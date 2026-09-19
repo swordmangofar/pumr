@@ -3,11 +3,12 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { ModelsService } from '../core/models.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { DiffView } from './diff-view';
+import { SystemPromptsPanel } from './system-prompts-panel';
 
 @Component({
   selector: 'app-right-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, DiffView],
+  imports: [TranslocoPipe, DiffView, SystemPromptsPanel],
   template: `
     <div class="flex h-full flex-col">
       <div class="flex shrink-0 border-b border-white/10">
@@ -39,6 +40,18 @@ import { DiffView } from './diff-view';
           (click)="tab.set('session')"
         >
           {{ 'right.session' | transloco }}
+        </button>
+        <button
+          type="button"
+          class="relative flex-1 px-4 py-3 text-sm font-medium transition-colors"
+          [class]="
+            tab() === 'prompts'
+              ? 'text-white after:absolute after:inset-x-4 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent'
+              : 'text-mist/40 hover:text-mist'
+          "
+          (click)="tab.set('prompts')"
+        >
+          {{ 'right.systemPrompts' | transloco }}
         </button>
       </div>
 
@@ -87,7 +100,7 @@ import { DiffView } from './diff-view';
             <p class="px-4 py-5 text-sm text-mist/40">{{ 'right.selectFile' | transloco }}</p>
           }
         </section>
-      } @else {
+      } @else if (tab() === 'session') {
         <div class="min-h-0 flex-1 overflow-y-auto">
           @if (session(); as active) {
             <section class="border-b border-white/10 p-4">
@@ -182,6 +195,8 @@ import { DiffView } from './diff-view';
             <p class="p-4 text-sm text-mist/40">{{ 'right.session' | transloco }}</p>
           }
         </div>
+      } @else {
+        <app-system-prompts-panel />
       }
     </div>
 
@@ -214,7 +229,7 @@ export class RightPanel {
   protected readonly workspace = inject(WorkspaceService);
   private readonly models = inject(ModelsService);
 
-  protected readonly tab = signal<'changes' | 'session'>('changes');
+  protected readonly tab = signal<'changes' | 'session' | 'prompts'>('changes');
   protected readonly overlay = signal(false);
   protected readonly session = this.workspace.activeSession;
   protected readonly sessionId = computed(() => this.session()?.id ?? null);

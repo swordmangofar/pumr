@@ -1,8 +1,11 @@
-use crate::broker::PermissionBroker;
+use crate::broker::{PermissionBroker, QuestionBroker};
 use crate::db::{Db, NewMessage};
 use crate::error::Result;
 use crate::git::ShadowRepo;
-use crate::models::{EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord};
+use crate::models::{
+    Attachment, EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord,
+};
+use crate::permissions::LivePermissions;
 use crate::processes::ProcessRegistry;
 use crate::providers::openrouter::{
     ChatChunk, ChatMessage, ChatUsage, OpenRouterClient, ProviderRouting, ReasoningSetting,
@@ -10,7 +13,7 @@ use crate::providers::openrouter::{
 use crate::tools::{self, ToolOutcome, ToolRuntime};
 use serde_json::{json, Value};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -45,6 +48,8 @@ pub struct TurnDeps {
     pub shadow: Arc<ShadowRepo>,
     pub processes: Arc<ProcessRegistry>,
     pub broker: Arc<PermissionBroker>,
+    pub questions: Arc<QuestionBroker>,
+    pub permissions: Arc<LivePermissions>,
     pub client: OpenRouterClient,
     pub http: reqwest::Client,
 }
@@ -75,7 +80,10 @@ pub async fn run_turn(
     let mut tool_schemas = tools::tool_schemas();
     if request.depth >= MAX_SUBAGENT_DEPTH {
         tool_schemas.retain(|schema| {
-            schema.pointer("/function/name").and_then(Value::as_str) != Some("task")
+            !matches!(
+                schema.pointer("/function/name").and_then(Value::as_str),
+                Some("task") | Some("question")
+            )
         });
     }
     let mut total_usage = ChatUsage::default();
@@ -211,7 +219,7 @@ pub async fn run_turn(
             emit(StreamEvent::ToolStart {
                 call_id: call.id.clone(),
                 name: call.name.clone(),
-                summary: summarize(&call.name, &call.arguments),
+                summary: summarize(&request, &call.name, &call.arguments),
                 arguments: call.arguments.clone(),
             });
 
@@ -367,10 +375,10 @@ fn run_subagent<'a>(
                 return ToolOutcome::error(format!("Could not snapshot project: {error}"));
             }
         };
-        if let Err(error) = deps
-            .db
-            .append_message(&child.id, NewMessage::user(&prompt, Some(&base_commit)))
-        {
+        if let Err(error) = deps.db.append_message(
+            &child.id,
+            NewMessage::user(&prompt, Some(&base_commit), &[]),
+        ) {
             let _ = deps.db.set_agent_status(&child.id, "error");
             emit_status(&sink, &child.id, "error");
             return ToolOutcome::error(format!("Could not record subagent prompt: {error}"));
@@ -482,8 +490,8 @@ fn build_history(deps: &TurnDeps, request: &TurnRequest) -> Result<Vec<ChatMessa
     for message in messages {
         match message.role.as_str() {
             "user" => {
-                if !message.content.is_empty() {
-                    history.push(ChatMessage::text("user", message.content));
+                if let Some(content) = user_content(&message.content, &message.attachments) {
+                    history.push(ChatMessage::parts("user", content));
                 }
             }
             "assistant" => {
@@ -521,6 +529,61 @@ fn build_history(deps: &TurnDeps, request: &TurnRequest) -> Result<Vec<ChatMessa
     Ok(sanitize(history))
 }
 
+fn user_content(text: &str, attachments: &[Attachment]) -> Option<Value> {
+    if attachments.is_empty() {
+        return (!text.is_empty()).then(|| Value::String(text.to_string()));
+    }
+    let mut parts: Vec<Value> = Vec::new();
+    if !text.is_empty() {
+        parts.push(json!({ "type": "text", "text": text }));
+    }
+    for attachment in attachments {
+        if attachment.is_image() {
+            let url = format!("data:{};base64,{}", attachment.mime_type, attachment.data);
+            parts.push(json!({
+                "type": "image_url",
+                "image_url": { "url": url }
+            }));
+        } else if attachment.is_pdf() {
+            let data_url = format!("data:application/pdf;base64,{}", attachment.data);
+            parts.push(json!({
+                "type": "file",
+                "file": {
+                    "filename": attachment.name,
+                    "file_data": data_url
+                }
+            }));
+        } else {
+            let mut header = format!("<file name=\"{}\"", attachment.name);
+            if let Some(lines) = attachment.lines {
+                header.push_str(&format!(" lines=\"{}\"", lines));
+            }
+            header.push('>');
+            parts.push(json!({
+                "type": "text",
+                "text": format!("{}\n{}\n</file>", header, attachment.data)
+            }));
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(Value::Array(parts))
+    }
+}
+
+fn content_to_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
 fn sanitize(history: Vec<ChatMessage>) -> Vec<ChatMessage> {
     let mut sanitized: Vec<ChatMessage> = Vec::new();
     for message in history {
@@ -541,10 +604,9 @@ fn sanitize(history: Vec<ChatMessage>) -> Vec<ChatMessage> {
                 .unwrap_or(false);
             if previous_has_dangling_calls {
                 if let Some(previous) = sanitized.pop() {
-                    if let Value::String(text) = previous.content {
-                        if !text.is_empty() {
-                            sanitized.push(ChatMessage::text("assistant", text));
-                        }
+                    let text = content_to_text(&previous.content);
+                    if !text.is_empty() {
+                        sanitized.push(ChatMessage::text("assistant", text));
                     }
                 }
             }
@@ -557,10 +619,9 @@ fn sanitize(history: Vec<ChatMessage>) -> Vec<ChatMessage> {
         .unwrap_or(false)
     {
         if let Some(previous) = sanitized.pop() {
-            if let Value::String(text) = previous.content {
-                if !text.is_empty() {
-                    sanitized.push(ChatMessage::text("assistant", text));
-                }
+            let text = content_to_text(&previous.content);
+            if !text.is_empty() {
+                sanitized.push(ChatMessage::text("assistant", text));
             }
         }
     }
@@ -577,14 +638,14 @@ async fn execute_call(
     let mut runtime = ToolRuntime {
         call_id: call.id.clone(),
         project_root: request.project_root.clone(),
-        extra_folders: request.extra_folders.clone(),
-        command_rules: request.command_rules.clone(),
         allowed_websites: request.allowed_websites.clone(),
         denied_websites: request.denied_websites.clone(),
         session_id: request.session_id.clone(),
         shadow: deps.shadow.clone(),
         processes: deps.processes.clone(),
         broker: deps.broker.clone(),
+        questions: deps.questions.clone(),
+        permissions: deps.permissions.clone(),
         http: deps.http.clone(),
         cancel: request.cancel.clone(),
         emit: sink.clone(),
@@ -598,7 +659,7 @@ fn compute_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
         .unwrap_or_default()
 }
 
-fn summarize(name: &str, arguments: &str) -> String {
+fn summarize(request: &TurnRequest, name: &str, arguments: &str) -> String {
     let parsed: Value = serde_json::from_str(arguments).unwrap_or_else(|_| json!({}));
     match name {
         "bash" => parsed
@@ -606,11 +667,10 @@ fn summarize(name: &str, arguments: &str) -> String {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        "read" | "write" | "edit" | "ls" => parsed
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+        "read" | "write" | "edit" | "ls" => relative_path(
+            request,
+            parsed.get("path").and_then(Value::as_str).unwrap_or(""),
+        ),
         "glob" | "grep" => parsed
             .get("pattern")
             .and_then(Value::as_str)
@@ -631,8 +691,39 @@ fn summarize(name: &str, arguments: &str) -> String {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
+        "question" => parsed
+            .get("questions")
+            .and_then(Value::as_array)
+            .and_then(|entries| entries.first())
+            .and_then(|entry| {
+                entry
+                    .get("header")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| entry.get("question").and_then(Value::as_str))
+            })
+            .unwrap_or("")
+            .to_string(),
         _ => arguments.chars().take(120).collect(),
     }
+}
+
+fn relative_path(request: &TurnRequest, path: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        if let Ok(relative) = candidate.strip_prefix(&request.project_root) {
+            return relative.to_string_lossy().replace('\\', "/");
+        }
+        for folder in &request.extra_folders {
+            if let Ok(relative) = candidate.strip_prefix(folder) {
+                return relative.to_string_lossy().replace('\\', "/");
+            }
+        }
+    }
+    path.replace('\\', "/")
 }
 
 fn accumulate_usage(total: &mut ChatUsage, usage: &ChatUsage) {

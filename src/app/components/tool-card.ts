@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   inject,
   input,
@@ -8,14 +9,16 @@ import {
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { ansiToHtml } from '../core/ansi';
 import { FileChange } from '../core/models';
 import { MonacoService } from '../core/monaco.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { ToolStatus } from './tool-status';
 
 @Component({
   selector: 'app-tool-card',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TranslocoPipe, ToolStatus],
   template: `
     <div class="my-3 overflow-hidden rounded-xl border border-white/10 bg-navy/30">
       <button
@@ -32,6 +35,7 @@ import { WorkspaceService } from '../core/workspace.service';
         @if (status() === 'running') {
           <span class="h-2 w-2 animate-pulse rounded-full bg-accent"></span>
         }
+        <app-tool-status [status]="status()" />
         <span class="text-xs text-mist/30">{{ expanded() ? '▾' : '▸' }}</span>
       </button>
 
@@ -71,10 +75,16 @@ import { WorkspaceService } from '../core/workspace.service';
           <div class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-mist/30">
             {{ 'tools.output' | transloco }}
           </div>
-          <pre
-            class="max-h-72 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
-            >{{ output() || ('common.loading' | transloco) }}</pre
-          >
+          @if (output()) {
+            <pre
+              class="max-h-72 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
+              [innerHTML]="outputHtml()"
+            ></pre>
+          } @else {
+            <pre
+              class="max-h-72 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
+              >{{ 'common.loading' | transloco }}</pre>
+          }
         </div>
       }
     </div>
@@ -91,6 +101,9 @@ export class ToolCard {
 
   protected readonly expanded = signal(false);
   protected readonly highlighted = signal<SafeHtml>('');
+  protected readonly outputHtml = computed<SafeHtml>(() =>
+    this.sanitizer.bypassSecurityTrustHtml(ansiToHtml(this.output())),
+  );
   private readonly workspace = inject(WorkspaceService);
   private readonly monaco = inject(MonacoService);
   private readonly sanitizer = inject(DomSanitizer);
@@ -128,6 +141,8 @@ export class ToolCard {
       case 'error':
         return 'text-rose-400';
       case 'denied':
+        return 'text-mist/40';
+      case 'canceled':
         return 'text-mist/40';
       default:
         return 'text-emerald-400';

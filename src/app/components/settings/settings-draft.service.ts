@@ -1,10 +1,12 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Settings } from '../../core/models';
 import { FALLBACK_SETTINGS, SettingsService } from '../../core/settings.service';
+import { ThemeService } from '../../core/theme.service';
 
 @Injectable()
 export class SettingsDraftService {
   private readonly settingsService = inject(SettingsService);
+  private readonly theme = inject(ThemeService);
 
   readonly draft = signal<Settings>({
     ...FALLBACK_SETTINGS,
@@ -18,6 +20,16 @@ export class SettingsDraftService {
     this.draft.update((draft) => ({ ...draft, [key]: value }));
     this.dirty.set(true);
     this.saved.set(false);
+  }
+
+  selectTheme(id: string): void {
+    this.patch('theme', id);
+    this.theme.apply(id);
+  }
+
+  setHighContrast(enabled: boolean): void {
+    this.patch('highContrast', enabled);
+    this.theme.applyContrast(enabled);
   }
 
   async save(): Promise<void> {

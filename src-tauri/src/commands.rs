@@ -4,9 +4,9 @@ use crate::db::NewMessage;
 use crate::error::{AppError, Result};
 use crate::git::{project_git_info, ShadowRepo};
 use crate::models::{
-    EndpointInfo, EventSink, FileChange, FileDiff, GitInfo, Message, ModelInfo, PermissionDecision,
-    ProcessInfo, Project, ProjectRule, ProviderInfo, RoutedEvent, Session, SpendSummary,
-    StreamEvent,
+    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitInfo, Message, ModelInfo,
+    PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
+    RoutedEvent, Session, SpendSummary, StreamEvent,
 };
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,11 @@ pub struct RevertResult {
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Settings {
     state.settings()
+}
+
+#[tauri::command]
+pub fn get_default_system_prompts() -> config::DefaultSystemPrompts {
+    config::default_system_prompts()
 }
 
 #[tauri::command]
@@ -122,8 +127,14 @@ pub fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<
 }
 
 #[tauri::command]
-pub fn list_sessions(state: State<'_, AppState>, project_id: String) -> Result<Vec<Session>> {
-    state.db.list_sessions(&project_id)
+pub fn list_sessions(
+    state: State<'_, AppState>,
+    project_id: String,
+    include_archived: Option<bool>,
+) -> Result<Vec<Session>> {
+    state
+        .db
+        .list_sessions(&project_id, include_archived.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -172,6 +183,19 @@ pub fn update_session(
         provider.as_deref(),
         system_prompt.as_deref(),
     )
+}
+
+#[tauri::command]
+pub fn archive_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    archived: bool,
+) -> Result<Session> {
+    if archived {
+        state.processes.stop_for_session(&session_id);
+        state.cancel(&session_id);
+    }
+    state.db.set_session_archived(&session_id, archived)
 }
 
 #[tauri::command]
@@ -284,6 +308,16 @@ pub fn resolve_permission(
             folder,
         },
     );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn resolve_question(
+    state: State<'_, AppState>,
+    request_id: String,
+    answers: Option<Vec<QuestionAnswer>>,
+) -> Result<()> {
+    state.questions.resolve(&request_id, answers);
     Ok(())
 }
 
@@ -575,8 +609,10 @@ pub async fn send_message(
     model: String,
     reasoning_effort: Option<String>,
     provider: Option<String>,
+    attachments: Option<Vec<Attachment>>,
     channel: Channel<RoutedEvent>,
 ) -> Result<Message> {
+    let attachments = attachments.unwrap_or_default();
     let settings = state.settings();
     let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?
         .filter(|key| !key.trim().is_empty())
@@ -608,9 +644,10 @@ pub async fn send_message(
     )?);
     let base_commit = shadow.snapshot(&format!("before: {}", truncate_title(&content)))?;
 
-    let user_message = state
-        .db
-        .append_message(&session_id, NewMessage::user(&content, Some(&base_commit)))?;
+    let user_message = state.db.append_message(
+        &session_id,
+        NewMessage::user(&content, Some(&base_commit), &attachments),
+    )?;
 
     if session.title == DEFAULT_SESSION_TITLE {
         let title = truncate_title(&user_message.content);
@@ -626,6 +663,33 @@ pub async fn send_message(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| settings.default_system_prompt.clone());
+
+    for (enabled, prompt) in [
+        (
+            settings.security_system_prompt_enabled,
+            &settings.security_system_prompt,
+        ),
+        (
+            settings.testing_system_prompt_enabled,
+            &settings.testing_system_prompt,
+        ),
+        (
+            settings.architecture_system_prompt_enabled,
+            &settings.architecture_system_prompt,
+        ),
+    ] {
+        if enabled && !prompt.trim().is_empty() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(prompt);
+        }
+    }
+
+    for prompt in &settings.user_system_prompts {
+        if prompt.enabled && !prompt.prompt.trim().is_empty() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&prompt.prompt);
+        }
+    }
 
     let rules = collect_project_rules(&state, &project.id, Some(&session_id)).unwrap_or_default();
     if !rules.is_empty() {
@@ -676,6 +740,8 @@ pub async fn send_message(
         shadow,
         processes: state.processes.clone(),
         broker: state.broker.clone(),
+        questions: state.questions.clone(),
+        permissions: state.permissions.clone(),
         client: state.provider(),
         http: state.http.clone(),
     };

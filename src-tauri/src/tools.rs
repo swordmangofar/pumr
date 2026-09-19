@@ -1,8 +1,10 @@
-use crate::broker::{PermissionBroker, PermissionPrompt};
+use crate::broker::{PermissionBroker, PermissionPrompt, QuestionBroker};
 use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, GitProbe, RepoProbe, ShadowRepo};
-use crate::models::{EventSink, FileChange, RoutedEvent, StreamEvent};
-use crate::permissions::{self, CommandDecision, WebsiteDecision};
+use crate::models::{
+    EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
+};
+use crate::permissions::{self, CommandDecision, LivePermissions, WebsiteDecision};
 use crate::processes::{ProcessRegistry, RunningProcess};
 use globset::Glob;
 use ignore::WalkBuilder;
@@ -27,14 +29,14 @@ const SEARCH_BASE_URL: &str = "https://html.duckduckgo.com/html/";
 pub struct ToolRuntime {
     pub call_id: String,
     pub project_root: PathBuf,
-    pub extra_folders: Vec<PathBuf>,
-    pub command_rules: Vec<String>,
+    pub permissions: Arc<LivePermissions>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
     pub session_id: String,
     pub shadow: Arc<ShadowRepo>,
     pub processes: Arc<ProcessRegistry>,
     pub broker: Arc<PermissionBroker>,
+    pub questions: Arc<QuestionBroker>,
     pub http: reqwest::Client,
     pub cancel: CancellationToken,
     pub emit: EventSink,
@@ -68,6 +70,14 @@ impl ToolOutcome {
         Self {
             result: truncate(result.into()),
             status: "error".to_string(),
+            changes: Vec::new(),
+        }
+    }
+
+    pub fn cancelled() -> Self {
+        Self {
+            result: "Command cancelled.".to_string(),
+            status: "canceled".to_string(),
             changes: Vec::new(),
         }
     }
@@ -223,6 +233,44 @@ pub fn tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "question",
+                "description": "Ask the user one or more questions and wait for their answers before continuing. Use this whenever you are blocked on a decision, need a preference, or requirements are ambiguous instead of guessing or ending your turn with an open question. Provide concise options when a small set of choices covers the answer; the user can always type a custom answer. Ask several related questions in one call.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "description": "One or more questions shown together in a single prompt.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "header": { "type": "string", "description": "Very short label for the question (a few words)" },
+                                    "question": { "type": "string", "description": "The full question to show the user" },
+                                    "options": {
+                                        "type": "array",
+                                        "description": "Suggested answers the user can click. Keep to 2-5 concise options; omit for an open question.",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "label": { "type": "string", "description": "Short answer text" },
+                                                "description": { "type": "string", "description": "Optional clarification of what this option means" }
+                                            },
+                                            "required": ["label"]
+                                        }
+                                    },
+                                    "multiSelect": { "type": "boolean", "description": "Allow selecting more than one option. Defaults to false." }
+                                },
+                                "required": ["question"]
+                            }
+                        }
+                    },
+                    "required": ["questions"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "task",
                 "description": "Spawn a subagent to work on a focused task in parallel with the main agent. The subagent has the same tools and project access, runs its own tool loop, and returns a concise report when done. Use this to parallelize independent work (e.g. investigate several areas at once, or offload a self-contained subtask). Multiple task calls in one turn run concurrently.",
                 "parameters": {
@@ -249,8 +297,91 @@ pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -
         "bash" => run_bash(runtime, arguments).await,
         "webfetch" => web_fetch(runtime, arguments).await,
         "websearch" => web_search(runtime, arguments).await,
+        "question" => ask_question(runtime, arguments).await,
         other => ToolOutcome::error(format!("Unknown tool: {other}")),
     }
+}
+
+/// Presents one or more questions to the user and blocks the tool loop until
+/// they answer or skip. The answers are returned as JSON so the model can rely
+/// on the structure and the UI can render them from history.
+async fn ask_question(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let Some(items) = arguments.get("questions").and_then(Value::as_array) else {
+        return ToolOutcome::error("The question tool requires a non-empty 'questions' array.");
+    };
+
+    let mut questions: Vec<QuestionItem> = Vec::new();
+    for item in items {
+        let question = item
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if question.is_empty() {
+            continue;
+        }
+        let header = item
+            .get("header")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let header: String = if header.is_empty() {
+            question.chars().take(30).collect()
+        } else {
+            header.chars().take(60).collect()
+        };
+        let options = item
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let label = entry.get("label").and_then(Value::as_str)?.trim();
+                        if label.is_empty() {
+                            return None;
+                        }
+                        Some(QuestionOption {
+                            label: label.to_string(),
+                            description: entry
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        questions.push(QuestionItem {
+            header,
+            question: question.to_string(),
+            options,
+            multi_select: item
+                .get("multiSelect")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+
+    if questions.is_empty() {
+        return ToolOutcome::error("The question tool requires at least one non-empty question.");
+    }
+
+    let answers = runtime
+        .questions
+        .ask(
+            questions,
+            &runtime.cancel,
+            &runtime.session_id,
+            &runtime.emit,
+        )
+        .await;
+
+    let payload = match answers {
+        Some(answers) => json!({ "answers": answers, "skipped": false }),
+        None => json!({ "answers": [], "skipped": true }),
+    };
+    ToolOutcome::ok(payload.to_string())
 }
 
 fn arg_str(arguments: &Value, key: &str) -> Result<String> {
@@ -265,7 +396,7 @@ fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(&runtime.project_root) {
         return relative.to_string_lossy().replace('\\', "/");
     }
-    for folder in &runtime.extra_folders {
+    for folder in &runtime.permissions.extra_folders() {
         if let Ok(relative) = path.strip_prefix(folder) {
             return relative.to_string_lossy().replace('\\', "/");
         }
@@ -274,7 +405,11 @@ fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
 }
 
 async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &str) -> bool {
-    if permissions::path_is_inside(absolute, &runtime.project_root, &runtime.extra_folders) {
+    if permissions::path_is_inside(
+        absolute,
+        &runtime.project_root,
+        &runtime.permissions.extra_folders(),
+    ) {
         return true;
     }
     let folder = if absolute.is_dir() {
@@ -1118,8 +1253,8 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         permissions::evaluate_command(
             &command,
             &runtime.project_root,
-            &runtime.extra_folders,
-            &runtime.command_rules,
+            &runtime.permissions.extra_folders(),
+            &runtime.permissions.command_rules(),
             &probe,
         )
     };
@@ -1199,7 +1334,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                 if let Some(child) = child_handle.lock().unwrap().as_mut() {
                     let _ = child.start_kill();
                 }
-                return ToolOutcome::error("Command cancelled.");
+                return ToolOutcome::cancelled();
             }
             chunk = receiver.recv(), if !channel_closed => {
                 match chunk {

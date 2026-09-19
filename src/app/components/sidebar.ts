@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { TranslocoPipe } from '@jsverse/transloco';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { WorkspaceService } from '../core/workspace.service';
+import { Session } from '../core/models';
 import { AgentStatus } from './agent-status';
 
 @Component({
@@ -14,14 +15,41 @@ import { AgentStatus } from './agent-status';
         <span class="text-xs font-semibold uppercase tracking-widest text-mist/40">
           {{ 'sidebar.projects' | transloco }}
         </span>
-        <button
-          type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 text-mist/60 transition-colors hover:border-accent/60 hover:text-accent"
-          [title]="'sidebar.addProject' | transloco"
-          (click)="addProject()"
-        >
-          ＋
-        </button>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+            [class]="
+              workspace.showArchived()
+                ? 'border-accent/60 text-accent'
+                : 'border-white/10 text-mist/60 hover:border-accent/60 hover:text-accent'
+            "
+            [title]="'sidebar.showArchived' | transloco"
+            (click)="toggleArchived()"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="2.5" y="3" width="11" height="3.5" rx="0.75" />
+              <path d="M3.5 6.5v5.75A1.25 1.25 0 0 0 4.75 13.5h6.5a1.25 1.25 0 0 0 1.25-1.25V6.5" />
+              <path d="M6.5 9.5h3" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 text-mist/60 transition-colors hover:border-accent/60 hover:text-accent"
+            [title]="'sidebar.addProject' | transloco"
+            (click)="addProject()"
+          >
+            ＋
+          </button>
+        </div>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
@@ -63,32 +91,96 @@ import { AgentStatus } from './agent-status';
               <div class="mt-0.5 space-y-0.5 pl-4">
                 @for (session of workspace.sessionsFor(project.id); track session.id) {
                   <div>
-                    <button
-                      type="button"
-                      class="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm transition-colors"
-                      [class]="
-                        session.id === workspace.activeSessionId() &&
-                        session.id === workspace.activeAgentId()
-                          ? 'bg-accent font-medium text-ink'
-                          : 'text-mist/50 hover:bg-white/5 hover:text-mist'
-                      "
-                      (click)="workspace.openTab(session.id)"
+                    <div
+                      class="group flex items-center gap-1 rounded-xl pr-1 transition-colors"
+                      [class]="sessionRowClass(session)"
                     >
-                      <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
-                      @if (session.cost > 0) {
-                        <span
-                          class="shrink-0 text-xs"
-                          [class]="
-                            session.id === workspace.activeSessionId() &&
-                            session.id === workspace.activeAgentId()
-                              ? 'text-ink/60'
-                              : 'text-mist/30'
+                      <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm"
+                        [class]="sessionTextClass(session)"
+                        (click)="workspace.openTab(session.id)"
+                      >
+                        <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
+                      </button>
+
+                      <div
+                        class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                      >
+                        <button
+                          type="button"
+                          class="flex h-6 w-6 items-center justify-center rounded-md border transition-colors"
+                          [class]="sessionActionClass(session, 'archive')"
+                          [title]="
+                            (session.archived
+                              ? 'sidebar.unarchiveSession'
+                              : 'sidebar.archiveSession'
+                            ) | transloco
                           "
+                          (click)="archiveSession($event, session)"
                         >
-                          {{ money(session.cost) }}
-                        </span>
-                      }
-                    </button>
+                          @if (session.archived) {
+                            <svg
+                              viewBox="0 0 16 16"
+                              class="h-3.5 w-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.4"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <rect x="2.5" y="3" width="11" height="3.5" rx="0.75" />
+                              <path
+                                d="M3.5 6.5v5.75A1.25 1.25 0 0 0 4.75 13.5h6.5a1.25 1.25 0 0 0 1.25-1.25V6.5"
+                              />
+                              <path d="M8 12V8.5M6.5 10 8 8.5 9.5 10" />
+                            </svg>
+                          } @else {
+                            <svg
+                              viewBox="0 0 16 16"
+                              class="h-3.5 w-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.4"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <rect x="2.5" y="3" width="11" height="3.5" rx="0.75" />
+                              <path
+                                d="M3.5 6.5v5.75A1.25 1.25 0 0 0 4.75 13.5h6.5a1.25 1.25 0 0 0 1.25-1.25V6.5"
+                              />
+                              <path d="M6.5 9.5h3" />
+                            </svg>
+                          }
+                        </button>
+                        <button
+                          type="button"
+                          class="flex h-6 w-6 items-center justify-center rounded-md border transition-colors"
+                          [class]="sessionActionClass(session, 'delete')"
+                          [title]="'common.delete' | transloco"
+                          (click)="removeSession($event, session)"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.4"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M3 4.5h10" />
+                            <path
+                              d="M6 4.5V3.25A1.25 1.25 0 0 1 7.25 2h1.5A1.25 1.25 0 0 1 10 3.25V4.5"
+                            />
+                            <path
+                              d="M4.5 4.5l.6 8.1a1.25 1.25 0 0 0 1.25 1.15h3.3a1.25 1.25 0 0 0 1.25-1.15l.6-8.1"
+                            />
+                            <path d="M6.75 7.5v4M9.25 7.5v4" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
 
                     @for (agent of workspace.subAgentsFor(session.id); track agent.id) {
                       <button
@@ -103,9 +195,6 @@ import { AgentStatus } from './agent-status';
                       >
                         <app-agent-status [status]="agent.agentStatus" [small]="true" />
                         <span class="min-w-0 flex-1 truncate">{{ agent.title }}</span>
-                        @if (agent.cost > 0) {
-                          <span class="shrink-0 text-xs text-mist/30">{{ money(agent.cost) }}</span>
-                        }
                       </button>
                     }
                   </div>
@@ -168,6 +257,64 @@ export class Sidebar {
     this.workspace.viewAgent(rootSessionId, agentSessionId);
   }
 
+  protected sessionActive(session: Session): boolean {
+    return (
+      session.id === this.workspace.activeSessionId() &&
+      session.id === this.workspace.activeAgentId()
+    );
+  }
+
+  protected sessionRowClass(session: Session): string {
+    const base = this.sessionActive(session) ? 'bg-accent' : 'hover:bg-white/5';
+    return session.archived ? `${base} opacity-60` : base;
+  }
+
+  protected sessionTextClass(session: Session): string {
+    return this.sessionActive(session) ? 'font-medium text-ink' : 'text-mist/50 hover:text-mist';
+  }
+
+  protected sessionActionClass(session: Session, kind: 'archive' | 'delete'): string {
+    if (this.sessionActive(session)) {
+      return 'border-ink/25 text-ink/80 hover:border-ink/50 hover:text-ink';
+    }
+    return kind === 'delete'
+      ? 'border-white/10 text-mist/50 hover:border-rose-400/60 hover:text-rose-400'
+      : 'border-white/10 text-mist/50 hover:border-accent/60 hover:text-accent';
+  }
+
+  protected async archiveSession(event: Event, session: Session): Promise<void> {
+    event.stopPropagation();
+    try {
+      await this.workspace.archiveSession(session.id, !session.archived);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async removeSession(event: Event, session: Session): Promise<void> {
+    event.stopPropagation();
+    const confirmed = await confirm(`Delete session "${session.title}"? This cannot be undone.`, {
+      title: 'pumr',
+      kind: 'warning',
+    });
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await this.workspace.deleteSession(session.id);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async toggleArchived(): Promise<void> {
+    try {
+      await this.workspace.toggleShowArchived();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   protected async removeProject(event: Event, projectId: string): Promise<void> {
     event.stopPropagation();
     const project = this.workspace.projects().find((entry) => entry.id === projectId);
@@ -189,9 +336,5 @@ export class Sidebar {
     } catch (error) {
       console.error(error);
     }
-  }
-
-  protected money(value: number): string {
-    return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
   }
 }

@@ -41,6 +41,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            commands::get_default_system_prompts,
             commands::save_settings,
             commands::set_api_key,
             commands::delete_api_key,
@@ -55,11 +56,13 @@ pub fn run() {
             commands::list_sub_sessions,
             commands::create_session,
             commands::update_session,
+            commands::archive_session,
             commands::delete_session,
             commands::list_messages,
             commands::get_spend,
             commands::stop_generation,
             commands::resolve_permission,
+            commands::resolve_question,
             commands::add_command_rule,
             commands::delete_command_rule,
             commands::add_website_rule,

@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import {
   CreateSessionArgs,
+  DefaultSystemPrompts,
   EndpointInfo,
   FileChange,
   FileDiff,
@@ -12,6 +13,7 @@ import {
   Project,
   ProjectRule,
   ProviderInfo,
+  QuestionAnswer,
   RevertResult,
   RoutedEvent,
   SendMessageArgs,
@@ -30,6 +32,7 @@ export function isTauri(): boolean {
 
 export const api = {
   getSettings: () => invoke<Settings>('get_settings'),
+  getDefaultSystemPrompts: () => invoke<DefaultSystemPrompts>('get_default_system_prompts'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
@@ -41,10 +44,13 @@ export const api = {
   listProjects: () => invoke<Project[]>('list_projects'),
   addProject: (path: string) => invoke<Project>('add_project', { path }),
   removeProject: (projectId: string) => invoke<void>('remove_project', { projectId }),
-  listSessions: (projectId: string) => invoke<Session[]>('list_sessions', { projectId }),
+  listSessions: (projectId: string, includeArchived = false) =>
+    invoke<Session[]>('list_sessions', { projectId, includeArchived }),
   listSubSessions: (sessionId: string) => invoke<Session[]>('list_sub_sessions', { sessionId }),
   createSession: (args: CreateSessionArgs) => invoke<Session>('create_session', { ...args }),
   updateSession: (args: UpdateSessionArgs) => invoke<Session>('update_session', { ...args }),
+  archiveSession: (sessionId: string, archived: boolean) =>
+    invoke<Session>('archive_session', { sessionId, archived }),
   deleteSession: (sessionId: string) => invoke<void>('delete_session', { sessionId }),
   listMessages: (sessionId: string) => invoke<Message[]>('list_messages', { sessionId }),
   getSpend: (sessionId: string | null = null) => invoke<SpendSummary>('get_spend', { sessionId }),
@@ -56,6 +62,8 @@ export const api = {
     folder: string | null = null,
     promptKind: string | null = null,
   ) => invoke<void>('resolve_permission', { requestId, decision, rule, folder, promptKind }),
+  resolveQuestion: (requestId: string, answers: QuestionAnswer[] | null) =>
+    invoke<void>('resolve_question', { requestId, answers }),
   addCommandRule: (rule: string) => invoke<Settings>('add_command_rule', { rule }),
   deleteCommandRule: (rule: string) => invoke<Settings>('delete_command_rule', { rule }),
   addWebsiteRule: (rule: string, allow: boolean) =>

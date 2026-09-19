@@ -1,5 +1,7 @@
 use crate::error::{AppError, Result};
-use crate::models::{FileChange, Message, Project, Session, SpendSummary, ToolCallRecord};
+use crate::models::{
+    Attachment, FileChange, Message, Project, Session, SpendSummary, ToolCallRecord,
+};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::Path;
@@ -30,10 +32,15 @@ pub struct NewMessage<'a> {
     pub status: Option<&'a str>,
     pub changes: &'a [FileChange],
     pub base_commit: Option<&'a str>,
+    pub attachments: &'a [Attachment],
 }
 
 impl<'a> NewMessage<'a> {
-    pub fn user(content: &'a str, base_commit: Option<&'a str>) -> Self {
+    pub fn user(
+        content: &'a str,
+        base_commit: Option<&'a str>,
+        attachments: &'a [Attachment],
+    ) -> Self {
         Self {
             role: "user",
             content,
@@ -50,6 +57,7 @@ impl<'a> NewMessage<'a> {
             status: None,
             changes: &[],
             base_commit,
+            attachments,
         }
     }
 
@@ -70,6 +78,7 @@ impl<'a> NewMessage<'a> {
             status: None,
             changes: &[],
             base_commit: None,
+            attachments: &[],
         }
     }
 
@@ -96,6 +105,7 @@ impl<'a> NewMessage<'a> {
             status: Some(status),
             changes,
             base_commit: None,
+            attachments: &[],
         }
     }
 }
@@ -142,7 +152,8 @@ impl Db {
                 cost REAL NOT NULL DEFAULT 0,
                 prompt_tokens INTEGER NOT NULL DEFAULT 0,
                 completion_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_tokens INTEGER NOT NULL DEFAULT 0
+                cached_tokens INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -172,10 +183,15 @@ impl Db {
             ("status", "TEXT"),
             ("changes", "TEXT NOT NULL DEFAULT '[]'"),
             ("base_commit", "TEXT"),
+            ("attachments", "TEXT NOT NULL DEFAULT '[]'"),
         ] {
             add_column_if_missing(&conn, "messages", column, definition)?;
         }
-        for (column, definition) in [("parent_session_id", "TEXT"), ("agent_status", "TEXT")] {
+        for (column, definition) in [
+            ("parent_session_id", "TEXT"),
+            ("agent_status", "TEXT"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
             add_column_if_missing(&conn, "sessions", column, definition)?;
         }
         // A run that was interrupted by an app restart can never resume.
@@ -225,7 +241,7 @@ impl Db {
         conn.query_row(
             r#"
             SELECT p.id, p.path, p.name, p.created_at, p.last_opened_at,
-                   (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id),
+                   (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0),
                    COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0)
             FROM projects p WHERE p.id = ?1
             "#,
@@ -240,7 +256,7 @@ impl Db {
             let mut stmt = conn.prepare(
                 r#"
                 SELECT p.id, p.path, p.name, p.created_at, p.last_opened_at,
-                       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id),
+                       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0),
                        COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0)
                 FROM projects p
                 ORDER BY p.last_opened_at DESC
@@ -314,7 +330,7 @@ impl Db {
         })
     }
 
-    pub fn list_sessions(&self, project_id: &str) -> Result<Vec<Session>> {
+    pub fn list_sessions(&self, project_id: &str, include_archived: bool) -> Result<Vec<Session>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 r#"
@@ -322,13 +338,14 @@ impl Db {
                        s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens,
                        s.completion_tokens, s.cached_tokens,
                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-                       s.parent_session_id, s.agent_status
+                       s.parent_session_id, s.agent_status, s.archived
                 FROM sessions s
                 WHERE s.project_id = ?1 AND s.parent_session_id IS NULL
+                      AND (?2 = 1 OR s.archived = 0)
                 ORDER BY s.updated_at DESC
                 "#,
             )?;
-            let rows = stmt.query_map(params![project_id], map_session)?;
+            let rows = stmt.query_map(params![project_id, include_archived], map_session)?;
             let mut sessions = Vec::new();
             for row in rows {
                 sessions.push(row?);
@@ -345,7 +362,7 @@ impl Db {
                        s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens,
                        s.completion_tokens, s.cached_tokens,
                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-                       s.parent_session_id, s.agent_status
+                       s.parent_session_id, s.agent_status, s.archived
                 FROM sessions s
                 WHERE s.parent_session_id = ?1
                 ORDER BY s.created_at ASC
@@ -371,7 +388,7 @@ impl Db {
                    s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens,
                    s.completion_tokens, s.cached_tokens,
                    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-                   s.parent_session_id, s.agent_status
+                   s.parent_session_id, s.agent_status, s.archived
             FROM sessions s WHERE s.id = ?1
             "#,
             params![id],
@@ -459,6 +476,16 @@ impl Db {
         })
     }
 
+    pub fn set_session_archived(&self, id: &str, archived: bool) -> Result<Session> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET archived = ?1 WHERE id = ?2",
+                params![archived, id],
+            )?;
+            self.session_by_id(conn, id)
+        })
+    }
+
     pub fn delete_session(&self, id: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
@@ -471,7 +498,8 @@ impl Db {
             let mut stmt = conn.prepare(
                 r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
                           cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
-                          tool_calls, tool_call_id, tool_name, status, changes, base_commit
+                          tool_calls, tool_call_id, tool_name, status, changes, base_commit,
+                          attachments
                    FROM messages WHERE session_id = ?1 ORDER BY seq ASC"#,
             )?;
             let rows = stmt.query_map(params![session_id], map_message)?;
@@ -492,6 +520,7 @@ impl Db {
         let now = now_ms();
         let tool_calls = serde_json::to_string(message.tool_calls)?;
         let changes = serde_json::to_string(message.changes)?;
+        let attachments = serde_json::to_string(message.attachments)?;
         self.with_conn(|conn| {
             let seq: i64 = conn.query_row(
                 "SELECT COALESCE(MAX(seq), -1) + 1 FROM messages WHERE session_id = ?1",
@@ -502,9 +531,10 @@ impl Db {
                 r#"INSERT INTO messages
                    (id, session_id, seq, role, content, reasoning, model, provider, cost,
                     prompt_tokens, completion_tokens, cached_tokens, created_at,
-                    tool_calls, tool_call_id, tool_name, status, changes, base_commit)
+                    tool_calls, tool_call_id, tool_name, status, changes, base_commit,
+                    attachments)
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                           ?14, ?15, ?16, ?17, ?18, ?19)"#,
+                           ?14, ?15, ?16, ?17, ?18, ?19, ?20)"#,
                 params![
                     id,
                     session_id,
@@ -524,7 +554,8 @@ impl Db {
                     message.tool_name,
                     message.status,
                     changes,
-                    message.base_commit
+                    message.base_commit,
+                    attachments
                 ],
             )?;
             conn.execute(
@@ -598,7 +629,8 @@ impl Db {
         conn.query_row(
             r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
                       cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
-                      tool_calls, tool_call_id, tool_name, status, changes, base_commit
+                      tool_calls, tool_call_id, tool_name, status, changes, base_commit,
+                      attachments
                FROM messages WHERE id = ?1"#,
             params![id],
             map_message,
@@ -741,12 +773,14 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<Session> {
         message_count: row.get(13)?,
         parent_session_id: row.get(14)?,
         agent_status: row.get(15)?,
+        archived: row.get::<_, i64>(16)? != 0,
     })
 }
 
 fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
     let tool_calls: String = row.get(13)?;
     let changes: String = row.get(17)?;
+    let attachments: String = row.get(19)?;
     Ok(Message {
         id: row.get(0)?,
         session_id: row.get(1)?,
@@ -767,5 +801,6 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         status: row.get(16)?,
         changes: serde_json::from_str(&changes).unwrap_or_default(),
         base_commit: row.get(18)?,
+        attachments: serde_json::from_str(&attachments).unwrap_or_default(),
     })
 }

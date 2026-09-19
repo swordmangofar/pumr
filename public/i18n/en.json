@@ -6,6 +6,8 @@
     "spent": "Spent",
     "remaining": "Remaining",
     "settings": "Settings",
+    "toggleSidebar": "Toggle sidebar",
+    "toggleRightPanel": "Toggle right panel",
     "refresh": "Refresh",
     "notTauri": "pumr must run inside Tauri. Start it with: pnpm tauri dev"
   },
@@ -16,7 +18,10 @@
     "noProjects": "No projects yet. Add a folder to get started.",
     "noSessions": "No sessions",
     "removeProject": "Remove project",
-    "sessions": "Sessions"
+    "sessions": "Sessions",
+    "archiveSession": "Archive session",
+    "unarchiveSession": "Unarchive session",
+    "showArchived": "Show archived sessions"
   },
   "tabs": {
     "empty": "Open a session from the sidebar or create a new one.",
@@ -47,6 +52,7 @@
     "revertFiles": "Also restore files to this point",
     "revertConfirm": "Revert",
     "scrollToBottom": "Scroll to latest",
+    "sessionCost": "Session cost",
     "hint": "Enter to send · Shift+Enter for a new line"
   },
   "agents": {
@@ -71,7 +77,13 @@
     "tools": "tools",
     "pricing": "Pricing per 1M tokens",
     "favorite": "Add to favorites",
-    "unfavorite": "Remove from favorites"
+    "unfavorite": "Remove from favorites",
+    "attach": "Attach files",
+    "removeAttachment": "Remove attachment",
+    "attachmentLines": "{{ count }} lines",
+    "attachmentTooMany": "You can attach up to 10 files per message.",
+    "attachmentTooLarge": "Files larger than 10 MB cannot be attached.",
+    "attachmentUnsupported": "Only images, PDFs, and text files can be attached."
   },
   "reasoning": {
     "off": "Off",
@@ -116,7 +128,22 @@
     "expand": "Expand",
     "selectFile": "Select a changed file to view its diff.",
     "prompts": "Prompts",
-    "noPrompts": "No prompts sent in this session yet."
+    "noPrompts": "No prompts sent in this session yet.",
+    "systemPrompts": "System prompts",
+    "activePrompts": "Active prompts",
+    "activePromptsHint": "These are added to every session. Toggle the optional ones on or off.",
+    "basePrompt": "Base system prompt",
+    "alwaysOn": "Always on",
+    "editInSettings": "Edit in settings",
+    "yourPrompts": "Your prompts",
+    "yourPromptsHint": "Enabled prompts are appended to the active system prompts. Edit them or reset built-ins to their original text.",
+    "addPrompt": "New",
+    "customPrompt": "Custom prompt",
+    "promptName": "Prompt name",
+    "resetPrompt": "Reset to original",
+    "deletePrompt": "Delete",
+    "builtin": "Built-in",
+    "noUserPrompts": "No custom prompts yet. Add one to extend the assistant's behavior."
   },
   "settings": {
     "title": "Settings",
@@ -185,11 +212,44 @@
     "keyMissing": "No key stored",
     "systemPrompt": "Default system prompt",
     "systemPromptHint": "Used for every new session unless a session defines its own.",
+    "systemPromptCustomized": "Customized",
+    "systemPromptCustomizedHint": "A customized system prompt is active for new sessions.",
+    "systemPromptReset": "Reset to default",
+    "systemPromptWarning": "You are changing the system prompt. This can significantly alter the assistant's behavior and may break tool use, safety checks or output formatting. Only change it if you know what you are doing.",
+    "securityPrompt": "Security best practices",
+    "securityPromptHint": "Adds guidance on secrets, input validation, least privilege and safe dependencies.",
+    "testingPrompt": "Testing",
+    "testingPromptHint": "Adds guidance on writing focused, deterministic tests and running them before finishing.",
+    "architecturePrompt": "Software architecture",
+    "architecturePromptHint": "Adds guidance on module boundaries, responsibilities and maintainable design.",
     "budget": "Budget (USD)",
     "budgetHint": "0 disables the budget display.",
     "language": "Language",
+    "theme": "Theme",
+    "themeHint": "Applied immediately and saved together with your settings.",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "highContrast": "High contrast mode",
+    "highContrastHint": "Strengthens muted text, borders and surfaces for improved readability. Recommended for low vision or bright environments.",
+    "themes": {
+      "midnight": "Midnight",
+      "oled": "Super Black",
+      "dracula": "Dracula",
+      "nord": "Nord",
+      "rosePine": "Rosé Pine",
+      "gruvbox": "Gruvbox",
+      "daylight": "Daylight",
+      "solarizedLight": "Solarized Light",
+      "githubLight": "GitHub Light",
+      "catppuccinLatte": "Catppuccin Latte",
+      "rosePineDawn": "Rosé Pine Dawn",
+      "nordLight": "Nord Light",
+      "gruvboxLight": "Gruvbox Light"
+    },
     "keepAwake": "Keep screen awake",
     "keepAwakeHint": "Prevents the screen from locking and the computer from sleeping while the agent or a subagent is running.",
+    "tabsMultiline": "Wrap tabs onto multiple rows",
+    "tabsMultilineHint": "When enabled, open tabs wrap onto additional rows. When disabled, tabs stay on one row and a scrollbar appears once there is no space left.",
     "extraFolders": "Additional folders the assistant may access",
     "extraFoldersHint": "One absolute path per line. Used in the tools phase.",
     "contextLimit": "Context messages sent to the model",
@@ -218,13 +278,26 @@
     "siteRuleLabel": "Website rule (domain or glob)",
     "siteRuleHint": "For example: docs.rs allows that site, *.github.com allows all its subdomains."
   },
+  "question": {
+    "title": "Question",
+    "multiHint": "select all that apply",
+    "customPlaceholder": "Type your own answer…",
+    "back": "Back",
+    "next": "Next",
+    "submit": "Submit",
+    "skip": "Skip"
+  },
   "processes": {
     "running": "running",
     "stop": "Stop"
   },
   "tools": {
     "command": "Command",
-    "output": "Output"
+    "output": "Output",
+    "files": "files",
+    "permissionDenied": "Permission denied",
+    "canceled": "Canceled",
+    "error": "Error"
   },
   "common": {
     "cancel": "Cancel",

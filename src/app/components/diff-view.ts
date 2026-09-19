@@ -8,7 +8,8 @@ import {
   input,
   viewChild,
 } from '@angular/core';
-import { MonacoService } from '../core/monaco.service';
+import { MonacoApi as BaseMonacoApi, MonacoService } from '../core/monaco.service';
+import { ThemeService } from '../core/theme.service';
 import { FileDiff } from '../core/models';
 
 interface MonacoEditor {
@@ -21,11 +22,10 @@ interface MonacoModel {
   dispose(): void;
 }
 
-interface MonacoApi {
-  editor: {
+interface MonacoApi extends BaseMonacoApi {
+  editor: BaseMonacoApi['editor'] & {
     createDiffEditor(container: HTMLElement, options: Record<string, unknown>): MonacoEditor;
     createModel(content: string, language: string): MonacoModel;
-    defineTheme?(name: string, theme: Record<string, unknown>): void;
   };
 }
 
@@ -39,6 +39,7 @@ export class DiffView implements OnDestroy {
   readonly sideBySide = input<boolean>(false);
 
   private readonly monacoService = inject(MonacoService);
+  private readonly themeService = inject(ThemeService);
   private readonly container = viewChild<ElementRef<HTMLDivElement>>('container');
 
   private editor: MonacoEditor | null = null;
@@ -49,6 +50,7 @@ export class DiffView implements OnDestroy {
     effect(() => {
       const diff = this.diff();
       const sideBySide = this.sideBySide();
+      this.themeService.current();
       const container = this.container()?.nativeElement;
       if (!container) {
         return;
@@ -69,25 +71,14 @@ export class DiffView implements OnDestroy {
     sideBySide: boolean,
   ): Promise<void> {
     const monaco = (await this.monacoService.load()) as MonacoApi;
-    monaco.editor.defineTheme?.('pumr-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [],
-      colors: {
-        'editor.background': '#0a1120',
-        'editorGutter.background': '#0a1120',
-        'editorLineNumber.foreground': '#e5e5e533',
-        'editorLineNumber.activeForeground': '#fca311',
-        'diffEditor.insertedTextBackground': '#fca3111f',
-        'diffEditor.removedTextBackground': '#f43f5e1f',
-      },
-    });
+    this.monacoService.applyTheme(monaco);
+    const themeName = this.monacoService.currentThemeName();
     if (!this.editor) {
       this.editor = monaco.editor.createDiffEditor(container, {
         readOnly: true,
         renderSideBySide: sideBySide,
         automaticLayout: true,
-        theme: 'pumr-dark',
+        theme: themeName,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         fontSize: 13,
@@ -95,7 +86,7 @@ export class DiffView implements OnDestroy {
         renderOverviewRuler: false,
       });
     } else {
-      this.editor.updateOptions({ renderSideBySide: sideBySide });
+      this.editor.updateOptions({ renderSideBySide: sideBySide, theme: themeName });
     }
     if (!diff) {
       return;

@@ -1,7 +1,8 @@
-use crate::broker::PermissionBroker;
+use crate::broker::{PermissionBroker, QuestionBroker};
 use crate::config::Settings;
 use crate::db::Db;
 use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
+use crate::permissions::LivePermissions;
 use crate::power::PowerManager;
 use crate::processes::ProcessRegistry;
 use crate::providers::openrouter::OpenRouterClient;
@@ -18,6 +19,8 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub processes: Arc<ProcessRegistry>,
     pub broker: Arc<PermissionBroker>,
+    pub questions: Arc<QuestionBroker>,
+    pub permissions: Arc<LivePermissions>,
     pub power: PowerManager,
     cancels: Mutex<HashMap<String, CancellationToken>>,
     models_cache: Mutex<Option<Vec<ModelInfo>>>,
@@ -32,6 +35,10 @@ impl AppState {
             .build()
             .expect("failed to build http client");
         let power = PowerManager::new(settings.keep_awake);
+        let permissions = Arc::new(LivePermissions::new(
+            settings.command_rules.clone(),
+            settings.extra_folders.clone(),
+        ));
         Self {
             db: Arc::new(db),
             data_dir,
@@ -40,6 +47,8 @@ impl AppState {
             http,
             processes: Arc::new(ProcessRegistry::new()),
             broker: Arc::new(PermissionBroker::new()),
+            questions: Arc::new(QuestionBroker::new()),
+            permissions,
             power,
             cancels: Mutex::new(HashMap::new()),
             models_cache: Mutex::new(None),
@@ -53,6 +62,10 @@ impl AppState {
     }
 
     pub fn set_settings(&self, settings: Settings) {
+        self.permissions.replace(
+            settings.command_rules.clone(),
+            settings.extra_folders.clone(),
+        );
         *self.settings.lock().unwrap() = settings;
     }
 
@@ -102,6 +115,7 @@ impl AppState {
             token.cancel();
         }
         self.broker.deny_all();
+        self.questions.skip_all();
     }
 
     pub fn clear_cancel(&self, key: &str) {

@@ -1,6 +1,7 @@
 use crate::git::RepoProbe;
 use globset::{Glob, GlobSetBuilder};
 use std::path::{Component, Path, PathBuf};
+use std::sync::RwLock;
 
 pub const IGNORED_DIRS: &[&str] = &[
     "node_modules",
@@ -88,6 +89,42 @@ impl CommandDecision {
     #[allow(dead_code)]
     pub fn is_ask(&self) -> bool {
         matches!(self, Self::Ask { .. })
+    }
+}
+
+/// Shared, live permission configuration. Running turns read from this so a
+/// rule or folder granted with "allow always" applies immediately, including to
+/// subagents that are already in flight.
+#[derive(Debug, Default)]
+pub struct LivePermissions {
+    command_rules: RwLock<Vec<String>>,
+    extra_folders: RwLock<Vec<String>>,
+}
+
+impl LivePermissions {
+    pub fn new(command_rules: Vec<String>, extra_folders: Vec<String>) -> Self {
+        Self {
+            command_rules: RwLock::new(command_rules),
+            extra_folders: RwLock::new(extra_folders),
+        }
+    }
+
+    pub fn replace(&self, command_rules: Vec<String>, extra_folders: Vec<String>) {
+        *self.command_rules.write().unwrap() = command_rules;
+        *self.extra_folders.write().unwrap() = extra_folders;
+    }
+
+    pub fn command_rules(&self) -> Vec<String> {
+        self.command_rules.read().unwrap().clone()
+    }
+
+    pub fn extra_folders(&self) -> Vec<PathBuf> {
+        self.extra_folders
+            .read()
+            .unwrap()
+            .iter()
+            .map(PathBuf::from)
+            .collect()
     }
 }
 

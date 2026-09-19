@@ -9,9 +9,11 @@ import {
   LiveToolCall,
   Message,
   PendingPermission,
+  PendingQuestion,
   ProcessInfo,
   Project,
   ProjectRule,
+  QuestionAnswer,
   RevertResult,
   RoutedEvent,
   SendMessageArgs,
@@ -45,10 +47,12 @@ export class WorkspaceService {
   private readonly gitState = signal<Record<string, GitInfo>>({});
   private readonly processesState = signal<ProcessInfo[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
+  private readonly questionState = signal<PendingQuestion[]>([]);
   private readonly draftState = signal<string | null>(null);
   private readonly scrollTargetState = signal<{ id: string; nonce: number } | null>(null);
   private readonly subAgentsState = signal<Record<string, string[]>>({});
   private readonly viewingState = signal<Record<string, string>>({});
+  private readonly showArchivedState = signal(false);
   private scrollNonce = 0;
   private processTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -56,11 +60,13 @@ export class WorkspaceService {
   readonly spend = this.spendState.asReadonly();
   readonly activeSessionId = this.activeState.asReadonly();
   readonly permission = computed<PendingPermission | null>(() => this.permissionState()[0] ?? null);
+  readonly question = computed<PendingQuestion | null>(() => this.questionState()[0] ?? null);
   readonly processes = this.processesState.asReadonly();
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
   readonly scrollTarget = this.scrollTargetState.asReadonly();
+  readonly showArchived = this.showArchivedState.asReadonly();
   readonly tabs = computed(() =>
     this.tabsState()
       .map((id) => this.sessionsState()[id])
@@ -209,7 +215,7 @@ export class WorkspaceService {
   }
 
   async reloadSessions(projectId: string): Promise<void> {
-    const sessions = await api.listSessions(projectId);
+    const sessions = await api.listSessions(projectId, this.showArchivedState());
     this.sessionsState.update((state) => {
       const next = { ...state };
       for (const session of sessions) {
@@ -221,6 +227,11 @@ export class WorkspaceService {
       ...state,
       [projectId]: sessions.map((session) => session.id),
     }));
+  }
+
+  async toggleShowArchived(): Promise<void> {
+    this.showArchivedState.update((value) => !value);
+    await Promise.all(this.projectsState().map((project) => this.reloadSessions(project.id)));
   }
 
   async addProject(): Promise<void> {
@@ -317,6 +328,7 @@ export class WorkspaceService {
       status: null,
       changes: [],
       baseCommit: null,
+      attachments: args.attachments ?? [],
     });
     this.setError(args.sessionId, null);
     this.setStreaming(args.sessionId, true);
@@ -376,7 +388,7 @@ export class WorkspaceService {
         case 'toolEnd':
           this.patchLiveTool(sessionId, event.callId, (tool) => ({
             ...tool,
-            status: event.status === 'ok' ? 'ok' : event.status === 'denied' ? 'denied' : 'error',
+            status: this.mapToolStatus(event.status),
             output: event.result,
             changes: event.changes,
           }));
@@ -386,6 +398,14 @@ export class WorkspaceService {
           break;
         case 'permissionResolved':
           this.permissionState.update((state) =>
+            state.filter((entry) => entry.requestId !== event.requestId),
+          );
+          break;
+        case 'questionRequest':
+          this.questionState.update((state) => [...state, { ...event, sessionId }]);
+          break;
+        case 'questionResolved':
+          this.questionState.update((state) =>
             state.filter((entry) => entry.requestId !== event.requestId),
           );
           break;
@@ -479,9 +499,23 @@ export class WorkspaceService {
     );
   }
 
+  async resolveQuestion(requestId: string, answers: QuestionAnswer[] | null): Promise<void> {
+    await api.resolveQuestion(requestId, answers);
+    this.questionState.update((state) => state.filter((entry) => entry.requestId !== requestId));
+  }
+
   async updateSession(args: UpdateSessionArgs): Promise<void> {
     const session = await api.updateSession(args);
     this.upsertSession(session);
+  }
+
+  async archiveSession(sessionId: string, archived: boolean): Promise<void> {
+    const session = await api.archiveSession(sessionId, archived);
+    this.upsertSession(session);
+    if (archived) {
+      this.closeTab(sessionId);
+    }
+    await this.reloadSessions(session.projectId);
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -652,6 +686,17 @@ export class WorkspaceService {
         entry.id === messageId ? patch(entry) : entry,
       ),
     }));
+  }
+
+  private mapToolStatus(status: string): LiveToolCall['status'] {
+    switch (status) {
+      case 'ok':
+      case 'denied':
+      case 'canceled':
+        return status;
+      default:
+        return 'error';
+    }
   }
 
   private setLiveTools(sessionId: string, tools: LiveToolCall[]): void {

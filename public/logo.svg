@@ -1,65 +1,7 @@
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="512"
-  height="512"
-  viewBox="0 0 512 512"
-  role="img"
-  aria-labelledby="pumr-title pumr-description"
->
-  <title id="pumr-title">Pumr</title>
-  <desc id="pumr-description">
-    A side profile of a puma head facing left, drawn in orange on a navy background.
-  </desc>
-
-  <rect width="512" height="512" rx="96" fill="#14213d" />
-
-  <g transform="translate(512 0) scale(-1 1)">
-    <path
-      fill="#fca311"
-      d="M140 425
-         Q100 330 110 255
-         Q122 210 160 190
-         Q182 154 206 118
-         Q218 104 232 114
-         Q258 142 274 180
-         Q300 185 320 195
-         Q340 205 348 215
-         Q378 235 405 255
-         L435 278
-         Q444 288 436 300
-         L420 305
-         Q408 330 396 340
-         Q370 360 340 368
-         Q250 388 175 410
-         Z"
-    />
-
-    <path
-      fill="#14213d"
-      d="M316 238
-         Q346 220 378 242
-         Q346 262 316 238
-         Z"
-    />
-
-    <path
-      fill="#14213d"
-      d="M412 266
-         Q438 271 442 288
-         Q436 304 419 306
-         Q410 295 410 281
-         Z"
-    />
-
-    <path
-      fill="none"
-      stroke="#14213d"
-      stroke-width="12"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      d="M418 306
-         L398 336
-         L352 350"
-    />
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" shape-rendering="crispEdges" role="img" aria-labelledby="pumr-title">
+  <title id="pumr-title">pumr</title>
+  <g transform="translate(-104.96 -32.77) scale(24.06)">
+    <path fill="#fca311" d="M13 2h2v1h-2Z M13 3h2v1h-2Z M20 3h2v1h-2Z M12 4h4v1h-4Z M20 4h2v1h-2Z M12 5h6v1h-6Z M19 5h4v1h-4Z M11 6h12v1h-12Z M11 7h12v1h-12Z M10 8h14v1h-14Z M10 9h14v1h-14Z M9 10h16v1h-16Z M9 11h16v1h-16Z M7 12h6v1h-6Z M15 12h10v1h-10Z M6 13h6v1h-6Z M14 13h11v1h-11Z M5 14h20v1h-20Z M5 15h1v1h-1Z M7 15h18v1h-18Z M5 16h1v1h-1Z M7 16h17v1h-17Z M6 17h17v1h-17Z M7 18h15v1h-15Z M7 19h14v1h-14Z M7 20h11v1h-11Z M9 21h7v1h-7Z" />
+    <path fill="#14213d" d="M13 12h2v1h-2Z M12 13h2v1h-2Z M6 15h1v1h-1Z M6 16h1v1h-1Z" />
   </g>
 </svg>

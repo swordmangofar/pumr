@@ -1,4 +1,5 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
+import { ThemeService } from './theme.service';
 
 interface MonacoEditorApi {
   colorize(
@@ -10,14 +11,15 @@ interface MonacoEditorApi {
   setTheme?(name: string): void;
 }
 
-interface MonacoApi {
+export interface MonacoApi {
   editor: MonacoEditorApi;
 }
 
 @Injectable({ providedIn: 'root' })
 export class MonacoService {
+  private readonly themeService = inject(ThemeService);
   private loading: Promise<unknown> | null = null;
-  private themeReady = false;
+  private appliedThemeId: string | null = null;
 
   load(): Promise<unknown> {
     if (!this.loading) {
@@ -26,29 +28,36 @@ export class MonacoService {
     return this.loading;
   }
 
+  currentThemeName(): string {
+    return `pumr-${this.themeService.current().id}`;
+  }
+
   async colorize(text: string, languageId: string): Promise<string> {
     const monaco = (await this.load()) as MonacoApi;
-    this.ensureTheme(monaco);
+    this.applyTheme(monaco);
     return monaco.editor.colorize(text, languageId, { tabSize: 2 });
   }
 
-  private ensureTheme(monaco: MonacoApi): void {
-    if (this.themeReady) {
+  applyTheme(monaco: MonacoApi): void {
+    const theme = this.themeService.current();
+    if (this.appliedThemeId === theme.id) {
       return;
     }
-    monaco.editor.defineTheme?.('pumr-dark', {
-      base: 'vs-dark',
+    monaco.editor.defineTheme?.(this.currentThemeName(), {
+      base: theme.scheme === 'light' ? 'vs' : 'vs-dark',
       inherit: true,
       rules: [],
       colors: {
-        'editor.background': '#0a1120',
-        'editorGutter.background': '#0a1120',
-        'editorLineNumber.foreground': '#e5e5e533',
-        'editorLineNumber.activeForeground': '#fca311',
+        'editor.background': theme.ink,
+        'editorGutter.background': theme.ink,
+        'editorLineNumber.foreground': `${theme.mist}33`,
+        'editorLineNumber.activeForeground': theme.accent,
+        'diffEditor.insertedTextBackground': `${theme.accent}1f`,
+        'diffEditor.removedTextBackground': '#f43f5e1f',
       },
     });
-    monaco.editor.setTheme?.('pumr-dark');
-    this.themeReady = true;
+    monaco.editor.setTheme?.(this.currentThemeName());
+    this.appliedThemeId = theme.id;
   }
 
   private loadInternal(): Promise<unknown> {

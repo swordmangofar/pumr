@@ -1,8 +1,36 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 
 const FRAME_WIDTH = 34;
 const FRAME_HEIGHT = 20;
+
+const SIT_WIDTH = 30;
+const SIT_HEIGHT = 22;
+
+const SIT_FRAME_DATA: readonly string[] = [
+  '..............................',
+  '..............................',
+  '.....................##.##....',
+  '....................######....',
+  '....................#######...',
+  '...................#########..',
+  '...................##########.',
+  '...................#####.###..',
+  '..................#######.....',
+  '.................#######......',
+  '..#..............#######......',
+  '..##............########......',
+  '..###..........########.......',
+  '..####........########........',
+  '..#####.....##########........',
+  '...#####..############........',
+  '....##################........',
+  '.....#################........',
+  '.....################.........',
+  '.....#######....###.###.......',
+  '.....######.....##...##.......',
+  '....########....##...##.......',
+];
 
 const FRAME_DATA: readonly (readonly string[])[] = [
   [
@@ -201,6 +229,7 @@ function toPixels(rows: readonly string[]): readonly Pixel[] {
 }
 
 const FRAMES = FRAME_DATA.map(toPixels);
+const SIT_FRAME = toPixels(SIT_FRAME_DATA);
 
 const SPINNER_CELLS: readonly Pixel[] = [
   { x: 1, y: 0 },
@@ -221,28 +250,36 @@ const SPINNER_CELLS: readonly Pixel[] = [
     <div [class]="compact() ? 'flex items-center' : 'flex flex-col items-center gap-6'">
       <svg
         class="puma-sprite text-accent"
-        [class.puma-sprite-sm]="compact()"
-        [attr.viewBox]="viewBox"
+        [class.puma-sprite-sm]="compact() && pose() === 'run'"
+        [class.puma-sprite-sit]="pose() === 'sit'"
+        [attr.viewBox]="viewBox()"
         shape-rendering="crispEdges"
-        role="img"
-        [attr.aria-label]="'common.loading' | transloco"
+        [attr.role]="pose() === 'sit' ? null : 'img'"
+        [attr.aria-hidden]="pose() === 'sit' ? 'true' : null"
+        [attr.aria-label]="pose() === 'sit' ? null : ('common.loading' | transloco)"
       >
-        @for (frame of frames; track $index) {
-          <g [class]="'puma-frame puma-frame-' + $index">
-            @for (pixel of frame; track pixel.y * width + pixel.x) {
-              <rect
-                [attr.x]="pixel.x"
-                [attr.y]="pixel.y"
-                width="1"
-                height="1"
-                fill="currentColor"
-              />
-            }
-          </g>
+        @if (pose() === 'sit') {
+          @for (pixel of sitFrame; track pixel.y * width + pixel.x) {
+            <rect [attr.x]="pixel.x" [attr.y]="pixel.y" width="1" height="1" fill="currentColor" />
+          }
+        } @else {
+          @for (frame of frames; track $index) {
+            <g [class]="'puma-frame puma-frame-' + $index">
+              @for (pixel of frame; track pixel.y * width + pixel.x) {
+                <rect
+                  [attr.x]="pixel.x"
+                  [attr.y]="pixel.y"
+                  width="1"
+                  height="1"
+                  fill="currentColor"
+                />
+              }
+            </g>
+          }
         }
       </svg>
 
-      @if (!compact()) {
+      @if (!compact() && pose() === 'run') {
         <div class="flex items-center gap-2.5">
           <svg
             class="puma-spinner text-accent"
@@ -270,8 +307,12 @@ const SPINNER_CELLS: readonly Pixel[] = [
 })
 export class PumaLoader {
   readonly compact = input(false);
+  readonly pose = input<'run' | 'sit'>('run');
   protected readonly width = FRAME_WIDTH;
-  protected readonly viewBox = `0 0 ${FRAME_WIDTH} ${FRAME_HEIGHT}`;
+  protected readonly viewBox = computed(() =>
+    this.pose() === 'sit' ? `0 0 ${SIT_WIDTH} ${SIT_HEIGHT}` : `0 0 ${FRAME_WIDTH} ${FRAME_HEIGHT}`,
+  );
   protected readonly frames = FRAMES;
+  protected readonly sitFrame = SIT_FRAME;
   protected readonly spinnerCells = SPINNER_CELLS;
 }

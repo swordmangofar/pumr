@@ -25,6 +25,7 @@ export interface Session {
   messageCount: number;
   parentSessionId: string | null;
   agentStatus: string | null;
+  archived: boolean;
 }
 
 export interface ToolCallRecord {
@@ -38,6 +39,18 @@ export interface FileChange {
   additions: number;
   deletions: number;
   status: string;
+}
+
+export type AttachmentKind = 'image' | 'text' | 'pdf';
+
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: AttachmentKind;
+  lines: number | null;
+  data: string;
 }
 
 export interface Message {
@@ -60,6 +73,7 @@ export interface Message {
   status: string | null;
   changes: FileChange[];
   baseCommit: string | null;
+  attachments: MessageAttachment[];
 }
 
 export interface ModelInfo {
@@ -116,10 +130,26 @@ export interface SpendSummary {
   cachedTokens: number;
 }
 
+export interface UserSystemPrompt {
+  id: string;
+  name: string;
+  prompt: string;
+  enabled: boolean;
+}
+
 export interface Settings {
   defaultSystemPrompt: string;
+  securitySystemPromptEnabled: boolean;
+  securitySystemPrompt: string;
+  testingSystemPromptEnabled: boolean;
+  testingSystemPrompt: string;
+  architectureSystemPromptEnabled: boolean;
+  architectureSystemPrompt: string;
+  userSystemPrompts: UserSystemPrompt[];
   budgetUsd: number;
   language: string;
+  theme: string;
+  highContrast: boolean;
   extraFolders: string[];
   openrouterBaseUrl: string;
   defaultModel: string | null;
@@ -136,6 +166,15 @@ export interface Settings {
   skillFolders: string[];
   skillsDisabled: string[];
   keepAwake: boolean;
+  tabsMultiline: boolean;
+}
+
+export interface DefaultSystemPrompts {
+  defaultSystemPrompt: string;
+  securitySystemPrompt: string;
+  testingSystemPrompt: string;
+  architectureSystemPrompt: string;
+  userSystemPrompts: UserSystemPrompt[];
 }
 
 export interface McpCandidate {
@@ -192,18 +231,39 @@ export interface RevertResult {
   restoredFiles: string[];
 }
 
+export interface QuestionOption {
+  label: string;
+  description: string | null;
+}
+
+export interface QuestionItem {
+  header: string;
+  question: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+export interface QuestionAnswer {
+  header: string;
+  question: string;
+  selected: string[];
+  custom: string | null;
+}
+
 export interface LiveToolCall {
   callId: string;
   name: string;
   summary: string;
   arguments: string;
   output: string;
-  status: 'running' | 'ok' | 'error' | 'denied';
+  status: 'running' | 'ok' | 'error' | 'denied' | 'canceled';
   changes: FileChange[];
   anchor: string | null;
 }
 
 export type PermissionRequestEvent = Extract<StreamEvent, { kind: 'permissionRequest' }>;
+
+export type QuestionRequestEvent = Extract<StreamEvent, { kind: 'questionRequest' }>;
 
 export type StreamEvent =
   | { kind: 'started'; message: Message }
@@ -240,6 +300,8 @@ export type StreamEvent =
       suggestedRule: string | null;
     }
   | { kind: 'permissionResolved'; requestId: string; allowed: boolean }
+  | { kind: 'questionRequest'; requestId: string; questions: QuestionItem[] }
+  | { kind: 'questionResolved'; requestId: string; answers: QuestionAnswer[] | null }
   | { kind: 'changes'; changes: FileChange[] }
   | { kind: 'done'; message: Message; session: Session }
   | { kind: 'stopped'; message: Message }
@@ -253,6 +315,10 @@ export interface RoutedEvent {
 }
 
 export interface PendingPermission extends PermissionRequestEvent {
+  sessionId: string;
+}
+
+export interface PendingQuestion extends QuestionRequestEvent {
   sessionId: string;
 }
 
@@ -280,4 +346,5 @@ export interface SendMessageArgs {
   model: string;
   reasoningEffort?: string | null;
   provider?: string | null;
+  attachments?: MessageAttachment[];
 }

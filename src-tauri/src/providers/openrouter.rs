@@ -27,6 +27,15 @@ impl ChatMessage {
         }
     }
 
+    pub fn parts(role: &str, content: Value) -> Self {
+        Self {
+            role: role.to_string(),
+            content,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
     pub fn assistant_tool_calls(content: String, tool_calls: Value) -> Self {
         Self {
             role: "assistant".to_string(),

@@ -6,6 +6,8 @@
     "spent": "Ausgegeben",
     "remaining": "Verbleibend",
     "settings": "Einstellungen",
+    "toggleSidebar": "Seitenleiste umschalten",
+    "toggleRightPanel": "Rechtes Panel umschalten",
     "refresh": "Aktualisieren",
     "notTauri": "pumr muss in Tauri laufen. Starte es mit: pnpm tauri dev"
   },
@@ -16,7 +18,10 @@
     "noProjects": "Noch keine Projekte. Füge einen Ordner hinzu.",
     "noSessions": "Keine Sitzungen",
     "removeProject": "Projekt entfernen",
-    "sessions": "Sitzungen"
+    "sessions": "Sitzungen",
+    "archiveSession": "Sitzung archivieren",
+    "unarchiveSession": "Sitzung wiederherstellen",
+    "showArchived": "Archivierte Sitzungen anzeigen"
   },
   "tabs": {
     "empty": "Öffne eine Sitzung aus der Seitenleiste oder erstelle eine neue.",
@@ -47,6 +52,7 @@
     "revertFiles": "Dateien ebenfalls zurücksetzen",
     "revertConfirm": "Zurücksetzen",
     "scrollToBottom": "Zum Neuesten scrollen",
+    "sessionCost": "Sitzungskosten",
     "hint": "Enter zum Senden · Shift+Enter für neue Zeile"
   },
   "agents": {
@@ -71,7 +77,13 @@
     "tools": "Tools",
     "pricing": "Preise pro 1M Tokens",
     "favorite": "Zu Favoriten hinzufügen",
-    "unfavorite": "Aus Favoriten entfernen"
+    "unfavorite": "Aus Favoriten entfernen",
+    "attach": "Dateien anhängen",
+    "removeAttachment": "Anhang entfernen",
+    "attachmentLines": "{{ count }} Zeilen",
+    "attachmentTooMany": "Du kannst maximal 10 Dateien pro Nachricht anhängen.",
+    "attachmentTooLarge": "Dateien größer als 10 MB können nicht angehängt werden.",
+    "attachmentUnsupported": "Nur Bilder, PDFs und Textdateien können angehängt werden."
   },
   "reasoning": {
     "off": "Aus",
@@ -116,7 +128,22 @@
     "expand": "Vergrößern",
     "selectFile": "Wähle eine geänderte Datei, um den Diff zu sehen.",
     "prompts": "Prompts",
-    "noPrompts": "In dieser Sitzung wurden noch keine Prompts gesendet."
+    "noPrompts": "In dieser Sitzung wurden noch keine Prompts gesendet.",
+    "systemPrompts": "System-Prompts",
+    "activePrompts": "Aktive Prompts",
+    "activePromptsHint": "Diese werden jeder Sitzung hinzugefügt. Optionale Prompts lassen sich ein- oder ausschalten.",
+    "basePrompt": "Basis-System-Prompt",
+    "alwaysOn": "Immer aktiv",
+    "editInSettings": "In den Einstellungen bearbeiten",
+    "yourPrompts": "Deine Prompts",
+    "yourPromptsHint": "Aktivierte Prompts werden an die aktiven System-Prompts angehängt. Du kannst sie bearbeiten oder integrierte Prompts auf den Originaltext zurücksetzen.",
+    "addPrompt": "Neu",
+    "customPrompt": "Eigener Prompt",
+    "promptName": "Name des Prompts",
+    "resetPrompt": "Auf Original zurücksetzen",
+    "deletePrompt": "Löschen",
+    "builtin": "Integriert",
+    "noUserPrompts": "Noch keine eigenen Prompts. Füge einen hinzu, um das Verhalten des Assistenten zu erweitern."
   },
   "settings": {
     "title": "Einstellungen",
@@ -185,11 +212,44 @@
     "keyMissing": "Kein Schlüssel gespeichert",
     "systemPrompt": "Standard-System-Prompt",
     "systemPromptHint": "Wird für jede neue Sitzung verwendet, sofern sie keinen eigenen definiert.",
+    "systemPromptCustomized": "Angepasst",
+    "systemPromptCustomizedHint": "Für neue Sitzungen ist ein angepasster System-Prompt aktiv.",
+    "systemPromptReset": "Auf Standard zurücksetzen",
+    "systemPromptWarning": "Du änderst den System-Prompt. Das kann das Verhalten des Assistenten stark verändern und Tool-Nutzung, Sicherheitsprüfungen oder die Formatierung der Ausgabe beeinträchtigen. Ändere ihn nur, wenn du weißt, was du tust.",
+    "securityPrompt": "Security-Best-Practices",
+    "securityPromptHint": "Ergänzt Hinweise zu Secrets, Eingabevalidierung, minimalen Rechten und sicheren Abhängigkeiten.",
+    "testingPrompt": "Testing",
+    "testingPromptHint": "Ergänzt Hinweise zu fokussierten, deterministischen Tests und deren Ausführung vor Abschluss.",
+    "architecturePrompt": "Softwarearchitektur",
+    "architecturePromptHint": "Ergänzt Hinweise zu Modulgrenzen, Verantwortlichkeiten und wartbarem Design.",
     "budget": "Budget (USD)",
     "budgetHint": "0 deaktiviert die Budgetanzeige.",
     "language": "Sprache",
+    "theme": "Design",
+    "themeHint": "Wird sofort angewendet und zusammen mit den Einstellungen gespeichert.",
+    "themeLight": "Hell",
+    "themeDark": "Dunkel",
+    "highContrast": "Hoher Kontrast",
+    "highContrastHint": "Verstärkt gedämpften Text, Ränder und Flächen für bessere Lesbarkeit. Empfohlen bei Sehschwäche oder hellem Umgebungslicht.",
+    "themes": {
+      "midnight": "Mitternacht",
+      "oled": "Super-Schwarz",
+      "dracula": "Dracula",
+      "nord": "Nord",
+      "rosePine": "Rosé Pine",
+      "gruvbox": "Gruvbox",
+      "daylight": "Tageslicht",
+      "solarizedLight": "Solarized Hell",
+      "githubLight": "GitHub Hell",
+      "catppuccinLatte": "Catppuccin Latte",
+      "rosePineDawn": "Rosé Pine Dawn",
+      "nordLight": "Nord Hell",
+      "gruvboxLight": "Gruvbox Hell"
+    },
     "keepAwake": "Bildschirm wach halten",
     "keepAwakeHint": "Verhindert, dass der Bildschirm gesperrt wird oder der Computer in den Standby geht, während der Agent oder ein Subagent läuft.",
+    "tabsMultiline": "Tabs auf mehrere Zeilen umbrechen",
+    "tabsMultilineHint": "Wenn aktiviert, brechen offene Tabs auf zusätzliche Zeilen um. Wenn deaktiviert, bleiben die Tabs in einer Zeile und es erscheint eine Bildlaufleiste, sobald kein Platz mehr ist.",
     "extraFolders": "Zusätzliche Ordner für den Assistenten",
     "extraFoldersHint": "Ein absoluter Pfad pro Zeile. Wird in der Tools-Phase genutzt.",
     "contextLimit": "Kontextnachrichten an das Modell",
@@ -218,13 +278,26 @@
     "siteRuleLabel": "Website-Regel (Domain oder Glob)",
     "siteRuleHint": "Zum Beispiel: docs.rs erlaubt diese Seite, *.github.com erlaubt alle Subdomains."
   },
+  "question": {
+    "title": "Frage",
+    "multiHint": "Mehrfachauswahl",
+    "customPlaceholder": "Eigene Antwort eingeben…",
+    "back": "Zurück",
+    "next": "Weiter",
+    "submit": "Absenden",
+    "skip": "Überspringen"
+  },
   "processes": {
     "running": "laufend",
     "stop": "Stoppen"
   },
   "tools": {
     "command": "Befehl",
-    "output": "Ausgabe"
+    "output": "Ausgabe",
+    "files": "Dateien",
+    "permissionDenied": "Berechtigung verweigert",
+    "canceled": "Abgebrochen",
+    "error": "Fehler"
   },
   "common": {
     "cancel": "Abbrechen",

@@ -18,7 +18,7 @@ body {
   background-color: var(--color-ink);
   background-image: radial-gradient(
     70rem 32rem at 50% -12rem,
-    rgb(20 33 61 / 0.5),
+    color-mix(in oklab, var(--color-navy) 55%, transparent),
     transparent 70%
   );
   background-attachment: fixed;
@@ -43,9 +43,89 @@ body {
   outline-offset: 2px;
 }
 
+/* Light themes: raise the effective opacity of muted text and borders so they
+   stay readable instead of washing out against the light background. */
+[data-scheme='light'] .text-mist\/20 {
+  color: color-mix(in oklab, var(--color-mist) 50%, transparent);
+}
+
+[data-scheme='light'] .text-mist\/30 {
+  color: color-mix(in oklab, var(--color-mist) 62%, transparent);
+}
+
+[data-scheme='light'] .text-mist\/40 {
+  color: color-mix(in oklab, var(--color-mist) 74%, transparent);
+}
+
+[data-scheme='light'] .text-mist\/50 {
+  color: color-mix(in oklab, var(--color-mist) 85%, transparent);
+}
+
+[data-scheme='light'] .text-mist\/60 {
+  color: color-mix(in oklab, var(--color-mist) 94%, transparent);
+}
+
+[data-scheme='light'] .border-white\/5 {
+  border-color: color-mix(in oklab, var(--color-white) 12%, transparent);
+}
+
+[data-scheme='light'] .border-white\/10 {
+  border-color: color-mix(in oklab, var(--color-white) 18%, transparent);
+}
+
+/* High contrast mode: strengthen muted text, borders and subtle surfaces. */
+[data-contrast='high'] .text-mist\/20 {
+  color: color-mix(in oklab, var(--color-mist) 78%, transparent);
+}
+
+[data-contrast='high'] .text-mist\/30 {
+  color: color-mix(in oklab, var(--color-mist) 84%, transparent);
+}
+
+[data-contrast='high'] .text-mist\/40 {
+  color: color-mix(in oklab, var(--color-mist) 92%, transparent);
+}
+
+[data-contrast='high'] .text-mist\/50,
+[data-contrast='high'] .text-mist\/60 {
+  color: var(--color-mist);
+}
+
+[data-contrast='high'] .border-white\/5 {
+  border-color: color-mix(in oklab, var(--color-white) 30%, transparent);
+}
+
+[data-contrast='high'] .border-white\/10 {
+  border-color: color-mix(in oklab, var(--color-white) 42%, transparent);
+}
+
+[data-contrast='high'] .border-white\/15 {
+  border-color: color-mix(in oklab, var(--color-white) 56%, transparent);
+}
+
+[data-contrast='high'] .border-white\/20 {
+  border-color: color-mix(in oklab, var(--color-white) 66%, transparent);
+}
+
+[data-contrast='high'] .border-white\/25 {
+  border-color: color-mix(in oklab, var(--color-white) 74%, transparent);
+}
+
+[data-contrast='high'] .bg-white\/5 {
+  background-color: color-mix(in oklab, var(--color-white) 14%, transparent);
+}
+
+[data-contrast='high'] .bg-white\/10 {
+  background-color: color-mix(in oklab, var(--color-white) 20%, transparent);
+}
+
+[data-contrast='high'] .bg-white\/15 {
+  background-color: color-mix(in oklab, var(--color-white) 28%, transparent);
+}
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+  scrollbar-color: color-mix(in oklab, var(--color-white) 16%, transparent) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -54,14 +134,14 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 0.14);
+  background: color-mix(in oklab, var(--color-white) 14%, transparent);
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: padding-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgb(255 255 255 / 0.26);
+  background: color-mix(in oklab, var(--color-white) 26%, transparent);
   background-clip: padding-box;
 }
 
@@ -80,6 +160,11 @@ textarea {
 
 .puma-sprite-sm {
   height: 1.5rem;
+}
+
+.puma-sprite-sit {
+  height: 2.5rem;
+  width: auto;
 }
 
 .puma-frame {

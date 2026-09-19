@@ -34,6 +34,8 @@ pub struct Session {
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub agent_status: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -51,6 +53,34 @@ pub struct FileChange {
     pub additions: i64,
     pub deletions: i64,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub mime_type: String,
+    #[serde(default)]
+    pub size: i64,
+    /// Either `"image"` (vision payload) or `"text"` (inlined file contents).
+    pub kind: String,
+    #[serde(default)]
+    pub lines: Option<i64>,
+    /// Raw base64 for images (no data-URL prefix), file contents for text.
+    #[serde(default)]
+    pub data: String,
+}
+
+impl Attachment {
+    pub fn is_image(&self) -> bool {
+        self.kind == "image"
+    }
+
+    pub fn is_pdf(&self) -> bool {
+        self.kind == "pdf"
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +107,8 @@ pub struct Message {
     #[serde(default)]
     pub changes: Vec<FileChange>,
     pub base_commit: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +225,36 @@ pub struct PermissionDecision {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct QuestionOption {
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionItem {
+    pub header: String,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<QuestionOption>,
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionAnswer {
+    pub header: String,
+    pub question: String,
+    #[serde(default)]
+    pub selected: Vec<String>,
+    #[serde(default)]
+    pub custom: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpCandidate {
     pub path: String,
     pub label: String,
@@ -268,6 +330,14 @@ pub enum StreamEvent {
     PermissionResolved {
         request_id: String,
         allowed: bool,
+    },
+    QuestionRequest {
+        request_id: String,
+        questions: Vec<QuestionItem>,
+    },
+    QuestionResolved {
+        request_id: String,
+        answers: Option<Vec<QuestionAnswer>>,
     },
     Changes {
         changes: Vec<FileChange>,

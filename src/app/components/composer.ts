@@ -10,12 +10,71 @@ import {
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { EndpointInfo } from '../core/models';
+import { EndpointInfo, MessageAttachment } from '../core/models';
 import { ModelsService } from '../core/models.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
+
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+const CONTEXT_CIRCUMFERENCE = 2 * Math.PI * 6;
+
+const TEXT_EXTENSIONS = new Set([
+  'c',
+  'cc',
+  'conf',
+  'cpp',
+  'cs',
+  'css',
+  'csv',
+  'env',
+  'go',
+  'h',
+  'hpp',
+  'html',
+  'ini',
+  'java',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'log',
+  'lua',
+  'md',
+  'mjs',
+  'php',
+  'properties',
+  'py',
+  'rb',
+  'rs',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'txt',
+  'vue',
+  'xml',
+  'yaml',
+  'yml',
+  'zsh',
+]);
+
+const TEXT_MIME_TYPES = new Set([
+  'application/json',
+  'application/xml',
+  'application/javascript',
+  'application/typescript',
+  'application/x-yaml',
+  'application/yaml',
+  'application/toml',
+]);
 
 const PROVIDER_PRESETS = [
   {
@@ -43,7 +102,80 @@ const PROVIDER_PRESETS = [
     <div class="border-t border-white/10 bg-ink/40 px-4 pt-3 pb-3">
       <div
         class="relative mx-auto w-full max-w-4xl rounded-2xl border border-white/10 bg-navy/30 shadow-lg shadow-black/20 transition-colors focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/15"
+        [class]="dragging() ? 'border-accent/60 ring-2 ring-accent/25' : ''"
+        (dragover)="onDragOver($event)"
+        (dragleave)="onDragLeave($event)"
+        (drop)="onDrop($event)"
       >
+        @if (attachments().length > 0) {
+          <div class="flex flex-wrap gap-2 px-4 pt-3">
+            @for (attachment of attachments(); track attachment.id) {
+              <div
+                class="relative flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 py-1.5 pr-7 pl-1.5"
+              >
+                @if (attachment.kind === 'image') {
+                  <img
+                    [src]="preview(attachment)"
+                    [alt]="attachment.name"
+                    class="h-10 w-10 shrink-0 rounded-lg object-cover"
+                  />
+                } @else if (attachment.kind === 'pdf') {
+                  <span
+                    class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-[10px] font-semibold tracking-wide text-rose-300"
+                  >
+                    PDF
+                  </span>
+                } @else {
+                  <span
+                    class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white/10 text-mist/50"
+                  >
+                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path
+                        d="M11.5 2.5H5.5A1.5 1.5 0 0 0 4 4v12a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 16 16V7zM11.5 2.5V7H16M7 11h6M7 13.5h4"
+                        stroke="currentColor"
+                        stroke-width="1.4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </span>
+                }
+                <span class="flex min-w-0 flex-col">
+                  <span class="max-w-44 truncate text-xs font-medium text-white">{{
+                    attachment.name
+                  }}</span>
+                  <span class="text-[11px] text-mist/40">
+                    {{ formatSize(attachment.size) }}
+                    @if (attachment.kind === 'text' && attachment.lines !== null) {
+                      · {{ 'composer.attachmentLines' | transloco: { count: attachment.lines } }}
+                    }
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  class="absolute top-1 right-1 grid h-5 w-5 place-items-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
+                  [attr.aria-label]="'composer.removeAttachment' | transloco"
+                  [attr.title]="'composer.removeAttachment' | transloco"
+                  (click)="removeAttachment(attachment.id)"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path
+                      d="M6 6l8 8M14 6l-8 8"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            }
+          </div>
+        }
+
+        @if (attachmentError(); as error) {
+          <p class="px-4 pt-2 text-xs text-rose-300">{{ error | transloco }}</p>
+        }
+
         <textarea
           #input
           class="block max-h-[min(45vh,22rem)] min-h-[5.5rem] w-full resize-none overflow-y-auto bg-transparent px-4 pt-3.5 pr-3 pb-1 text-[15px] leading-relaxed text-white outline-none placeholder:text-mist/50"
@@ -54,10 +186,35 @@ const PROVIDER_PRESETS = [
           [placeholder]="'chat.placeholder' | transloco"
           (input)="onInput($event)"
           (keydown)="onKeydown($event)"
+          (paste)="onPaste($event)"
         ></textarea>
 
         <div class="flex items-end justify-between gap-2 border-t border-white/5 px-4 py-2">
           <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              class="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-mist transition-colors hover:border-accent/40 hover:text-white"
+              [attr.aria-label]="'composer.attach' | transloco"
+              [attr.title]="'composer.attach' | transloco"
+              (click)="openFilePicker()"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M13.5 8.5 9 13a2.83 2.83 0 0 1-4-4l5-5a2.12 2.12 0 0 1 3 3l-5 5a.7.7 0 1 1-1-1l4.5-4.5"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <input
+              #fileInput
+              type="file"
+              multiple
+              class="hidden"
+              (change)="onFilesSelected($event)"
+            />
             <!-- Model picker -->
             <div>
               <button
@@ -324,7 +481,9 @@ const PROVIDER_PRESETS = [
                       <button
                         type="button"
                         class="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-white/5"
-                        [class]="provider() === preset.value ? 'bg-accent/10 text-white' : 'text-mist'"
+                        [class]="
+                          provider() === preset.value ? 'bg-accent/10 text-white' : 'text-mist'
+                        "
                         [attr.title]="preset.hint | transloco"
                         (click)="selectPreset(preset.value)"
                       >
@@ -501,9 +660,57 @@ const PROVIDER_PRESETS = [
         </div>
       </div>
 
-      <p class="mx-auto mt-1.5 hidden w-full max-w-4xl px-1 text-xs text-mist/40 sm:block">
-        {{ 'chat.hint' | transloco }}
-      </p>
+      <div
+        class="mx-auto mt-1.5 flex w-full max-w-4xl items-center gap-3 px-1 text-xs text-mist/40"
+      >
+        <p class="hidden min-w-0 flex-1 truncate sm:block">{{ 'chat.hint' | transloco }}</p>
+
+        <div class="ml-auto flex shrink-0 items-center gap-3">
+          @if (contextUsage(); as usage) {
+            <span
+              class="flex items-center gap-1.5"
+              [title]="
+                ('right.contextLength' | transloco) +
+                ': ' +
+                usage.usedLabel +
+                ' / ' +
+                usage.limitLabel
+              "
+            >
+              <svg class="h-3.5 w-3.5 -rotate-90" viewBox="0 0 16 16" aria-hidden="true">
+                <circle
+                  cx="8"
+                  cy="8"
+                  r="6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  class="text-white/10"
+                />
+                <circle
+                  cx="8"
+                  cy="8"
+                  r="6"
+                  fill="none"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  class="transition-[stroke-dashoffset] duration-500 ease-out"
+                  [style.stroke]="usage.color"
+                  [attr.stroke-dasharray]="circumference"
+                  [attr.stroke-dashoffset]="circumference * (1 - usage.ratio)"
+                />
+              </svg>
+              <span class="tabular-nums" [style.color]="usage.color">{{ usage.percent }}%</span>
+            </span>
+          }
+
+          @if (sessionCost() > 0) {
+            <span class="tabular-nums text-mist/60" [title]="'chat.sessionCost' | transloco">
+              {{ money(sessionCost()) }}
+            </span>
+          }
+        </div>
+      </div>
     </div>
   `,
 })
@@ -514,12 +721,17 @@ export class Composer {
 
   protected readonly reasoningOptions = REASONING_OPTIONS;
   protected readonly providerPresets = PROVIDER_PRESETS;
+  protected readonly circumference = CONTEXT_CIRCUMFERENCE;
   protected readonly draft = signal('');
+  protected readonly attachments = signal<MessageAttachment[]>([]);
+  protected readonly attachmentError = signal<string | null>(null);
+  protected readonly dragging = signal(false);
   protected readonly modelOpen = signal(false);
   protected readonly providerOpen = signal(false);
   protected readonly modelFilter = signal('');
 
   private readonly inputRef = viewChild<ElementRef<HTMLTextAreaElement>>('input');
+  private readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
 
   private readonly modelOverride = signal<{ sessionId: string; value: string } | null>(null);
   private readonly reasoningOverride = signal<{ sessionId: string; value: string } | null>(null);
@@ -563,8 +775,31 @@ export class Composer {
     return session ? this.workspace.isStreaming(session.id) : false;
   });
   protected readonly canSend = computed(
-    () => this.draft().trim().length > 0 && !!this.model() && !this.streaming(),
+    () =>
+      (this.draft().trim().length > 0 || this.attachments().length > 0) &&
+      !!this.model() &&
+      !this.streaming(),
   );
+  protected readonly sessionCost = computed(() => this.workspace.activeAgent()?.cost ?? 0);
+  protected readonly contextUsage = computed(() => {
+    const session = this.workspace.activeAgent();
+    const limit = this.selectedModel()?.contextLength ?? 0;
+    if (!session || limit <= 0) {
+      return null;
+    }
+    const used = this.lastTurnTokens(session.id);
+    if (used <= 0) {
+      return null;
+    }
+    const ratio = Math.min(1, used / limit);
+    return {
+      ratio,
+      percent: Math.max(1, Math.round(ratio * 100)),
+      color: this.usageColor(ratio),
+      usedLabel: used.toLocaleString(),
+      limitLabel: limit.toLocaleString(),
+    };
+  });
   protected readonly filteredModels = computed(() => {
     const filter = this.modelFilter().trim().toLowerCase();
     const favorites = new Set(this.favoriteModels());
@@ -636,6 +871,175 @@ export class Composer {
     this.inputRef()?.nativeElement.focus();
   }
 
+  protected openFilePicker(): void {
+    this.fileInputRef()?.nativeElement.click();
+  }
+
+  protected onFilesSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      void this.addFiles(input.files);
+    }
+    input.value = '';
+  }
+
+  protected onPaste(event: ClipboardEvent): void {
+    const files = event.clipboardData?.files;
+    if (files && files.length > 0) {
+      event.preventDefault();
+      void this.addFiles(files);
+    }
+  }
+
+  protected onDragOver(event: DragEvent): void {
+    if (!event.dataTransfer) {
+      return;
+    }
+    event.preventDefault();
+    this.dragging.set(true);
+  }
+
+  protected onDragLeave(event: DragEvent): void {
+    const next = event.relatedTarget as Node | null;
+    const current = event.currentTarget as Node | null;
+    if (!next || !current || !current.contains(next)) {
+      this.dragging.set(false);
+    }
+  }
+
+  protected onDrop(event: DragEvent): void {
+    event.preventDefault();
+    this.dragging.set(false);
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      void this.addFiles(files);
+    }
+  }
+
+  protected removeAttachment(id: string): void {
+    this.attachments.update((list) => list.filter((attachment) => attachment.id !== id));
+    this.attachmentError.set(null);
+  }
+
+  protected preview(attachment: MessageAttachment): string {
+    return attachment.kind === 'image'
+      ? `data:${attachment.mimeType};base64,${attachment.data}`
+      : '';
+  }
+
+  protected formatSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  private async addFiles(files: Iterable<File>): Promise<void> {
+    const selected = Array.from(files);
+    if (selected.length === 0) {
+      return;
+    }
+    this.attachmentError.set(null);
+    const current = this.attachments();
+    const accepted: MessageAttachment[] = [];
+    let unsupported = false;
+    let tooLarge = false;
+    let tooMany = false;
+    for (const file of selected) {
+      if (current.length + accepted.length >= MAX_ATTACHMENTS) {
+        tooMany = true;
+        continue;
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        tooLarge = true;
+        continue;
+      }
+      const attachment = await this.readAttachment(file);
+      if (!attachment) {
+        unsupported = true;
+        continue;
+      }
+      accepted.push(attachment);
+    }
+    if (accepted.length > 0) {
+      this.attachments.set([...current, ...accepted]);
+    }
+    if (tooMany) {
+      this.attachmentError.set('composer.attachmentTooMany');
+    } else if (tooLarge) {
+      this.attachmentError.set('composer.attachmentTooLarge');
+    } else if (unsupported) {
+      this.attachmentError.set('composer.attachmentUnsupported');
+    }
+  }
+
+  private attachmentKind(file: File): MessageAttachment['kind'] | null {
+    const mime = file.type.toLowerCase();
+    if (mime.startsWith('image/')) {
+      return 'image';
+    }
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    if (mime === 'application/pdf' || extension === 'pdf') {
+      return 'pdf';
+    }
+    if (mime.startsWith('text/') || TEXT_MIME_TYPES.has(mime) || TEXT_EXTENSIONS.has(extension)) {
+      return 'text';
+    }
+    return null;
+  }
+
+  private readAttachment(file: File): Promise<MessageAttachment | null> {
+    const kind = this.attachmentKind(file);
+    if (!kind) {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onerror = () => resolve(null);
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const id =
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        if (kind === 'image' || kind === 'pdf') {
+          const comma = result.indexOf(',');
+          const data = comma >= 0 ? result.slice(comma + 1) : result;
+          const mimeType =
+            /^data:([^;,]+)/.exec(result)?.[1] ??
+            (file.type || (kind === 'pdf' ? 'application/pdf' : 'image/png'));
+          resolve({
+            id,
+            name: file.name || (kind === 'pdf' ? 'document.pdf' : 'image'),
+            mimeType,
+            size: file.size,
+            kind,
+            lines: null,
+            data,
+          });
+          return;
+        }
+        resolve({
+          id,
+          name: file.name,
+          mimeType: file.type || 'text/plain',
+          size: file.size,
+          kind,
+          lines: result.length === 0 ? 0 : result.split('\n').length,
+          data: result,
+        });
+      };
+      if (kind === 'image' || kind === 'pdf') {
+        reader.readAsDataURL(file);
+      } else {
+        reader.readAsText(file);
+      }
+    });
+  }
+
   protected onFilter(event: Event): void {
     this.modelFilter.set((event.target as HTMLInputElement).value);
   }
@@ -666,16 +1070,20 @@ export class Composer {
     const session = this.workspace.activeAgent();
     const content = this.draft().trim();
     const model = this.model();
-    if (!session || !content || !model || this.streaming()) {
+    const attachments = this.attachments();
+    if (!session || (!content && attachments.length === 0) || !model || this.streaming()) {
       return;
     }
     this.draft.set('');
+    this.attachments.set([]);
+    this.attachmentError.set(null);
     await this.workspace.send({
       sessionId: session.id,
       content,
       model,
       reasoningEffort: this.reasoning(),
       provider: this.provider() === 'auto' ? null : this.provider(),
+      attachments,
     });
     this.focusInput();
   }
@@ -841,5 +1249,30 @@ export class Composer {
       return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
     }
     return value >= 1000 ? `${Math.round(value / 1000)}k` : `${value}`;
+  }
+
+  protected money(value: number): string {
+    return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+  }
+
+  private lastTurnTokens(sessionId: string): number {
+    const messages = this.workspace.messagesFor(sessionId);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === 'assistant' && message.promptTokens > 0) {
+        return message.promptTokens + message.completionTokens;
+      }
+    }
+    return 0;
+  }
+
+  private usageColor(ratio: number): string {
+    if (ratio >= 0.9) {
+      return '#fb7185';
+    }
+    if (ratio >= 0.75) {
+      return '#fbbf24';
+    }
+    return 'var(--color-accent)';
   }
 }

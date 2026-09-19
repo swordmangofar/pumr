@@ -45,6 +45,26 @@ import { WorkspaceService } from './core/workspace.service';
         <div class="flex min-w-0 items-center gap-3">
           <img src="logo.svg" alt="" class="h-7 w-7 shrink-0 rounded-lg" />
           <span class="text-base font-bold tracking-tight text-white">pumr</span>
+          <button
+            type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 text-mist/60 transition-colors hover:border-accent/60 hover:text-accent"
+            [title]="'app.toggleSidebar' | transloco"
+            (click)="leftPanelOpen.set(!leftPanelOpen())"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+              />
+            </svg>
+          </button>
           @if (workspace.activeProject(); as project) {
             <span class="truncate text-sm text-mist/40">{{ project.path }}</span>
           }
@@ -75,6 +95,25 @@ import { WorkspaceService } from './core/workspace.service';
           <app-process-indicator />
           <button
             type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-white/10 text-mist/60 transition-colors hover:border-accent/60 hover:text-accent"
+            [title]="'app.toggleRightPanel' | transloco"
+            (click)="rightPanelOpen.set(!rightPanelOpen())"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M15 3v18" />
+            </svg>
+          </button>
+          <button
+            type="button"
             class="rounded-full border border-white/15 px-4 py-1.5 text-sm text-mist transition-colors hover:border-accent/60 hover:text-accent"
             (click)="settings.open()"
           >
@@ -84,29 +123,47 @@ import { WorkspaceService } from './core/workspace.service';
       </header>
 
       <div class="flex min-h-0 flex-1">
-        <app-sidebar class="w-72 shrink-0 border-r border-white/10" />
+        @if (leftPanelOpen()) {
+          <app-sidebar class="w-72 shrink-0 border-r border-white/10" />
+        }
 
         <main class="flex min-w-0 flex-1 flex-col">
           <div
-            class="flex items-center gap-1.5 overflow-x-auto border-b border-white/10 bg-navy/20 px-3 pt-2"
+            class="flex gap-1 border-b border-white/10 bg-navy/20 px-2.5 py-2"
+            [class]="
+              settings.settings()?.tabsMultiline ?? true
+                ? 'flex-wrap items-center'
+                : 'items-center overflow-x-auto'
+            "
           >
             @for (session of workspace.tabs(); track session.id) {
               <div
-                class="group flex cursor-pointer items-center gap-2 rounded-t-xl border border-b-0 px-4 py-2 text-sm transition-colors"
+                class="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors"
                 [class]="
                   session.id === workspace.activeSessionId()
-                    ? 'border-white/10 bg-navy/60 text-white'
-                    : 'border-transparent text-mist/40 hover:bg-white/5 hover:text-mist'
+                    ? 'border-accent/30 bg-accent/15 text-white'
+                    : 'border-white/10 bg-white/5 text-mist/50 hover:border-white/20 hover:bg-white/10 hover:text-mist'
                 "
                 (click)="workspace.openTab(session.id)"
               >
                 <span class="max-w-48 truncate">{{ session.title }}</span>
                 <button
                   type="button"
-                  class="text-mist/40 opacity-0 transition-opacity group-hover:opacity-100 hover:text-white"
+                  class="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
+                  [attr.aria-label]="'tabs.close' | transloco"
                   (click)="closeTab($event, session.id)"
                 >
-                  ✕
+                  <svg
+                    class="h-3 w-3"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
             }
@@ -115,18 +172,20 @@ import { WorkspaceService } from './core/workspace.service';
           <app-chat-view class="min-h-0 flex-1" />
         </main>
 
-        <div
-          [class]="
-            'w-1.5 shrink-0 cursor-col-resize transition-colors ' +
-            (resizing() ? 'bg-accent/50' : 'hover:bg-accent/50')
-          "
-          (mousedown)="startResize($event)"
-        ></div>
+        @if (rightPanelOpen()) {
+          <div
+            [class]="
+              'w-1.5 shrink-0 cursor-col-resize transition-colors ' +
+              (resizing() ? 'bg-accent/50' : 'hover:bg-accent/50')
+            "
+            (mousedown)="startResize($event)"
+          ></div>
 
-        <app-right-panel
-          [style.width.px]="rightPanelWidth()"
-          class="shrink-0 border-l border-white/10"
-        />
+          <app-right-panel
+            [style.width.px]="rightPanelWidth()"
+            class="shrink-0 border-l border-white/10"
+          />
+        }
       </div>
 
       @if (settings.dialogOpen()) {
@@ -145,6 +204,8 @@ export class App implements OnInit {
 
   protected readonly rightPanelWidth = signal(512);
   protected readonly resizing = signal(false);
+  protected readonly leftPanelOpen = signal(true);
+  protected readonly rightPanelOpen = signal(true);
   protected readonly booting = signal(true);
   protected readonly splashVisible = signal(true);
   private readonly minSplashMs = 900;

@@ -9,15 +9,17 @@ import {
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { FileChange, LiveToolCall, Message } from '../core/models';
+import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
+import { QuestionOverlay } from './question-overlay';
 import { StreamText } from './stream-text';
 import { ToolCard } from './tool-card';
+import { ToolGroup, ToolGroupItem } from './tool-group';
 
 interface MessageEntry {
   kind: 'message';
@@ -36,7 +38,17 @@ interface ToolEntry {
   changes: FileChange[];
 }
 
-type ChatEntry = MessageEntry | ToolEntry;
+interface ToolGroupEntry {
+  kind: 'toolGroup';
+  key: string;
+  name: string;
+  items: ToolGroupItem[];
+}
+
+type ChatEntry = MessageEntry | ToolEntry | ToolGroupEntry;
+
+const HIDDEN_TOOLS = new Set(['ls']);
+const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
 
 @Component({
   selector: 'app-chat-view',
@@ -45,7 +57,9 @@ type ChatEntry = MessageEntry | ToolEntry;
     TranslocoPipe,
     Composer,
     PermissionOverlay,
+    QuestionOverlay,
     ToolCard,
+    ToolGroup,
     AgentStatus,
     PumaLoader,
     StreamText,
@@ -87,6 +101,7 @@ type ChatEntry = MessageEntry | ToolEntry;
                     @switch (entry.message.role) {
                       @case ('user') {
                         <div class="group flex items-start justify-end gap-2">
+                          <app-puma-loader [compact]="true" [pose]="'sit'" class="mt-1 shrink-0" />
                           <button
                             type="button"
                             class="mt-3 text-xs text-mist/30 opacity-0 transition-opacity group-hover:opacity-100 hover:text-accent"
@@ -98,6 +113,45 @@ type ChatEntry = MessageEntry | ToolEntry;
                           <div
                             class="max-w-[85%] rounded-2xl rounded-tr-md border border-accent/25 bg-accent/10 px-4 py-3 text-[15px] whitespace-pre-wrap text-white"
                           >
+                            @if (entry.message.attachments.length > 0) {
+                              <div
+                                class="mb-2 flex flex-wrap gap-2"
+                                [class.mb-0]="!entry.message.content"
+                              >
+                                @for (
+                                  attachment of entry.message.attachments;
+                                  track attachment.id
+                                ) {
+                                  @if (attachment.kind === 'image') {
+                                    <img
+                                      [src]="attachmentPreview(attachment)"
+                                      [alt]="attachment.name"
+                                      class="h-28 w-28 rounded-lg border border-white/10 object-cover"
+                                    />
+                                  } @else {
+                                    <span
+                                      class="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1"
+                                    >
+                                      @if (attachment.kind === 'pdf') {
+                                        <span
+                                          class="shrink-0 rounded bg-rose-500/15 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-rose-300"
+                                          >PDF</span
+                                        >
+                                      }
+                                      <span class="max-w-48 truncate text-xs text-white">{{
+                                        attachment.name
+                                      }}</span>
+                                      <span class="shrink-0 text-[11px] text-mist/50">
+                                        {{ formatSize(attachment.size) }}
+                                        @if (attachment.lines !== null) {
+                                          · {{ attachment.lines }} ln
+                                        }
+                                      </span>
+                                    </span>
+                                  }
+                                }
+                              </div>
+                            }
                             {{ entry.message.content }}
                           </div>
                         </div>
@@ -168,6 +222,12 @@ type ChatEntry = MessageEntry | ToolEntry;
                       }
                     }
                   </div>
+                } @else if (entry.kind === 'toolGroup') {
+                  <app-tool-group
+                    [name]="entry.name"
+                    [items]="entry.items"
+                    [sessionId]="active.id"
+                  />
                 } @else {
                   <app-tool-card
                     [name]="entry.name"
@@ -247,6 +307,9 @@ type ChatEntry = MessageEntry | ToolEntry;
         <div class="relative">
           @if (workspace.permission(); as request) {
             <app-permission-overlay [request]="request" />
+          }
+          @if (workspace.question(); as request) {
+            <app-question-overlay [request]="request" />
           }
           <app-composer />
         </div>
@@ -352,24 +415,36 @@ export class ChatView {
 
     const entries: ChatEntry[] = [];
     const commands = new Map<string, string>();
+    const summaries = new Map<string, string>();
     for (const message of messages) {
       for (const call of message.toolCalls) {
         const command = this.commandOf(call.name, call.arguments);
         if (command) {
           commands.set(call.id, command);
         }
+        const summary = this.summaryOf(call.name, call.arguments);
+        if (summary !== null) {
+          summaries.set(call.id, summary);
+        }
       }
     }
     for (const message of messages) {
-      entries.push(this.messageEntry(message, commands));
+      const entry = this.messageEntry(message, commands, summaries);
+      if (entry.kind !== 'tool' || !HIDDEN_TOOLS.has(entry.name)) {
+        entries.push(entry);
+      }
       for (const tool of anchored.get(message.id) ?? []) {
-        entries.push(this.toolEntry(tool));
+        if (!HIDDEN_TOOLS.has(tool.name)) {
+          entries.push(this.toolEntry(tool));
+        }
       }
     }
     for (const tool of loose) {
-      entries.push(this.toolEntry(tool));
+      if (!HIDDEN_TOOLS.has(tool.name)) {
+        entries.push(this.toolEntry(tool));
+      }
     }
-    return entries;
+    return this.groupTools(entries);
   });
   protected readonly streaming = computed(() => {
     const session = this.session();
@@ -420,14 +495,35 @@ export class ChatView {
     return !!last && last.kind === 'message' && last.message.id === message.id;
   }
 
-  private messageEntry(message: Message, commands: Map<string, string>): ChatEntry {
+  protected attachmentPreview(attachment: MessageAttachment): string {
+    return attachment.kind === 'image'
+      ? `data:${attachment.mimeType};base64,${attachment.data}`
+      : '';
+  }
+
+  protected formatSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  private messageEntry(
+    message: Message,
+    commands: Map<string, string>,
+    summaries: Map<string, string>,
+  ): ChatEntry {
     if (message.role === 'tool') {
       const command = message.toolCallId ? (commands.get(message.toolCallId) ?? '') : '';
+      const summary = message.toolCallId ? summaries.get(message.toolCallId) : undefined;
       return {
         kind: 'tool',
         key: message.id,
         name: message.toolName ?? 'tool',
-        summary: this.toolSummary(message.toolName ?? 'tool', command, message.content),
+        summary: this.toolSummary(message.toolName ?? 'tool', command, summary ?? message.content),
         command,
         output: message.content,
         status: message.status ?? 'ok',
@@ -451,6 +547,48 @@ export class ChatView {
     };
   }
 
+  private groupTools(entries: ChatEntry[]): ChatEntry[] {
+    const grouped: ChatEntry[] = [];
+    let group: ToolEntry[] = [];
+    let name = '';
+    const flush = (): void => {
+      if (group.length >= 2) {
+        grouped.push({
+          kind: 'toolGroup',
+          key: `group:${name}:${group[0].key}`,
+          name,
+          items: group.map((tool) => ({
+            key: tool.key,
+            label: tool.summary,
+            output: tool.output,
+            status: tool.status,
+            additions: tool.changes.reduce((sum, change) => sum + change.additions, 0),
+            deletions: tool.changes.reduce((sum, change) => sum + change.deletions, 0),
+            path: tool.changes[0]?.path ?? null,
+          })),
+        });
+      } else {
+        grouped.push(...group);
+      }
+      group = [];
+      name = '';
+    };
+    for (const entry of entries) {
+      if (entry.kind === 'tool' && GROUPABLE_TOOLS.has(entry.name)) {
+        if (name && entry.name !== name) {
+          flush();
+        }
+        name = entry.name;
+        group.push(entry);
+      } else {
+        flush();
+        grouped.push(entry);
+      }
+    }
+    flush();
+    return grouped;
+  }
+
   private commandOf(name: string, args: string): string {
     if (name !== 'bash') {
       return '';
@@ -461,6 +599,50 @@ export class ChatView {
     } catch {
       return '';
     }
+  }
+
+  private summaryOf(name: string, args: string): string | null {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(args) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    const text = (key: string): string =>
+      typeof parsed[key] === 'string' ? (parsed[key] as string) : '';
+    switch (name) {
+      case 'bash':
+        return text('command');
+      case 'read':
+      case 'write':
+      case 'edit':
+      case 'ls':
+        return this.relativePath(text('path'));
+      case 'glob':
+      case 'grep':
+        return text('pattern');
+      case 'webfetch':
+        return text('url');
+      case 'websearch':
+        return text('query');
+      case 'task':
+        return text('description');
+      default:
+        return null;
+    }
+  }
+
+  private relativePath(path: string): string {
+    const root = this.workspace.activeProject()?.path;
+    const normalized = path.replace(/\\/g, '/');
+    if (!root) {
+      return normalized;
+    }
+    const base = root.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (normalized.startsWith(`${base}/`)) {
+      return normalized.slice(base.length + 1);
+    }
+    return normalized;
   }
 
   private toolSummary(name: string, command: string, fallback: string): string {
