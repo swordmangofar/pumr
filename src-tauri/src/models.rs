@@ -1,0 +1,304 @@
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub created_at: i64,
+    pub last_opened_at: i64,
+    pub session_count: i64,
+    pub total_cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub provider: Option<String>,
+    pub system_prompt: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub message_count: i64,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub agent_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallRecord {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    pub path: String,
+    pub additions: i64,
+    pub deletions: i64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub id: String,
+    pub session_id: String,
+    pub seq: i64,
+    pub role: String,
+    pub content: String,
+    pub reasoning: String,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub created_at: i64,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallRecord>,
+    pub tool_call_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub status: Option<String>,
+    #[serde(default)]
+    pub changes: Vec<FileChange>,
+    pub base_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub context_length: i64,
+    pub prompt_price_per_m: f64,
+    pub completion_price_per_m: f64,
+    pub cache_read_price_per_m: f64,
+    pub supports_reasoning: bool,
+    pub supports_vision: bool,
+    pub supports_tools: bool,
+    pub input_modalities: Vec<String>,
+    pub supported_parameters: Vec<String>,
+    pub created: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointInfo {
+    pub name: String,
+    pub slug: String,
+    pub provider_name: String,
+    pub provider_slug: String,
+    pub context_length: i64,
+    pub prompt_price_per_m: f64,
+    pub completion_price_per_m: f64,
+    pub cache_read_price_per_m: f64,
+    pub uptime_last_5m: Option<f64>,
+    pub uptime_last_30m: Option<f64>,
+    pub uptime_last_1d: Option<f64>,
+    pub throughput_last_30m: Option<f64>,
+    pub latency_last_30m: Option<f64>,
+    pub max_completion_tokens: Option<i64>,
+    pub quantization: Option<String>,
+    pub supports_implicit_caching: bool,
+    pub training: Option<bool>,
+    pub retains_prompts: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderInfo {
+    pub slug: String,
+    pub name: String,
+    pub icon_url: Option<String>,
+    pub headquarters: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpendSummary {
+    pub total_cost: f64,
+    pub session_cost: f64,
+    pub budget_usd: f64,
+    pub remaining_usd: Option<f64>,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitInfo {
+    pub is_repo: bool,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRule {
+    pub path: String,
+    pub scope: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiff {
+    pub path: String,
+    pub old_content: String,
+    pub new_content: String,
+    pub language: String,
+    pub additions: i64,
+    pub deletions: i64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessInfo {
+    pub id: String,
+    pub session_id: String,
+    pub command: String,
+    pub cwd: String,
+    pub started_at: i64,
+    pub running: bool,
+    pub output: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionDecision {
+    pub allowed: bool,
+    #[serde(default)]
+    pub rule: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCandidate {
+    pub path: String,
+    pub label: String,
+    pub source: String,
+    pub format: String,
+    pub servers: Vec<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCandidate {
+    pub path: String,
+    pub label: String,
+    pub source: String,
+    pub skills: Vec<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum StreamEvent {
+    Started {
+        message: Message,
+    },
+    Delta {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+    },
+    Usage {
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        cached_tokens: i64,
+        cost: f64,
+    },
+    Assistant {
+        message: Message,
+    },
+    ToolStart {
+        call_id: String,
+        name: String,
+        summary: String,
+        arguments: String,
+    },
+    ToolDelta {
+        call_id: String,
+        text: String,
+    },
+    ToolEnd {
+        call_id: String,
+        name: String,
+        status: String,
+        result: String,
+        changes: Vec<FileChange>,
+    },
+    PermissionRequest {
+        request_id: String,
+        prompt_kind: String,
+        title: String,
+        detail: String,
+        command: Option<String>,
+        path: Option<String>,
+        folder: Option<String>,
+        url: Option<String>,
+        suggested_rule: Option<String>,
+    },
+    PermissionResolved {
+        request_id: String,
+        allowed: bool,
+    },
+    Changes {
+        changes: Vec<FileChange>,
+    },
+    Done {
+        message: Message,
+        session: Session,
+    },
+    Stopped {
+        message: Message,
+    },
+    SubAgentStarted {
+        session: Session,
+    },
+    SubAgentStatus {
+        status: String,
+    },
+    Error {
+        message: String,
+    },
+}
+
+/// A stream event tagged with the session it belongs to. Subagents stream their
+/// own events through the same channel, so consumers route by `session_id`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutedEvent {
+    pub session_id: String,
+    pub event: StreamEvent,
+}
+
+/// Cloneable sink used by the agent loop. The routed session id is supplied by
+/// the emitter, which allows parallel subagents to share one sink.
+pub type EventSink = Arc<dyn Fn(RoutedEvent) + Send + Sync>;

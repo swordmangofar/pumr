@@ -1,0 +1,306 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #000000;
+  --color-navy: #14213d;
+  --color-accent: #fca311;
+  --color-mist: #e5e5e5;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background-color: var(--color-ink);
+  background-image: radial-gradient(
+    70rem 32rem at 50% -12rem,
+    rgb(20 33 61 / 0.5),
+    transparent 70%
+  );
+  background-attachment: fixed;
+  color: var(--color-mist);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background-color: var(--color-accent);
+  color: var(--color-ink);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.14);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.26);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea {
+  field-sizing: content;
+}
+
+.puma-sprite {
+  height: 6rem;
+  width: auto;
+}
+
+.puma-sprite-sm {
+  height: 1.5rem;
+}
+
+.puma-frame {
+  opacity: 0;
+  animation-duration: 0.8s;
+  animation-timing-function: steps(1, end);
+  animation-iteration-count: infinite;
+}
+
+.puma-frame-0 {
+  animation-name: puma-run-0;
+}
+
+.puma-frame-1 {
+  animation-name: puma-run-1;
+}
+
+.puma-frame-2 {
+  animation-name: puma-run-2;
+}
+
+.puma-frame-3 {
+  animation-name: puma-run-3;
+}
+
+.puma-frame-4 {
+  animation-name: puma-run-4;
+}
+
+.puma-frame-5 {
+  animation-name: puma-run-5;
+}
+
+.puma-frame-6 {
+  animation-name: puma-run-6;
+}
+
+.puma-frame-7 {
+  animation-name: puma-run-7;
+}
+
+@keyframes puma-run-0 {
+  0%,
+  12.49% {
+    opacity: 1;
+  }
+  12.50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-1 {
+  0%,
+  12.49% {
+    opacity: 0;
+  }
+  12.50%,
+  24.99% {
+    opacity: 1;
+  }
+  25.00%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-2 {
+  0%,
+  24.99% {
+    opacity: 0;
+  }
+  25.00%,
+  37.49% {
+    opacity: 1;
+  }
+  37.50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-3 {
+  0%,
+  37.49% {
+    opacity: 0;
+  }
+  37.50%,
+  49.99% {
+    opacity: 1;
+  }
+  50.00%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-4 {
+  0%,
+  49.99% {
+    opacity: 0;
+  }
+  50.00%,
+  62.49% {
+    opacity: 1;
+  }
+  62.50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-5 {
+  0%,
+  62.49% {
+    opacity: 0;
+  }
+  62.50%,
+  74.99% {
+    opacity: 1;
+  }
+  75.00%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-6 {
+  0%,
+  74.99% {
+    opacity: 0;
+  }
+  75.00%,
+  87.49% {
+    opacity: 1;
+  }
+  87.50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes puma-run-7 {
+  0%,
+  87.49% {
+    opacity: 0;
+  }
+  87.50%,
+  99.99% {
+    opacity: 1;
+  }
+  100.00%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.puma-spinner {
+  height: 1.25rem;
+  width: 1.25rem;
+}
+
+.puma-spinner-dot {
+  animation: puma-spin 0.8s linear infinite;
+}
+
+@keyframes puma-spin {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .puma-frame {
+    animation: none;
+  }
+
+  .puma-frame-0 {
+    opacity: 1;
+  }
+
+  .puma-spinner-dot {
+    animation-duration: 1.6s;
+  }
+
+  .stream-chunk {
+    animation: none;
+  }
+}
+
+.stream-chunk {
+  animation: stream-in 0.4s ease-out both;
+}
+
+@keyframes stream-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.msg-flash {
+  animation: msg-flash 1.2s ease-out;
+  border-radius: 1rem;
+}
+
+@keyframes msg-flash {
+  0% {
+    background-color: color-mix(in oklab, var(--color-accent) 22%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 60%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
