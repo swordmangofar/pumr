@@ -10,6 +10,7 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import { FileChange } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
+import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
 import { FileView } from './file-view';
@@ -17,7 +18,7 @@ import { FileView } from './file-view';
 @Component({
   selector: 'app-workspace-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, DiffView, FileIcon, FileView],
+  imports: [TranslocoPipe, ChangeStatusIcon, DiffView, FileIcon, FileView],
   host: {
     '(document:keydown)': 'onKeydown($event)',
   },
@@ -38,9 +39,7 @@ import { FileView } from './file-view';
             <app-file-icon [name]="baseName(path)" />
             <span class="truncate">{{ baseName(path) }}</span>
             @if (statusFor(path); as status) {
-              <span class="shrink-0 text-[10px] font-semibold" [class]="statusColor(status)">{{
-                status
-              }}</span>
+              <app-change-status-icon [status]="status" />
             }
             <button
               type="button"
@@ -120,6 +119,34 @@ import { FileView } from './file-view';
                       {{ 'workspace.code' | transloco }}
                     </button>
                   </div>
+                  @if (mode() === 'diff') {
+                    <div class="flex gap-0.5 rounded-lg bg-white/5 p-0.5">
+                      <button
+                        type="button"
+                        class="rounded-md px-2.5 py-0.5 font-medium transition-colors"
+                        [class]="
+                          diffLayout() === 'single'
+                            ? 'bg-white/10 text-white'
+                            : 'text-mist/50 hover:text-mist'
+                        "
+                        (click)="diffLayout.set('single')"
+                      >
+                        {{ 'workspace.single' | transloco }}
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md px-2.5 py-0.5 font-medium transition-colors"
+                        [class]="
+                          diffLayout() === 'split'
+                            ? 'bg-white/10 text-white'
+                            : 'text-mist/50 hover:text-mist'
+                        "
+                        (click)="diffLayout.set('split')"
+                      >
+                        {{ 'workspace.split' | transloco }}
+                      </button>
+                    </div>
+                  }
                 }
               </div>
             </div>
@@ -129,6 +156,7 @@ import { FileView } from './file-view';
                   <app-diff-view
                     [diff]="diff"
                     [editable]="true"
+                    [sideBySide]="diffLayout() === 'split'"
                     (contentChange)="onContentChange($event)"
                   />
                 } @else if (activeContent(); as content) {
@@ -159,6 +187,7 @@ export class WorkspaceEditor {
 
   protected readonly project = this.workspace.activeProject;
   protected readonly mode = signal<'diff' | 'file'>('diff');
+  protected readonly diffLayout = signal<'single' | 'split'>('single');
   protected readonly tabs = computed(() => {
     const project = this.project();
     return project ? this.workspace.openFilesFor(project.id) : [];
@@ -219,17 +248,6 @@ export class WorkspaceEditor {
 
   protected statusFor(path: string): string | null {
     return this.changes().get(path)?.status ?? null;
-  }
-
-  protected statusColor(status: string): string {
-    switch (status) {
-      case 'A':
-        return 'text-emerald-400';
-      case 'D':
-        return 'text-rose-400';
-      default:
-        return 'text-sky-300';
-    }
   }
 
   protected isDirty(path: string): boolean {

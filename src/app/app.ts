@@ -86,8 +86,7 @@ import { WorkspaceService } from './core/workspace.service';
             }
           }
         </div>
-        @if (workspace.leftTab() === 'projects') {
-<div
+        <div
           class="no-scrollbar flex min-w-0 flex-1 items-center gap-1"
           [class]="
             (settings.settings()?.tabsMultiline ?? true)
@@ -95,58 +94,57 @@ import { WorkspaceService } from './core/workspace.service';
               : 'flex-nowrap overflow-x-auto'
           "
         >
-            @for (session of workspace.tabs(); track session.id) {
-              <div
-                class="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors"
-                [class]="
-                  session.id === workspace.activeSessionId()
-                    ? 'bg-accent/15 text-white ring-1 ring-accent/30'
-                    : 'text-mist/50 hover:bg-white/5 hover:text-mist'
-                "
-                (click)="workspace.openTab(session.id)"
-              >
-                <span class="max-w-48 truncate">{{ session.title }}</span>
-                <button
-                  type="button"
-                  class="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
-                  [attr.aria-label]="'tabs.close' | transloco"
-                  (click)="closeTab($event, session.id)"
-                >
-                  <svg
-                    class="h-3 w-3"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M18 6 6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            }
-
-            <button
-              type="button"
-              class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-              [title]="'tabs.new' | transloco"
-              [attr.aria-label]="'tabs.new' | transloco"
-              (click)="startNewSession()"
+          @for (session of workspace.tabs(); track session.id) {
+            <div
+              class="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors"
+              [class]="
+                session.id === workspace.activeSessionId()
+                  ? 'bg-accent/15 text-white ring-1 ring-accent/30'
+                  : 'text-mist/50 hover:bg-white/5 hover:text-mist'
+              "
+              (click)="workspace.openTab(session.id)"
             >
-              <svg
-                class="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
+              <span class="max-w-48 truncate">{{ session.title }}</span>
+              <button
+                type="button"
+                class="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
+                [attr.aria-label]="'tabs.close' | transloco"
+                (click)="closeTab($event, session.id)"
               >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-          </div>
-        }
+                <svg
+                  class="h-3 w-3"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          }
+
+          <button
+            type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+            [title]="'tabs.new' | transloco"
+            [attr.aria-label]="'tabs.new' | transloco"
+            (click)="startNewSession()"
+          >
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
         <div class="flex shrink-0 items-center gap-4 text-sm text-mist/50">
           <app-spend-indicator class="hidden lg:block" />
           <app-process-indicator />

@@ -925,6 +925,7 @@ export class WorkspaceService {
         this.loadRules(session.projectId, sessionId),
         this.loadGitInfo(session.projectId),
         this.loadSubAgents(sessionId),
+        this.loadWorkspaceEntries(session.projectId),
       ]);
       const active = this.activeOpenFileState()[session.projectId];
       if (active) {

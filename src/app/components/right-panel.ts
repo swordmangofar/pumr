@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { TranslocoPipe } from '@jsverse/transloco';
 import { ModelsService } from '../core/models.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { ModesPanel } from './modes-panel';
 import { SystemPromptsPanel } from './system-prompts-panel';
@@ -9,7 +10,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
 @Component({
   selector: 'app-right-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, DiffView, SystemPromptsPanel, ModesPanel],
+  imports: [TranslocoPipe, ChangeStatusIcon, DiffView, SystemPromptsPanel, ModesPanel],
   template: `
     <div class="flex h-full flex-col">
       <div class="shrink-0 p-2.5">
@@ -79,9 +80,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
               [class]="isSelected(change.path) ? 'bg-accent/10 text-white' : 'text-mist/60'"
               (click)="select(change.path)"
             >
-              <span class="w-3 shrink-0 text-xs font-semibold" [class]="statusColor(change.status)">
-                {{ change.status || 'M' }}
-              </span>
+              <app-change-status-icon [status]="change.status" />
               <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ change.path }}</span>
               @if (change.additions > 0) {
                 <span class="shrink-0 text-xs text-emerald-400">+{{ change.additions }}</span>
@@ -98,17 +97,19 @@ import { SystemPromptsPanel } from './system-prompts-panel';
         </section>
 
         <section class="relative min-h-0 flex-1">
-          @if (workspace.activeDiff(); as diff) {
-            <button
-              type="button"
-              class="absolute right-3 top-3 z-10 rounded-full border border-white/10 bg-navy/90 px-3 py-1 text-xs text-mist backdrop-blur transition-colors hover:border-accent/50 hover:text-white"
-              (click)="overlay.set(true)"
-            >
-              ⛶ {{ 'right.expand' | transloco }}
-            </button>
-            <app-diff-view [diff]="diff" />
-          } @else {
-            <p class="px-4 py-5 text-sm text-mist/40">{{ 'right.selectFile' | transloco }}</p>
+          @if (workspace.leftTab() !== 'workspace') {
+            @if (workspace.activeDiff(); as diff) {
+              <button
+                type="button"
+                class="absolute right-3 top-3 z-10 rounded-full border border-white/10 bg-navy/90 px-3 py-1 text-xs text-mist backdrop-blur transition-colors hover:border-accent/50 hover:text-white"
+                (click)="overlay.set(true)"
+              >
+                ⛶ {{ 'right.expand' | transloco }}
+              </button>
+              <app-diff-view [diff]="diff" />
+            } @else {
+              <p class="px-4 py-5 text-sm text-mist/40">{{ 'right.selectFile' | transloco }}</p>
+            }
           }
         </section>
       } @else if (tab() === 'session') {
@@ -276,22 +277,19 @@ export class RightPanel {
   });
 
   protected isSelected(path: string): boolean {
+    if (this.workspace.leftTab() === 'workspace') {
+      const project = this.workspace.activeProject();
+      return project ? path === this.workspace.activeFileFor(project.id) : false;
+    }
     const id = this.sessionId();
     return id ? path === this.workspace.selectedPathFor(id) : false;
   }
 
-  protected statusColor(status: string): string {
-    switch (status) {
-      case 'A':
-        return 'text-emerald-400';
-      case 'D':
-        return 'text-rose-400';
-      default:
-        return 'text-accent';
-    }
-  }
-
   protected select(path: string): void {
+    if (this.workspace.leftTab() === 'workspace') {
+      this.workspace.openWorkspaceFile(path);
+      return;
+    }
     const id = this.sessionId();
     if (id) {
       void this.workspace.selectChange(id, path);
