@@ -6,6 +6,8 @@ mod db;
 mod discovery;
 mod error;
 mod git;
+mod mcp;
+mod mentions;
 mod models;
 mod permissions;
 mod power;
@@ -42,6 +44,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::get_default_system_prompts,
+            commands::get_default_modes,
             commands::save_settings,
             commands::set_api_key,
             commands::delete_api_key,
@@ -60,6 +63,7 @@ pub fn run() {
             commands::delete_session,
             commands::list_messages,
             commands::get_spend,
+            commands::get_spend_stats,
             commands::stop_generation,
             commands::resolve_permission,
             commands::resolve_question,
@@ -69,6 +73,9 @@ pub fn run() {
             commands::delete_website_rule,
             commands::discover_mcp_sources,
             commands::discover_skills,
+            commands::list_workspace_entries,
+            commands::read_workspace_file,
+            commands::write_workspace_file,
             commands::list_processes,
             commands::stop_process,
             commands::get_git_info,
@@ -76,6 +83,7 @@ pub fn run() {
             commands::get_file_diff,
             commands::get_project_rules,
             commands::revert_to_message,
+            commands::summarize_session,
             commands::send_message,
         ])
         .run(tauri::generate_context!())

@@ -1,14 +1,26 @@
 import { Injectable, computed, signal } from '@angular/core';
-import { DEFAULT_THEME_ID, THEME_PRESETS, ThemePreset, findTheme } from './themes';
+import {
+  CUSTOM_THEME_ID,
+  CustomTheme,
+  DEFAULT_CUSTOM_THEME,
+  DEFAULT_THEME_ID,
+  THEME_PRESETS,
+  ThemePreset,
+  buildCustomPreset,
+  findTheme,
+} from './themes';
 
 const STORAGE_KEY = 'pumr.theme';
 const CONTRAST_KEY = 'pumr.highContrast';
+const CUSTOM_KEY = 'pumr.customTheme';
 
 @Injectable({ providedIn: 'root' })
 export class ThemeService {
   readonly presets = THEME_PRESETS;
   private readonly activeId = signal<string>(this.readCached(STORAGE_KEY, DEFAULT_THEME_ID));
-  readonly current = computed<ThemePreset>(() => findTheme(this.activeId()));
+  private readonly custom = signal<CustomTheme>(this.readCustom());
+  readonly current = computed<ThemePreset>(() => this.resolve(this.activeId()));
+  readonly customColors = this.custom.asReadonly();
   readonly highContrast = signal<boolean>(this.readCached(CONTRAST_KEY, 'false') === 'true');
 
   init(): void {
@@ -16,8 +28,12 @@ export class ThemeService {
     this.applyContrast(this.highContrast());
   }
 
+  resolve(id: string | null | undefined): ThemePreset {
+    return id === CUSTOM_THEME_ID ? buildCustomPreset(this.custom()) : findTheme(id);
+  }
+
   apply(id: string | null | undefined): void {
-    const theme = findTheme(id);
+    const theme = this.resolve(id);
     this.activeId.set(theme.id);
     this.writeCached(STORAGE_KEY, theme.id);
     const root = document.documentElement;
@@ -31,10 +47,30 @@ export class ThemeService {
     root.style.setProperty('--color-white', theme.white);
   }
 
+  setCustom(custom: CustomTheme): void {
+    this.custom.set(custom);
+    this.writeCached(CUSTOM_KEY, JSON.stringify(custom));
+    if (this.activeId() === CUSTOM_THEME_ID) {
+      this.apply(CUSTOM_THEME_ID);
+    }
+  }
+
   applyContrast(enabled: boolean): void {
     this.highContrast.set(enabled);
     this.writeCached(CONTRAST_KEY, enabled ? 'true' : 'false');
     document.documentElement.dataset['contrast'] = enabled ? 'high' : 'normal';
+  }
+
+  private readCustom(): CustomTheme {
+    try {
+      const raw = localStorage.getItem(CUSTOM_KEY);
+      if (raw) {
+        return { ...DEFAULT_CUSTOM_THEME, ...(JSON.parse(raw) as Partial<CustomTheme>) };
+      }
+    } catch {
+      // Fall through to the default custom palette.
+    }
+    return { ...DEFAULT_CUSTOM_THEME };
   }
 
   private readCached(key: string, fallback: string): string {

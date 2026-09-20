@@ -6,6 +6,7 @@ import {
   effect,
   inject,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
@@ -85,10 +86,86 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
         <div class="relative min-h-0 flex-1">
           <div #scroll class="h-full overflow-y-auto" (scroll)="onScroll()">
             <div class="mx-auto w-full max-w-4xl px-6 py-6">
-              @if (messages().length === 0 && liveTools().length === 0) {
-                <p class="py-24 text-center text-base text-mist/40">
-                  {{ 'chat.empty' | transloco }}
-                </p>
+              @if (
+                messages().length === 0 &&
+                liveTools().length === 0 &&
+                !composing() &&
+                !viewingSubAgent()
+              ) {
+                <div class="flex flex-col items-center gap-3 py-24">
+                  <span class="text-xs font-semibold uppercase tracking-widest text-mist/40">
+                    {{ 'tabs.selectProject' | transloco }}
+                  </span>
+                  <div class="relative">
+                    <button
+                      type="button"
+                      class="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition-colors hover:border-accent/40 hover:bg-accent/10"
+                      (click)="toggleProjectMenu()"
+                    >
+                      <span>{{ workspace.activeProject()?.name }}</span>
+                      <svg
+                        class="h-3.5 w-3.5 text-mist/40"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M5 7.5 10 12.5 15 7.5"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+
+                    @if (projectOpen()) {
+                      <div class="fixed inset-0 z-30" (click)="projectOpen.set(false)"></div>
+                      <div
+                        class="absolute top-full left-1/2 z-40 mt-2 max-h-[min(20rem,50vh)] w-80 max-w-[80vw] -translate-x-1/2 overflow-y-auto glass-pop rounded-2xl shadow-2xl"
+                      >
+                        @for (project of workspace.projects(); track project.id) {
+                          <button
+                            type="button"
+                            class="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                            [class]="
+                              project.id === workspace.activeProject()?.id
+                                ? 'bg-accent/10'
+                                : 'hover:bg-white/5'
+                            "
+                            (click)="selectProject(project.id)"
+                          >
+                            <span class="min-w-0 flex-1">
+                              <span class="block truncate text-sm text-white">{{
+                                project.name
+                              }}</span>
+                              <span class="block truncate text-xs text-mist/40">{{
+                                project.path
+                              }}</span>
+                            </span>
+                            @if (gitFor(project.id); as git) {
+                              @if (git.isRepo && git.branch) {
+                                <span
+                                  class="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-mist/60"
+                                >
+                                  ⎇ {{ git.branch }}
+                                </span>
+                              }
+                            }
+                          </button>
+                        }
+                      </div>
+                    }
+                  </div>
+
+                  @if (workspace.activeGitInfo()?.branch; as branch) {
+                    <span
+                      class="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-xs text-mist/60"
+                    >
+                      ⎇ {{ branch }}
+                    </span>
+                  }
+                </div>
               }
 
               @for (entry of timeline(); track entry.key) {
@@ -104,11 +181,22 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                           <app-puma-loader [compact]="true" [pose]="'sit'" class="mt-1 shrink-0" />
                           <button
                             type="button"
-                            class="mt-3 text-xs text-mist/30 opacity-0 transition-opacity group-hover:opacity-100 hover:text-accent"
+                            class="mt-2 flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
                             [title]="'chat.revert' | transloco"
                             (click)="revertTarget.set(entry.message)"
                           >
-                            ↩
+                            <svg
+                              viewBox="0 0 24 24"
+                              class="h-4 w-4"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                              <path d="M3 3v5h5" />
+                            </svg>
                           </button>
                           <div
                             class="max-w-[85%] rounded-2xl rounded-tr-md border border-accent/25 bg-accent/10 px-4 py-3 text-[15px] whitespace-pre-wrap text-white"
@@ -152,14 +240,38 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                                 }
                               </div>
                             }
+                            @if (entry.message.mentions.length > 0) {
+                              <div
+                                class="mb-2 flex flex-wrap gap-2"
+                                [class.mb-0]="
+                                  !entry.message.content && entry.message.attachments.length === 0
+                                "
+                              >
+                                @for (
+                                  mention of entry.message.mentions;
+                                  track mention.kind + ':' + mention.value
+                                ) {
+                                  <span
+                                    class="flex min-w-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs"
+                                  >
+                                    <span class="shrink-0 font-medium text-accent">{{
+                                      mention.kind
+                                    }}</span>
+                                    <span class="max-w-56 truncate text-mist/70">{{
+                                      mention.value
+                                    }}</span>
+                                  </span>
+                                }
+                              </div>
+                            }
                             {{ entry.message.content }}
                           </div>
                         </div>
                       }
                       @default {
                         <div>
-                          @if (entry.message.reasoning) {
-                            <details class="mb-3 rounded-xl border border-white/10 bg-navy/30">
+                          @if (entry.message.reasoning || isThinking(entry.message)) {
+                            <details class="glass-inset mb-3 rounded-xl">
                               <summary
                                 class="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-mist/50 select-none hover:text-mist"
                               >
@@ -170,11 +282,13 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                                   {{ 'chat.thinkingProcess' | transloco }}
                                 }
                               </summary>
-                              <div
-                                class="max-h-80 overflow-y-auto border-t border-white/10 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-mist/60"
-                              >
-                                <app-stream-text [content]="entry.message.reasoning" />
-                              </div>
+                              @if (entry.message.reasoning) {
+                                <div
+                                  class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-mist/60"
+                                >
+                                  <app-stream-text [content]="entry.message.reasoning" />
+                                </div>
+                              }
                             </details>
                           }
 
@@ -272,7 +386,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
         </div>
 
         @if (subAgents().length > 0) {
-          <div class="flex flex-wrap items-center gap-2 border-t border-white/10 px-6 py-2">
+          <div class="flex flex-wrap items-center gap-2 border-t border-white/5 px-6 py-2">
             <button
               type="button"
               class="flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors"
@@ -311,7 +425,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
           @if (workspace.question(); as request) {
             <app-question-overlay [request]="request" />
           }
-          <app-composer />
+          <app-composer (composing)="composing.set($event)" />
         </div>
       } @else {
         <div
@@ -377,6 +491,8 @@ export class ChatView {
   protected readonly revertFiles = signal(true);
   protected readonly atBottom = signal(true);
   protected readonly highlightId = signal<string | null>(null);
+  protected readonly composing = signal(false);
+  protected readonly projectOpen = signal(false);
 
   private readonly scrollRef = viewChild<ElementRef<HTMLDivElement>>('scroll');
 
@@ -456,13 +572,7 @@ export class ChatView {
     }
     const entries = this.timeline();
     const last = entries[entries.length - 1];
-    if (!last || last.kind !== 'message') {
-      return false;
-    }
-    if (last.message.role === 'user') {
-      return true;
-    }
-    return last.message.role === 'assistant' && !last.message.content && !last.message.reasoning;
+    return !!last && last.kind === 'message' && last.message.role === 'user';
   });
   protected readonly error = computed(() => {
     const session = this.session();
@@ -487,12 +597,23 @@ export class ChatView {
       }
       queueMicrotask(() => this.goToMessage(target.id));
     });
+
+    effect(() => {
+      this.workspace.activeSessionId();
+      untracked(() => this.composing.set(false));
+    });
   }
 
   protected isLast(message: Message): boolean {
     const entries = this.timeline();
     const last = entries[entries.length - 1];
     return !!last && last.kind === 'message' && last.message.id === message.id;
+  }
+
+  protected isThinking(message: Message): boolean {
+    return (
+      this.streaming() && message.role === 'assistant' && !message.content && this.isLast(message)
+    );
   }
 
   protected attachmentPreview(attachment: MessageAttachment): string {
@@ -509,6 +630,33 @@ export class ChatView {
       return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
     }
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  protected gitFor(projectId: string) {
+    return this.workspace.gitInfoFor(projectId);
+  }
+
+  protected toggleProjectMenu(): void {
+    const next = !this.projectOpen();
+    this.projectOpen.set(next);
+    if (next) {
+      for (const project of this.workspace.projects()) {
+        void this.workspace.loadGitInfo(project.id);
+      }
+    }
+  }
+
+  protected async selectProject(projectId: string): Promise<void> {
+    this.projectOpen.set(false);
+    const session = this.workspace.activeSession();
+    if (!session) {
+      return;
+    }
+    try {
+      await this.workspace.changeSessionProject(session.id, projectId);
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   private messageEntry(

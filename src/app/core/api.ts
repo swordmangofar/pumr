@@ -8,6 +8,7 @@ import {
   GitInfo,
   McpCandidate,
   Message,
+  Mode,
   ModelInfo,
   ProcessInfo,
   Project,
@@ -20,8 +21,11 @@ import {
   Session,
   Settings,
   SkillCandidate,
+  SpendStats,
   SpendSummary,
   UpdateSessionArgs,
+  WorkspaceEntry,
+  WorkspaceFile,
 } from './models';
 
 export const OPENROUTER_PROVIDER = 'openrouter';
@@ -33,6 +37,7 @@ export function isTauri(): boolean {
 export const api = {
   getSettings: () => invoke<Settings>('get_settings'),
   getDefaultSystemPrompts: () => invoke<DefaultSystemPrompts>('get_default_system_prompts'),
+  getDefaultModes: () => invoke<Mode[]>('get_default_modes'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
@@ -54,6 +59,8 @@ export const api = {
   deleteSession: (sessionId: string) => invoke<void>('delete_session', { sessionId }),
   listMessages: (sessionId: string) => invoke<Message[]>('list_messages', { sessionId }),
   getSpend: (sessionId: string | null = null) => invoke<SpendSummary>('get_spend', { sessionId }),
+  getSpendStats: (fromMs: number, toMs: number, bucket: 'day' | 'hour' = 'day') =>
+    invoke<SpendStats>('get_spend_stats', { fromMs, toMs, bucket }),
   stopGeneration: (sessionId: string) => invoke<void>('stop_generation', { sessionId }),
   resolvePermission: (
     requestId: string,
@@ -83,8 +90,15 @@ export const api = {
     invoke<McpCandidate[]>('discover_mcp_sources', { folders, disabled, autoDiscovery }),
   discoverSkills: (folders: string[], disabled: string[], autoDiscovery: boolean) =>
     invoke<SkillCandidate[]>('discover_skills', { folders, disabled, autoDiscovery }),
+  listWorkspaceEntries: (projectId: string) =>
+    invoke<WorkspaceEntry[]>('list_workspace_entries', { projectId }),
+  readWorkspaceFile: (projectId: string, path: string) =>
+    invoke<WorkspaceFile>('read_workspace_file', { projectId, path }),
+  writeWorkspaceFile: (projectId: string, path: string, content: string) =>
+    invoke<void>('write_workspace_file', { projectId, path, content }),
   revertToMessage: (messageId: string, restoreFiles: boolean) =>
     invoke<RevertResult>('revert_to_message', { messageId, restoreFiles }),
+  summarizeSession: (sessionId: string) => invoke<string>('summarize_session', { sessionId }),
   sendMessage: (args: SendMessageArgs, channel: Channel<RoutedEvent>) =>
     invoke<Message>('send_message', { ...args, channel }),
 };

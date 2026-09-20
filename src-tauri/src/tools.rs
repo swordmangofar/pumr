@@ -1,6 +1,7 @@
 use crate::broker::{PermissionBroker, PermissionPrompt, QuestionBroker};
 use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, GitProbe, RepoProbe, ShadowRepo};
+use crate::mcp::McpManager;
 use crate::models::{
     EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
 };
@@ -38,6 +39,7 @@ pub struct ToolRuntime {
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
     pub http: reqwest::Client,
+    pub mcp: Option<Arc<McpManager>>,
     pub cancel: CancellationToken,
     pub emit: EventSink,
 }
@@ -298,7 +300,24 @@ pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -
         "webfetch" => web_fetch(runtime, arguments).await,
         "websearch" => web_search(runtime, arguments).await,
         "question" => ask_question(runtime, arguments).await,
+        other if other.starts_with("mcp__") => call_mcp_tool(runtime, other, arguments).await,
         other => ToolOutcome::error(format!("Unknown tool: {other}")),
+    }
+}
+
+async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -> ToolOutcome {
+    let Some(manager) = runtime.mcp.clone() else {
+        return ToolOutcome::error(format!("MCP tool '{name}' is not available."));
+    };
+    match manager.call(name, arguments.clone()).await {
+        Ok((text, is_error)) => {
+            if is_error {
+                ToolOutcome::error(text)
+            } else {
+                ToolOutcome::ok(text)
+            }
+        }
+        Err(error) => ToolOutcome::error(error.to_string()),
     }
 }
 
@@ -878,7 +897,7 @@ async fn read_web_body(response: reqwest::Response) -> std::result::Result<Vec<u
     Ok(buffer)
 }
 
-async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     let url = match arg_str(arguments, "url") {
         Ok(url) => url,
         Err(error) => return ToolOutcome::error(error.to_string()),

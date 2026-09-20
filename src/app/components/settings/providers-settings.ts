@@ -48,7 +48,7 @@ const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
         <input
           #apiKeyInput
           type="password"
-          class="min-w-0 flex-1 rounded-xl border border-white/10 bg-ink/60 px-4 py-2 text-sm text-mist outline-none focus:border-accent/60"
+          class="field min-w-0 flex-1 rounded-xl px-4 py-2 text-sm"
           placeholder="sk-or-v1-..."
           [value]="apiKeyDraft()"
           (input)="apiKeyDraft.set($any($event.target).value)"
@@ -75,7 +75,7 @@ const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
     <section class="mt-8">
       <label class="mb-2 block text-sm text-mist/50">{{ 'settings.baseUrl' | transloco }}</label>
       <input
-        class="w-full rounded-xl border border-white/10 bg-ink/60 px-4 py-2 font-mono text-sm text-mist outline-none focus:border-accent/60"
+        class="field w-full rounded-xl px-4 py-2 font-mono text-sm"
         [value]="draft.draft().openrouterBaseUrl"
         (input)="draft.patch('openrouterBaseUrl', $any($event.target).value)"
       />
@@ -89,7 +89,7 @@ const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
         }}</label>
         <input
           list="pumr-models"
-          class="w-full rounded-xl border border-white/10 bg-ink/60 px-4 py-2 text-sm text-mist outline-none focus:border-accent/60"
+          class="field w-full rounded-xl px-4 py-2 text-sm"
           placeholder="anthropic/claude-sonnet-4"
           [value]="draft.draft().defaultModel ?? ''"
           (input)="onModelInput($event)"
@@ -123,6 +123,25 @@ const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
           }
         </div>
       </div>
+    </section>
+
+    <section class="mt-8">
+      <label class="mb-2 block text-sm text-mist/50">{{
+        'settings.handoverModel' | transloco
+      }}</label>
+      <input
+        list="pumr-handover-models"
+        class="field w-full max-w-md rounded-xl px-4 py-2 text-sm"
+        [placeholder]="'settings.handoverModelPlaceholder' | transloco"
+        [value]="draft.draft().handoverModel ?? ''"
+        (input)="onHandoverModelInput($event)"
+      />
+      <datalist id="pumr-handover-models">
+        @for (model of modelsService.models(); track model.id) {
+          <option [value]="model.id">{{ model.name }}</option>
+        }
+      </datalist>
+      <p class="mt-2 text-xs text-mist/30">{{ 'settings.handoverModelHint' | transloco }}</p>
     </section>
 
     <section class="mt-8">
@@ -173,6 +192,11 @@ export class ProvidersSettings {
   protected onModelInput(event: Event): void {
     const value = (event.target as HTMLInputElement).value.trim();
     this.draft.patch('defaultModel', value.length > 0 ? value : null);
+  }
+
+  protected onHandoverModelInput(event: Event): void {
+    const value = (event.target as HTMLInputElement).value.trim();
+    this.draft.patch('handoverModel', value.length > 0 ? value : null);
   }
 
   protected async saveApiKey(): Promise<void> {

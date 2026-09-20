@@ -85,7 +85,7 @@ interface QuestionDraft {
           }
 
           <input
-            class="w-full rounded-lg border border-white/10 bg-ink/60 px-3 py-1.5 text-sm text-mist outline-none focus:border-accent/60"
+            class="field w-full rounded-lg px-3 py-1.5 text-sm"
             [placeholder]="'question.customPlaceholder' | transloco"
             [value]="draft(index()).custom"
             (input)="setCustom($any($event.target).value)"

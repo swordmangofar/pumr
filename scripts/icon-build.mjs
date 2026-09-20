@@ -12,7 +12,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -299,9 +299,26 @@ function buildIcns(icons) {
   console.log('wrote src-tauri/icons/icon.icns (via iconutil)');
 }
 
+/**
+ * Tauri bakes the icons into the binary at compile time via
+ * `generate_context!`, but Cargo does not track `src-tauri/icons` as a
+ * dependency, so an icon change alone never triggers a rebuild. Nudge the
+ * crate that expands the macro so the next build picks the icons up -- without
+ * this the macOS Dock keeps showing the previous icon.
+ */
+function touchContext() {
+  const context = resolve(root, 'src-tauri/src/lib.rs');
+  if (!existsSync(context)) return;
+
+  const now = new Date();
+  utimesSync(context, now, now);
+  console.log('touched src-tauri/src/lib.rs to force an icon rebuild');
+}
+
 mkdirSync(resolve(root, 'src-tauri/icons'), { recursive: true });
 buildFavicon();
 buildPlatformIcons();
 buildDesktopIcons();
+touchContext();
 
 console.log(`mark bounds ${markBounds.width}x${markBounds.height} (grid units)`);

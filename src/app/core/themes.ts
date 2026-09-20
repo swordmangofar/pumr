@@ -9,6 +9,42 @@ export interface ThemePreset {
   white: string;
 }
 
+export const CUSTOM_THEME_ID = 'custom';
+
+export interface ThemeColors {
+  ink: string;
+  navy: string;
+  accent: string;
+  mist: string;
+  white: string;
+}
+
+export interface CustomTheme extends ThemeColors {
+  scheme: 'dark' | 'light';
+}
+
+export const DEFAULT_CUSTOM_THEME: CustomTheme = {
+  scheme: 'light',
+  ink: '#fbf1c7',
+  navy: '#ebdbb2',
+  accent: '#458588',
+  mist: '#504945',
+  white: '#050505',
+};
+
+export function buildCustomPreset(custom: CustomTheme): ThemePreset {
+  return {
+    id: CUSTOM_THEME_ID,
+    labelKey: 'settings.themes.custom',
+    scheme: custom.scheme,
+    ink: custom.ink,
+    navy: custom.navy,
+    accent: custom.accent,
+    mist: custom.mist,
+    white: custom.white,
+  };
+}
+
 export const DEFAULT_THEME_ID = 'midnight';
 
 export const THEME_PRESETS: ThemePreset[] = [
@@ -17,8 +53,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     labelKey: 'settings.themes.midnight',
     scheme: 'dark',
     ink: '#000000',
-    navy: '#14213d',
-    accent: '#fca311',
+    navy: '#1e293b',
+    accent: '#f59e0b',
     mist: '#e5e5e5',
     white: '#ffffff',
   },
@@ -141,6 +177,16 @@ export const THEME_PRESETS: ThemePreset[] = [
     accent: '#b57614',
     mist: '#3c3836',
     white: '#3c3836',
+  },
+  {
+    id: 'patricks-retro',
+    labelKey: 'settings.themes.patricksRetro',
+    scheme: 'light',
+    ink: '#fbf1c7',
+    navy: '#ebdbb2',
+    accent: '#458588',
+    mist: '#050505',
+    white: '#050505',
   },
 ];
 

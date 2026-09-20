@@ -3,12 +3,17 @@ use crate::config::{self, Settings};
 use crate::db::NewMessage;
 use crate::error::{AppError, Result};
 use crate::git::{project_git_info, ShadowRepo};
+use crate::mcp::McpManager;
+use crate::mentions;
 use crate::models::{
-    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitInfo, Message, ModelInfo,
-    PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
-    RoutedEvent, Session, SpendSummary, StreamEvent,
+    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitInfo, Mention, Message,
+    ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
+    RoutedEvent, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
 };
+use crate::providers::openrouter::{ChatChunk, ChatMessage};
 use crate::state::AppState;
+use crate::tools::ToolRuntime;
+use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +37,11 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 #[tauri::command]
 pub fn get_default_system_prompts() -> config::DefaultSystemPrompts {
     config::default_system_prompts()
+}
+
+#[tauri::command]
+pub fn get_default_modes() -> Vec<config::Mode> {
+    config::default_modes()
 }
 
 #[tauri::command]
@@ -152,6 +162,7 @@ pub fn create_session(
     reasoning_effort: Option<String>,
     provider: Option<String>,
     system_prompt: Option<String>,
+    mode_id: Option<String>,
 ) -> Result<Session> {
     state.db.touch_project(&project_id)?;
     state.db.create_session(
@@ -161,6 +172,7 @@ pub fn create_session(
         reasoning_effort.as_deref(),
         provider.as_deref(),
         system_prompt.as_deref(),
+        mode_id.as_deref(),
     )
 }
 
@@ -174,7 +186,12 @@ pub fn update_session(
     reasoning_effort: Option<String>,
     provider: Option<String>,
     system_prompt: Option<String>,
+    mode_id: Option<String>,
+    project_id: Option<String>,
 ) -> Result<Session> {
+    if let Some(project_id) = project_id.as_deref() {
+        state.db.touch_project(project_id)?;
+    }
     state.db.update_session(
         &session_id,
         title.as_deref(),
@@ -182,6 +199,8 @@ pub fn update_session(
         reasoning_effort.as_deref(),
         provider.as_deref(),
         system_prompt.as_deref(),
+        mode_id.as_deref(),
+        project_id.as_deref(),
     )
 }
 
@@ -216,6 +235,17 @@ pub fn get_spend(state: State<'_, AppState>, session_id: Option<String>) -> Resu
 }
 
 #[tauri::command]
+pub fn get_spend_stats(
+    state: State<'_, AppState>,
+    from_ms: i64,
+    to_ms: i64,
+    bucket: Option<String>,
+) -> Result<SpendStats> {
+    let bucket = bucket.as_deref().unwrap_or("day");
+    state.db.spend_stats(from_ms, to_ms, bucket)
+}
+
+#[tauri::command]
 pub fn stop_generation(state: State<'_, AppState>, session_id: String) {
     state.cancel(&session_id);
 }
@@ -236,6 +266,95 @@ pub fn discover_skills(
     auto_discovery: bool,
 ) -> Vec<crate::models::SkillCandidate> {
     crate::discovery::discover_skills(&folders, &disabled, auto_discovery)
+}
+
+const MAX_WORKSPACE_ENTRIES: usize = 4000;
+
+/// Lists files and directories in the project so the composer can offer
+/// `@file` and `@directory` completions. Git-ignored paths are skipped.
+#[tauri::command]
+pub fn list_workspace_entries(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<WorkspaceEntry>> {
+    let project = state.db.get_project(&project_id)?;
+    let root = PathBuf::from(&project.path);
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<WorkspaceEntry> = Vec::new();
+    let walker = WalkBuilder::new(&root).hidden(false).build();
+    for entry in walker.flatten() {
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+        if path
+            .components()
+            .any(|component| component.as_os_str() == ".git")
+        {
+            continue;
+        }
+        let Ok(relative) = path.strip_prefix(&root) else {
+            continue;
+        };
+        let kind = if path.is_dir() { "directory" } else { "file" };
+        entries.push(WorkspaceEntry {
+            path: relative.to_string_lossy().replace('\\', "/"),
+            kind: kind.to_string(),
+        });
+        if entries.len() >= MAX_WORKSPACE_ENTRIES {
+            break;
+        }
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
+}
+
+/// Reads a project file for the workspace viewer. The path must resolve inside
+/// the project root; binary or unreadable files open as an empty viewer.
+#[tauri::command]
+pub fn read_workspace_file(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+) -> Result<WorkspaceFile> {
+    let project = state.db.get_project(&project_id)?;
+    let root = PathBuf::from(&project.path);
+    let root = root.canonicalize().unwrap_or(root);
+    let absolute = crate::permissions::resolve_path(&root, &path);
+    if !crate::permissions::path_is_inside(&absolute, &root, &[]) {
+        return Err(AppError::msg("path is outside the project"));
+    }
+    let content = std::fs::read_to_string(&absolute).unwrap_or_default();
+    Ok(WorkspaceFile {
+        path: path.replace('\\', "/"),
+        content,
+        language: language_for(&path).to_string(),
+    })
+}
+
+/// Writes a file edited in the workspace viewer. The path must resolve inside
+/// the project root; missing parent directories are created.
+#[tauri::command]
+pub fn write_workspace_file(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+    content: String,
+) -> Result<()> {
+    let project = state.db.get_project(&project_id)?;
+    let root = PathBuf::from(&project.path);
+    let root = root.canonicalize().unwrap_or(root);
+    let absolute = crate::permissions::resolve_path(&root, &path);
+    if !crate::permissions::path_is_inside(&absolute, &root, &[]) {
+        return Err(AppError::msg("path is outside the project"));
+    }
+    if let Some(parent) = absolute.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&absolute, content)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -602,6 +721,7 @@ pub fn revert_to_message(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn send_message(
     state: State<'_, AppState>,
     session_id: String,
@@ -610,6 +730,7 @@ pub async fn send_message(
     reasoning_effort: Option<String>,
     provider: Option<String>,
     attachments: Option<Vec<Attachment>>,
+    mentions: Option<Vec<Mention>>,
     channel: Channel<RoutedEvent>,
 ) -> Result<Message> {
     let attachments = attachments.unwrap_or_default();
@@ -644,9 +765,94 @@ pub async fn send_message(
     )?);
     let base_commit = shadow.snapshot(&format!("before: {}", truncate_title(&content)))?;
 
+    let sink: EventSink = {
+        let channel = channel.clone();
+        Arc::new(move |event: RoutedEvent| {
+            let _ = channel.send(event);
+        })
+    };
+
+    let mentions = mentions.unwrap_or_default();
+    let mode = config::resolve_mode(&settings, session.mode_id.as_deref());
+    let cancel = state.register_cancel(&session_id);
+
+    let mut context = String::new();
+    let mut mcp_servers: Vec<String> = Vec::new();
+    let mut mcp_manager = Arc::new(McpManager::empty());
+    let mut mcp_errors: Vec<String> = Vec::new();
+    if !mentions.is_empty() {
+        let mut mention_runtime = ToolRuntime {
+            call_id: "mention".to_string(),
+            project_root: project_root.clone(),
+            permissions: state.permissions.clone(),
+            allowed_websites: settings.allowed_websites.clone(),
+            denied_websites: settings.denied_websites.clone(),
+            session_id: session_id.clone(),
+            shadow: shadow.clone(),
+            processes: state.processes.clone(),
+            broker: state.broker.clone(),
+            questions: state.questions.clone(),
+            http: state.http.clone(),
+            mcp: None,
+            cancel: cancel.clone(),
+            emit: sink.clone(),
+        };
+        let resolution = mentions::resolve(&mut mention_runtime, &settings, &mentions).await;
+        context = resolution.context;
+        mcp_servers = resolution.mcp_servers;
+    }
+
+    // Modes bundle skills and MCP servers that apply automatically.
+    for server in &mode.mcp_servers {
+        let name = server.trim();
+        if !name.is_empty() && !mcp_servers.iter().any(|entry| entry == name) {
+            mcp_servers.push(name.to_string());
+        }
+    }
+    for skill in &mode.skills {
+        if skill.trim().is_empty() {
+            continue;
+        }
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str(&mentions::resolve_skill(&settings, skill));
+    }
+
+    if !mcp_servers.is_empty() {
+        let available = crate::discovery::discover_mcp_servers(
+            &settings.mcp_folders,
+            &settings.mcp_disabled,
+            settings.mcp_auto_discovery,
+        );
+        let mut configs = Vec::new();
+        for name in &mcp_servers {
+            match available.iter().find(|config| &config.name == name) {
+                Some(config) => configs.push(config.clone()),
+                None => mcp_errors.push(format!(
+                    "No MCP server named '{name}' was found in the configured sources."
+                )),
+            }
+        }
+        mcp_manager = Arc::new(McpManager::connect(configs).await);
+    }
+    mcp_errors.extend(mcp_manager.errors.iter().cloned());
+    if !mcp_errors.is_empty() {
+        context.push_str("\n\n## MCP connection issues\n");
+        for error in &mcp_errors {
+            context.push_str(&format!("- {error}\n"));
+        }
+    }
+
     let user_message = state.db.append_message(
         &session_id,
-        NewMessage::user(&content, Some(&base_commit), &attachments),
+        NewMessage::user(
+            &content,
+            &context,
+            Some(&base_commit),
+            &attachments,
+            &mentions,
+        ),
     )?;
 
     if session.title == DEFAULT_SESSION_TITLE {
@@ -654,7 +860,7 @@ pub async fn send_message(
         if !title.trim().is_empty() {
             state
                 .db
-                .update_session(&session_id, Some(&title), None, None, None, None)?;
+                .update_session(&session_id, Some(&title), None, None, None, None, None, None)?;
         }
     }
 
@@ -664,34 +870,73 @@ pub async fn send_message(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| settings.default_system_prompt.clone());
 
-    for (enabled, prompt) in [
-        (
-            settings.security_system_prompt_enabled,
-            &settings.security_system_prompt,
-        ),
-        (
-            settings.testing_system_prompt_enabled,
-            &settings.testing_system_prompt,
-        ),
-        (
-            settings.architecture_system_prompt_enabled,
-            &settings.architecture_system_prompt,
-        ),
-    ] {
-        if enabled && !prompt.trim().is_empty() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(prompt);
+    let mut added_user_prompts: Vec<String> = Vec::new();
+    if mode.include_global_prompts {
+        for (enabled, prompt) in [
+            (
+                settings.security_system_prompt_enabled,
+                &settings.security_system_prompt,
+            ),
+            (
+                settings.testing_system_prompt_enabled,
+                &settings.testing_system_prompt,
+            ),
+            (
+                settings.architecture_system_prompt_enabled,
+                &settings.architecture_system_prompt,
+            ),
+        ] {
+            if enabled && !prompt.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(prompt);
+            }
+        }
+
+        for prompt in &settings.user_system_prompts {
+            if prompt.enabled && !prompt.prompt.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&prompt.prompt);
+                added_user_prompts.push(prompt.id.clone());
+            }
         }
     }
 
-    for prompt in &settings.user_system_prompts {
-        if prompt.enabled && !prompt.prompt.trim().is_empty() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&prompt.prompt);
+    for id in &mode.user_prompt_ids {
+        if added_user_prompts.iter().any(|added| added == id) {
+            continue;
+        }
+        if let Some(prompt) = settings
+            .user_system_prompts
+            .iter()
+            .find(|entry| &entry.id == id)
+        {
+            if !prompt.prompt.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&prompt.prompt);
+                added_user_prompts.push(id.clone());
+            }
         }
     }
 
-    let rules = collect_project_rules(&state, &project.id, Some(&session_id)).unwrap_or_default();
+    if !mode.system_prompt.trim().is_empty() {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&mode.system_prompt);
+    }
+
+    if let Some(language) = settings
+        .reply_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
+    }
+
+    let rules = if mode.include_project_rules {
+        collect_project_rules(&state, &project.id, Some(&session_id)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     if !rules.is_empty() {
         system_prompt.push_str("\n\n# Project rules\n");
         system_prompt.push_str(
@@ -701,6 +946,19 @@ pub async fn send_message(
             system_prompt.push_str(&format!(
                 "\n## {} ({})\n{}\n",
                 rule.scope, rule.path, rule.content
+            ));
+        }
+    }
+
+    if !mcp_manager.tools().is_empty() {
+        system_prompt.push_str("\n\n# MCP tools\n");
+        system_prompt.push_str(
+            "These MCP servers are active for this message (from @mentions or the selected mode). Their tools are available; call them when they help complete the task.\n",
+        );
+        for tool in mcp_manager.tools() {
+            system_prompt.push_str(&format!(
+                "\n- {} (server: {}): {}",
+                tool.exposed_name, tool.server, tool.description
             ));
         }
     }
@@ -715,7 +973,6 @@ pub async fn send_message(
             )
         });
 
-    let cancel = state.register_cancel(&session_id);
     let request = TurnRequest {
         api_key,
         model: model.clone(),
@@ -733,6 +990,7 @@ pub async fn send_message(
         context_message_limit: settings.context_message_limit,
         fallback_pricing,
         base_commit,
+        plan_only: mode.plan_only,
         cancel,
     };
     let deps = TurnDeps {
@@ -744,13 +1002,7 @@ pub async fn send_message(
         permissions: state.permissions.clone(),
         client: state.provider(),
         http: state.http.clone(),
-    };
-
-    let sink: EventSink = {
-        let channel = channel.clone();
-        Arc::new(move |event: RoutedEvent| {
-            let _ = channel.send(event);
-        })
+        mcp: mcp_manager,
     };
 
     let result = {
@@ -802,6 +1054,143 @@ pub async fn send_message(
             Err(error)
         }
     }
+}
+
+const HANDOVER_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The current working session is being handed off to a fresh session. Write a self-contained handover briefing that lets the next assistant continue seamlessly. Cover, when relevant:\n- The user's overall goal and any constraints or decisions already made.\n- What has been completed so far, with concrete file paths and key changes.\n- The current state of the work: what works, what is untested, what is still in progress.\n- Important commands, findings, errors or gotchas discovered.\n- Open questions or decisions that still need the user.\n- Clear next steps.\nWrite it as a message from the user to the new assistant and begin by stating the goal. Use concise bullet points. Output only the briefing and do not call any tools.";
+
+#[tauri::command]
+pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -> Result<String> {
+    let settings = state.settings();
+    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| AppError::msg("No OpenRouter API key configured. Add one in Settings."))?;
+
+    let session = state.db.get_session(&session_id)?;
+    let messages = state.db.list_messages(&session_id)?;
+    let transcript = build_transcript(&messages);
+    if transcript.trim().is_empty() {
+        return Err(AppError::msg("There is nothing to hand over yet."));
+    }
+
+    let model = settings
+        .handover_model
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            session
+                .model
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| settings.default_model.clone())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AppError::msg("No model configured. Pick a model before handing over."))?;
+
+    let fallback_pricing = state
+        .cached_models()
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model))
+        .map(|entry| {
+            (
+                entry.prompt_price_per_m / 1_000_000.0,
+                entry.completion_price_per_m / 1_000_000.0,
+            )
+        });
+
+    let client = state.provider();
+    let cancel = state.register_cancel(&format!("handover:{session_id}"));
+    let mut summary = String::new();
+    let result = client
+        .stream_chat(
+            &api_key,
+            &model,
+            vec![
+                ChatMessage::text("system", HANDOVER_SYSTEM_PROMPT),
+                ChatMessage::text("user", format!("# Session transcript\n\n{transcript}")),
+            ],
+            None,
+            None,
+            fallback_pricing,
+            &[],
+            cancel,
+            &mut |chunk| {
+                if let ChatChunk::Delta(text) = chunk {
+                    summary.push_str(&text);
+                }
+            },
+        )
+        .await;
+    state.clear_cancel(&format!("handover:{session_id}"));
+    result?;
+
+    let summary = summary.trim().to_string();
+    if summary.is_empty() {
+        return Err(AppError::msg(
+            "The model returned an empty handover summary.",
+        ));
+    }
+    Ok(summary)
+}
+
+fn build_transcript(messages: &[Message]) -> String {
+    const MAX_CONTENT: usize = 4000;
+    const MAX_TOOL_OUTPUT: usize = 1500;
+    const MAX_ARGUMENTS: usize = 300;
+
+    let mut out = String::new();
+    for message in messages {
+        match message.role.as_str() {
+            "user" => {
+                out.push_str("\n## User\n");
+                push_truncated(&mut out, &message.content, MAX_CONTENT);
+                if !message.mentions.is_empty() {
+                    let refs = message
+                        .mentions
+                        .iter()
+                        .map(|mention| format!("{}:{}", mention.kind, mention.value))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("\n(references: {refs})"));
+                }
+            }
+            "assistant" => {
+                out.push_str("\n## Assistant\n");
+                push_truncated(&mut out, &message.content, MAX_CONTENT);
+                for call in &message.tool_calls {
+                    out.push_str(&format!(
+                        "\n- tool call {}({})\n",
+                        call.name,
+                        truncate(&call.arguments, MAX_ARGUMENTS)
+                    ));
+                }
+            }
+            "tool" => {
+                out.push_str(&format!(
+                    "\n### Tool result: {}\n",
+                    message.tool_name.as_deref().unwrap_or("tool")
+                ));
+                push_truncated(&mut out, &message.content, MAX_TOOL_OUTPUT);
+            }
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
+
+fn push_truncated(out: &mut String, text: &str, max: usize) {
+    if text.trim().is_empty() {
+        return;
+    }
+    out.push_str(&truncate(text, max));
+    out.push('\n');
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed.chars().take(max).collect();
+    format!("{head}… [truncated]")
 }
 
 fn truncate_title(content: &str) -> String {

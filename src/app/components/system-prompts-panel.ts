@@ -22,7 +22,7 @@ interface BuiltinPrompt {
   host: { class: 'flex min-h-0 flex-1 flex-col' },
   template: `
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <section class="border-b border-white/10 p-4">
+      <section class="border-b border-white/5 p-4">
         <h3 class="mb-1 text-xs font-semibold uppercase tracking-widest text-mist/40">
           {{ 'right.activePrompts' | transloco }}
         </h3>
@@ -30,7 +30,7 @@ interface BuiltinPrompt {
           {{ 'right.activePromptsHint' | transloco }}
         </p>
 
-        <div class="mb-1.5 rounded-xl border border-white/10 bg-navy/30 px-3 py-2">
+        <div class="mb-1.5 glass-inset rounded-xl px-3 py-2">
           <div class="flex items-center justify-between gap-2">
             <span class="text-sm text-mist">{{ 'right.basePrompt' | transloco }}</span>
             <span
@@ -42,7 +42,7 @@ interface BuiltinPrompt {
         </div>
 
         @for (prompt of builtinPrompts; track prompt.key) {
-          <div class="mb-1.5 rounded-xl border border-white/10 bg-navy/30">
+          <div class="mb-1.5 glass-inset rounded-xl">
             <div class="flex items-center gap-2.5 px-3 py-2">
               <button
                 type="button"
@@ -69,7 +69,7 @@ interface BuiltinPrompt {
             </div>
             @if (expanded(prompt.key)) {
               <pre
-                class="max-h-60 overflow-auto border-t border-white/10 px-3 py-2 text-xs whitespace-pre-wrap text-mist/50"
+                class="max-h-60 overflow-auto border-t border-white/5 px-3 py-2 text-xs whitespace-pre-wrap text-mist/50"
                 >{{ builtinText(prompt) }}</pre>
             }
           </div>
@@ -103,7 +103,7 @@ interface BuiltinPrompt {
 
         <div class="space-y-2">
           @for (prompt of userPrompts(); track prompt.id) {
-            <div class="rounded-xl border border-white/10 bg-navy/30">
+            <div class="glass-inset rounded-xl">
               <div class="flex items-center gap-2.5 px-3 py-2">
                 <button
                   type="button"
@@ -137,15 +137,15 @@ interface BuiltinPrompt {
               </div>
 
               @if (expanded(prompt.id)) {
-                <div class="space-y-2 border-t border-white/10 p-3">
+                <div class="space-y-2 border-t border-white/5 p-3">
                   <input
-                    class="w-full rounded-lg border border-white/10 bg-ink/60 px-3 py-1.5 text-sm text-mist outline-none focus:border-accent/60"
+                    class="field w-full rounded-lg px-3 py-1.5 text-sm"
                     [placeholder]="'right.promptName' | transloco"
                     [value]="prompt.name"
                     (change)="renamePrompt(prompt, $any($event.target).value)"
                   />
                   <textarea
-                    class="h-44 w-full resize-y rounded-lg border border-white/10 bg-ink/60 px-3 py-2 font-mono text-xs leading-relaxed text-mist outline-none focus:border-accent/60"
+                    class="field h-44 w-full resize-y rounded-lg px-3 py-2 font-mono text-xs leading-relaxed"
                     [value]="prompt.prompt"
                     (change)="updatePromptText(prompt, $any($event.target).value)"
                   ></textarea>

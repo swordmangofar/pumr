@@ -116,6 +116,134 @@ pub fn default_bugfixer_prompt() -> String {
         .to_string()
 }
 
+pub fn default_planning_prompt() -> String {
+    r#"# Planning mode
+
+You are in planning mode. Do NOT implement anything yet. The write and edit tools are disabled, and you must not run commands that modify the project.
+
+Work with the user to turn the request into a concrete, agreed implementation plan:
+
+- Inspect the codebase first with read, glob, grep, ls and read-only shell commands so the plan is grounded in the real code. Never invent files, APIs or behavior.
+- Use the question tool whenever requirements, scope, constraints or trade-offs are ambiguous. Ask instead of guessing, and offer concrete options when a small set fits.
+- Lay out the affected areas, the exact files that will change and what each change does, in the order you would make them.
+- Call out trade-offs, edge cases, risks, migration concerns and how each step will be verified (tests, manual checks).
+- Keep refining the plan with the user until they agree. When the plan is ready, summarize it and remind the user to switch to a mode that allows implementation to proceed.
+
+Do not produce code changes, diffs or file writes in this mode — only analysis and the plan."#
+        .to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mode {
+    pub id: String,
+    pub name: String,
+    /// Short description shown in the modes panel and the composer picker.
+    #[serde(default)]
+    pub description: String,
+    /// Extra system prompt appended when this mode is active.
+    #[serde(default)]
+    pub system_prompt: String,
+    /// Ids of `user_system_prompts` that this mode pulls in.
+    #[serde(default)]
+    pub user_prompt_ids: Vec<String>,
+    /// MCP servers to connect automatically while this mode is active.
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
+    /// Skills whose instructions are loaded automatically while this mode is active.
+    #[serde(default)]
+    pub skills: Vec<String>,
+    /// Whether the globally enabled built-in and user prompts apply in this mode.
+    #[serde(default)]
+    pub include_global_prompts: bool,
+    /// Whether project rule files (AGENTS.md) are appended in this mode.
+    #[serde(default)]
+    pub include_project_rules: bool,
+    /// Disables the write/edit tools so the agent can only plan.
+    #[serde(default)]
+    pub plan_only: bool,
+    #[serde(default)]
+    pub builtin: bool,
+}
+
+pub const DEFAULT_MODE_ID: &str = "coding";
+
+pub fn default_modes() -> Vec<Mode> {
+    vec![
+        Mode {
+            id: "coding".to_string(),
+            name: "Coding".to_string(),
+            description:
+                "Full coding mode. The main system prompt is combined with the system prompts you have activated, project rules, MCP servers and skills."
+                    .to_string(),
+            system_prompt: String::new(),
+            user_prompt_ids: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
+            include_global_prompts: true,
+            include_project_rules: true,
+            plan_only: false,
+            builtin: true,
+        },
+        Mode {
+            id: "planning".to_string(),
+            name: "Planning".to_string(),
+            description:
+                "Plans a feature together with you and produces an implementation plan. Cannot write or edit files."
+                    .to_string(),
+            system_prompt: default_planning_prompt(),
+            user_prompt_ids: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
+            include_global_prompts: true,
+            include_project_rules: true,
+            plan_only: true,
+            builtin: true,
+        },
+        Mode {
+            id: "nacked".to_string(),
+            name: "Nacked".to_string(),
+            description:
+                "Fast mode. Uses only the main system prompt — no activated prompts, project rules, MCP servers or skills."
+                    .to_string(),
+            system_prompt: String::new(),
+            user_prompt_ids: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
+            include_global_prompts: false,
+            include_project_rules: false,
+            plan_only: false,
+            builtin: true,
+        },
+    ]
+}
+
+/// Looks up the mode for a session, falling back to the default coding mode and
+/// finally to the first configured mode. Always returns a usable mode.
+pub fn resolve_mode(settings: &Settings, mode_id: Option<&str>) -> Mode {
+    let requested = mode_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| settings.default_mode_id.trim());
+    let id = if requested.is_empty() {
+        DEFAULT_MODE_ID
+    } else {
+        requested
+    };
+    settings
+        .modes
+        .iter()
+        .find(|mode| mode.id == id)
+        .or_else(|| {
+            settings
+                .modes
+                .iter()
+                .find(|mode| mode.id == DEFAULT_MODE_ID)
+        })
+        .cloned()
+        .unwrap_or_else(|| default_modes().into_iter().next().unwrap())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSystemPrompt {
@@ -157,6 +285,30 @@ pub fn default_user_system_prompts() -> Vec<UserSystemPrompt> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+pub struct CustomTheme {
+    pub scheme: String,
+    pub ink: String,
+    pub navy: String,
+    pub accent: String,
+    pub mist: String,
+    pub white: String,
+}
+
+impl Default for CustomTheme {
+    fn default() -> Self {
+        Self {
+            scheme: "light".to_string(),
+            ink: "#fbf1c7".to_string(),
+            navy: "#ebdbb2".to_string(),
+            accent: "#458588".to_string(),
+            mist: "#504945".to_string(),
+            white: "#050505".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub default_system_prompt: String,
     pub security_system_prompt_enabled: bool,
@@ -166,13 +318,18 @@ pub struct Settings {
     pub architecture_system_prompt_enabled: bool,
     pub architecture_system_prompt: String,
     pub user_system_prompts: Vec<UserSystemPrompt>,
+    pub modes: Vec<Mode>,
+    pub default_mode_id: String,
     pub budget_usd: f64,
     pub language: String,
+    pub reply_language: Option<String>,
     pub theme: String,
+    pub custom_theme: CustomTheme,
     pub high_contrast: bool,
     pub extra_folders: Vec<String>,
     pub openrouter_base_url: String,
     pub default_model: Option<String>,
+    pub handover_model: Option<String>,
     pub default_reasoning_effort: Option<String>,
     pub favorite_models: Vec<String>,
     pub context_message_limit: usize,
@@ -187,6 +344,26 @@ pub struct Settings {
     pub skills_disabled: Vec<String>,
     pub keep_awake: bool,
     pub tabs_multiline: bool,
+    pub open_tab_hotkey: String,
+    pub close_tab_hotkey: String,
+}
+
+/// The primary shortcut modifier for the current platform: `Cmd` on macOS and
+/// `Ctrl` elsewhere.
+pub fn default_hotkey_modifier() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    }
+}
+
+pub fn default_open_tab_hotkey() -> String {
+    format!("{}+T", default_hotkey_modifier())
+}
+
+pub fn default_close_tab_hotkey() -> String {
+    format!("{}+W", default_hotkey_modifier())
 }
 
 impl Default for Settings {
@@ -200,13 +377,18 @@ impl Default for Settings {
             architecture_system_prompt_enabled: false,
             architecture_system_prompt: default_architecture_prompt(),
             user_system_prompts: default_user_system_prompts(),
+            modes: default_modes(),
+            default_mode_id: DEFAULT_MODE_ID.to_string(),
             budget_usd: 0.0,
             language: "en".to_string(),
+            reply_language: None,
             theme: "midnight".to_string(),
+            custom_theme: CustomTheme::default(),
             high_contrast: false,
             extra_folders: Vec::new(),
             openrouter_base_url: crate::providers::openrouter::DEFAULT_BASE_URL.to_string(),
             default_model: None,
+            handover_model: None,
             default_reasoning_effort: Some("medium".to_string()),
             favorite_models: Vec::new(),
             context_message_limit: 40,
@@ -221,6 +403,8 @@ impl Default for Settings {
             skills_disabled: Vec::new(),
             keep_awake: true,
             tabs_multiline: true,
+            open_tab_hotkey: default_open_tab_hotkey(),
+            close_tab_hotkey: default_close_tab_hotkey(),
         }
     }
 }
@@ -251,6 +435,7 @@ pub fn load_settings(path: &Path) -> Settings {
         .and_then(|raw| serde_json::from_str::<Settings>(&raw).ok())
         .unwrap_or_default();
     merge_default_user_system_prompts(&mut settings);
+    merge_default_modes(&mut settings);
     settings
 }
 
@@ -266,6 +451,30 @@ fn merge_default_user_system_prompts(settings: &mut Settings) {
         {
             settings.user_system_prompts.push(builtin);
         }
+    }
+}
+
+/// Built-in modes are always available. Re-add any that are missing while
+/// keeping user edits and custom modes intact.
+fn merge_default_modes(settings: &mut Settings) {
+    for builtin in default_modes() {
+        match settings.modes.iter_mut().find(|mode| mode.id == builtin.id) {
+            // Backfill the description of built-in modes added before
+            // descriptions existed, without touching user edits.
+            Some(existing) if existing.description.trim().is_empty() => {
+                existing.description = builtin.description;
+            }
+            Some(_) => {}
+            None => settings.modes.push(builtin),
+        }
+    }
+    if settings.default_mode_id.trim().is_empty()
+        || !settings
+            .modes
+            .iter()
+            .any(|mode| mode.id == settings.default_mode_id)
+    {
+        settings.default_mode_id = DEFAULT_MODE_ID.to_string();
     }
 }
 

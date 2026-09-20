@@ -61,7 +61,7 @@ import { WorkspaceService } from '../core/workspace.service';
                 {{ (isWeb() ? 'permission.siteRuleLabel' : 'permission.ruleLabel') | transloco }}
               </label>
               <input
-                class="w-full rounded-xl border border-white/10 bg-ink/60 px-4 py-2 font-mono text-sm text-mist outline-none focus:border-accent/60"
+                class="field w-full rounded-xl px-4 py-2 font-mono text-sm"
                 [value]="rule()"
                 (input)="rule.set($any($event.target).value)"
               />

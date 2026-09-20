@@ -3,69 +3,80 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { ModelsService } from '../core/models.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { DiffView } from './diff-view';
+import { ModesPanel } from './modes-panel';
 import { SystemPromptsPanel } from './system-prompts-panel';
 
 @Component({
   selector: 'app-right-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, DiffView, SystemPromptsPanel],
+  imports: [TranslocoPipe, DiffView, SystemPromptsPanel, ModesPanel],
   template: `
     <div class="flex h-full flex-col">
-      <div class="flex shrink-0 border-b border-white/10">
-        <button
-          type="button"
-          class="relative flex-1 px-4 py-3 text-sm font-medium transition-colors"
-          [class]="
-            tab() === 'changes'
-              ? 'text-white after:absolute after:inset-x-4 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent'
-              : 'text-mist/40 hover:text-mist'
-          "
-          (click)="tab.set('changes')"
-        >
-          {{ 'right.files' | transloco }}
-          @if (changes().length > 0) {
-            <span class="ml-1.5 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
-              {{ changes().length }}
-            </span>
-          }
-        </button>
-        <button
-          type="button"
-          class="relative flex-1 px-4 py-3 text-sm font-medium transition-colors"
-          [class]="
-            tab() === 'session'
-              ? 'text-white after:absolute after:inset-x-4 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent'
-              : 'text-mist/40 hover:text-mist'
-          "
-          (click)="tab.set('session')"
-        >
-          {{ 'right.session' | transloco }}
-        </button>
-        <button
-          type="button"
-          class="relative flex-1 px-4 py-3 text-sm font-medium transition-colors"
-          [class]="
-            tab() === 'prompts'
-              ? 'text-white after:absolute after:inset-x-4 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent'
-              : 'text-mist/40 hover:text-mist'
-          "
-          (click)="tab.set('prompts')"
-        >
-          {{ 'right.systemPrompts' | transloco }}
-        </button>
+      <div class="shrink-0 p-2.5">
+        <div class="flex gap-1 rounded-xl bg-white/5 p-1">
+          <button
+            type="button"
+            class="flex flex-1 items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            [class]="
+              tab() === 'changes'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-mist/50 hover:text-mist'
+            "
+            (click)="tab.set('changes')"
+          >
+            {{ 'right.files' | transloco }}
+            @if (changes().length > 0) {
+              <span class="ml-1.5 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
+                {{ changes().length }}
+              </span>
+            }
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            [class]="
+              tab() === 'session'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-mist/50 hover:text-mist'
+            "
+            (click)="tab.set('session')"
+          >
+            {{ 'right.session' | transloco }}
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            [class]="
+              tab() === 'prompts'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-mist/50 hover:text-mist'
+            "
+            (click)="tab.set('prompts')"
+          >
+            {{ 'right.systemPrompts' | transloco }}
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            [class]="
+              tab() === 'modes'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-mist/50 hover:text-mist'
+            "
+            (click)="tab.set('modes')"
+          >
+            {{ 'right.modes' | transloco }}
+          </button>
+        </div>
       </div>
 
       @if (tab() === 'changes') {
-        <section class="max-h-56 shrink-0 overflow-y-auto border-b border-white/10 py-1">
+        <section class="max-h-56 shrink-0 overflow-y-auto border-b border-white/5 py-1">
           @for (change of changes(); track change.path) {
             <button
               type="button"
               class="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm transition-colors hover:bg-white/5"
-              [class]="
-                change.path === workspace.selectedPathFor(sessionId() ?? '')
-                  ? 'bg-accent/10 text-white'
-                  : 'text-mist/60'
-              "
+              [class]="isSelected(change.path) ? 'bg-accent/10 text-white' : 'text-mist/60'"
               (click)="select(change.path)"
             >
               <span class="w-3 shrink-0 text-xs font-semibold" [class]="statusColor(change.status)">
@@ -103,7 +114,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
       } @else if (tab() === 'session') {
         <div class="min-h-0 flex-1 overflow-y-auto">
           @if (session(); as active) {
-            <section class="border-b border-white/10 p-4">
+            <section class="border-b border-white/5 p-4">
               <h3 class="mb-3 text-xs font-semibold uppercase tracking-widest text-mist/40">
                 {{ 'right.prompts' | transloco }}
               </h3>
@@ -111,7 +122,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 @for (prompt of prompts(); track prompt.id) {
                   <button
                     type="button"
-                    class="line-clamp-2 w-full rounded-xl border border-white/10 bg-navy/30 px-3 py-2 text-left text-sm leading-snug text-mist/60 transition-colors hover:border-accent/40 hover:bg-white/5 hover:text-white"
+                    class="line-clamp-2 w-full glass-inset rounded-xl px-3 py-2 text-left text-sm leading-snug text-mist/60 transition-colors hover:border-accent/40 hover:bg-white/5 hover:text-white"
                     [title]="prompt.content"
                     (click)="goToPrompt(prompt.id)"
                   >
@@ -125,7 +136,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
               </div>
             </section>
 
-            <section class="border-b border-white/10 p-4">
+            <section class="border-b border-white/5 p-4">
               <h3 class="mb-3 text-xs font-semibold uppercase tracking-widest text-mist/40">
                 {{ 'right.stats' | transloco }}
               </h3>
@@ -174,7 +185,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 {{ 'right.rules' | transloco }}
               </h3>
               @for (rule of workspace.rules(); track rule.path) {
-                <details class="mb-1.5 rounded-xl border border-white/10 bg-navy/30">
+                <details class="mb-1.5 glass-inset rounded-xl">
                   <summary class="cursor-pointer px-3 py-2 text-xs text-mist/60">
                     <span class="mr-1.5 rounded-full bg-white/5 px-2 py-0.5 text-mist/50">{{
                       rule.scope
@@ -182,7 +193,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                     <span class="font-mono">{{ rule.path }}</span>
                   </summary>
                   <pre
-                    class="max-h-60 overflow-auto border-t border-white/10 px-3 py-2 text-xs whitespace-pre-wrap text-mist/60"
+                    class="max-h-60 overflow-auto border-t border-white/5 px-3 py-2 text-xs whitespace-pre-wrap text-mist/60"
                     >{{ rule.content }}</pre>
                 </details>
               } @empty {
@@ -195,8 +206,10 @@ import { SystemPromptsPanel } from './system-prompts-panel';
             <p class="p-4 text-sm text-mist/40">{{ 'right.session' | transloco }}</p>
           }
         </div>
-      } @else {
+      } @else if (tab() === 'prompts') {
         <app-system-prompts-panel />
+      } @else {
+        <app-modes-panel />
       }
     </div>
 
@@ -229,7 +242,7 @@ export class RightPanel {
   protected readonly workspace = inject(WorkspaceService);
   private readonly models = inject(ModelsService);
 
-  protected readonly tab = signal<'changes' | 'session' | 'prompts'>('changes');
+  protected readonly tab = signal<'changes' | 'session' | 'prompts' | 'modes'>('changes');
   protected readonly overlay = signal(false);
   protected readonly session = this.workspace.activeSession;
   protected readonly sessionId = computed(() => this.session()?.id ?? null);
@@ -261,6 +274,11 @@ export class RightPanel {
     }
     return `${Math.round(model.contextLength / 1000)}k`;
   });
+
+  protected isSelected(path: string): boolean {
+    const id = this.sessionId();
+    return id ? path === this.workspace.selectedPathFor(id) : false;
+  }
 
   protected statusColor(status: string): string {
     switch (status) {

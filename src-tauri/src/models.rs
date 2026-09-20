@@ -36,6 +36,8 @@ pub struct Session {
     pub agent_status: Option<String>,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub mode_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -83,6 +85,20 @@ impl Attachment {
     }
 }
 
+/// A user-supplied context reference inserted from the composer with `@`.
+///
+/// `kind` is one of `file`, `directory`, `website`, `skill` or `mcp`; `value`
+/// is a project-relative path, an absolute URL, a skill name or an MCP server
+/// name respectively. `label` is the text shown to the user.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mention {
+    pub kind: String,
+    pub value: String,
+    #[serde(default)]
+    pub label: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
@@ -109,6 +125,40 @@ pub struct Message {
     pub base_commit: Option<String>,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default)]
+    pub mentions: Vec<Mention>,
+    /// Content resolved from `mentions` (file contents, directory trees, web
+    /// pages, skill instructions). Sent to the model but never displayed.
+    #[serde(default)]
+    pub context: String,
+}
+
+/// A file or folder that can be referenced from the composer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceEntry {
+    pub path: String,
+    pub kind: String,
+}
+
+/// The text content of a file opened from the workspace tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFile {
+    pub path: String,
+    pub content: String,
+    pub language: String,
+}
+
+/// An MCP tool exposed to the agent loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+    pub server: String,
+    pub name: String,
+    pub exposed_name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,12 +215,64 @@ pub struct ProviderInfo {
 #[serde(rename_all = "camelCase")]
 pub struct SpendSummary {
     pub total_cost: f64,
+    pub today_cost: f64,
     pub session_cost: f64,
     pub budget_usd: f64,
     pub remaining_usd: Option<f64>,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub cached_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailySpend {
+    pub date: String,
+    pub cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpend {
+    pub model: String,
+    pub provider: Option<String>,
+    pub cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub messages: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSpend {
+    pub session_id: String,
+    pub title: String,
+    pub project_id: String,
+    pub parent_session_id: Option<String>,
+    pub cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub messages: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpendStats {
+    pub total_cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub messages: i64,
+    pub sessions: i64,
+    pub daily: Vec<DailySpend>,
+    pub by_model: Vec<ModelSpend>,
+    pub by_session: Vec<SessionSpend>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

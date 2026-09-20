@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { Settings } from '../../core/models';
 import { FALLBACK_SETTINGS, SettingsService } from '../../core/settings.service';
 import { ThemeService } from '../../core/theme.service';
+import { CUSTOM_THEME_ID, CustomTheme } from '../../core/themes';
 
 @Injectable()
 export class SettingsDraftService {
@@ -15,6 +16,7 @@ export class SettingsDraftService {
   readonly dirty = signal(false);
   readonly saving = signal(false);
   readonly saved = signal(false);
+  readonly recording = signal(false);
 
   patch<K extends keyof Settings>(key: K, value: Settings[K]): void {
     this.draft.update((draft) => ({ ...draft, [key]: value }));
@@ -25,6 +27,15 @@ export class SettingsDraftService {
   selectTheme(id: string): void {
     this.patch('theme', id);
     this.theme.apply(id);
+  }
+
+  setCustomTheme(patch: Partial<CustomTheme>): void {
+    const customTheme = { ...this.draft().customTheme, ...patch };
+    this.patch('customTheme', customTheme);
+    this.theme.setCustom(customTheme);
+    if (this.draft().theme !== CUSTOM_THEME_ID) {
+      this.selectTheme(CUSTOM_THEME_ID);
+    }
   }
 
   setHighContrast(enabled: boolean): void {

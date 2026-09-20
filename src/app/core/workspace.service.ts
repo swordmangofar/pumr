@@ -20,11 +20,19 @@ import {
   Session,
   SpendSummary,
   UpdateSessionArgs,
+  WorkspaceEntry,
+  WorkspaceFile,
 } from './models';
 import { SettingsService } from './settings.service';
 
 const TABS_KEY = 'pumr.tabs';
 const ACTIVE_KEY = 'pumr.activeTab';
+const OPEN_FILES_KEY = 'pumr.workspace.openFiles';
+
+interface PersistedOpenFiles {
+  files?: string[];
+  active?: string | null;
+}
 
 @Injectable({ providedIn: 'root' })
 export class WorkspaceService {
@@ -43,18 +51,27 @@ export class WorkspaceService {
   private readonly changesState = signal<Record<string, FileChange[]>>({});
   private readonly selectedPathState = signal<Record<string, string | null>>({});
   private readonly diffState = signal<FileDiff | null>(null);
+  private readonly workspaceEntriesState = signal<Record<string, WorkspaceEntry[]>>({});
+  private readonly openFilesState = signal<Record<string, string[]>>({});
+  private readonly activeOpenFileState = signal<Record<string, string | null>>({});
+  private readonly editorContentState = signal<Record<string, WorkspaceFile>>({});
+  private readonly editorDiffState = signal<Record<string, FileDiff>>({});
+  private readonly editorDirtyState = signal<Record<string, boolean>>({});
+  private readonly leftTabState = signal<'projects' | 'workspace'>('projects');
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly gitState = signal<Record<string, GitInfo>>({});
   private readonly processesState = signal<ProcessInfo[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
   private readonly draftState = signal<string | null>(null);
+  private readonly handoverState = signal<Record<string, boolean>>({});
   private readonly scrollTargetState = signal<{ id: string; nonce: number } | null>(null);
   private readonly subAgentsState = signal<Record<string, string[]>>({});
   private readonly viewingState = signal<Record<string, string>>({});
   private readonly showArchivedState = signal(false);
   private scrollNonce = 0;
   private processTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   readonly projects = this.projectsState.asReadonly();
   readonly spend = this.spendState.asReadonly();
@@ -64,7 +81,11 @@ export class WorkspaceService {
   readonly processes = this.processesState.asReadonly();
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
+  readonly editorContent = this.editorContentState.asReadonly();
+  readonly editorDiff = this.editorDiffState.asReadonly();
+  readonly leftTab = this.leftTabState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
+  readonly handovers = this.handoverState.asReadonly();
   readonly scrollTarget = this.scrollTargetState.asReadonly();
   readonly showArchived = this.showArchivedState.asReadonly();
   readonly tabs = computed(() =>
@@ -103,6 +124,18 @@ export class WorkspaceService {
     const project = this.activeProject();
     return project ? (this.gitState()[project.id] ?? null) : null;
   });
+
+  constructor() {
+    const stored = this.readJson<Record<string, PersistedOpenFiles>>(OPEN_FILES_KEY, {});
+    const files: Record<string, string[]> = {};
+    const active: Record<string, string | null> = {};
+    for (const [projectId, entry] of Object.entries(stored)) {
+      files[projectId] = Array.isArray(entry?.files) ? entry.files : [];
+      active[projectId] = entry?.active ?? null;
+    }
+    this.openFilesState.set(files);
+    this.activeOpenFileState.set(active);
+  }
 
   async init(): Promise<void> {
     await this.reloadProjects();
@@ -263,12 +296,57 @@ export class WorkspaceService {
       model: settings?.defaultModel ?? null,
       reasoningEffort: settings?.defaultReasoningEffort ?? 'medium',
       provider: null,
+      modeId: settings?.defaultModeId ?? 'coding',
     });
     this.sessionsState.update((state) => ({ ...state, [session.id]: session }));
     await this.reloadSessions(projectId);
     this.messagesState.update((state) => ({ ...state, [session.id]: [] }));
     this.openTab(session.id);
     return session;
+  }
+
+  isHandover(sessionId: string): boolean {
+    return this.handoverState()[sessionId] ?? false;
+  }
+
+  /**
+   * Summarizes the active session and opens a fresh session with the summary
+   * prefilled in the composer so the work can continue seamlessly.
+   */
+  async handoverActiveSession(): Promise<Session | null> {
+    const session = this.activeSession();
+    if (!session || this.isStreaming(session.id) || this.isHandover(session.id)) {
+      return null;
+    }
+    this.handoverState.update((state) => ({ ...state, [session.id]: true }));
+    this.setError(session.id, null);
+    try {
+      const summary = await api.summarizeSession(session.id);
+      const settings = this.settings.settings();
+      const created = await api.createSession({
+        projectId: session.projectId,
+        title: `Handover: ${session.title}`.slice(0, 60),
+        model: session.model ?? settings?.defaultModel ?? null,
+        reasoningEffort: session.reasoningEffort ?? settings?.defaultReasoningEffort ?? 'medium',
+        provider: session.provider,
+        modeId: session.modeId ?? settings?.defaultModeId ?? 'coding',
+      });
+      this.sessionsState.update((state) => ({ ...state, [created.id]: created }));
+      await this.reloadSessions(session.projectId);
+      this.messagesState.update((state) => ({ ...state, [created.id]: [] }));
+      this.openTab(created.id);
+      this.draftState.set(summary);
+      return created;
+    } catch (error) {
+      this.setError(session.id, String(error));
+      return null;
+    } finally {
+      this.handoverState.update((state) => {
+        const next = { ...state };
+        delete next[session.id];
+        return next;
+      });
+    }
   }
 
   openTab(sessionId: string): void {
@@ -329,6 +407,8 @@ export class WorkspaceService {
       changes: [],
       baseCommit: null,
       attachments: args.attachments ?? [],
+      mentions: args.mentions ?? [],
+      context: '',
     });
     this.setError(args.sessionId, null);
     this.setStreaming(args.sessionId, true);
@@ -470,6 +550,11 @@ export class WorkspaceService {
       await this.loadChanges(args.sessionId);
       await this.loadRules(session.projectId, args.sessionId);
       await this.loadSubAgents(args.sessionId);
+      await this.loadWorkspaceEntries(session.projectId, true);
+      const active = this.activeOpenFileState()[session.projectId];
+      if (active) {
+        void this.loadEditorFile(session.projectId, active);
+      }
     }
   }
 
@@ -507,6 +592,18 @@ export class WorkspaceService {
   async updateSession(args: UpdateSessionArgs): Promise<void> {
     const session = await api.updateSession(args);
     this.upsertSession(session);
+  }
+
+  async changeSessionProject(sessionId: string, projectId: string): Promise<void> {
+    const current = this.sessionsState()[sessionId];
+    if (!current || current.projectId === projectId) {
+      return;
+    }
+    const session = await api.updateSession({ sessionId, projectId });
+    this.upsertSession(session);
+    await this.reloadSessions(current.projectId);
+    await this.reloadSessions(projectId);
+    await this.activateSession(sessionId);
   }
 
   async archiveSession(sessionId: string, archived: boolean): Promise<void> {
@@ -567,6 +664,195 @@ export class WorkspaceService {
 
   clearDiff(): void {
     this.diffState.set(null);
+  }
+
+  workspaceEntriesFor(projectId: string): WorkspaceEntry[] {
+    return this.workspaceEntriesState()[projectId] ?? [];
+  }
+
+  async loadWorkspaceEntries(projectId: string, force = false): Promise<void> {
+    if (!force && this.workspaceEntriesState()[projectId]) {
+      return;
+    }
+    try {
+      const entries = await api.listWorkspaceEntries(projectId);
+      this.workspaceEntriesState.update((state) => ({ ...state, [projectId]: entries }));
+    } catch {
+      // best effort
+    }
+  }
+
+  setLeftTab(tab: 'projects' | 'workspace'): void {
+    this.leftTabState.set(tab);
+  }
+
+  openFilesFor(projectId: string): string[] {
+    return this.openFilesState()[projectId] ?? [];
+  }
+
+  activeFileFor(projectId: string): string | null {
+    return this.activeOpenFileState()[projectId] ?? null;
+  }
+
+  editorKey(projectId: string, path: string): string {
+    return `${projectId}\n${path}`;
+  }
+
+  openWorkspaceFile(path: string): void {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    const files = this.openFilesState()[project.id] ?? [];
+    if (!files.includes(path)) {
+      this.openFilesState.update((state) => ({ ...state, [project.id]: [...files, path] }));
+    }
+    this.setActiveWorkspaceFile(project.id, path);
+  }
+
+  setActiveWorkspaceFile(projectId: string, path: string): void {
+    this.activeOpenFileState.update((state) => ({ ...state, [projectId]: path }));
+    this.persistOpenFiles();
+  }
+
+  closeWorkspaceFile(path: string): void {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    const files = (this.openFilesState()[project.id] ?? []).filter((entry) => entry !== path);
+    this.openFilesState.update((state) => ({ ...state, [project.id]: files }));
+    const key = this.editorKey(project.id, path);
+    const pending = this.editorContentState()[key];
+    if (pending && this.editorDirtyState()[key]) {
+      void api.writeWorkspaceFile(project.id, path, pending.content).catch(() => undefined);
+    }
+    this.clearAutoSave(project.id, path);
+    this.editorContentState.update((state) => {
+      const next = { ...state };
+      delete next[key];
+      return next;
+    });
+    this.clearEditorDiff(key);
+    this.editorDirtyState.update((state) => {
+      const next = { ...state };
+      delete next[key];
+      return next;
+    });
+    if (this.activeOpenFileState()[project.id] === path) {
+      const next = files[files.length - 1] ?? null;
+      this.activeOpenFileState.update((state) => ({ ...state, [project.id]: next }));
+    }
+    this.persistOpenFiles();
+  }
+
+  async loadEditorFile(projectId: string, path: string, force = false): Promise<void> {
+    const key = this.editorKey(projectId, path);
+    if (!force && this.editorDirtyState()[key]) {
+      return;
+    }
+    const session = this.activeSession();
+    const changed = session
+      ? this.changesFor(session.id).some((change) => change.path === path)
+      : false;
+    const [file, diff] = await Promise.all([
+      api.readWorkspaceFile(projectId, path).catch(() => null),
+      changed && session
+        ? api.getFileDiff(session.id, path).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    if (file) {
+      this.editorContentState.update((state) => ({ ...state, [key]: file }));
+      this.editorDirtyState.update((state) => {
+        const next = { ...state };
+        delete next[key];
+        return next;
+      });
+    }
+    if (diff) {
+      this.editorDiffState.update((state) => ({ ...state, [key]: diff }));
+    } else {
+      this.clearEditorDiff(key);
+    }
+  }
+
+  updateEditorContent(projectId: string, path: string, content: string): void {
+    const key = this.editorKey(projectId, path);
+    const file = this.editorContentState()[key];
+    if (!file || file.content === content) {
+      return;
+    }
+    this.editorContentState.update((state) => ({ ...state, [key]: { ...file, content } }));
+    this.editorDirtyState.update((state) => ({ ...state, [key]: true }));
+    this.scheduleAutoSave(projectId, path);
+  }
+
+  isEditorDirty(projectId: string, path: string): boolean {
+    return this.editorDirtyState()[this.editorKey(projectId, path)] ?? false;
+  }
+
+  async saveEditorFile(projectId: string, path: string): Promise<void> {
+    const key = this.editorKey(projectId, path);
+    const file = this.editorContentState()[key];
+    if (!file) {
+      return;
+    }
+    const saved = file.content;
+    try {
+      await api.writeWorkspaceFile(projectId, path, saved);
+    } catch {
+      return;
+    }
+    const current = this.editorContentState()[key];
+    if (current && current.content !== saved) {
+      this.scheduleAutoSave(projectId, path);
+      return;
+    }
+    this.editorDirtyState.update((state) => {
+      const next = { ...state };
+      delete next[key];
+      return next;
+    });
+  }
+
+  async discardEditorFile(projectId: string, path: string): Promise<void> {
+    this.clearAutoSave(projectId, path);
+    await this.loadEditorFile(projectId, path, true);
+  }
+
+  private scheduleAutoSave(projectId: string, path: string): void {
+    const key = this.editorKey(projectId, path);
+    this.clearAutoSave(projectId, path);
+    const timer = setTimeout(() => {
+      this.autoSaveTimers.delete(key);
+      void this.saveEditorFile(projectId, path);
+    }, 500);
+    this.autoSaveTimers.set(key, timer);
+  }
+
+  private clearAutoSave(projectId: string, path: string): void {
+    const key = this.editorKey(projectId, path);
+    const timer = this.autoSaveTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.autoSaveTimers.delete(key);
+    }
+  }
+
+  private clearEditorDiff(key: string): void {
+    this.editorDiffState.update((state) => {
+      const next = { ...state };
+      delete next[key];
+      return next;
+    });
+  }
+
+  private persistOpenFiles(): void {
+    const data: Record<string, PersistedOpenFiles> = {};
+    for (const [projectId, files] of Object.entries(this.openFilesState())) {
+      data[projectId] = { files, active: this.activeOpenFileState()[projectId] ?? null };
+    }
+    localStorage.setItem(OPEN_FILES_KEY, JSON.stringify(data));
   }
 
   async loadRules(projectId: string, sessionId: string | null): Promise<void> {
@@ -640,6 +926,10 @@ export class WorkspaceService {
         this.loadGitInfo(session.projectId),
         this.loadSubAgents(sessionId),
       ]);
+      const active = this.activeOpenFileState()[session.projectId];
+      if (active) {
+        void this.loadEditorFile(session.projectId, active);
+      }
     }
     void this.refreshSpend();
   }

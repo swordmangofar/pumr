@@ -21,7 +21,7 @@ import { WorkspaceService } from '../core/workspace.service';
         @if (open()) {
           <div class="fixed inset-0 z-30" (click)="open.set(false)"></div>
           <div
-            class="absolute right-0 top-full z-40 mt-2 max-h-80 w-[28rem] overflow-y-auto rounded-2xl border border-white/10 bg-navy shadow-2xl"
+            class="absolute right-0 top-full z-40 mt-2 max-h-80 w-[28rem] overflow-y-auto glass-pop rounded-2xl shadow-2xl"
           >
             @for (process of workspace.processes(); track process.id) {
               <div class="border-b border-white/5 px-4 py-3">

@@ -34,13 +34,10 @@ impl ProcessRegistry {
     }
 
     pub fn list(&self) -> Vec<ProcessInfo> {
-        let mut processes: Vec<ProcessInfo> = self
-            .processes
-            .lock()
-            .unwrap()
-            .values()
-            .map(|process| process.to_info())
-            .collect();
+        let mut guard = self.processes.lock().unwrap();
+        guard.retain(|_, process| process.running.load(Ordering::SeqCst));
+        let mut processes: Vec<ProcessInfo> =
+            guard.values().map(|process| process.to_info()).collect();
         processes.sort_by_key(|process| process.started_at);
         processes
     }
@@ -50,8 +47,7 @@ impl ProcessRegistry {
             .processes
             .lock()
             .unwrap()
-            .get(id)
-            .cloned()
+            .remove(id)
             .ok_or_else(|| AppError::msg(format!("Unknown process: {id}")))?;
         if let Some(child) = process.child.lock().unwrap().as_mut() {
             let _ = child.start_kill();

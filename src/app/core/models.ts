@@ -1,3 +1,5 @@
+import { CustomTheme } from './themes';
+
 export interface Project {
   id: string;
   path: string;
@@ -26,6 +28,7 @@ export interface Session {
   parentSessionId: string | null;
   agentStatus: string | null;
   archived: boolean;
+  modeId: string | null;
 }
 
 export interface ToolCallRecord {
@@ -42,6 +45,33 @@ export interface FileChange {
 }
 
 export type AttachmentKind = 'image' | 'text' | 'pdf';
+
+export type MentionKind = 'file' | 'directory' | 'website' | 'skill' | 'mcp';
+
+export interface Mention {
+  kind: MentionKind;
+  value: string;
+  label: string;
+}
+
+export interface WorkspaceEntry {
+  path: string;
+  kind: 'file' | 'directory';
+}
+
+export interface WorkspaceFile {
+  path: string;
+  content: string;
+  language: string;
+}
+
+export interface McpToolInfo {
+  server: string;
+  name: string;
+  exposedName: string;
+  description: string;
+  inputSchema: unknown;
+}
 
 export interface MessageAttachment {
   id: string;
@@ -74,6 +104,8 @@ export interface Message {
   changes: FileChange[];
   baseCommit: string | null;
   attachments: MessageAttachment[];
+  mentions: Mention[];
+  context: string;
 }
 
 export interface ModelInfo {
@@ -122,6 +154,7 @@ export interface ProviderInfo {
 
 export interface SpendSummary {
   totalCost: number;
+  todayCost: number;
   sessionCost: number;
   budgetUsd: number;
   remainingUsd: number | null;
@@ -130,11 +163,68 @@ export interface SpendSummary {
   cachedTokens: number;
 }
 
+export interface DailySpend {
+  date: string;
+  cost: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+}
+
+export interface ModelSpend {
+  model: string;
+  provider: string | null;
+  cost: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  messages: number;
+}
+
+export interface SessionSpend {
+  sessionId: string;
+  title: string;
+  projectId: string;
+  parentSessionId: string | null;
+  cost: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  messages: number;
+  updatedAt: number;
+}
+
+export interface SpendStats {
+  totalCost: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  messages: number;
+  sessions: number;
+  daily: DailySpend[];
+  byModel: ModelSpend[];
+  bySession: SessionSpend[];
+}
+
 export interface UserSystemPrompt {
   id: string;
   name: string;
   prompt: string;
   enabled: boolean;
+}
+
+export interface Mode {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  userPromptIds: string[];
+  mcpServers: string[];
+  skills: string[];
+  includeGlobalPrompts: boolean;
+  includeProjectRules: boolean;
+  planOnly: boolean;
+  builtin: boolean;
 }
 
 export interface Settings {
@@ -146,13 +236,18 @@ export interface Settings {
   architectureSystemPromptEnabled: boolean;
   architectureSystemPrompt: string;
   userSystemPrompts: UserSystemPrompt[];
+  modes: Mode[];
+  defaultModeId: string;
   budgetUsd: number;
   language: string;
+  replyLanguage: string | null;
   theme: string;
+  customTheme: CustomTheme;
   highContrast: boolean;
   extraFolders: string[];
   openrouterBaseUrl: string;
   defaultModel: string | null;
+  handoverModel: string | null;
   defaultReasoningEffort: string | null;
   favoriteModels: string[];
   contextMessageLimit: number;
@@ -167,6 +262,8 @@ export interface Settings {
   skillsDisabled: string[];
   keepAwake: boolean;
   tabsMultiline: boolean;
+  openTabHotkey: string;
+  closeTabHotkey: string;
 }
 
 export interface DefaultSystemPrompts {
@@ -329,6 +426,7 @@ export interface CreateSessionArgs {
   reasoningEffort?: string | null;
   provider?: string | null;
   systemPrompt?: string | null;
+  modeId?: string | null;
 }
 
 export interface UpdateSessionArgs {
@@ -338,6 +436,8 @@ export interface UpdateSessionArgs {
   reasoningEffort?: string | null;
   provider?: string | null;
   systemPrompt?: string | null;
+  modeId?: string | null;
+  projectId?: string | null;
 }
 
 export interface SendMessageArgs {
@@ -347,4 +447,5 @@ export interface SendMessageArgs {
   reasoningEffort?: string | null;
   provider?: string | null;
   attachments?: MessageAttachment[];
+  mentions?: Mention[];
 }

@@ -2,6 +2,7 @@ use crate::broker::{PermissionBroker, QuestionBroker};
 use crate::db::{Db, NewMessage};
 use crate::error::Result;
 use crate::git::ShadowRepo;
+use crate::mcp::McpManager;
 use crate::models::{
     Attachment, EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord,
 };
@@ -39,6 +40,8 @@ pub struct TurnRequest {
     pub context_message_limit: usize,
     pub fallback_pricing: Option<(f64, f64)>,
     pub base_commit: String,
+    /// Planning modes disable the write/edit tools so the agent can only plan.
+    pub plan_only: bool,
     pub cancel: CancellationToken,
 }
 
@@ -52,6 +55,7 @@ pub struct TurnDeps {
     pub permissions: Arc<LivePermissions>,
     pub client: OpenRouterClient,
     pub http: reqwest::Client,
+    pub mcp: Arc<McpManager>,
 }
 
 pub struct TurnResult {
@@ -78,6 +82,15 @@ pub async fn run_turn(
     };
 
     let mut tool_schemas = tools::tool_schemas();
+    tool_schemas.extend(deps.mcp.schemas());
+    if request.plan_only {
+        tool_schemas.retain(|schema| {
+            !matches!(
+                schema.pointer("/function/name").and_then(Value::as_str),
+                Some("write") | Some("edit")
+            )
+        });
+    }
     if request.depth >= MAX_SUBAGENT_DEPTH {
         tool_schemas.retain(|schema| {
             !matches!(
@@ -377,7 +390,7 @@ fn run_subagent<'a>(
         };
         if let Err(error) = deps.db.append_message(
             &child.id,
-            NewMessage::user(&prompt, Some(&base_commit), &[]),
+            NewMessage::user(&prompt, "", Some(&base_commit), &[], &[]),
         ) {
             let _ = deps.db.set_agent_status(&child.id, "error");
             emit_status(&sink, &child.id, "error");
@@ -401,6 +414,7 @@ fn run_subagent<'a>(
             context_message_limit: request.context_message_limit,
             fallback_pricing: request.fallback_pricing,
             base_commit,
+            plan_only: request.plan_only,
             cancel: request.cancel.clone(),
         };
 
@@ -490,7 +504,9 @@ fn build_history(deps: &TurnDeps, request: &TurnRequest) -> Result<Vec<ChatMessa
     for message in messages {
         match message.role.as_str() {
             "user" => {
-                if let Some(content) = user_content(&message.content, &message.attachments) {
+                if let Some(content) =
+                    user_content(&message.content, &message.attachments, &message.context)
+                {
                     history.push(ChatMessage::parts("user", content));
                 }
             }
@@ -529,11 +545,17 @@ fn build_history(deps: &TurnDeps, request: &TurnRequest) -> Result<Vec<ChatMessa
     Ok(sanitize(history))
 }
 
-fn user_content(text: &str, attachments: &[Attachment]) -> Option<Value> {
-    if attachments.is_empty() {
+fn user_content(text: &str, attachments: &[Attachment], context: &str) -> Option<Value> {
+    if attachments.is_empty() && context.trim().is_empty() {
         return (!text.is_empty()).then(|| Value::String(text.to_string()));
     }
     let mut parts: Vec<Value> = Vec::new();
+    if !context.trim().is_empty() {
+        parts.push(json!({
+            "type": "text",
+            "text": format!("# Referenced context\n\n{context}")
+        }));
+    }
     if !text.is_empty() {
         parts.push(json!({ "type": "text", "text": text }));
     }
@@ -647,6 +669,7 @@ async fn execute_call(
         questions: deps.questions.clone(),
         permissions: deps.permissions.clone(),
         http: deps.http.clone(),
+        mcp: Some(deps.mcp.clone()),
         cancel: request.cancel.clone(),
         emit: sink.clone(),
     };
@@ -704,6 +727,7 @@ fn summarize(request: &TurnRequest, name: &str, arguments: &str) -> String {
             })
             .unwrap_or("")
             .to_string(),
+        other if other.starts_with("mcp__") => other.to_string(),
         _ => arguments.chars().take(120).collect(),
     }
 }

@@ -1,3 +1,4 @@
+use crate::mcp::McpServerConfig;
 use crate::models::{McpCandidate, SkillCandidate};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -254,6 +255,228 @@ fn skill_names(directory: &Path) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+/// Finds every enabled MCP config file and parses concrete server definitions
+/// (command line or URL) so the MCP client can connect to them.
+pub fn discover_mcp_servers(
+    folders: &[String],
+    disabled: &[String],
+    auto: bool,
+) -> Vec<McpServerConfig> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if auto {
+        for (path, _) in standard_mcp_paths() {
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+    }
+    for folder in folders {
+        for path in scan_for_mcp_files(Path::new(folder)) {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    let mut configs: Vec<McpServerConfig> = Vec::new();
+    for path in paths {
+        let key = path.to_string_lossy().to_string();
+        if disabled.iter().any(|entry| entry == &key) {
+            continue;
+        }
+        configs.extend(parse_server_configs(&path));
+    }
+    configs
+}
+
+fn parse_server_configs(path: &Path) -> Vec<McpServerConfig> {
+    let source = path.to_string_lossy().to_string();
+    if source.ends_with(".toml") {
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+            return Vec::new();
+        };
+        let mut configs = Vec::new();
+        for key in ["mcp_servers", "mcpServers", "mcp", "servers"] {
+            if let Some(table) = value.get(key).and_then(toml::Value::as_table) {
+                for (name, entry) in table {
+                    configs.push(toml_config(name, entry, &source));
+                }
+            }
+        }
+        return configs;
+    }
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return Vec::new();
+    };
+    let mut configs = Vec::new();
+    for key in ["mcpServers", "mcp_servers", "mcp", "servers"] {
+        if let Some(object) = value.get(key).and_then(Value::as_object) {
+            for (name, entry) in object {
+                if let Some(config) = json_config(name, entry, &source) {
+                    configs.push(config);
+                }
+            }
+        }
+    }
+    configs
+}
+
+fn json_config(name: &str, entry: &Value, source: &str) -> Option<McpServerConfig> {
+    let object = entry.as_object()?;
+    let mut command = object
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut args: Vec<String> = object
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    // opencode uses `"command": ["npx", "-y", "..."]`.
+    if command.is_none() {
+        if let Some(parts) = object.get("command").and_then(Value::as_array) {
+            let mut parts = parts.iter().filter_map(Value::as_str);
+            command = parts.next().map(str::to_string);
+            args = parts.map(str::to_string).collect();
+        }
+    }
+    let config = McpServerConfig {
+        name: name.to_string(),
+        command,
+        args,
+        env: json_env(object),
+        url: object
+            .get("url")
+            .or_else(|| object.get("serverUrl"))
+            .or_else(|| object.get("httpUrl"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        source: source.to_string(),
+    };
+    if config.command.is_none() && config.url.is_none() {
+        return None;
+    }
+    Some(config)
+}
+
+fn json_env(object: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
+    for key in ["env", "environment"] {
+        if let Some(env) = object.get(key).and_then(Value::as_object) {
+            return env
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_string()))
+                })
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn toml_config(name: &str, entry: &toml::Value, source: &str) -> McpServerConfig {
+    let mut command = entry
+        .get("command")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    let mut args: Vec<String> = entry
+        .get("args")
+        .and_then(toml::Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if command.is_none() {
+        if let Some(parts) = entry.get("command").and_then(toml::Value::as_array) {
+            let mut parts = parts.iter().filter_map(toml::Value::as_str);
+            command = parts.next().map(str::to_string);
+            args = parts.map(str::to_string).collect();
+        }
+    }
+    let env = entry
+        .get("env")
+        .or_else(|| entry.get("environment"))
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    McpServerConfig {
+        name: name.to_string(),
+        command,
+        args,
+        env,
+        url: entry
+            .get("url")
+            .or_else(|| entry.get("serverUrl"))
+            .and_then(toml::Value::as_str)
+            .map(str::to_string),
+        source: source.to_string(),
+    }
+}
+
+/// Locates the directory that holds the `SKILL.md` for a named skill, across
+/// the standard locations and the user's custom folders.
+pub fn find_skill_dir(
+    name: &str,
+    folders: &[String],
+    disabled: &[String],
+    auto: bool,
+) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if auto {
+        for (path, _) in standard_skill_dirs() {
+            if path.is_dir() {
+                roots.push(path);
+            }
+        }
+    }
+    for folder in folders {
+        let path = PathBuf::from(folder);
+        if path.is_dir() {
+            roots.push(path);
+        }
+    }
+    for root in roots {
+        if disabled
+            .iter()
+            .any(|entry| entry == &root.to_string_lossy())
+        {
+            continue;
+        }
+        // The root itself may be the skill directory.
+        if root.file_name().map(|value| value == name).unwrap_or(false)
+            && root.join("SKILL.md").is_file()
+        {
+            return Some(root);
+        }
+        let candidate = root.join(name);
+        if candidate.join("SKILL.md").is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

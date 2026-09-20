@@ -20,7 +20,7 @@ import { ToolStatus } from './tool-status';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [TranslocoPipe, ToolStatus],
   template: `
-    <div class="my-3 overflow-hidden rounded-xl border border-white/10 bg-navy/30">
+    <div class="my-3 overflow-hidden glass-inset rounded-xl">
       <button
         type="button"
         class="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
@@ -40,7 +40,7 @@ import { ToolStatus } from './tool-status';
       </button>
 
       @if (changes().length > 0) {
-        <div class="flex flex-wrap gap-1.5 border-t border-white/10 px-4 py-2">
+        <div class="flex flex-wrap gap-1.5 border-t border-white/5 px-4 py-2">
           @for (change of changes(); track change.path) {
             <button
               type="button"
@@ -61,7 +61,7 @@ import { ToolStatus } from './tool-status';
 
       @if (expanded()) {
         @if (highlighted()) {
-          <div class="border-t border-white/10 bg-ink/60 px-4 py-3">
+          <div class="border-t border-white/5 bg-ink/60 px-4 py-3">
             <div class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-mist/30">
               {{ 'tools.command' | transloco }}
             </div>
@@ -71,7 +71,7 @@ import { ToolStatus } from './tool-status';
             ></pre>
           </div>
         }
-        <div class="border-t border-white/10 px-4 py-3">
+        <div class="border-t border-white/5 px-4 py-3">
           <div class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-mist/30">
             {{ 'tools.output' | transloco }}
           </div>

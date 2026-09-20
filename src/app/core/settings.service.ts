@@ -1,9 +1,10 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
 import { OPENROUTER_PROVIDER, api } from './api';
-import { DefaultSystemPrompts, Settings, UserSystemPrompt } from './models';
+import { defaultCloseTabHotkey, defaultOpenTabHotkey } from './hotkeys';
+import { DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
 import { ThemeService } from './theme.service';
-import { DEFAULT_THEME_ID } from './themes';
+import { DEFAULT_THEME_ID, DEFAULT_CUSTOM_THEME } from './themes';
 
 export const FALLBACK_SETTINGS: Settings = {
   defaultSystemPrompt: '',
@@ -14,13 +15,18 @@ export const FALLBACK_SETTINGS: Settings = {
   architectureSystemPromptEnabled: false,
   architectureSystemPrompt: '',
   userSystemPrompts: [],
+  modes: [],
+  defaultModeId: 'coding',
   budgetUsd: 0,
   language: 'en',
+  replyLanguage: null,
   theme: DEFAULT_THEME_ID,
+  customTheme: { ...DEFAULT_CUSTOM_THEME },
   highContrast: false,
   extraFolders: [],
   openrouterBaseUrl: 'https://openrouter.ai/api/v1',
   defaultModel: null,
+  handoverModel: null,
   defaultReasoningEffort: 'medium',
   favoriteModels: [],
   contextMessageLimit: 40,
@@ -35,6 +41,8 @@ export const FALLBACK_SETTINGS: Settings = {
   skillsDisabled: [],
   keepAwake: true,
   tabsMultiline: true,
+  openTabHotkey: defaultOpenTabHotkey(),
+  closeTabHotkey: defaultCloseTabHotkey(),
 };
 
 @Injectable({ providedIn: 'root' })
@@ -60,6 +68,8 @@ export class SettingsService {
     userSystemPrompts: [],
   });
   readonly originalUserSystemPrompts = signal<UserSystemPrompt[]>([]);
+  readonly originalModes = signal<Mode[]>([]);
+  readonly modes = computed(() => this.state()?.modes ?? []);
   readonly dialogOpen = signal(false);
   readonly focusSection = signal<string | null>(null);
   readonly focusAnchor = signal<string | null>(null);
@@ -71,8 +81,12 @@ export class SettingsService {
   }
 
   close(): void {
-    this.theme.apply(this.state()?.theme);
-    this.theme.applyContrast(this.state()?.highContrast ?? false);
+    const settings = this.state();
+    if (settings) {
+      this.theme.setCustom(settings.customTheme);
+    }
+    this.theme.apply(settings?.theme);
+    this.theme.applyContrast(settings?.highContrast ?? false);
     this.dialogOpen.set(false);
     this.focusSection.set(null);
     this.focusAnchor.set(null);
@@ -82,12 +96,14 @@ export class SettingsService {
     try {
       const settings = await api.getSettings();
       this.state.set(settings);
+      this.theme.setCustom(settings.customTheme);
       this.theme.apply(settings.theme);
       this.theme.applyContrast(settings.highContrast);
       try {
         const defaults = await api.getDefaultSystemPrompts();
         this.originalSystemPrompts.set(defaults);
         this.originalUserSystemPrompts.set(defaults.userSystemPrompts);
+        this.originalModes.set(await api.getDefaultModes());
       } catch {
         this.originalSystemPrompts.set({
           defaultSystemPrompt: settings.defaultSystemPrompt,
@@ -110,6 +126,7 @@ export class SettingsService {
   async save(settings: Settings): Promise<Settings> {
     const saved = await api.saveSettings(settings);
     this.state.set(saved);
+    this.theme.setCustom(saved.customTheme);
     this.theme.apply(saved.theme);
     this.theme.applyContrast(saved.highContrast);
     this.transloco.setActiveLang(saved.language || 'en');

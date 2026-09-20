@@ -2,8 +2,8 @@
 
 @theme {
   --color-ink: #000000;
-  --color-navy: #14213d;
-  --color-accent: #fca311;
+  --color-navy: #1e293b;
+  --color-accent: #f59e0b;
   --color-mist: #e5e5e5;
 }
 
@@ -15,13 +15,6 @@ html,
 body {
   height: 100%;
   margin: 0;
-  background-color: var(--color-ink);
-  background-image: radial-gradient(
-    70rem 32rem at 50% -12rem,
-    color-mix(in oklab, var(--color-navy) 55%, transparent),
-    transparent 70%
-  );
-  background-attachment: fixed;
   color: var(--color-mist);
   font-family:
     ui-sans-serif,
@@ -33,6 +26,30 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* The gradient lives on <html> so it becomes the canvas background. That keeps
+   <body> free of a background box, which would otherwise paint over the glass
+   blur layers (they sit at z-index:-1 inside the panels). */
+html {
+  background-color: var(--color-ink);
+  background-image:
+    radial-gradient(
+      55rem 34rem at 6% -12%,
+      color-mix(in oklab, var(--color-navy) 80%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      46rem 30rem at 98% 2%,
+      color-mix(in oklab, var(--color-accent) 16%, transparent),
+      transparent 58%
+    ),
+    radial-gradient(
+      72rem 42rem at 52% 122%,
+      color-mix(in oklab, var(--color-navy) 62%, transparent),
+      transparent 68%
+    );
+  background-attachment: fixed;
+}
+
 ::selection {
   background-color: var(--color-accent);
   color: var(--color-ink);
@@ -41,6 +58,14 @@ body {
 :focus-visible {
   outline: 2px solid color-mix(in oklab, var(--color-accent) 70%, transparent);
   outline-offset: 2px;
+}
+
+/* Form fields draw their own focus ring (see .field below). The global outline
+   above is unlayered, so it would otherwise win over Tailwind's `outline-none`
+   utility and paint a second, offset ring around the field border. */
+.field:focus-visible,
+.field-flush:focus-visible {
+  outline: none;
 }
 
 /* Light themes: raise the effective opacity of muted text and borders so they
@@ -149,8 +174,172 @@ body {
   background: transparent;
 }
 
+/* Scroll regions that should not show a scrollbar (e.g. the tab strip in the
+   header) while still remaining scrollable. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 textarea {
   field-sizing: content;
+}
+
+/* Floating glass surfaces replace hard divider lines between regions. The blur
+   lives on a ::before layer so the panels never take a backdrop-filter of their
+   own, which would otherwise become the containing block for their fixed
+   fullscreen overlays (diff expand, revert dialog). */
+@layer components {
+  .glass {
+    position: relative;
+    background-color: color-mix(in oklab, var(--color-white) 6%, transparent);
+    background-image: linear-gradient(
+      150deg,
+      color-mix(in oklab, var(--color-white) 8%, transparent),
+      transparent 45%
+    );
+    border: 1px solid color-mix(in oklab, var(--color-white) 13%, transparent);
+    box-shadow:
+      inset 0 1px 0 color-mix(in oklab, var(--color-white) 10%, transparent),
+      inset 0 0 0 1px color-mix(in oklab, var(--color-white) 3%, transparent),
+      0 30px 60px -34px rgb(0 0 0 / 0.85);
+  }
+
+  .glass::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    -webkit-backdrop-filter: blur(30px) saturate(1.7);
+    backdrop-filter: blur(30px) saturate(1.7);
+  }
+
+  .glass-inset {
+    background-color: color-mix(in oklab, var(--color-white) 5%, transparent);
+    background-image: linear-gradient(
+      150deg,
+      color-mix(in oklab, var(--color-white) 7%, transparent),
+      transparent 55%
+    );
+    border: 1px solid color-mix(in oklab, var(--color-white) 9%, transparent);
+  }
+
+  .glass-pop {
+    background-color: color-mix(in oklab, var(--color-navy) 72%, transparent);
+    background-image: linear-gradient(
+      160deg,
+      color-mix(in oklab, var(--color-white) 9%, transparent),
+      transparent 52%
+    );
+    border: 1px solid color-mix(in oklab, var(--color-white) 17%, transparent);
+    box-shadow: 0 30px 70px -22px rgb(0 0 0 / 0.85);
+    -webkit-backdrop-filter: blur(32px) saturate(1.6);
+    backdrop-filter: blur(32px) saturate(1.6);
+  }
+
+  /* Shared look for text inputs, textareas and selects. Keeps a consistent,
+     theme-aware border and a soft accent focus ring instead of the OS default
+     chrome. Sizing utilities (rounded-*, px-*, py-*) still win, so callers
+     only need to add the spacing they want. */
+  .field {
+    background-color: color-mix(in oklab, var(--color-white) 4%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-white) 12%, transparent);
+    color: var(--color-mist);
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .field::placeholder {
+    color: color-mix(in oklab, var(--color-mist) 38%, transparent);
+  }
+
+  .field:hover:not(:focus) {
+    border-color: color-mix(in oklab, var(--color-white) 22%, transparent);
+  }
+
+  .field:focus {
+    outline: none;
+    border-color: color-mix(in oklab, var(--color-accent) 60%, transparent);
+    background-color: color-mix(in oklab, var(--color-ink) 55%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent);
+  }
+
+  /* Custom chevron so the select matches the theme instead of the native
+     macOS control. Padding for the glyph is added by the caller via `pr-*`. */
+  .field-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5 10 12.5 15 7.5' stroke='%23cbd5e1' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 0.7rem;
+    cursor: pointer;
+  }
+
+  .field-select option,
+  .field-select optgroup {
+    background-color: var(--color-ink);
+    color: var(--color-mist);
+  }
+
+  /* Borderless variant for search fields embedded in popovers. */
+  .field-flush {
+    background-color: transparent;
+    border: 0;
+    border-bottom: 1px solid color-mix(in oklab, var(--color-white) 10%, transparent);
+    color: var(--color-white);
+    transition: border-color 0.15s ease;
+  }
+
+  .field-flush::placeholder {
+    color: color-mix(in oklab, var(--color-mist) 38%, transparent);
+  }
+
+  .field-flush:focus {
+    outline: none;
+    border-bottom-color: color-mix(in oklab, var(--color-accent) 60%, transparent);
+  }
+}
+
+[data-scheme='light'] .glass {
+  border-color: color-mix(in oklab, var(--color-white) 15%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-white) 9%, transparent),
+    0 30px 60px -38px rgb(15 23 42 / 0.3);
+}
+
+[data-scheme='light'] .glass-inset {
+  border-color: color-mix(in oklab, var(--color-white) 11%, transparent);
+}
+
+[data-scheme='light'] .glass-pop {
+  background-color: color-mix(in oklab, var(--color-navy) 84%, transparent);
+  border-color: color-mix(in oklab, var(--color-white) 15%, transparent);
+}
+
+[data-scheme='light'] .field-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5 10 12.5 15 7.5' stroke='%23475569' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-contrast='high'] .glass {
+  background-color: color-mix(in oklab, var(--color-white) 10%, transparent);
+  border-color: color-mix(in oklab, var(--color-white) 30%, transparent);
+}
+
+[data-contrast='high'] .glass-inset {
+  background-color: color-mix(in oklab, var(--color-white) 8%, transparent);
+  border-color: color-mix(in oklab, var(--color-white) 22%, transparent);
+}
+
+[data-contrast='high'] .glass-pop {
+  background-color: color-mix(in oklab, var(--color-navy) 88%, transparent);
+  border-color: color-mix(in oklab, var(--color-white) 36%, transparent);
 }
 
 .puma-sprite {

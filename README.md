@@ -75,6 +75,19 @@ Tool calls and their output stream into the chat as collapsible cards; file-modi
   `~/.pumr/AGENTS.md`), project root, then nested files for directories touched in the session.
   The right panel shows every rule that applies and where it came from.
 
+### Context mentions
+
+Type `@` in the composer to add context to your next message:
+
+- `@file` inlines a file's contents, `@directory` inlines a folder listing, and `@website` fetches
+  a page (the usual website allow/deny rules apply).
+- `@skill` loads a detected skill's `SKILL.md` instructions into the message.
+- `@mcp` connects a discovered MCP server for that message and exposes its tools to the agent.
+  Local `stdio` servers and remote streamable-HTTP servers are supported.
+
+Mentions are sent as structured data alongside the message; resolved context is stored on the
+message so later turns see the same content without refetching.
+
 ## Settings
 
 Settings is split into six categories:
@@ -92,7 +105,8 @@ Settings is split into six categories:
   and TOML configs.
 - **Workspace** — folders the assistant may access without asking (file explorer picker).
 
-Discovery results are previews: connecting MCP servers and loading skills into chats is Phase 3.
+Reference detected skills and MCP servers from the composer with `@skill` and `@mcp` to load
+their instructions or connect their tools.
 
 ## Architecture
 
@@ -124,7 +138,8 @@ Design decisions:
 
 ## Roadmap
 
-- **Phase 3 — context & integrations:** smart project context + memories, skills, MCP servers,
-  opencode agent import, `@file` / `@directory` / `@skill` mentions, file & image attachments.
+- **Phase 3 — context & integrations:** smart project context + memories, opencode agent import,
+  file & image attachments. (`@file` / `@directory` / `@website` / `@skill` / `@mcp` mentions and
+  the MCP client are implemented.)
 - **Phase 4 — polish:** additional providers (Anthropic, OpenAI, OAuth), context-window
   management, packaging/signing.

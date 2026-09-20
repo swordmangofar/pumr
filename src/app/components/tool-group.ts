@@ -18,7 +18,7 @@ export interface ToolGroupItem {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [TranslocoPipe, ToolStatus],
   template: `
-    <div class="my-3 overflow-hidden rounded-xl border border-white/10 bg-navy/30">
+    <div class="my-3 overflow-hidden glass-inset rounded-xl">
       <div class="flex items-center gap-3 px-4 py-2.5">
         <span class="text-xs font-semibold uppercase tracking-wider text-emerald-400">{{
           name()
@@ -27,7 +27,7 @@ export interface ToolGroupItem {
           {{ items().length }} {{ 'tools.files' | transloco }}
         </span>
       </div>
-      <div class="border-t border-white/10">
+      <div class="border-t border-white/5">
         @for (item of items(); track item.key) {
           <div class="border-b border-white/5 last:border-b-0">
             <div class="flex items-center gap-3 px-4 py-2 transition-colors hover:bg-white/5">
@@ -55,7 +55,7 @@ export interface ToolGroupItem {
             </div>
             @if (expanded().has(item.key)) {
               <pre
-                class="max-h-72 overflow-y-auto border-t border-white/10 bg-ink/60 px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
+                class="max-h-72 overflow-y-auto border-t border-white/5 bg-ink/60 px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
                 >{{ item.output || ('common.loading' | transloco) }}</pre>
             }
           </div>

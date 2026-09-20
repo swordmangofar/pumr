@@ -3,7 +3,9 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { SettingsService } from '../../core/settings.service';
 import { AgentSettings } from './agent-settings';
 import { GeneralSettings } from './general-settings';
+import { HotkeysSettings } from './hotkeys-settings';
 import { McpSettings } from './mcp-settings';
+import { AgentRulesSettings } from './agent-rules-settings';
 import { ProvidersSettings } from './providers-settings';
 import { SettingsDraftService } from './settings-draft.service';
 import { SkillsSettings } from './skills-settings';
@@ -17,7 +19,9 @@ interface Category {
 const CATEGORIES: Category[] = [
   { id: 'providers', label: 'settings.categories.providers' },
   { id: 'agent', label: 'settings.categories.agent' },
+  { id: 'agentRules', label: 'settings.categories.agentRules' },
   { id: 'general', label: 'settings.categories.general' },
+  { id: 'hotkeys', label: 'settings.categories.hotkeys' },
   { id: 'skills', label: 'settings.categories.skills' },
   { id: 'mcp', label: 'settings.categories.mcp' },
   { id: 'workspace', label: 'settings.categories.workspace' },
@@ -31,13 +35,15 @@ const CATEGORIES: Category[] = [
     TranslocoPipe,
     ProvidersSettings,
     AgentSettings,
+    AgentRulesSettings,
     GeneralSettings,
     SkillsSettings,
     McpSettings,
     WorkspaceSettings,
+    HotkeysSettings,
   ],
   host: {
-    '(document:keydown.escape)': 'close()',
+    '(document:keydown.escape)': 'onEscape()',
   },
   template: `
     <div
@@ -45,11 +51,11 @@ const CATEGORIES: Category[] = [
       (click)="close()"
     >
       <div
-        class="flex h-[82vh] w-[72rem] max-w-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-navy shadow-2xl"
+        class="flex h-[82vh] w-[72rem] max-w-full flex-col overflow-hidden glass-pop rounded-2xl shadow-2xl"
         (click)="$event.stopPropagation()"
       >
         <header
-          class="flex shrink-0 items-center justify-between border-b border-white/10 px-6 py-4"
+          class="flex shrink-0 items-center justify-between border-b border-white/5 px-6 py-4"
         >
           <h2 class="text-base font-semibold text-white">{{ 'settings.title' | transloco }}</h2>
           <button
@@ -62,7 +68,7 @@ const CATEGORIES: Category[] = [
         </header>
 
         <div class="flex min-h-0 flex-1">
-          <nav class="w-60 shrink-0 border-r border-white/10 p-3">
+          <nav class="w-60 shrink-0 border-r border-white/5 p-3">
             @for (category of categories; track category.id) {
               <button
                 type="button"
@@ -87,8 +93,14 @@ const CATEGORIES: Category[] = [
               @case ('agent') {
                 <app-agent-settings />
               }
+              @case ('agentRules') {
+                <app-agent-rules-settings />
+              }
               @case ('general') {
                 <app-general-settings />
+              }
+              @case ('hotkeys') {
+                <app-hotkeys-settings />
               }
               @case ('skills') {
                 <app-skills-settings />
@@ -104,7 +116,7 @@ const CATEGORIES: Category[] = [
         </div>
 
         <footer
-          class="flex shrink-0 items-center justify-between border-t border-white/10 px-6 py-4"
+          class="flex shrink-0 items-center justify-between border-t border-white/5 px-6 py-4"
         >
           <span class="text-xs">
             @if (draft.saved()) {
@@ -150,5 +162,12 @@ export class SettingsDialog {
 
   protected close(): void {
     this.closed.emit();
+  }
+
+  protected onEscape(): void {
+    if (this.draft.recording()) {
+      return;
+    }
+    this.close();
   }
 }
