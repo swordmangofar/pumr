@@ -3,6 +3,9 @@ name: Installers
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
+      - main
     tags:
       - 'v*'
 
