@@ -8,6 +8,9 @@ export interface Project {
   lastOpenedAt: number;
   sessionCount: number;
   totalCost: number;
+  color: string | null;
+  icon: string | null;
+  iconImage: string | null;
 }
 
 export interface Session {
@@ -264,6 +267,19 @@ export interface Settings {
   tabsMultiline: boolean;
   openTabHotkey: string;
   closeTabHotkey: string;
+  soundsEnabled: boolean;
+  soundVolume: number;
+  doneSound: string;
+  permissionSound: string;
+  errorSound: string;
+  doneSoundPath: string;
+  permissionSoundPath: string;
+  errorSoundPath: string;
+  background: string;
+  backgroundImage: string;
+  backgroundOpacity: number;
+  backgroundBlur: number;
+  glassOpacity: number;
 }
 
 export interface DefaultSystemPrompts {

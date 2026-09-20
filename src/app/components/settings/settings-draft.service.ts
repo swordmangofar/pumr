@@ -1,6 +1,9 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Settings } from '../../core/models';
+import { BackgroundService } from '../../core/background.service';
+import { BACKGROUND_CUSTOM, BACKGROUND_NONE } from '../../core/backgrounds';
 import { FALLBACK_SETTINGS, SettingsService } from '../../core/settings.service';
+import { SOUND_PATH_KEYS, SOUND_SELECTION_KEYS, SoundKind } from '../../core/sound.service';
 import { ThemeService } from '../../core/theme.service';
 import { CUSTOM_THEME_ID, CustomTheme } from '../../core/themes';
 
@@ -8,6 +11,7 @@ import { CUSTOM_THEME_ID, CustomTheme } from '../../core/themes';
 export class SettingsDraftService {
   private readonly settingsService = inject(SettingsService);
   private readonly theme = inject(ThemeService);
+  private readonly background = inject(BackgroundService);
 
   readonly draft = signal<Settings>({
     ...FALLBACK_SETTINGS,
@@ -41,6 +45,40 @@ export class SettingsDraftService {
   setHighContrast(enabled: boolean): void {
     this.patch('highContrast', enabled);
     this.theme.applyContrast(enabled);
+  }
+
+  setSoundSelection(kind: SoundKind, selection: string): void {
+    this.patch(SOUND_SELECTION_KEYS[kind], selection);
+  }
+
+  setSoundPath(kind: SoundKind, path: string): void {
+    this.patch(SOUND_PATH_KEYS[kind], path);
+  }
+
+  selectBackground(id: string): void {
+    this.patch('background', id);
+    this.background.apply(this.draft());
+  }
+
+  setBackgroundImage(path: string): void {
+    this.patch('backgroundImage', path);
+    this.patch('background', path ? BACKGROUND_CUSTOM : BACKGROUND_NONE);
+    this.background.apply(this.draft());
+  }
+
+  setBackgroundOpacity(value: number): void {
+    this.patch('backgroundOpacity', value);
+    this.background.apply(this.draft());
+  }
+
+  setBackgroundBlur(value: number): void {
+    this.patch('backgroundBlur', value);
+    this.background.apply(this.draft());
+  }
+
+  setGlassOpacity(value: number): void {
+    this.patch('glassOpacity', value);
+    this.theme.applyGlassOpacity(value);
   }
 
   async save(): Promise<void> {

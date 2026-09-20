@@ -49,6 +49,12 @@ export const api = {
   listProjects: () => invoke<Project[]>('list_projects'),
   addProject: (path: string) => invoke<Project>('add_project', { path }),
   removeProject: (projectId: string) => invoke<void>('remove_project', { projectId }),
+  updateProject: (args: {
+    projectId: string;
+    color: string | null;
+    icon: string | null;
+    iconImage: string | null;
+  }) => invoke<Project>('update_project', { ...args }),
   listSessions: (projectId: string, includeArchived = false) =>
     invoke<Session[]>('list_sessions', { projectId, includeArchived }),
   listSubSessions: (sessionId: string) => invoke<Session[]>('list_sub_sessions', { sessionId }),

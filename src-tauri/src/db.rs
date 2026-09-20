@@ -147,7 +147,10 @@ impl Db {
                 path TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
-                last_opened_at INTEGER NOT NULL
+                last_opened_at INTEGER NOT NULL,
+                color TEXT,
+                icon TEXT,
+                icon_image TEXT
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
@@ -208,6 +211,9 @@ impl Db {
         ] {
             add_column_if_missing(&conn, "sessions", column, definition)?;
         }
+        for (column, definition) in [("color", "TEXT"), ("icon", "TEXT"), ("icon_image", "TEXT")] {
+            add_column_if_missing(&conn, "projects", column, definition)?;
+        }
         // A run that was interrupted by an app restart can never resume.
         conn.execute(
             "UPDATE sessions SET agent_status = 'stopped' WHERE agent_status = 'running'",
@@ -230,7 +236,7 @@ impl Db {
         self.with_conn(|conn| {
             if let Some(existing) = conn
                 .query_row(
-                    "SELECT id, path, name, created_at, last_opened_at FROM projects WHERE path = ?1",
+                    "SELECT id, path, name, created_at, last_opened_at, color, icon, icon_image FROM projects WHERE path = ?1",
                     params![path],
                     map_project_base,
                 )
@@ -256,7 +262,8 @@ impl Db {
             r#"
             SELECT p.id, p.path, p.name, p.created_at, p.last_opened_at,
                    (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0),
-                   COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0)
+                   COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0),
+                   p.color, p.icon, p.icon_image
             FROM projects p WHERE p.id = ?1
             "#,
             params![id],
@@ -271,7 +278,8 @@ impl Db {
                 r#"
                 SELECT p.id, p.path, p.name, p.created_at, p.last_opened_at,
                        (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0),
-                       COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0)
+                       COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0),
+                       p.color, p.icon, p.icon_image
                 FROM projects p
                 ORDER BY p.last_opened_at DESC
                 "#,
@@ -288,7 +296,7 @@ impl Db {
     pub fn get_project(&self, project_id: &str) -> Result<Project> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, path, name, created_at, last_opened_at, 0, 0 FROM projects WHERE id = ?1",
+                "SELECT id, path, name, created_at, last_opened_at, 0, 0, color, icon, icon_image FROM projects WHERE id = ?1",
                 params![project_id],
                 map_project,
             )
@@ -310,6 +318,22 @@ impl Db {
                 params![now_ms(), project_id],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn update_project_appearance(
+        &self,
+        project_id: &str,
+        color: Option<&str>,
+        icon: Option<&str>,
+        icon_image: Option<&str>,
+    ) -> Result<Project> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE projects SET color = ?1, icon = ?2, icon_image = ?3 WHERE id = ?4",
+                params![color, icon, icon_image, project_id],
+            )?;
+            self.project_with_stats(conn, project_id.to_string())
         })
     }
 
@@ -924,6 +948,9 @@ fn map_project_base(row: &Row<'_>) -> rusqlite::Result<Project> {
         last_opened_at: row.get(4)?,
         session_count: 0,
         total_cost: 0.0,
+        color: row.get(5)?,
+        icon: row.get(6)?,
+        icon_image: row.get(7)?,
     })
 }
 
@@ -936,6 +963,9 @@ fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {
         last_opened_at: row.get(4)?,
         session_count: row.get(5)?,
         total_cost: row.get(6)?,
+        color: row.get(7)?,
+        icon: row.get(8)?,
+        icon_image: row.get(9)?,
     })
 }
 

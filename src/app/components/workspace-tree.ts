@@ -10,6 +10,7 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { FileChange, WorkspaceEntry } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
 import { FileIcon } from './file-icon';
+import { ProjectIcon } from './project-icon';
 
 interface TreeNode {
   name: string;
@@ -70,23 +71,27 @@ function sortTree(nodes: TreeNode[]): void {
 @Component({
   selector: 'app-workspace-tree',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, FileIcon],
+  imports: [TranslocoPipe, FileIcon, ProjectIcon],
   template: `
     <div class="flex h-full flex-col">
       <div class="flex items-center gap-2 px-3 py-2.5">
-        <svg
-          viewBox="0 0 16 16"
-          class="h-4 w-4 shrink-0 text-accent/70"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.3"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path
-            d="M1.75 4.25A1.25 1.25 0 0 1 3 3h3l1.25 1.5H13a1.25 1.25 0 0 1 1.25 1.25v6A1.25 1.25 0 0 1 13 13H3a1.25 1.25 0 0 1-1.25-1.25Z"
-          />
-        </svg>
+        @if (project(); as active) {
+          <app-project-icon [project]="active" [size]="22" />
+        } @else {
+          <svg
+            viewBox="0 0 16 16"
+            class="h-4 w-4 shrink-0 text-accent/70"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M1.75 4.25A1.25 1.25 0 0 1 3 3h3l1.25 1.5H13a1.25 1.25 0 0 1 1.25 1.25v6A1.25 1.25 0 0 1 13 13H3a1.25 1.25 0 0 1-1.25-1.25Z"
+            />
+          </svg>
+        }
         <span class="shrink-0 truncate text-[13px] font-semibold text-mist">{{
           project()?.name ?? ('workspace.title' | transloco)
         }}</span>

@@ -96,7 +96,9 @@ Settings is split into six categories:
   effort; placeholders for future providers (Anthropic, OpenAI, Google, xAI).
 - **Agent Configuration** — default system prompt, budget, context message limit and the
   allow-always command rules.
-- **General** — UI language, keep-awake while agents run, and app info.
+- **General** — UI language, theme and custom palette, app background (built-in
+  abstract/puma backdrops or your own image with opacity/blur), glass opacity,
+  notification sounds, keep-awake while agents run, and app info.
 - **Skills** — auto-discovery of standard skill locations (`~/.claude/skills`,
   `~/.config/opencode/skill`, `~/.agents/skills`, ...) plus custom folders picked with the file
   explorer; every detected folder can be toggled on/off.

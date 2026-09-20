@@ -346,6 +346,19 @@ pub struct Settings {
     pub tabs_multiline: bool,
     pub open_tab_hotkey: String,
     pub close_tab_hotkey: String,
+    pub sounds_enabled: bool,
+    pub sound_volume: f64,
+    pub done_sound: String,
+    pub permission_sound: String,
+    pub error_sound: String,
+    pub done_sound_path: String,
+    pub permission_sound_path: String,
+    pub error_sound_path: String,
+    pub background: String,
+    pub background_image: String,
+    pub background_opacity: f64,
+    pub background_blur: f64,
+    pub glass_opacity: f64,
 }
 
 /// The primary shortcut modifier for the current platform: `Cmd` on macOS and
@@ -405,6 +418,19 @@ impl Default for Settings {
             tabs_multiline: true,
             open_tab_hotkey: default_open_tab_hotkey(),
             close_tab_hotkey: default_close_tab_hotkey(),
+            sounds_enabled: true,
+            sound_volume: 0.6,
+            done_sound: "chime".to_string(),
+            permission_sound: "ping".to_string(),
+            error_sound: "alert".to_string(),
+            done_sound_path: String::new(),
+            permission_sound_path: String::new(),
+            error_sound_path: String::new(),
+            background: String::new(),
+            background_image: String::new(),
+            background_opacity: 1.0,
+            background_blur: 0.0,
+            glass_opacity: 1.0,
         }
     }
 }

@@ -11,6 +11,16 @@ pub struct Project {
     pub last_opened_at: i64,
     pub session_count: i64,
     pub total_cost: f64,
+    /// User-chosen accent color as a hex string (e.g. `#f59e0b`). When unset the
+    /// UI derives a stable color from the project identity.
+    #[serde(default)]
+    pub color: Option<String>,
+    /// Id of a built-in icon from the fixed set. Ignored when `icon_image` is set.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Data URL of an uploaded square image. Takes precedence over `icon`.
+    #[serde(default)]
+    pub icon_image: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

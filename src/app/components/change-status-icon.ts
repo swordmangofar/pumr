@@ -10,12 +10,11 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
         @case ('A') {
           <circle cx="6" cy="6" r="6" fill="#34d399" />
           <path
-            d="M3.2 6.3 5.1 8.2 8.8 3.9"
+            d="M6 3.3 6 8.7M3.3 6 8.7 6"
             fill="none"
             stroke="#04140d"
             stroke-width="1.3"
             stroke-linecap="round"
-            stroke-linejoin="round"
           />
         }
         @case ('D') {
@@ -31,11 +30,11 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
         @default {
           <circle cx="6" cy="6" r="6" fill="#ca8a04" />
           <path
-            d="M8.6 3.3 4.1 7.8l-.4 1.5 1.5-.4 4.5-4.5Z"
+            d="M3.4 6 8.6 6"
             fill="none"
             stroke="#1a1002"
-            stroke-width="1.1"
-            stroke-linejoin="round"
+            stroke-width="1.3"
+            stroke-linecap="round"
           />
         }
       }

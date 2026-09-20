@@ -55,6 +55,7 @@ pub fn run() {
             commands::list_projects,
             commands::add_project,
             commands::remove_project,
+            commands::update_project,
             commands::list_sessions,
             commands::list_sub_sessions,
             commands::create_session,

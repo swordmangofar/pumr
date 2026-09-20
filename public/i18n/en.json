@@ -29,7 +29,13 @@
     "sessions": "Sessions",
     "archiveSession": "Archive session",
     "unarchiveSession": "Unarchive session",
-    "showArchived": "Show archived sessions"
+    "expandSubAgents": "Expand subagents",
+    "collapseSubAgents": "Collapse subagents",
+    "showArchived": "Show archived sessions",
+    "viewByProject": "By project",
+    "viewHistory": "History",
+    "today": "Today",
+    "yesterday": "Yesterday"
   },
   "workspace": {
     "title": "Workspace",
@@ -50,6 +56,22 @@
     "close": "Close tab",
     "new": "New session",
     "selectProject": "Project"
+  },
+  "projectAppearance": {
+    "title": "Project appearance",
+    "edit": "Edit project appearance",
+    "color": "Color",
+    "auto": "Auto",
+    "customColor": "Custom color",
+    "icon": "Icon",
+    "letter": "Use first letter",
+    "image": "Custom image",
+    "upload": "Upload image",
+    "removeImage": "Remove image",
+    "imageHint": "A square image works best. It is cropped and resized automatically.",
+    "notAnImage": "Please choose an image file.",
+    "imageFailed": "Could not read that image.",
+    "saveFailed": "Could not save the project appearance."
   },
   "chat": {
     "empty": "Ask pumr to build, explain or fix something in your project.",
@@ -233,7 +255,12 @@
   },
   "settings": {
     "title": "Settings",
-    "general": "General",
+    "general": {
+      "about": "About",
+      "version": "Version",
+      "model": "Built with",
+      "storage": "API keys are stored in the operating system keychain. Sessions, costs and settings live in a local SQLite database in pumr's app data folder."
+    },
     "categories": {
       "providers": "Providers",
       "agent": "Agent Configuration",
@@ -262,12 +289,6 @@
     "rulePlaceholder": "e.g. pnpm test or grep *",
     "unsaved": "Unsaved changes",
     "languageHint": "Applies after saving.",
-    "general": {
-      "about": "About",
-      "version": "Version",
-      "model": "Built with",
-      "storage": "API keys are stored in the operating system keychain. Sessions, costs and settings live in a local SQLite database in pumr's app data folder."
-    },
     "workspace": {
       "allowed": "Allowed folders",
       "foldersHint": "The assistant can read and write these folders without asking. The active project is always allowed."
@@ -352,10 +373,83 @@
       "mist": "Muted text",
       "white": "Text"
     },
+    "background": {
+      "title": "App background",
+      "hint": "Pick a built-in backdrop or use your own image. It sits behind the glass panels and follows your theme.",
+      "none": "Theme default",
+      "custom": "Custom image…",
+      "chooseFile": "Choose image",
+      "clearFile": "Remove image",
+      "noFile": "No image selected",
+      "opacity": "Opacity",
+      "blur": "Blur",
+      "presets": {
+        "aurora": "Aurora",
+        "mesh": "Mesh",
+        "grid": "Grid",
+        "dots": "Dot matrix",
+        "topo": "Topography",
+        "circuit": "Circuit",
+        "hex": "Honeycomb",
+        "puma": "Pixel puma",
+        "pumaTrail": "Puma tracks",
+        "pumaAscii": "ASCII puma"
+      }
+    },
+    "glassOpacity": "Glass opacity",
+    "glassOpacityHint": "How opaque the frosted panels are. Lower values make them clearer so the app background shows through.",
     "keepAwake": "Keep screen awake",
     "keepAwakeHint": "Prevents the screen from locking and the computer from sleeping while the agent or a subagent is running.",
     "tabsMultiline": "Wrap tabs onto multiple rows",
     "tabsMultilineHint": "When enabled, open tabs wrap onto additional rows. When disabled, tabs stay on one row and a scrollbar appears once there is no space left.",
+    "sounds": {
+      "title": "Notification sounds",
+      "hint": "Play a short sound when the agent finishes, asks for permission or stops with an error.",
+      "volume": "Volume",
+      "preview": "Preview",
+      "none": "No sound",
+      "custom": "Custom file…",
+      "chooseFile": "Choose file",
+      "clearFile": "Remove file",
+      "noFile": "No file selected",
+      "builtinHint": "Built-in sounds are synthesised in the app and are free to use. Custom files are played from their original location.",
+      "done": "Agent finished",
+      "doneHint": "Played when the agent completes a task.",
+      "permission": "Permission or question",
+      "permissionHint": "Played when the agent needs your approval or asks a question.",
+      "error": "Agent error",
+      "errorHint": "Played when the agent stops because of an error.",
+      "presets": {
+        "chime": "Chime",
+        "marimba": "Marimba",
+        "pop": "Pop",
+        "bell": "Bell",
+        "soft": "Soft",
+        "success": "Success",
+        "harp": "Harp",
+        "coin": "Coin",
+        "droplet": "Droplet",
+        "xylophone": "Xylophone",
+        "ping": "Ping",
+        "knock": "Knock",
+        "double": "Double tone",
+        "question": "Question",
+        "ding": "Ding",
+        "notify": "Notify",
+        "woodblock": "Woodblock",
+        "pulse": "Pulse",
+        "echo": "Echo",
+        "alert": "Alert",
+        "thud": "Thud",
+        "buzz": "Buzz",
+        "descend": "Descending",
+        "error": "Error",
+        "deny": "Deny",
+        "glitch": "Glitch",
+        "deep": "Deep",
+        "horn": "Horn"
+      }
+    },
     "hotkeys": {
       "title": "Keyboard shortcuts",
       "hint": "Click a shortcut and press the key combination you want to use. Press Escape to cancel. At least one modifier is required.",

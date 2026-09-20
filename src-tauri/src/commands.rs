@@ -137,6 +137,22 @@ pub fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<
 }
 
 #[tauri::command]
+pub fn update_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    color: Option<String>,
+    icon: Option<String>,
+    icon_image: Option<String>,
+) -> Result<Project> {
+    state.db.update_project_appearance(
+        &project_id,
+        color.as_deref(),
+        icon.as_deref(),
+        icon_image.as_deref(),
+    )
+}
+
+#[tauri::command]
 pub fn list_sessions(
     state: State<'_, AppState>,
     project_id: String,

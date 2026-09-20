@@ -29,7 +29,13 @@
     "sessions": "Sitzungen",
     "archiveSession": "Sitzung archivieren",
     "unarchiveSession": "Sitzung wiederherstellen",
-    "showArchived": "Archivierte Sitzungen anzeigen"
+    "expandSubAgents": "Subagenten ausklappen",
+    "collapseSubAgents": "Subagenten einklappen",
+    "showArchived": "Archivierte Sitzungen anzeigen",
+    "viewByProject": "Nach Projekt",
+    "viewHistory": "Verlauf",
+    "today": "Heute",
+    "yesterday": "Gestern"
   },
   "workspace": {
     "title": "Workspace",
@@ -50,6 +56,22 @@
     "close": "Tab schließen",
     "new": "Neue Sitzung",
     "selectProject": "Projekt"
+  },
+  "projectAppearance": {
+    "title": "Projekt-Darstellung",
+    "edit": "Projekt-Darstellung bearbeiten",
+    "color": "Farbe",
+    "auto": "Automatisch",
+    "customColor": "Eigene Farbe",
+    "icon": "Symbol",
+    "letter": "Ersten Buchstaben verwenden",
+    "image": "Eigenes Bild",
+    "upload": "Bild hochladen",
+    "removeImage": "Bild entfernen",
+    "imageHint": "Ein quadratisches Bild eignet sich am besten. Es wird automatisch zugeschnitten und skaliert.",
+    "notAnImage": "Bitte wähle eine Bilddatei aus.",
+    "imageFailed": "Das Bild konnte nicht gelesen werden.",
+    "saveFailed": "Die Projekt-Darstellung konnte nicht gespeichert werden."
   },
   "chat": {
     "empty": "Bitte pumr, etwas in deinem Projekt zu bauen, zu erklären oder zu reparieren.",
@@ -233,7 +255,12 @@
   },
   "settings": {
     "title": "Einstellungen",
-    "general": "Allgemein",
+    "general": {
+      "about": "Über",
+      "version": "Version",
+      "model": "Gebaut mit",
+      "storage": "API-Schlüssel liegen im Schlüsselbund des Betriebssystems. Sitzungen, Kosten und Einstellungen liegen in einer lokalen SQLite-Datenbank im App-Datenordner von pumr."
+    },
     "categories": {
       "providers": "Anbieter",
       "agent": "Agent-Konfiguration",
@@ -262,12 +289,6 @@
     "rulePlaceholder": "z. B. pnpm test oder grep *",
     "unsaved": "Ungespeicherte Änderungen",
     "languageHint": "Wird nach dem Speichern angewendet.",
-    "general": {
-      "about": "Über",
-      "version": "Version",
-      "model": "Gebaut mit",
-      "storage": "API-Schlüssel liegen im Schlüsselbund des Betriebssystems. Sitzungen, Kosten und Einstellungen liegen in einer lokalen SQLite-Datenbank im App-Datenordner von pumr."
-    },
     "workspace": {
       "allowed": "Erlaubte Ordner",
       "foldersHint": "Der Assistent darf diese Ordner ohne Nachfrage lesen und schreiben. Das aktive Projekt ist immer erlaubt."
@@ -352,10 +373,83 @@
       "mist": "Gedämpfter Text",
       "white": "Text"
     },
+    "background": {
+      "title": "App-Hintergrund",
+      "hint": "Wähle einen eingebauten Hintergrund oder nutze dein eigenes Bild. Er liegt hinter den Glasflächen und folgt deinem Theme.",
+      "none": "Theme-Standard",
+      "custom": "Eigenes Bild…",
+      "chooseFile": "Bild wählen",
+      "clearFile": "Bild entfernen",
+      "noFile": "Kein Bild ausgewählt",
+      "opacity": "Deckkraft",
+      "blur": "Weichzeichnen",
+      "presets": {
+        "aurora": "Polarlicht",
+        "mesh": "Netz",
+        "grid": "Raster",
+        "dots": "Punktmatrix",
+        "topo": "Topografie",
+        "circuit": "Schaltkreis",
+        "hex": "Wabe",
+        "puma": "Pixel-Puma",
+        "pumaTrail": "Puma-Spuren",
+        "pumaAscii": "ASCII-Puma"
+      }
+    },
+    "glassOpacity": "Glas-Deckkraft",
+    "glassOpacityHint": "Wie deckend die Glasflächen sind. Niedrigere Werte machen sie klarer, sodass der App-Hintergrund durchscheint.",
     "keepAwake": "Bildschirm wach halten",
     "keepAwakeHint": "Verhindert, dass der Bildschirm gesperrt wird oder der Computer in den Standby geht, während der Agent oder ein Subagent läuft.",
     "tabsMultiline": "Tabs auf mehrere Zeilen umbrechen",
     "tabsMultilineHint": "Wenn aktiviert, brechen offene Tabs auf zusätzliche Zeilen um. Wenn deaktiviert, bleiben die Tabs in einer Zeile und es erscheint eine Bildlaufleiste, sobald kein Platz mehr ist.",
+    "sounds": {
+      "title": "Benachrichtigungstöne",
+      "hint": "Spielt einen kurzen Ton, wenn der Agent fertig ist, um Erlaubnis bittet oder mit einem Fehler abbricht.",
+      "volume": "Lautstärke",
+      "preview": "Anhören",
+      "none": "Kein Ton",
+      "custom": "Eigene Datei…",
+      "chooseFile": "Datei wählen",
+      "clearFile": "Datei entfernen",
+      "noFile": "Keine Datei gewählt",
+      "builtinHint": "Die eingebauten Töne werden in der App erzeugt und sind frei verwendbar. Eigene Dateien werden von ihrem ursprünglichen Ort abgespielt.",
+      "done": "Agent fertig",
+      "doneHint": "Wird abgespielt, wenn der Agent eine Aufgabe abgeschlossen hat.",
+      "permission": "Erlaubnis oder Frage",
+      "permissionHint": "Wird abgespielt, wenn der Agent deine Zustimmung braucht oder eine Frage stellt.",
+      "error": "Agent-Fehler",
+      "errorHint": "Wird abgespielt, wenn der Agent wegen eines Fehlers abbricht.",
+      "presets": {
+        "chime": "Glockenspiel",
+        "marimba": "Marimba",
+        "pop": "Pop",
+        "bell": "Glocke",
+        "soft": "Sanft",
+        "success": "Erfolg",
+        "harp": "Harfe",
+        "coin": "Münze",
+        "droplet": "Tropfen",
+        "xylophone": "Xylophon",
+        "ping": "Ping",
+        "knock": "Klopfen",
+        "double": "Doppelton",
+        "question": "Frage",
+        "ding": "Ding",
+        "notify": "Hinweis",
+        "woodblock": "Holzblock",
+        "pulse": "Puls",
+        "echo": "Echo",
+        "alert": "Alarm",
+        "thud": "Dumpf",
+        "buzz": "Summen",
+        "descend": "Absteigend",
+        "error": "Fehler",
+        "deny": "Ablehnung",
+        "glitch": "Störung",
+        "deep": "Tief",
+        "horn": "Horn"
+      }
+    },
     "hotkeys": {
       "title": "Tastenkürzel",
       "hint": "Klicke auf ein Kürzel und drücke die gewünschte Tastenkombination. Zum Abbrechen Escape drücken. Mindestens ein Modifikator ist erforderlich.",

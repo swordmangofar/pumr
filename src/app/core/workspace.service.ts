@@ -24,6 +24,7 @@ import {
   WorkspaceFile,
 } from './models';
 import { SettingsService } from './settings.service';
+import { SoundService } from './sound.service';
 
 const TABS_KEY = 'pumr.tabs';
 const ACTIVE_KEY = 'pumr.activeTab';
@@ -37,6 +38,7 @@ interface PersistedOpenFiles {
 @Injectable({ providedIn: 'root' })
 export class WorkspaceService {
   private readonly settings = inject(SettingsService);
+  private readonly sound = inject(SoundService);
 
   private readonly projectsState = signal<Project[]>([]);
   private readonly sessionsState = signal<Record<string, Session>>({});
@@ -58,6 +60,7 @@ export class WorkspaceService {
   private readonly editorDiffState = signal<Record<string, FileDiff>>({});
   private readonly editorDirtyState = signal<Record<string, boolean>>({});
   private readonly leftTabState = signal<'projects' | 'workspace'>('projects');
+  private readonly sessionViewState = signal<'projects' | 'history'>('projects');
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly gitState = signal<Record<string, GitInfo>>({});
   private readonly processesState = signal<ProcessInfo[]>([]);
@@ -69,6 +72,7 @@ export class WorkspaceService {
   private readonly subAgentsState = signal<Record<string, string[]>>({});
   private readonly viewingState = signal<Record<string, string>>({});
   private readonly showArchivedState = signal(false);
+  private readonly projectEditorState = signal<string | null>(null);
   private scrollNonce = 0;
   private processTimer: ReturnType<typeof setInterval> | null = null;
   private readonly autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -84,10 +88,12 @@ export class WorkspaceService {
   readonly editorContent = this.editorContentState.asReadonly();
   readonly editorDiff = this.editorDiffState.asReadonly();
   readonly leftTab = this.leftTabState.asReadonly();
+  readonly sessionView = this.sessionViewState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
   readonly handovers = this.handoverState.asReadonly();
   readonly scrollTarget = this.scrollTargetState.asReadonly();
   readonly showArchived = this.showArchivedState.asReadonly();
+  readonly projectEditorId = this.projectEditorState.asReadonly();
   readonly tabs = computed(() =>
     this.tabsState()
       .map((id) => this.sessionsState()[id])
@@ -159,6 +165,12 @@ export class WorkspaceService {
     return ids
       .map((id) => this.sessionsState()[id])
       .filter((session): session is Session => !!session);
+  }
+
+  allSessions(): Session[] {
+    return this.projectsState()
+      .flatMap((project) => this.sessionsFor(project.id))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   session(id: string): Session | null {
@@ -235,6 +247,47 @@ export class WorkspaceService {
     return this.streamingState()[sessionId] ?? false;
   }
 
+  /**
+   * Status of the agent(s) tied to a session. A root session reports `running`
+   * while it streams or while any of its sub-agents is still working, otherwise
+   * it falls back to its own persisted agent status.
+   */
+  agentActivity(sessionId: string): string | null {
+    if (this.isStreaming(sessionId)) {
+      return 'running';
+    }
+    const agents = this.subAgentsFor(sessionId);
+    if (agents.some((agent) => agent.agentStatus === 'running' || this.isStreaming(agent.id))) {
+      return 'running';
+    }
+    return this.sessionsState()[sessionId]?.agentStatus ?? null;
+  }
+
+  /**
+   * Whether a session is waiting on the user: a pending permission request or
+   * an open question. Root sessions also surface requests from their sub-agents.
+   */
+  sessionAttention(sessionId: string): 'permission' | 'question' | null {
+    const permission = this.permissionState();
+    const question = this.questionState();
+    if (permission.some((entry) => entry.sessionId === sessionId)) {
+      return 'permission';
+    }
+    if (question.some((entry) => entry.sessionId === sessionId)) {
+      return 'question';
+    }
+    const agents = this.subAgentsState()[sessionId];
+    if (agents?.length) {
+      if (agents.some((id) => permission.some((entry) => entry.sessionId === id))) {
+        return 'permission';
+      }
+      if (agents.some((id) => question.some((entry) => entry.sessionId === id))) {
+        return 'question';
+      }
+    }
+    return null;
+  }
+
   errorFor(sessionId: string): string | null {
     return this.errorsState()[sessionId] ?? null;
   }
@@ -287,6 +340,28 @@ export class WorkspaceService {
       this.closeTab(id);
     }
     await this.reloadProjects();
+  }
+
+  projectFor(projectId: string): Project | null {
+    return this.projectsState().find((project) => project.id === projectId) ?? null;
+  }
+
+  openProjectEditor(projectId: string): void {
+    this.projectEditorState.set(projectId);
+  }
+
+  closeProjectEditor(): void {
+    this.projectEditorState.set(null);
+  }
+
+  async updateProjectAppearance(
+    projectId: string,
+    appearance: { color: string | null; icon: string | null; iconImage: string | null },
+  ): Promise<void> {
+    const updated = await api.updateProject({ projectId, ...appearance });
+    this.projectsState.update((state) =>
+      state.map((project) => (project.id === updated.id ? updated : project)),
+    );
   }
 
   async newSession(projectId: string): Promise<Session> {
@@ -475,6 +550,7 @@ export class WorkspaceService {
           break;
         case 'permissionRequest':
           this.permissionState.update((state) => [...state, { ...event, sessionId }]);
+          this.sound.play('permission');
           break;
         case 'permissionResolved':
           this.permissionState.update((state) =>
@@ -483,6 +559,7 @@ export class WorkspaceService {
           break;
         case 'questionRequest':
           this.questionState.update((state) => [...state, { ...event, sessionId }]);
+          this.sound.play('permission');
           break;
         case 'questionResolved':
           this.questionState.update((state) =>
@@ -497,6 +574,7 @@ export class WorkspaceService {
           this.replaceMessage(sessionId, event.message);
           this.upsertSession(event.session);
           void this.refreshSpend();
+          this.sound.play('done');
           break;
         case 'stopped':
           this.replaceMessage(sessionId, event.message);
@@ -530,6 +608,7 @@ export class WorkspaceService {
           break;
         case 'error':
           this.setError(sessionId, event.message);
+          this.sound.play('error');
           break;
       }
     };
@@ -539,6 +618,7 @@ export class WorkspaceService {
     } catch (error) {
       if (!this.errorFor(args.sessionId)) {
         this.setError(args.sessionId, String(error));
+        this.sound.play('error');
       }
     } finally {
       this.setStreaming(args.sessionId, false);
@@ -684,6 +764,10 @@ export class WorkspaceService {
 
   setLeftTab(tab: 'projects' | 'workspace'): void {
     this.leftTabState.set(tab);
+  }
+
+  setSessionView(view: 'projects' | 'history'): void {
+    this.sessionViewState.set(view);
   }
 
   openFilesFor(projectId: string): string[] {

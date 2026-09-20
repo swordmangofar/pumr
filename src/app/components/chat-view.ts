@@ -17,6 +17,7 @@ import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
+import { ProjectIcon } from './project-icon';
 import { QuestionOverlay } from './question-overlay';
 import { StreamText } from './stream-text';
 import { ToolCard } from './tool-card';
@@ -64,6 +65,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
     AgentStatus,
     PumaLoader,
     StreamText,
+    ProjectIcon,
   ],
   template: `
     <div class="flex h-full min-h-0 flex-col">
@@ -102,6 +104,9 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                       class="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition-colors hover:border-accent/40 hover:bg-accent/10"
                       (click)="toggleProjectMenu()"
                     >
+                      @if (workspace.activeProject(); as project) {
+                        <app-project-icon [project]="project" [size]="24" />
+                      }
                       <span>{{ workspace.activeProject()?.name }}</span>
                       <svg
                         class="h-3.5 w-3.5 text-mist/40"
@@ -135,6 +140,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                             "
                             (click)="selectProject(project.id)"
                           >
+                            <app-project-icon [project]="project" [size]="34" radius="rounded-lg" />
                             <span class="min-w-0 flex-1">
                               <span class="block truncate text-sm text-white">{{
                                 project.name

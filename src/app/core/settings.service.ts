@@ -1,6 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
 import { OPENROUTER_PROVIDER, api } from './api';
+import { BackgroundService } from './background.service';
+import { BACKGROUND_NONE } from './backgrounds';
 import { defaultCloseTabHotkey, defaultOpenTabHotkey } from './hotkeys';
 import { DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
 import { ThemeService } from './theme.service';
@@ -43,12 +45,26 @@ export const FALLBACK_SETTINGS: Settings = {
   tabsMultiline: true,
   openTabHotkey: defaultOpenTabHotkey(),
   closeTabHotkey: defaultCloseTabHotkey(),
+  soundsEnabled: true,
+  soundVolume: 0.6,
+  doneSound: 'chime',
+  permissionSound: 'ping',
+  errorSound: 'alert',
+  doneSoundPath: '',
+  permissionSoundPath: '',
+  errorSoundPath: '',
+  background: BACKGROUND_NONE,
+  backgroundImage: '',
+  backgroundOpacity: 1,
+  backgroundBlur: 0,
+  glassOpacity: 1,
 };
 
 @Injectable({ providedIn: 'root' })
 export class SettingsService {
   private readonly transloco = inject(TranslocoService);
   private readonly theme = inject(ThemeService);
+  private readonly background = inject(BackgroundService);
   private readonly state = signal<Settings | null>(null);
 
   constructor() {
@@ -87,6 +103,8 @@ export class SettingsService {
     }
     this.theme.apply(settings?.theme);
     this.theme.applyContrast(settings?.highContrast ?? false);
+    this.theme.applyGlassOpacity(settings?.glassOpacity ?? 1);
+    this.background.apply(settings);
     this.dialogOpen.set(false);
     this.focusSection.set(null);
     this.focusAnchor.set(null);
@@ -99,6 +117,8 @@ export class SettingsService {
       this.theme.setCustom(settings.customTheme);
       this.theme.apply(settings.theme);
       this.theme.applyContrast(settings.highContrast);
+      this.theme.applyGlassOpacity(settings.glassOpacity);
+      this.background.apply(settings);
       try {
         const defaults = await api.getDefaultSystemPrompts();
         this.originalSystemPrompts.set(defaults);
@@ -129,6 +149,8 @@ export class SettingsService {
     this.theme.setCustom(saved.customTheme);
     this.theme.apply(saved.theme);
     this.theme.applyContrast(saved.highContrast);
+    this.theme.applyGlassOpacity(saved.glassOpacity);
+    this.background.apply(saved);
     this.transloco.setActiveLang(saved.language || 'en');
     return saved;
   }

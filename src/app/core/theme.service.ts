@@ -26,6 +26,7 @@ export class ThemeService {
   init(): void {
     this.apply(this.activeId());
     this.applyContrast(this.highContrast());
+    this.applyGlassOpacity(1);
   }
 
   resolve(id: string | null | undefined): ThemePreset {
@@ -59,6 +60,16 @@ export class ThemeService {
     this.highContrast.set(enabled);
     this.writeCached(CONTRAST_KEY, enabled ? 'true' : 'false');
     document.documentElement.dataset['contrast'] = enabled ? 'high' : 'normal';
+  }
+
+  /**
+   * Scales the frosted-panel tint and blur. 1 keeps the default glass look,
+   * lower values make the panels more transparent so the app background shows
+   * through.
+   */
+  applyGlassOpacity(value: number): void {
+    const clamped = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+    document.documentElement.style.setProperty('--glass-alpha', String(clamped));
   }
 
   private readCustom(): CustomTheme {

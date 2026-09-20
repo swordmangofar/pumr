@@ -1,15 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { PumaSpinner } from './puma-spinner';
 
 @Component({
   selector: 'app-agent-status',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [PumaSpinner],
   template: `
     @switch (status()) {
       @case ('running') {
-        <span
-          class="inline-block animate-spin rounded-full border-2 border-accent border-t-transparent"
-          [class]="sizeClass()"
-        ></span>
+        <span class="inline-flex" [class.text-accent]="!onAccent()" [class.text-ink]="onAccent()">
+          <app-puma-spinner [small]="small()" />
+        </span>
       }
       @case ('done') {
         <span
@@ -65,5 +66,6 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 export class AgentStatus {
   readonly status = input<string | null>(null);
   readonly small = input(false);
+  readonly onAccent = input(false);
   protected readonly sizeClass = computed(() => (this.small() ? 'h-3 w-3' : 'h-3.5 w-3.5'));
 }

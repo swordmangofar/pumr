@@ -1,8 +1,12 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { AgentStatus } from './components/agent-status';
+import { AttentionIndicator } from './components/attention-indicator';
 import { ChatView } from './components/chat-view';
 import { ProcessIndicator } from './components/process-indicator';
 import { PumaLoader } from './components/puma-loader';
+import { ProjectAppearanceDialog } from './components/project-appearance-dialog';
+import { ProjectIcon } from './components/project-icon';
 import { RightPanel } from './components/right-panel';
 import { SettingsDialog } from './components/settings/settings-dialog';
 import { Sidebar } from './components/sidebar';
@@ -27,11 +31,17 @@ import { WorkspaceService } from './core/workspace.service';
     SpendIndicator,
     WorkspaceEditor,
     TranslocoPipe,
+    AgentStatus,
+    AttentionIndicator,
+    ProjectIcon,
+    ProjectAppearanceDialog,
   ],
   host: {
     '(document:keydown)': 'onHotkey($event)',
   },
   template: `
+    <div class="app-background" aria-hidden="true"></div>
+
     @if (splashVisible()) {
       <div
         class="fixed inset-0 z-50 flex items-center justify-center bg-ink transition-opacity duration-300"
@@ -74,6 +84,7 @@ import { WorkspaceService } from './core/workspace.service';
             </svg>
           </button>
           @if (workspace.activeProject(); as project) {
+            <app-project-icon [project]="project" [size]="22" />
             <span class="truncate text-sm text-mist/40">{{ project.path }}</span>
           }
           @if (workspace.activeGitInfo(); as git) {
@@ -87,27 +98,50 @@ import { WorkspaceService } from './core/workspace.service';
           }
         </div>
         <div
-          class="no-scrollbar flex min-w-0 flex-1 items-center gap-1"
+          class="no-scrollbar flex min-w-0 flex-1 items-center gap-1 glass-inset rounded-2xl p-1"
           [class]="
             (settings.settings()?.tabsMultiline ?? true)
               ? 'flex-wrap'
               : 'flex-nowrap overflow-x-auto'
           "
         >
-          @for (session of workspace.tabs(); track session.id) {
+          @for (session of workspace.tabs(); track session.id; let i = $index) {
+            @if (i > 0) {
+              <span class="mx-0.5 h-5 w-px shrink-0 bg-white/10" aria-hidden="true"></span>
+            }
             <div
-              class="group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors"
+              class="group relative flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-medium transition-colors"
               [class]="
                 session.id === workspace.activeSessionId()
-                  ? 'bg-accent/15 text-white ring-1 ring-accent/30'
+                  ? 'bg-accent/15 text-white ring-1 ring-inset ring-accent/30'
                   : 'text-mist/50 hover:bg-white/5 hover:text-mist'
               "
               (click)="workspace.openTab(session.id)"
             >
+              @if (session.id === workspace.activeSessionId()) {
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden="true"></span>
+              }
+              @if (projectFor(session.projectId); as project) {
+                <app-project-icon [project]="project" [size]="20" />
+              }
+              @if (workspace.sessionAttention(session.id); as attention) {
+                <app-attention-indicator
+                  [kind]="attention"
+                  [onAccent]="session.id === workspace.activeSessionId()"
+                />
+              }
+              @if (workspace.agentActivity(session.id); as status) {
+                <app-agent-status [status]="status" [small]="true" />
+              }
               <span class="max-w-48 truncate">{{ session.title }}</span>
               <button
                 type="button"
-                class="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
+                class="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-all hover:bg-white/10 hover:text-white focus-visible:opacity-100"
+                [class]="
+                  session.id === workspace.activeSessionId()
+                    ? 'opacity-100'
+                    : 'opacity-0 group-hover:opacity-100'
+                "
                 [attr.aria-label]="'tabs.close' | transloco"
                 (click)="closeTab($event, session.id)"
               >
@@ -126,9 +160,12 @@ import { WorkspaceService } from './core/workspace.service';
             </div>
           }
 
+          @if (workspace.tabs().length > 0) {
+            <span class="mx-0.5 h-5 w-px shrink-0 bg-white/10" aria-hidden="true"></span>
+          }
           <button
             type="button"
-            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
             [title]="'tabs.new' | transloco"
             [attr.aria-label]="'tabs.new' | transloco"
             (click)="startNewSession()"
@@ -179,7 +216,16 @@ import { WorkspaceService } from './core/workspace.service';
 
       <div class="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         @if (leftPanelOpen()) {
-          <app-sidebar class="glass w-72 shrink-0 overflow-hidden rounded-2xl" />
+          <div class="relative shrink-0" [style.width.px]="leftPanelWidth()">
+            <app-sidebar class="glass block h-full w-full overflow-hidden rounded-2xl" />
+            <div
+              [class]="
+                'absolute inset-y-0 -right-2 w-2 cursor-col-resize rounded-full transition-colors ' +
+                (resizing() === 'left' ? 'bg-accent/40' : 'hover:bg-accent/30')
+              "
+              (mousedown)="startResize($event, 'left')"
+            ></div>
+          </div>
         }
 
         <main class="glass flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl">
@@ -195,9 +241,9 @@ import { WorkspaceService } from './core/workspace.service';
             <div
               [class]="
                 'absolute inset-y-0 -left-2 w-2 cursor-col-resize rounded-full transition-colors ' +
-                (resizing() ? 'bg-accent/40' : 'hover:bg-accent/30')
+                (resizing() === 'right' ? 'bg-accent/40' : 'hover:bg-accent/30')
               "
-              (mousedown)="startResize($event)"
+              (mousedown)="startResize($event, 'right')"
             ></div>
             <app-right-panel class="glass block h-full w-full overflow-hidden rounded-2xl" />
           </div>
@@ -206,6 +252,10 @@ import { WorkspaceService } from './core/workspace.service';
 
       @if (settings.dialogOpen()) {
         <app-settings-dialog (closed)="settings.close()" />
+      }
+
+      @if (workspace.projectEditorId()) {
+        <app-project-appearance-dialog />
       }
     </div>
   `,
@@ -218,13 +268,15 @@ export class App implements OnInit {
   protected readonly tauri = isTauri();
 
   protected readonly rightPanelWidth = signal(512);
-  protected readonly resizing = signal(false);
+  protected readonly leftPanelWidth = signal(340);
+  protected readonly resizing = signal<'left' | 'right' | null>(null);
   protected readonly leftPanelOpen = signal(true);
   protected readonly rightPanelOpen = signal(true);
   protected readonly booting = signal(true);
   protected readonly splashVisible = signal(true);
   private readonly minSplashMs = 900;
   private readonly splashFadeMs = 300;
+  private readonly minLeftPanelWidth = 240;
   private readonly minRightPanelWidth = 320;
   private readonly minMainWidth = 360;
 
@@ -242,11 +294,12 @@ export class App implements OnInit {
     setTimeout(() => this.splashVisible.set(false), this.splashFadeMs);
   }
 
-  protected startResize(event: MouseEvent): void {
+  protected startResize(event: MouseEvent, side: 'left' | 'right'): void {
     event.preventDefault();
-    this.resizing.set(true);
+    this.resizing.set(side);
+    this.resizeSide = side;
     this.startX = event.clientX;
-    this.startWidth = this.rightPanelWidth();
+    this.startWidth = side === 'left' ? this.leftPanelWidth() : this.rightPanelWidth();
 
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -256,19 +309,27 @@ export class App implements OnInit {
 
   private startX = 0;
   private startWidth = 0;
+  private resizeSide: 'left' | 'right' = 'right';
 
   private readonly onResize = (event: MouseEvent): void => {
-    const delta = this.startX - event.clientX;
-    const max = window.innerWidth - this.minMainWidth;
-    const next = Math.min(
-      Math.max(this.startWidth + delta, this.minRightPanelWidth),
-      Math.max(this.minRightPanelWidth, max),
-    );
-    this.rightPanelWidth.set(next);
+    const side = this.resizeSide;
+    const left = side === 'left';
+    const delta = left ? event.clientX - this.startX : this.startX - event.clientX;
+    const min = left ? this.minLeftPanelWidth : this.minRightPanelWidth;
+    const other = left
+      ? this.rightPanelOpen()
+        ? this.rightPanelWidth()
+        : 0
+      : this.leftPanelOpen()
+        ? this.leftPanelWidth()
+        : 0;
+    const max = window.innerWidth - this.minMainWidth - other;
+    const next = Math.min(Math.max(this.startWidth + delta, min), Math.max(min, max));
+    (left ? this.leftPanelWidth : this.rightPanelWidth).set(next);
   };
 
   private readonly stopResize = (): void => {
-    this.resizing.set(false);
+    this.resizing.set(null);
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     window.removeEventListener('mousemove', this.onResize);
@@ -278,6 +339,10 @@ export class App implements OnInit {
   protected closeTab(event: Event, sessionId: string): void {
     event.stopPropagation();
     this.workspace.closeTab(sessionId);
+  }
+
+  protected projectFor(projectId: string) {
+    return this.workspace.projectFor(projectId);
   }
 
   protected async startNewSession(): Promise<void> {
