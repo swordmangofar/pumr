@@ -874,9 +874,16 @@ pub async fn send_message(
     if session.title == DEFAULT_SESSION_TITLE {
         let title = truncate_title(&user_message.content);
         if !title.trim().is_empty() {
-            state
-                .db
-                .update_session(&session_id, Some(&title), None, None, None, None, None, None)?;
+            state.db.update_session(
+                &session_id,
+                Some(&title),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )?;
         }
     }
 

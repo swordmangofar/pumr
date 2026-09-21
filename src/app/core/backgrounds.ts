@@ -64,6 +64,9 @@ const ASCII_GLYPHS: Record<string, string> = {
   _: 'M0.5 13 L7.5 13',
   '|': 'M4 1 L4 13',
   '^': 'M1 6 L4 1.5 L7 6',
+  '-': 'M0.5 7 L7.5 7',
+  '(': 'M6 1 C2 4, 2 10, 6 13',
+  ')': 'M2 1 C6 4, 6 10, 2 13',
   "'": 'M4.5 1 L3.5 4.5',
   '`': 'M3 1 L5.5 4',
   ',': 'M4.5 11.5 L3 14.5',
@@ -74,7 +77,8 @@ function asciiSvg(lines: readonly string[], cellW = 8, cellH = 14): string {
   const pad = 12;
   const width = cols * cellW + pad * 2;
   const height = lines.length * cellH + pad * 2;
-  const glyphs: string[] = [];
+  const strokes: string[] = [];
+  const fills: string[] = [];
   lines.forEach((line, row) => {
     for (let col = 0; col < line.length; col += 1) {
       const char = line[col];
@@ -84,16 +88,31 @@ function asciiSvg(lines: readonly string[], cellW = 8, cellH = 14): string {
       const x = pad + col * cellW;
       const y = pad + row * cellH;
       if (char === 'o') {
-        glyphs.push(`<circle cx="${x + 4}" cy="${y + 7}" r="3"/>`);
+        fills.push(`<circle cx="${x + 4}" cy="${y + 7}" r="3"/>`);
+        continue;
+      }
+      // Density glyphs used to shade the puma: a dot, a colon and a block.
+      if (char === '.') {
+        fills.push(`<circle cx="${x + 4}" cy="${y + 7}" r="1.3"/>`);
+        continue;
+      }
+      if (char === ':') {
+        fills.push(
+          `<circle cx="${x + 4}" cy="${y + 4}" r="1.2"/><circle cx="${x + 4}" cy="${y + 10}" r="1.2"/>`,
+        );
+        continue;
+      }
+      if (char === '#') {
+        fills.push(`<rect x="${x + 1.5}" y="${y + 2}" width="5" height="10" rx="1"/>`);
         continue;
       }
       const path = ASCII_GLYPHS[char];
       if (path) {
-        glyphs.push(`<path d="${path}" transform="translate(${x},${y})"/>`);
+        strokes.push(`<path d="${path}" transform="translate(${x},${y})"/>`);
       }
     }
   });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${glyphs.join('')}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${strokes.join('')}</g><g fill="#fff">${fills.join('')}</g></svg>`;
 }
 
 function topoSvg(): string {
@@ -140,6 +159,80 @@ function hexSvg(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72"><path d="${path}" fill="none" stroke="#fff" stroke-width="1.5"/></svg>`;
 }
 
+/** Vertical, wavy curtains of light used to shape the aurora preset. */
+function auroraSvg(): string {
+  const width = 1000;
+  const height = 600;
+  const curtains = 5;
+  const wave = (base: number, index: number): string => {
+    const top = base + (index % 2 ? 40 : -30);
+    const mid = base + (index % 2 ? 90 : -80);
+    const mid2 = base + (index % 3 ? 80 : -70);
+    const bottom = base + (index % 2 ? -50 : 60);
+    return `M ${top} -40 C ${mid} ${height * 0.32}, ${mid2} ${height * 0.6}, ${bottom} ${height + 40}`;
+  };
+  const parts: string[] = [];
+  for (let i = 0; i < curtains; i += 1) {
+    parts.push(
+      `<path d="${wave(70 + i * 210, i)}" fill="none" stroke="#fff" stroke-width="${100 + (i % 3) * 40}" stroke-linecap="round" opacity="0.12"/>`,
+    );
+  }
+  for (let i = 0; i < curtains; i += 1) {
+    for (let j = 0; j < 6; j += 1) {
+      const base = 70 + i * 210 + (j - 2.5) * 17;
+      const opacity = (0.2 + ((i * 7 + j * 3) % 5) * 0.07).toFixed(2);
+      parts.push(
+        `<path d="${wave(base, i)}" fill="none" stroke="#fff" stroke-width="${1.5 + (j % 3)}" stroke-linecap="round" opacity="${opacity}"/>`,
+      );
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}</svg>`;
+}
+
+/** Jittered node grid with connecting links, used to shape the mesh preset. */
+function networkSvg(): string {
+  const width = 600;
+  const height = 600;
+  const step = 100;
+  const jitter = (i: number, j: number): number => {
+    const value = Math.sin(i * 37.3 + j * 91.7) * 43758.5453;
+    return (value - Math.floor(value)) * 34 - 17;
+  };
+  const points: [number, number][][] = [];
+  for (let i = 0; i <= 6; i += 1) {
+    points[i] = [];
+    for (let j = 0; j <= 6; j += 1) {
+      points[i][j] = [
+        Math.min(width - 6, Math.max(6, i * step + jitter(i, j))),
+        Math.min(height - 6, Math.max(6, j * step + jitter(i + 9, j))),
+      ];
+    }
+  }
+  const lines: string[] = [];
+  const nodes: string[] = [];
+  for (let i = 0; i <= 6; i += 1) {
+    for (let j = 0; j <= 6; j += 1) {
+      const [x, y] = points[i][j];
+      const px = x.toFixed(1);
+      const py = y.toFixed(1);
+      nodes.push(`<circle cx="${px}" cy="${py}" r="5"/>`);
+      if (i < 6) {
+        const [nx, ny] = points[i + 1][j];
+        lines.push(`<line x1="${px}" y1="${py}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"/>`);
+      }
+      if (j < 6) {
+        const [nx, ny] = points[i][j + 1];
+        lines.push(`<line x1="${px}" y1="${py}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"/>`);
+      }
+      if (i < 6 && j < 6 && (i + j) % 2 === 0) {
+        const [nx, ny] = points[i + 1][j + 1];
+        lines.push(`<line x1="${px}" y1="${py}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"/>`);
+      }
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g stroke="#fff" stroke-width="1.6" fill="none">${lines.join('')}</g><g fill="#fff">${nodes.join('')}</g></svg>`;
+}
+
 function pawShapes(): string {
   return [
     '<ellipse cx="32" cy="40" rx="16" ry="12"/>',
@@ -155,13 +248,57 @@ function pawTrailSvg(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="260" viewBox="0 0 260 260"><g fill="#fff"><g transform="translate(18,22) rotate(22 32 32)">${shapes}</g><g transform="translate(150,150) rotate(22 32 32)">${shapes}</g></g></svg>`;
 }
 
-const ASCII_PUMA: readonly string[] = [
-  '      /\\___/\\',
-  '     /  o o  \\',
-  '    |    ^    |',
-  '    |  \\___/  |',
-  '     \\       /',
-  '      \\_____/',
+const ASCII_SCENE: readonly string[] = [
+  "          .  '                '     '                                                                                  .  .",
+  "                  '                              .                 .          '                                           '                                '",
+  "                                               .                                    .   '               '",
+  "                          '                                '                                    .                                             __      '",
+  "      '                   .     .                                                                                                            /",
+  "         .                   '                                     .           .                                                            |         .",
+  ".                                    '      .                                              .                                                |             .",
+  "                   '                                              '  '                  . .'                      '    '               '     \\",
+  " '               '  '                    .                                                      '                                             \\_      .",
+  '                               \\      |',
+  '                              ||\\    |||',
+  '                              | \\\\   | |                                                                                |',
+  '                             ||  \\\\ |  ||                                                                               |',
+  '                             |    \\||   |                                                                              |',
+  '                            ||  _______ ||                                                                             |',
+  '                            ______    ____                                                                             |',
+  '                            //   ____                                                                                 |',
+  '                           //                                                                                         |',
+  '                          //          |                                                                             //',
+  '                         //           |                       ______________________                               //',
+  '                        |             ____         ____________::.:.:.:.:..:.::::::_______                        //',
+  '                        |             |   _________.::::..::::.:::::..::..:.::::..::::.:.______                  //',
+  '                        |             |     ..:.::.:.....:.::..::::.:..:::::::...::::...::::::____          ____/',
+  '                        |            ||    ::::.:...:::::...:...:::..::.::.....::::.:.:.::.:::..:.____  _____',
+  '                        \\            ||  ..::::.:.:::::......::.::.:.::......:::.:....:.:::.:::.:.::.__\\\\',
+  '                         \\\\         //| .:.:..::.::::.:.:.:.::...:...:::..:.....::::.:...::::::.::::.:::\\\\',
+  '                     /    \\\\       // |_____.:::..::...::..:::....:::::.:.::.:::.:.:::.::::.:::::...:::..\\\\\\                           /',
+  '                    //\\    \\______//       ______|_________|_______________________________.::...::..:::.:.\\\\                         /\\\\',
+  '                    / \\\\                         |         |                              ________:.....:.:.\\|                       // \\',
+  '                   /   \\\\                       |          |                                     __|..:::::.:|                      //   \\',
+  '       /          //    \\                       |          ||                                    .||__.:..:.||                      /    \\\\          /',
+  '      //\\         /      \\                      |           |                                    :|..___:|:.|                      /      \\         /\\\\',
+  '     //  \\       /       \\\\                    |            |                                     |.::.__||:|                     //       \\       /  \\\\',
+  '     /    \\     //        \\\\                   |            |                                    ||:.:.:::|:|                    //        \\\\     /    \\',
+  '    /      \\    /          \\                   |            |                                    |:.:...::|||                    /          \\    /      \\',
+  '   //       \\  /            \\                   |            |                                   ||::.:.:.:|                    /            \\  /       \\\\',
+  '   /         \\//             \\                  |            |                                    | :..::..||                  /             \\\\/         \\',
+  '  /           \\              \\\\                 |            |                                    |  :.::./ |                 //              \\           \\',
+  ' //                           \\\\                 |            |                                   ||  :.:/  ||               //                           \\\\',
+  '//                             \\\\               //           //                                   //   ./   //              //                             \\',
+  '/       \\                       \\\\             //           //                                   //    /   //              //                       /',
+  ' /     \\                         \\            //           //                                   //        //               /                         /     \\',
+  '__________________________________\\                                                                                       /_________________________________',
+  '  /   \\                                                                                                                                               /   \\',
+  '  /   \\                                                                                                                                               /   \\',
+  '   / \\                                                                                                                                                 / \\',
+  '   / \\                                                                                                                                                 / \\',
+  '   / \\                                                                                                                                                 / \\',
+  '_  / \\  _                                                                                                                                           _  / \\',
+  '    |                                                                                                                                                   |',
 ];
 
 const GRID_LINE = 'color-mix(in oklab, var(--color-accent) 12%, transparent)';
@@ -178,26 +315,27 @@ export const BACKGROUND_PRESETS: BackgroundPreset[] = [
     labelKey: 'settings.background.presets.aurora',
     scheme: 'any',
     style: {
-      image: [
-        `radial-gradient(60rem 40rem at 12% 8%, ${DIM_ACCENT(26)}, transparent 60%)`,
-        `radial-gradient(52rem 38rem at 88% 16%, ${DIM_NAVY(85)}, transparent 62%)`,
-        `radial-gradient(70rem 52rem at 50% 112%, ${DIM_ACCENT(18)}, transparent 66%)`,
-      ].join(', '),
-      size: 'auto',
+      image:
+        'linear-gradient(180deg, #e879f9 0%, #a78bfa 12%, #22d3ee 30%, #34d399 52%, #4ade80 68%, rgba(74,222,128,0) 95%)',
+      mask: svgUrl(auroraSvg()),
+      maskSize: 'cover',
+      maskPosition: 'center top',
+      maskRepeat: 'no-repeat',
+      opacity: 0.8,
     },
+    preview: { maskSize: 'cover', maskPosition: 'center' },
   },
   {
     id: 'mesh',
     labelKey: 'settings.background.presets.mesh',
     scheme: 'any',
     style: {
-      image: [
-        `radial-gradient(40rem 32rem at 20% 25%, ${DIM_ACCENT(22)}, transparent 60%)`,
-        `radial-gradient(38rem 30rem at 78% 30%, ${DIM_NAVY(90)}, transparent 62%)`,
-        `radial-gradient(34rem 28rem at 55% 78%, ${DIM_MIST(14)}, transparent 60%)`,
-        `radial-gradient(30rem 24rem at 10% 85%, ${DIM_ACCENT(16)}, transparent 62%)`,
-      ].join(', '),
-      size: 'auto',
+      image: `linear-gradient(135deg, ${DIM_ACCENT(70)}, ${DIM_NAVY(80)})`,
+      mask: svgUrl(networkSvg()),
+      maskSize: 'cover',
+      maskPosition: 'center',
+      maskRepeat: 'no-repeat',
+      opacity: 0.4,
     },
   },
   {
@@ -289,11 +427,11 @@ export const BACKGROUND_PRESETS: BackgroundPreset[] = [
     scheme: 'any',
     style: {
       image: `linear-gradient(120deg, ${DIM_ACCENT(75)}, ${DIM_MIST(25)})`,
-      mask: svgUrl(asciiSvg(ASCII_PUMA)),
-      maskSize: 'auto 76%',
+      mask: svgUrl(asciiSvg(ASCII_SCENE)),
+      maskSize: 'auto 80%',
       maskPosition: 'center',
       maskRepeat: 'no-repeat',
-      opacity: 0.32,
+      opacity: 0.34,
     },
     preview: { maskSize: 'auto 90%' },
   },

@@ -103,11 +103,21 @@ function startOfDay(timestamp: number): number {
               [class]="sessionTextClass(session)"
               (click)="workspace.openTab(session.id)"
             >
-              @if (showProject) {
-                @if (projectFor(session); as project) {
+              @if (showProject && projectFor(session); as project) {
+                <span class="relative inline-flex shrink-0">
                   <app-project-icon [project]="project" [size]="16" />
-                }
+                  @if (workspace.sessionAttention(session.id); as attention) {
+                    <span
+                      class="absolute -top-1 -left-1 flex h-2 w-2 items-center justify-center rounded-full ring-2 ring-ink"
+                    >
+                      <app-attention-indicator [kind]="attention" />
+                    </span>
+                  }
+                </span>
+              } @else if (workspace.sessionAttention(session.id); as attention) {
+                <app-attention-indicator [kind]="attention" [onAccent]="sessionActive(session)" />
               }
+              <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
               @if (workspace.agentActivity(session.id); as status) {
                 <app-agent-status
                   [status]="status"
@@ -115,10 +125,6 @@ function startOfDay(timestamp: number): number {
                   [onAccent]="sessionActive(session)"
                 />
               }
-              @if (workspace.sessionAttention(session.id); as attention) {
-                <app-attention-indicator [kind]="attention" [onAccent]="sessionActive(session)" />
-              }
-              <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
             </button>
 
             <div
@@ -217,11 +223,11 @@ function startOfDay(timestamp: number): number {
                       aria-hidden="true"
                       class="pointer-events-none absolute top-1/2 -left-3 h-px w-3 bg-white/10"
                     ></span>
-                    <app-agent-status [status]="agent.agentStatus" [small]="true" />
                     @if (workspace.sessionAttention(agent.id); as attention) {
                       <app-attention-indicator [kind]="attention" />
                     }
                     <span class="min-w-0 flex-1 truncate">{{ agent.title }}</span>
+                    <app-agent-status [status]="agent.agentStatus" [small]="true" />
                   </button>
                 }
               </div>

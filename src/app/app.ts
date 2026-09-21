@@ -122,18 +122,26 @@ import { WorkspaceService } from './core/workspace.service';
                 <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden="true"></span>
               }
               @if (projectFor(session.projectId); as project) {
-                <app-project-icon [project]="project" [size]="20" />
-              }
-              @if (workspace.sessionAttention(session.id); as attention) {
+                <span class="relative inline-flex shrink-0">
+                  <app-project-icon [project]="project" [size]="20" />
+                  @if (workspace.sessionAttention(session.id); as attention) {
+                    <span
+                      class="absolute -top-1 -left-1 flex h-2 w-2 items-center justify-center rounded-full ring-2 ring-ink"
+                    >
+                      <app-attention-indicator [kind]="attention" />
+                    </span>
+                  }
+                </span>
+              } @else if (workspace.sessionAttention(session.id); as attention) {
                 <app-attention-indicator
                   [kind]="attention"
                   [onAccent]="session.id === workspace.activeSessionId()"
                 />
               }
+              <span class="max-w-48 truncate">{{ session.title }}</span>
               @if (workspace.agentActivity(session.id); as status) {
                 <app-agent-status [status]="status" [small]="true" />
               }
-              <span class="max-w-48 truncate">{{ session.title }}</span>
               <button
                 type="button"
                 class="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-all hover:bg-white/10 hover:text-white focus-visible:opacity-100"

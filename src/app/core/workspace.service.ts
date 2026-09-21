@@ -80,8 +80,29 @@ export class WorkspaceService {
   readonly projects = this.projectsState.asReadonly();
   readonly spend = this.spendState.asReadonly();
   readonly activeSessionId = this.activeState.asReadonly();
-  readonly permission = computed<PendingPermission | null>(() => this.permissionState()[0] ?? null);
-  readonly question = computed<PendingQuestion | null>(() => this.questionState()[0] ?? null);
+  private readonly activeContextIds = computed(() => {
+    const rootId = this.activeState();
+    if (!rootId) {
+      return new Set<string>();
+    }
+    const viewing = this.viewingState()[rootId];
+    if (viewing && this.sessionsState()[viewing]) {
+      return new Set([viewing]);
+    }
+    const ids = new Set<string>([rootId]);
+    for (const agentId of this.subAgentsState()[rootId] ?? []) {
+      ids.add(agentId);
+    }
+    return ids;
+  });
+  readonly permission = computed<PendingPermission | null>(() => {
+    const ids = this.activeContextIds();
+    return this.permissionState().find((entry) => ids.has(entry.sessionId)) ?? null;
+  });
+  readonly question = computed<PendingQuestion | null>(() => {
+    const ids = this.activeContextIds();
+    return this.questionState().find((entry) => ids.has(entry.sessionId)) ?? null;
+  });
   readonly processes = this.processesState.asReadonly();
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
