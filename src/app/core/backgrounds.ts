@@ -53,76 +53,154 @@ function pixelSvg(rows: readonly string[]): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges"><g fill="#fff">${cells.join('')}</g></svg>`;
 }
 
-/**
- * Stroke outlines for the handful of characters used by the ASCII puma. Text
- * is deliberately avoided: fonts are not painted when an SVG is rasterised as
- * a CSS mask, so the glyphs are drawn as plain paths instead.
- */
-const ASCII_GLYPHS: Record<string, string> = {
-  '/': 'M1 13 L7 1',
-  '\\': 'M1 1 L7 13',
-  _: 'M0.5 13 L7.5 13',
-  '|': 'M4 1 L4 13',
-  '^': 'M1 6 L4 1.5 L7 6',
-  '-': 'M0.5 7 L7.5 7',
-  '(': 'M6 1 C2 4, 2 10, 6 13',
-  ')': 'M2 1 C6 4, 6 10, 2 13',
-  "'": 'M4.5 1 L3.5 4.5',
-  '`': 'M3 1 L5.5 4',
-  ',': 'M4.5 11.5 L3 14.5',
-};
-
-function asciiSvg(lines: readonly string[], cellW = 8, cellH = 14): string {
-  const cols = Math.max(...lines.map((line) => line.length));
-  const pad = 12;
-  const width = cols * cellW + pad * 2;
-  const height = lines.length * cellH + pad * 2;
-  const strokes: string[] = [];
-  const fills: string[] = [];
-  lines.forEach((line, row) => {
-    for (let col = 0; col < line.length; col += 1) {
-      const char = line[col];
-      if (char === ' ') {
-        continue;
-      }
-      const x = pad + col * cellW;
-      const y = pad + row * cellH;
-      if (char === 'o') {
-        fills.push(`<circle cx="${x + 4}" cy="${y + 7}" r="3"/>`);
-        continue;
-      }
-      // Density glyphs used to shade the puma: a dot, a colon and a block.
-      if (char === '.') {
-        fills.push(`<circle cx="${x + 4}" cy="${y + 7}" r="1.3"/>`);
-        continue;
-      }
-      if (char === ':') {
-        fills.push(
-          `<circle cx="${x + 4}" cy="${y + 4}" r="1.2"/><circle cx="${x + 4}" cy="${y + 10}" r="1.2"/>`,
-        );
-        continue;
-      }
-      if (char === '#') {
-        fills.push(`<rect x="${x + 1.5}" y="${y + 2}" width="5" height="10" rx="1"/>`);
-        continue;
-      }
-      const path = ASCII_GLYPHS[char];
-      if (path) {
-        strokes.push(`<path d="${path}" transform="translate(${x},${y})"/>`);
-      }
-    }
-  });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${strokes.join('')}</g><g fill="#fff">${fills.join('')}</g></svg>`;
+/** Smooth closed path through the given points (Catmull-Rom to cubic Bézier). */
+function smoothClosedPath(points: readonly (readonly [number, number])[], tension = 6): string {
+  const n = points.length;
+  let d = `M ${points[0][0]} ${points[0][1]} `;
+  for (let i = 0; i < n; i += 1) {
+    const [x0, y0] = points[(i - 1 + n) % n];
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % n];
+    const [x3, y3] = points[(i + 2) % n];
+    const c1x = x1 + (x2 - x0) / tension;
+    const c1y = y1 + (y2 - y0) / tension;
+    const c2x = x2 - (x3 - x1) / tension;
+    const c2y = y2 - (y3 - y1) / tension;
+    d += `C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${x2} ${y2} `;
+  }
+  return `${d}Z`;
 }
 
-function topoSvg(): string {
-  const paths: string[] = [];
-  for (let i = 0; i < 14; i += 1) {
-    const y = 24 + i * 30;
-    const d = `M -24 ${y} C 72 ${y - 34}, 156 ${y + 34}, 252 ${y} S 432 ${y - 34}, 504 ${y}`;
-    paths.push(`<path d="${d}" fill="none" stroke="#fff" stroke-width="1.4"/>`);
+function polygon(points: readonly (readonly [number, number])[]): string {
+  return `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`;
+}
+
+/**
+ * Filled night scene used as a mask: jagged mountain ranges, a crescent moon,
+ * scattered stars, pine trees and a puma silhouette in the foreground. Every
+ * shape is painted white; the theme gradient supplies the colour.
+ */
+function mountainNightSvg(): string {
+  const width = 1000;
+  const height = 620;
+
+  const pumaMain: readonly (readonly [number, number])[] = [
+    [48, 132],
+    [88, 112],
+    [138, 80],
+    [153, 36],
+    [183, 66],
+    [211, 34],
+    [246, 76],
+    [300, 88],
+    [360, 74],
+    [460, 66],
+    [560, 78],
+    [592, 100],
+    [622, 78],
+    [642, 46],
+    [652, 14],
+    [636, 12],
+    [616, 44],
+    [600, 90],
+    [608, 200],
+    [616, 300],
+    [600, 330],
+    [560, 336],
+    [548, 310],
+    [548, 210],
+    [470, 210],
+    [330, 205],
+    [322, 210],
+    [318, 300],
+    [292, 330],
+    [260, 324],
+    [256, 210],
+    [215, 200],
+    [190, 175],
+    [150, 162],
+    [100, 150],
+    [56, 140],
+  ];
+  const leg = (
+    back: number,
+    front: number,
+    top: number,
+    bottom: number,
+  ): readonly (readonly [number, number])[] => [
+    [back, top],
+    [front, top],
+    [front - 6, bottom - 28],
+    [front - 11, bottom],
+    [back + 11, bottom],
+    [back + 6, bottom - 28],
+  ];
+  const pumaFarHind = leg(482, 540, 210, 318);
+  const pumaFarFront = leg(342, 400, 205, 322);
+
+  const stars: string[] = [];
+  for (let i = 0; i < 70; i += 1) {
+    const x = (i * 137.5) % width;
+    const y = (i * 71.3) % (height * 0.5);
+    const r = 1.2 + ((i * 37) % 3) * 0.6;
+    stars.push(`<circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="${r.toFixed(1)}"/>`);
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="504" height="460" viewBox="0 0 504 460">${paths.join('')}</svg>`;
+
+  const circle = (cx: number, cy: number, r: number): string =>
+    `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0 Z`;
+  const moon = `<path fill-rule="evenodd" d="${circle(880, 95, 62)} ${circle(908, 89, 32)}"/>`;
+
+  const farRange =
+    'M 0 380 L 120 250 L 220 330 L 340 210 L 460 320 L 560 240 L 700 340 L 820 230 L 940 330 L 1000 280 L 1000 620 L 0 620 Z';
+  const nearRange =
+    'M 0 470 L 90 360 L 180 440 L 300 330 L 420 450 L 540 380 L 660 470 L 780 370 L 900 460 L 1000 400 L 1000 620 L 0 620 Z';
+  const mountains = `<path d="${farRange}" opacity="0.55"/><path d="${nearRange}" opacity="0.8"/>`;
+
+  const pine = (bx: number, base: number, h: number, w: number): string =>
+    `<path d="M ${bx} ${base - h} L ${bx + w} ${base} L ${bx - w} ${base} Z"/>`;
+  const pines = [
+    pine(70, 600, 150, 42),
+    pine(150, 620, 190, 54),
+    pine(940, 600, 150, 42),
+    pine(860, 620, 190, 54),
+  ].join('');
+
+  const pumaPath = `${smoothClosedPath(pumaMain)}${polygon(pumaFarHind)}${polygon(pumaFarFront)}`;
+  const puma = `<g transform="translate(170,320) scale(0.72)"><path d="${pumaPath}"/></g>`;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round">${stars.join('')}${moon}${mountains}${puma}${pines}</g></svg>`;
+}
+
+/**
+ * Contour lines built from periodic sine sums so every path meets itself with
+ * matching position and slope at the tile edges. Rows are spaced so the tile
+ * height is an exact multiple of the row pitch, keeping the pattern seamless
+ * both horizontally and vertically when it repeats.
+ */
+function topoSvg(): string {
+  const width = 520;
+  const height = 480;
+  const rows = 16;
+  const step = height / rows;
+  const samples = 96;
+  const paths: string[] = [];
+  for (let r = 0; r < rows; r += 1) {
+    const base = r * step;
+    const phase = (r / rows) * Math.PI * 2;
+    const amp1 = 18 + 6 * Math.sin(phase);
+    const amp2 = 9 + 4 * Math.cos(phase);
+    let d = '';
+    for (let s = 0; s <= samples; s += 1) {
+      const x = (s / samples) * width;
+      const y =
+        base +
+        amp1 * Math.sin((2 * Math.PI * s) / samples) +
+        amp2 * Math.sin((4 * Math.PI * s) / samples + phase);
+      d += `${s === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)} `;
+    }
+    paths.push(`<path d="${d.trim()}" fill="none" stroke="#fff" stroke-width="1.4"/>`);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${paths.join('')}</svg>`;
 }
 
 function circuitSvg(): string {
@@ -247,60 +325,6 @@ function pawTrailSvg(): string {
   const shapes = pawShapes();
   return `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="260" viewBox="0 0 260 260"><g fill="#fff"><g transform="translate(18,22) rotate(22 32 32)">${shapes}</g><g transform="translate(150,150) rotate(22 32 32)">${shapes}</g></g></svg>`;
 }
-
-const ASCII_SCENE: readonly string[] = [
-  "          .  '                '     '                                                                                  .  .",
-  "                  '                              .                 .          '                                           '                                '",
-  "                                               .                                    .   '               '",
-  "                          '                                '                                    .                                             __      '",
-  "      '                   .     .                                                                                                            /",
-  "         .                   '                                     .           .                                                            |         .",
-  ".                                    '      .                                              .                                                |             .",
-  "                   '                                              '  '                  . .'                      '    '               '     \\",
-  " '               '  '                    .                                                      '                                             \\_      .",
-  '                               \\      |',
-  '                              ||\\    |||',
-  '                              | \\\\   | |                                                                                |',
-  '                             ||  \\\\ |  ||                                                                               |',
-  '                             |    \\||   |                                                                              |',
-  '                            ||  _______ ||                                                                             |',
-  '                            ______    ____                                                                             |',
-  '                            //   ____                                                                                 |',
-  '                           //                                                                                         |',
-  '                          //          |                                                                             //',
-  '                         //           |                       ______________________                               //',
-  '                        |             ____         ____________::.:.:.:.:..:.::::::_______                        //',
-  '                        |             |   _________.::::..::::.:::::..::..:.::::..::::.:.______                  //',
-  '                        |             |     ..:.::.:.....:.::..::::.:..:::::::...::::...::::::____          ____/',
-  '                        |            ||    ::::.:...:::::...:...:::..::.::.....::::.:.:.::.:::..:.____  _____',
-  '                        \\            ||  ..::::.:.:::::......::.::.:.::......:::.:....:.:::.:::.:.::.__\\\\',
-  '                         \\\\         //| .:.:..::.::::.:.:.:.::...:...:::..:.....::::.:...::::::.::::.:::\\\\',
-  '                     /    \\\\       // |_____.:::..::...::..:::....:::::.:.::.:::.:.:::.::::.:::::...:::..\\\\\\                           /',
-  '                    //\\    \\______//       ______|_________|_______________________________.::...::..:::.:.\\\\                         /\\\\',
-  '                    / \\\\                         |         |                              ________:.....:.:.\\|                       // \\',
-  '                   /   \\\\                       |          |                                     __|..:::::.:|                      //   \\',
-  '       /          //    \\                       |          ||                                    .||__.:..:.||                      /    \\\\          /',
-  '      //\\         /      \\                      |           |                                    :|..___:|:.|                      /      \\         /\\\\',
-  '     //  \\       /       \\\\                    |            |                                     |.::.__||:|                     //       \\       /  \\\\',
-  '     /    \\     //        \\\\                   |            |                                    ||:.:.:::|:|                    //        \\\\     /    \\',
-  '    /      \\    /          \\                   |            |                                    |:.:...::|||                    /          \\    /      \\',
-  '   //       \\  /            \\                   |            |                                   ||::.:.:.:|                    /            \\  /       \\\\',
-  '   /         \\//             \\                  |            |                                    | :..::..||                  /             \\\\/         \\',
-  '  /           \\              \\\\                 |            |                                    |  :.::./ |                 //              \\           \\',
-  ' //                           \\\\                 |            |                                   ||  :.:/  ||               //                           \\\\',
-  '//                             \\\\               //           //                                   //   ./   //              //                             \\',
-  '/       \\                       \\\\             //           //                                   //    /   //              //                       /',
-  ' /     \\                         \\            //           //                                   //        //               /                         /     \\',
-  '__________________________________\\                                                                                       /_________________________________',
-  '  /   \\                                                                                                                                               /   \\',
-  '  /   \\                                                                                                                                               /   \\',
-  '   / \\                                                                                                                                                 / \\',
-  '   / \\                                                                                                                                                 / \\',
-  '   / \\                                                                                                                                                 / \\',
-  '_  / \\  _                                                                                                                                           _  / \\',
-  '    |                                                                                                                                                   |',
-];
-
 const GRID_LINE = 'color-mix(in oklab, var(--color-accent) 12%, transparent)';
 const DIM_ACCENT = (amount: number): string =>
   `color-mix(in oklab, var(--color-accent) ${amount}%, transparent)`;
@@ -422,18 +446,18 @@ export const BACKGROUND_PRESETS: BackgroundPreset[] = [
     preview: { maskSize: '120px 120px' },
   },
   {
-    id: 'puma-ascii',
-    labelKey: 'settings.background.presets.pumaAscii',
+    id: 'puma-night',
+    labelKey: 'settings.background.presets.pumaNight',
     scheme: 'any',
     style: {
-      image: `linear-gradient(120deg, ${DIM_ACCENT(75)}, ${DIM_MIST(25)})`,
-      mask: svgUrl(asciiSvg(ASCII_SCENE)),
-      maskSize: 'auto 80%',
+      image: `linear-gradient(165deg, ${DIM_ACCENT(75)}, ${DIM_NAVY(85)})`,
+      mask: svgUrl(mountainNightSvg()),
+      maskSize: 'auto 100%',
       maskPosition: 'center',
       maskRepeat: 'no-repeat',
-      opacity: 0.34,
+      opacity: 0.4,
     },
-    preview: { maskSize: 'auto 90%' },
+    preview: { maskSize: 'contain' },
   },
 ];
 

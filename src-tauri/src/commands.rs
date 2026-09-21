@@ -2,13 +2,28 @@ use crate::agent::{self, TurnDeps, TurnRequest};
 use crate::config::{self, Settings};
 use crate::db::NewMessage;
 use crate::error::{AppError, Result};
-use crate::git::{project_git_info, ShadowRepo};
+use crate::git::{
+    git_branch_create as branch_create_worktree, git_branch_delete as branch_delete_worktree,
+    git_branch_rename as branch_rename_worktree, git_checkout as checkout_worktree,
+    git_commit as commit_worktree, git_discard as discard_worktree,
+    git_fast_forward as fast_forward_worktree, git_fetch as fetch_worktree,
+    git_merge as merge_worktree, git_pull as pull_worktree,
+    git_pull_request_url as pull_request_url_worktree, git_push as push_worktree,
+    git_push_branch as push_branch_worktree, git_rebase as rebase_worktree,
+    git_rebase_interactive as rebase_interactive_worktree, git_set_upstream as set_upstream_worktree,
+    git_stage as stage_worktree, git_tag_create as tag_create_worktree,
+    git_unstage as unstage_worktree, project_branches, project_commit_detail,
+    project_commit_file_diff, project_commits, project_file_diff, project_git_info,
+    project_git_status, project_rebase_commits, project_remotes, ShadowRepo,
+};
 use crate::mcp::McpManager;
 use crate::mentions;
+use crate::permissions::FileIgnoreConfig;
 use crate::models::{
-    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitInfo, Mention, Message,
-    ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
-    RoutedEvent, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
+    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitBranch, GitCommit,
+    GitCommitDetail, GitInfo, GitStatus, Mention, Message, ModelInfo, PermissionDecision,
+    ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer, RoutedEvent, Session,
+    SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
 };
 use crate::providers::openrouter::{ChatChunk, ChatMessage};
 use crate::state::AppState;
@@ -518,6 +533,11 @@ pub fn delete_command_rule(state: State<'_, AppState>, rule: String) -> Result<S
 }
 
 #[tauri::command]
+pub fn get_file_ignore_catalog() -> Vec<crate::permissions::IgnoreCatalogEntry> {
+    crate::permissions::ignore_catalog()
+}
+
+#[tauri::command]
 pub fn list_processes(state: State<'_, AppState>) -> Vec<ProcessInfo> {
     state.processes.list()
 }
@@ -531,6 +551,309 @@ pub fn stop_process(state: State<'_, AppState>, process_id: String) -> Result<()
 pub fn get_git_info(state: State<'_, AppState>, project_id: String) -> Result<GitInfo> {
     let project = state.db.get_project(&project_id)?;
     Ok(project_git_info(Path::new(&project.path)))
+}
+
+fn project_root(state: &AppState, project_id: &str) -> Result<PathBuf> {
+    let project = state.db.get_project(project_id)?;
+    Ok(PathBuf::from(project.path))
+}
+
+#[tauri::command]
+pub fn get_git_status(state: State<'_, AppState>, project_id: String) -> Result<GitStatus> {
+    let root = project_root(&state, &project_id)?;
+    project_git_status(&root)
+}
+
+#[tauri::command]
+pub fn get_git_branches(state: State<'_, AppState>, project_id: String) -> Result<Vec<GitBranch>> {
+    let root = project_root(&state, &project_id)?;
+    Ok(project_branches(&root))
+}
+
+#[tauri::command]
+pub fn get_git_commits(
+    state: State<'_, AppState>,
+    project_id: String,
+    query: Option<String>,
+    skip: Option<usize>,
+    limit: Option<usize>,
+) -> Result<Vec<GitCommit>> {
+    let root = project_root(&state, &project_id)?;
+    project_commits(
+        &root,
+        query.as_deref(),
+        skip.unwrap_or(0),
+        limit.unwrap_or(50),
+    )
+}
+
+#[tauri::command]
+pub fn get_git_commit(
+    state: State<'_, AppState>,
+    project_id: String,
+    hash: String,
+) -> Result<GitCommitDetail> {
+    let root = project_root(&state, &project_id)?;
+    project_commit_detail(&root, &hash)
+}
+
+#[tauri::command]
+pub fn get_git_commit_file_diff(
+    state: State<'_, AppState>,
+    project_id: String,
+    hash: String,
+    path: String,
+) -> Result<FileDiff> {
+    let root = project_root(&state, &project_id)?;
+    project_commit_file_diff(&root, &hash, &path)
+}
+
+#[tauri::command]
+pub fn get_git_file_diff(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+    staged: bool,
+) -> Result<FileDiff> {
+    let root = project_root(&state, &project_id)?;
+    project_file_diff(&root, &path, staged)
+}
+
+#[tauri::command]
+pub fn git_stage(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: Option<String>,
+) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    stage_worktree(&root, path.as_deref())
+}
+
+#[tauri::command]
+pub fn git_unstage(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: Option<String>,
+) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    unstage_worktree(&root, path.as_deref())
+}
+
+#[tauri::command]
+pub fn git_discard(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    discard_worktree(&root, &path)
+}
+
+#[tauri::command]
+pub fn git_commit(
+    state: State<'_, AppState>,
+    project_id: String,
+    message: String,
+    amend: bool,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    commit_worktree(&root, &message, amend)
+}
+
+#[tauri::command]
+pub fn git_checkout(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+    track: Option<bool>,
+    local_branch: Option<String>,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    checkout_worktree(&root, &branch, track.unwrap_or(false), local_branch.as_deref())
+}
+
+#[tauri::command]
+pub fn git_fetch(state: State<'_, AppState>, project_id: String) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    fetch_worktree(&root)
+}
+
+#[tauri::command]
+pub fn git_pull(state: State<'_, AppState>, project_id: String) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    pull_worktree(&root)
+}
+
+#[tauri::command]
+pub fn git_push(state: State<'_, AppState>, project_id: String) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    push_worktree(&root)
+}
+
+#[tauri::command]
+pub fn get_git_remotes(state: State<'_, AppState>, project_id: String) -> Result<Vec<String>> {
+    let root = project_root(&state, &project_id)?;
+    Ok(project_remotes(&root))
+}
+
+#[tauri::command]
+pub fn git_fast_forward(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+    upstream: String,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    fast_forward_worktree(&root, &branch, &upstream)
+}
+
+#[tauri::command]
+pub fn git_merge(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    merge_worktree(&root, &branch)
+}
+
+#[tauri::command]
+pub fn git_rebase(state: State<'_, AppState>, project_id: String, onto: String) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    rebase_worktree(&root, &onto)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseTodoEntry {
+    pub action: String,
+    pub hash: String,
+}
+
+#[tauri::command]
+pub fn git_rebase_interactive(
+    state: State<'_, AppState>,
+    project_id: String,
+    onto: String,
+    todo: Vec<RebaseTodoEntry>,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    let entries: Vec<(String, String)> = todo
+        .into_iter()
+        .map(|entry| (entry.action, entry.hash))
+        .collect();
+    rebase_interactive_worktree(&root, &onto, &entries)
+}
+
+#[tauri::command]
+pub fn get_git_rebase_commits(
+    state: State<'_, AppState>,
+    project_id: String,
+    onto: String,
+) -> Result<Vec<GitCommit>> {
+    let root = project_root(&state, &project_id)?;
+    project_rebase_commits(&root, &onto)
+}
+
+#[tauri::command]
+pub fn git_branch_create(
+    state: State<'_, AppState>,
+    project_id: String,
+    name: String,
+    start_point: Option<String>,
+    checkout: bool,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    branch_create_worktree(&root, &name, start_point.as_deref(), checkout)
+}
+
+#[tauri::command]
+pub fn git_tag_create(
+    state: State<'_, AppState>,
+    project_id: String,
+    name: String,
+    target: Option<String>,
+    message: Option<String>,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    tag_create_worktree(&root, &name, target.as_deref(), message.as_deref())
+}
+
+#[tauri::command]
+pub fn git_branch_rename(
+    state: State<'_, AppState>,
+    project_id: String,
+    from: String,
+    to: String,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    branch_rename_worktree(&root, &from, &to)
+}
+
+#[tauri::command]
+pub fn git_branch_delete(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+    remote: bool,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    branch_delete_worktree(&root, &branch, remote)
+}
+
+#[tauri::command]
+pub fn git_set_upstream(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+    upstream: String,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    set_upstream_worktree(&root, &branch, &upstream)
+}
+
+#[tauri::command]
+pub fn git_push_branch(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+    remote: String,
+    set_upstream: bool,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    push_branch_worktree(&root, &branch, &remote, set_upstream)
+}
+
+#[tauri::command]
+pub fn git_pull_request_url(
+    state: State<'_, AppState>,
+    project_id: String,
+    remote: String,
+    branch: String,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    pull_request_url_worktree(&root, &remote, &branch)
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<()> {
+    let status = {
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open").arg(&url).status()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", &url])
+                .status()
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            std::process::Command::new("xdg-open").arg(&url).status()
+        }
+    };
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err(AppError::msg(format!("could not open {url}"))),
+        Err(error) => Err(AppError::msg(error.to_string())),
+    }
 }
 
 fn open_shadow(state: &AppState, project_id: &str) -> Result<Arc<ShadowRepo>> {
@@ -791,6 +1114,7 @@ pub async fn send_message(
     let mentions = mentions.unwrap_or_default();
     let mode = config::resolve_mode(&settings, session.mode_id.as_deref());
     let cancel = state.register_cancel(&session_id);
+    let file_ignore = Arc::new(FileIgnoreConfig::from_settings(&settings));
 
     let mut context = String::new();
     let mut mcp_servers: Vec<String> = Vec::new();
@@ -803,6 +1127,7 @@ pub async fn send_message(
             permissions: state.permissions.clone(),
             allowed_websites: settings.allowed_websites.clone(),
             denied_websites: settings.denied_websites.clone(),
+            file_ignore: file_ignore.clone(),
             session_id: session_id.clone(),
             shadow: shadow.clone(),
             processes: state.processes.clone(),
@@ -1010,6 +1335,7 @@ pub async fn send_message(
         command_rules: settings.command_rules.clone(),
         allowed_websites: settings.allowed_websites.clone(),
         denied_websites: settings.denied_websites.clone(),
+        file_ignore,
         context_message_limit: settings.context_message_limit,
         fallback_pricing,
         base_commit,

@@ -6,7 +6,7 @@ use crate::mcp::McpManager;
 use crate::models::{
     Attachment, EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord,
 };
-use crate::permissions::LivePermissions;
+use crate::permissions::{FileIgnoreConfig, LivePermissions};
 use crate::processes::ProcessRegistry;
 use crate::providers::openrouter::{
     ChatChunk, ChatMessage, ChatUsage, OpenRouterClient, ProviderRouting, ReasoningSetting,
@@ -37,6 +37,7 @@ pub struct TurnRequest {
     pub command_rules: Vec<String>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
+    pub file_ignore: Arc<FileIgnoreConfig>,
     pub context_message_limit: usize,
     pub fallback_pricing: Option<(f64, f64)>,
     pub base_commit: String,
@@ -140,6 +141,7 @@ pub async fn run_turn(
         let mut stream_error: Option<String> = None;
         let mut stream_cancelled = false;
 
+        let model_start = std::time::Instant::now();
         let stream_result = deps
             .client
             .stream_chat(
@@ -183,6 +185,7 @@ pub async fn run_turn(
             }
             Err(error) => stream_error = Some(error.to_string()),
         }
+        let model_duration_ms = model_start.elapsed().as_millis() as i64;
         accumulate_usage(&mut total_usage, &iteration_usage);
 
         if stream_error.is_some() || stream_cancelled || tool_calls.is_empty() {
@@ -197,6 +200,7 @@ pub async fn run_turn(
                 iteration_usage.cached_tokens,
                 &[],
                 &changes,
+                model_duration_ms,
             )?;
             if !changes.is_empty() {
                 emit(StreamEvent::Changes {
@@ -219,11 +223,15 @@ pub async fn run_turn(
             iteration_usage.cached_tokens,
             &tool_calls,
             &[],
+            model_duration_ms,
         )?;
         emit(StreamEvent::Assistant { message: assistant });
 
-        let mut pending_agents: Vec<(ToolCallRecord, tokio::task::JoinHandle<ToolOutcome>)> =
-            Vec::new();
+        let mut pending_agents: Vec<(
+            ToolCallRecord,
+            tokio::task::JoinHandle<ToolOutcome>,
+            std::time::Instant,
+        )> = Vec::new();
         for call in &tool_calls {
             if request.cancel.is_cancelled() {
                 final_cancelled = true;
@@ -242,12 +250,15 @@ pub async fn run_turn(
                 let deps_owned = deps.clone();
                 let request_owned = request.clone();
                 let sink_owned = sink.clone();
+                let started = std::time::Instant::now();
                 let handle = tokio::spawn(async move {
                     run_subagent(&deps_owned, &request_owned, arguments, sink_owned).await
                 });
-                pending_agents.push((call.clone(), handle));
+                pending_agents.push((call.clone(), handle, started));
             } else {
+                let started = std::time::Instant::now();
                 let outcome = execute_call(deps, &request, call, &sink).await;
+                let duration_ms = started.elapsed().as_millis() as i64;
                 deps.db.append_message(
                     &request.session_id,
                     NewMessage::tool(
@@ -256,6 +267,7 @@ pub async fn run_turn(
                         &outcome.result,
                         &outcome.status,
                         &outcome.changes,
+                        duration_ms,
                     ),
                 )?;
                 emit(StreamEvent::ToolEnd {
@@ -268,11 +280,12 @@ pub async fn run_turn(
             }
         }
 
-        for (call, handle) in pending_agents {
+        for (call, handle, started) in pending_agents {
             let outcome = match handle.await {
                 Ok(outcome) => outcome,
                 Err(error) => ToolOutcome::error(format!("Subagent failed: {error}")),
             };
+            let duration_ms = started.elapsed().as_millis() as i64;
             deps.db.append_message(
                 &request.session_id,
                 NewMessage::tool(
@@ -281,6 +294,7 @@ pub async fn run_turn(
                     &outcome.result,
                     &outcome.status,
                     &outcome.changes,
+                    duration_ms,
                 ),
             )?;
             emit(StreamEvent::ToolEnd {
@@ -411,6 +425,7 @@ fn run_subagent<'a>(
             command_rules: request.command_rules.clone(),
             allowed_websites: request.allowed_websites.clone(),
             denied_websites: request.denied_websites.clone(),
+            file_ignore: request.file_ignore.clone(),
             context_message_limit: request.context_message_limit,
             fallback_pricing: request.fallback_pricing,
             base_commit,
@@ -662,6 +677,7 @@ async fn execute_call(
         project_root: request.project_root.clone(),
         allowed_websites: request.allowed_websites.clone(),
         denied_websites: request.denied_websites.clone(),
+        file_ignore: request.file_ignore.clone(),
         session_id: request.session_id.clone(),
         shadow: deps.shadow.clone(),
         processes: deps.processes.clone(),

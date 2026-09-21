@@ -86,6 +86,11 @@ export interface MessageAttachment {
   data: string;
 }
 
+export interface TextBlock {
+  id: string;
+  text: string;
+}
+
 export interface Message {
   id: string;
   sessionId: string;
@@ -109,6 +114,7 @@ export interface Message {
   attachments: MessageAttachment[];
   mentions: Mention[];
   context: string;
+  durationMs: number;
 }
 
 export interface ModelInfo {
@@ -257,6 +263,14 @@ export interface Settings {
   commandRules: string[];
   allowedWebsites: string[];
   deniedWebsites: string[];
+  ignoreGitignored: boolean;
+  scanGeneratedFiles: boolean;
+  ignoreLocalDatabases: boolean;
+  ignoreEnvFiles: boolean;
+  fileIgnoreExemptions: string[];
+  fileIgnoreDisabled: string[];
+  fileIgnoreEnabled: string[];
+  fileIgnoreAdvanced: boolean;
   mcpAutoDiscovery: boolean;
   mcpFolders: string[];
   mcpDisabled: string[];
@@ -265,6 +279,7 @@ export interface Settings {
   skillsDisabled: string[];
   keepAwake: boolean;
   tabsMultiline: boolean;
+  pasteWordLimit: number;
   openTabHotkey: string;
   closeTabHotkey: string;
   soundsEnabled: boolean;
@@ -307,10 +322,74 @@ export interface SkillCandidate {
   enabled: boolean;
 }
 
+export interface IgnoreCatalogEntry {
+  id: string;
+  group: string;
+  pattern: string;
+}
+
 export interface GitInfo {
   isRepo: boolean;
   branch: string | null;
   head: string | null;
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream: string | null;
+  hash: string | null;
+  subject: string | null;
+  timestamp: number | null;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  timestamp: number;
+  subject: string;
+  refs: string[];
+  parents: string[];
+}
+
+export interface GitCommitDetail {
+  hash: string;
+  shortHash: string;
+  author: string;
+  authorEmail: string;
+  timestamp: number;
+  subject: string;
+  body: string;
+  parents: string[];
+  refs: string[];
+  changes: FileChange[];
+}
+
+export interface GitTag {
+  name: string;
+  hash: string;
+}
+
+export interface GitRebaseEntry {
+  action: string;
+  hash: string;
+}
+
+export interface GitStatus {
+  isRepo: boolean;
+  branch: string | null;
+  head: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  staged: FileChange[];
+  unstaged: FileChange[];
+  branches: GitBranch[];
+  tags: GitTag[];
+  stashes: string[];
+  submodules: string[];
 }
 
 export interface ProjectRule {

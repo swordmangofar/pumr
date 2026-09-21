@@ -5,7 +5,13 @@ import { api } from './api';
 import {
   FileChange,
   FileDiff,
+  GitBranch,
+  GitCommit,
+  GitCommitDetail,
   GitInfo,
+  GitRebaseEntry,
+  GitStatus,
+  GitTag,
   LiveToolCall,
   Message,
   PendingPermission,
@@ -29,10 +35,26 @@ import { SoundService } from './sound.service';
 const TABS_KEY = 'pumr.tabs';
 const ACTIVE_KEY = 'pumr.activeTab';
 const OPEN_FILES_KEY = 'pumr.workspace.openFiles';
+const LEFT_TAB_KEY = 'pumr.leftTab';
+const RIGHT_TAB_KEY = 'pumr.rightTab';
+const SESSION_VIEW_KEY = 'pumr.sessionView';
+const LAYOUT_KEY = 'pumr.layout';
+const GIT_COMMIT_PAGE_SIZE = 50;
+
+type LeftTab = 'projects' | 'workspace' | 'git';
+type RightTab = 'changes' | 'session' | 'prompts' | 'modes';
+type SessionView = 'projects' | 'history';
 
 interface PersistedOpenFiles {
   files?: string[];
   active?: string | null;
+}
+
+interface PersistedLayout {
+  leftPanelOpen?: boolean;
+  rightPanelOpen?: boolean;
+  leftPanelWidth?: number;
+  rightPanelWidth?: number;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -59,21 +81,45 @@ export class WorkspaceService {
   private readonly editorContentState = signal<Record<string, WorkspaceFile>>({});
   private readonly editorDiffState = signal<Record<string, FileDiff>>({});
   private readonly editorDirtyState = signal<Record<string, boolean>>({});
-  private readonly leftTabState = signal<'projects' | 'workspace'>('projects');
-  private readonly sessionViewState = signal<'projects' | 'history'>('projects');
+  private readonly leftTabState = signal<LeftTab>('projects');
+  private readonly rightTabState = signal<RightTab>('changes');
+  private readonly sessionViewState = signal<SessionView>('projects');
+  private readonly leftPanelOpenState = signal(true);
+  private readonly rightPanelOpenState = signal(true);
+  private readonly leftPanelWidthState = signal(340);
+  private readonly rightPanelWidthState = signal(512);
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly gitState = signal<Record<string, GitInfo>>({});
+  private readonly gitStatusState = signal<Record<string, GitStatus>>({});
+  private readonly gitBranchesState = signal<Record<string, GitBranch[]>>({});
+  private readonly gitRemotesState = signal<Record<string, string[]>>({});
+  private readonly gitCommitsState = signal<GitCommit[]>([]);
+  private readonly gitCommitsLoadingState = signal(false);
+  private readonly gitCommitsHasMoreState = signal(false);
+  private readonly gitCommitSearchState = signal('');
+  private readonly gitCommitDetailState = signal<GitCommitDetail | null>(null);
+  private readonly gitCommitFileDiffState = signal<FileDiff | null>(null);
+  private readonly selectedGitCommitState = signal<string | null>(null);
+  private readonly gitViewState = signal<'changes' | 'commits'>('changes');
+  private readonly selectedGitBranchState = signal<string | null>(null);
+  private readonly gitDiffState = signal<{ path: string; staged: boolean; diff: FileDiff } | null>(
+    null,
+  );
+  private readonly gitBusyState = signal(false);
+  private readonly gitMessageState = signal<string | null>(null);
   private readonly processesState = signal<ProcessInfo[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
   private readonly draftState = signal<string | null>(null);
   private readonly handoverState = signal<Record<string, boolean>>({});
+  private readonly debugSessionState = signal<string | null>(null);
   private readonly scrollTargetState = signal<{ id: string; nonce: number } | null>(null);
   private readonly subAgentsState = signal<Record<string, string[]>>({});
   private readonly viewingState = signal<Record<string, string>>({});
   private readonly showArchivedState = signal(false);
   private readonly projectEditorState = signal<string | null>(null);
   private scrollNonce = 0;
+  private gitCommitsRequest = 0;
   private processTimer: ReturnType<typeof setInterval> | null = null;
   private readonly autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -109,9 +155,16 @@ export class WorkspaceService {
   readonly editorContent = this.editorContentState.asReadonly();
   readonly editorDiff = this.editorDiffState.asReadonly();
   readonly leftTab = this.leftTabState.asReadonly();
+  readonly rightTab = this.rightTabState.asReadonly();
   readonly sessionView = this.sessionViewState.asReadonly();
+  readonly leftPanelOpen = this.leftPanelOpenState.asReadonly();
+  readonly rightPanelOpen = this.rightPanelOpenState.asReadonly();
+  readonly leftPanelWidth = this.leftPanelWidthState.asReadonly();
+  readonly rightPanelWidth = this.rightPanelWidthState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
   readonly handovers = this.handoverState.asReadonly();
+  readonly debugSessionId = this.debugSessionState.asReadonly();
+  readonly debugOpen = computed(() => this.debugSessionState() !== null);
   readonly scrollTarget = this.scrollTargetState.asReadonly();
   readonly showArchived = this.showArchivedState.asReadonly();
   readonly projectEditorId = this.projectEditorState.asReadonly();
@@ -151,6 +204,33 @@ export class WorkspaceService {
     const project = this.activeProject();
     return project ? (this.gitState()[project.id] ?? null) : null;
   });
+  readonly gitDiff = this.gitDiffState.asReadonly();
+  readonly gitBusy = this.gitBusyState.asReadonly();
+  readonly gitMessage = this.gitMessageState.asReadonly();
+  readonly gitView = this.gitViewState.asReadonly();
+  readonly selectedGitBranch = this.selectedGitBranchState.asReadonly();
+  readonly gitCommits = this.gitCommitsState.asReadonly();
+  readonly gitCommitsLoading = this.gitCommitsLoadingState.asReadonly();
+  readonly gitCommitsHasMore = this.gitCommitsHasMoreState.asReadonly();
+  readonly gitCommitSearch = this.gitCommitSearchState.asReadonly();
+  readonly gitCommitDetail = this.gitCommitDetailState.asReadonly();
+  readonly gitCommitFileDiff = this.gitCommitFileDiffState.asReadonly();
+  readonly selectedGitCommit = this.selectedGitCommitState.asReadonly();
+  readonly activeGitBranches = computed(() => {
+    const project = this.activeProject();
+    if (!project) {
+      return [];
+    }
+    return this.gitBranchesState()[project.id] ?? this.gitStatusState()[project.id]?.branches ?? [];
+  });
+  readonly activeGitStatus = computed(() => {
+    const project = this.activeProject();
+    return project ? (this.gitStatusState()[project.id] ?? null) : null;
+  });
+  readonly activeGitRemotes = computed(() => {
+    const project = this.activeProject();
+    return project ? (this.gitRemotesState()[project.id] ?? []) : [];
+  });
 
   constructor() {
     const stored = this.readJson<Record<string, PersistedOpenFiles>>(OPEN_FILES_KEY, {});
@@ -162,6 +242,37 @@ export class WorkspaceService {
     }
     this.openFilesState.set(files);
     this.activeOpenFileState.set(active);
+
+    const leftTab = localStorage.getItem(LEFT_TAB_KEY);
+    if (leftTab === 'projects' || leftTab === 'workspace' || leftTab === 'git') {
+      this.leftTabState.set(leftTab);
+    }
+    const rightTab = localStorage.getItem(RIGHT_TAB_KEY);
+    if (
+      rightTab === 'changes' ||
+      rightTab === 'session' ||
+      rightTab === 'prompts' ||
+      rightTab === 'modes'
+    ) {
+      this.rightTabState.set(rightTab);
+    }
+    const sessionView = localStorage.getItem(SESSION_VIEW_KEY);
+    if (sessionView === 'projects' || sessionView === 'history') {
+      this.sessionViewState.set(sessionView);
+    }
+    const layout = this.readJson<PersistedLayout>(LAYOUT_KEY, {});
+    if (typeof layout.leftPanelOpen === 'boolean') {
+      this.leftPanelOpenState.set(layout.leftPanelOpen);
+    }
+    if (typeof layout.rightPanelOpen === 'boolean') {
+      this.rightPanelOpenState.set(layout.rightPanelOpen);
+    }
+    if (typeof layout.leftPanelWidth === 'number' && Number.isFinite(layout.leftPanelWidth)) {
+      this.leftPanelWidthState.set(layout.leftPanelWidth);
+    }
+    if (typeof layout.rightPanelWidth === 'number' && Number.isFinite(layout.rightPanelWidth)) {
+      this.rightPanelWidthState.set(layout.rightPanelWidth);
+    }
   }
 
   async init(): Promise<void> {
@@ -454,6 +565,19 @@ export class WorkspaceService {
     void this.activateSession(sessionId);
   }
 
+  openDebug(): void {
+    const sessionId = this.activeState();
+    if (!sessionId) {
+      return;
+    }
+    this.debugSessionState.set(sessionId);
+    void this.loadMessages(sessionId, true);
+  }
+
+  closeDebug(): void {
+    this.debugSessionState.set(null);
+  }
+
   closeTab(sessionId: string): void {
     const tabs = this.tabsState().filter((id) => id !== sessionId);
     this.tabsState.set(tabs);
@@ -505,6 +629,7 @@ export class WorkspaceService {
       attachments: args.attachments ?? [],
       mentions: args.mentions ?? [],
       context: '',
+      durationMs: 0,
     });
     this.setError(args.sessionId, null);
     this.setStreaming(args.sessionId, true);
@@ -783,12 +908,47 @@ export class WorkspaceService {
     }
   }
 
-  setLeftTab(tab: 'projects' | 'workspace'): void {
+  setLeftTab(tab: LeftTab): void {
     this.leftTabState.set(tab);
+    localStorage.setItem(LEFT_TAB_KEY, tab);
   }
 
-  setSessionView(view: 'projects' | 'history'): void {
+  setRightTab(tab: RightTab): void {
+    this.rightTabState.set(tab);
+    localStorage.setItem(RIGHT_TAB_KEY, tab);
+  }
+
+  setSessionView(view: SessionView): void {
     this.sessionViewState.set(view);
+    localStorage.setItem(SESSION_VIEW_KEY, view);
+  }
+
+  toggleLeftPanel(): void {
+    this.setLeftPanelOpen(!this.leftPanelOpenState());
+  }
+
+  setLeftPanelOpen(open: boolean): void {
+    this.leftPanelOpenState.set(open);
+    this.persistLayout();
+  }
+
+  toggleRightPanel(): void {
+    this.setRightPanelOpen(!this.rightPanelOpenState());
+  }
+
+  setRightPanelOpen(open: boolean): void {
+    this.rightPanelOpenState.set(open);
+    this.persistLayout();
+  }
+
+  setLeftPanelWidth(width: number): void {
+    this.leftPanelWidthState.set(width);
+    this.persistLayout();
+  }
+
+  setRightPanelWidth(width: number): void {
+    this.rightPanelWidthState.set(width);
+    this.persistLayout();
   }
 
   openFilesFor(projectId: string): string[] {
@@ -960,6 +1120,16 @@ export class WorkspaceService {
     localStorage.setItem(OPEN_FILES_KEY, JSON.stringify(data));
   }
 
+  private persistLayout(): void {
+    const data: PersistedLayout = {
+      leftPanelOpen: this.leftPanelOpenState(),
+      rightPanelOpen: this.rightPanelOpenState(),
+      leftPanelWidth: this.leftPanelWidthState(),
+      rightPanelWidth: this.rightPanelWidthState(),
+    };
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(data));
+  }
+
   async loadRules(projectId: string, sessionId: string | null): Promise<void> {
     try {
       this.rulesState.set(await api.getProjectRules(projectId, sessionId));
@@ -974,6 +1144,461 @@ export class WorkspaceService {
       this.gitState.update((state) => ({ ...state, [projectId]: info }));
     } catch {
       // best effort
+    }
+  }
+
+  gitStatusFor(projectId: string): GitStatus | null {
+    return this.gitStatusState()[projectId] ?? null;
+  }
+
+  async loadGitStatus(projectId: string): Promise<void> {
+    try {
+      const status = await api.getGitStatus(projectId);
+      this.gitStatusState.update((state) => ({ ...state, [projectId]: status }));
+    } catch {
+      // best effort
+    }
+  }
+
+  async refreshGit(): Promise<void> {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    await Promise.all([
+      this.loadGitStatus(project.id),
+      this.loadGitInfo(project.id),
+      this.loadGitBranches(project.id),
+      this.loadGitRemotes(project.id),
+    ]);
+  }
+
+  async loadGitBranches(projectId: string): Promise<void> {
+    try {
+      const branches = await api.getGitBranches(projectId);
+      this.gitBranchesState.update((state) => ({ ...state, [projectId]: branches }));
+    } catch {
+      // best effort
+    }
+  }
+
+  async loadGitRemotes(projectId: string): Promise<void> {
+    try {
+      const remotes = await api.getGitRemotes(projectId);
+      this.gitRemotesState.update((state) => ({ ...state, [projectId]: remotes }));
+    } catch {
+      // best effort
+    }
+  }
+
+  async loadGitCommits(reset = true): Promise<void> {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    const request = ++this.gitCommitsRequest;
+    this.gitCommitsLoadingState.set(true);
+    try {
+      const query = this.gitCommitSearchState().trim() || null;
+      const skip = reset ? 0 : this.gitCommitsState().length;
+      const commits = await api.getGitCommits(project.id, query, skip, GIT_COMMIT_PAGE_SIZE);
+      if (request !== this.gitCommitsRequest) {
+        return;
+      }
+      this.gitCommitsState.update((list) => (reset ? commits : [...list, ...commits]));
+      this.gitCommitsHasMoreState.set(commits.length === GIT_COMMIT_PAGE_SIZE);
+    } catch {
+      if (request === this.gitCommitsRequest) {
+        if (reset) {
+          this.gitCommitsState.set([]);
+        }
+        this.gitCommitsHasMoreState.set(false);
+      }
+    } finally {
+      if (request === this.gitCommitsRequest) {
+        this.gitCommitsLoadingState.set(false);
+      }
+    }
+  }
+
+  async loadMoreGitCommits(): Promise<void> {
+    if (this.gitCommitsLoadingState() || !this.gitCommitsHasMoreState()) {
+      return;
+    }
+    await this.loadGitCommits(false);
+  }
+
+  async searchGitCommits(query: string): Promise<void> {
+    this.gitCommitSearchState.set(query);
+    this.selectedGitCommitState.set(null);
+    this.gitCommitDetailState.set(null);
+    this.gitCommitFileDiffState.set(null);
+    await this.loadGitCommits(true);
+    const first = this.gitCommitsState()[0];
+    if (first) {
+      await this.selectGitCommit(first.hash);
+    }
+  }
+
+  async openGitHistory(branch: string | null): Promise<void> {
+    this.gitViewState.set('commits');
+    this.selectedGitBranchState.set(branch);
+    this.selectedGitCommitState.set(null);
+    this.gitCommitDetailState.set(null);
+    this.gitCommitFileDiffState.set(null);
+    this.gitCommitsState.set([]);
+    this.gitCommitsHasMoreState.set(false);
+    this.gitCommitSearchState.set('');
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    await this.loadGitBranches(project.id);
+    await this.loadGitCommits(true);
+    const tip = branch
+      ? (this.gitBranchesState()[project.id] ?? []).find((entry) => entry.name === branch)
+      : null;
+    const target =
+      (tip ? this.gitCommitsState().find((commit) => commit.hash === tip.hash) : null) ??
+      this.gitCommitsState()[0];
+    if (target) {
+      await this.selectGitCommit(target.hash);
+    }
+  }
+
+  async openGitTag(tag: GitTag): Promise<void> {
+    await this.openGitHistory(null);
+    let attempts = 0;
+    while (
+      attempts < 40 &&
+      this.gitCommitsHasMoreState() &&
+      !this.gitCommitsState().some((commit) => commit.hash.startsWith(tag.hash))
+    ) {
+      await this.loadMoreGitCommits();
+      attempts += 1;
+    }
+    const match = this.gitCommitsState().find((commit) => commit.hash.startsWith(tag.hash));
+    if (match) {
+      await this.selectGitCommit(match.hash);
+    }
+  }
+
+  async selectGitCommit(hash: string): Promise<void> {
+    this.selectedGitCommitState.set(hash);
+    this.gitCommitFileDiffState.set(null);
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    try {
+      this.gitCommitDetailState.set(await api.getGitCommit(project.id, hash));
+    } catch {
+      this.gitCommitDetailState.set(null);
+    }
+  }
+
+  async selectGitCommitFile(path: string): Promise<void> {
+    const project = this.activeProject();
+    const hash = this.selectedGitCommitState();
+    if (!project || !hash) {
+      return;
+    }
+    try {
+      this.gitCommitFileDiffState.set(await api.getGitCommitFileDiff(project.id, hash, path));
+    } catch {
+      this.gitCommitFileDiffState.set(null);
+    }
+  }
+
+  showGitChanges(): void {
+    this.gitViewState.set('changes');
+    this.selectedGitBranchState.set(null);
+    this.selectedGitCommitState.set(null);
+    this.gitCommitDetailState.set(null);
+    this.gitCommitFileDiffState.set(null);
+    this.gitCommitsState.set([]);
+    this.gitCommitsHasMoreState.set(false);
+    this.gitCommitSearchState.set('');
+  }
+
+  async selectGitChange(path: string, staged: boolean): Promise<void> {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    try {
+      const diff = await api.getGitFileDiff(project.id, path, staged);
+      this.gitDiffState.set({ path, staged, diff });
+    } catch {
+      this.gitDiffState.set(null);
+    }
+  }
+
+  async stageGitPath(path: string | null): Promise<void> {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    try {
+      await api.gitStage(project.id, path);
+      await this.afterGitMutation(project.id, path, true);
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+    }
+  }
+
+  async unstageGitPath(path: string | null): Promise<void> {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    try {
+      await api.gitUnstage(project.id, path);
+      await this.afterGitMutation(project.id, path, false);
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+    }
+  }
+
+  async discardGitPath(path: string): Promise<void> {
+    const project = this.activeProject();
+    if (!project) {
+      return;
+    }
+    try {
+      await api.gitDiscard(project.id, path);
+      if (this.gitDiffState()?.path === path) {
+        this.gitDiffState.set(null);
+      }
+      await this.loadGitStatus(project.id);
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+    }
+  }
+
+  async commitGit(message: string, amend: boolean): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    try {
+      const output = await api.gitCommit(project.id, message, amend);
+      this.gitMessageState.set(output || null);
+      this.gitDiffState.set(null);
+      await this.loadGitStatus(project.id);
+      return output;
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+      throw error;
+    }
+  }
+
+  async checkoutGitBranch(branch: string, track = false, localBranch?: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    try {
+      const output = await api.gitCheckout(project.id, branch, track, localBranch);
+      this.gitDiffState.set(null);
+      await Promise.all([
+        this.loadGitStatus(project.id),
+        this.loadGitInfo(project.id),
+        this.loadGitBranches(project.id),
+      ]);
+      if (this.gitViewState() === 'commits') {
+        await this.loadGitCommits(true);
+      }
+      return output;
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+      throw error;
+    }
+  }
+
+  async runGitOperation(operation: 'fetch' | 'pull' | 'push'): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    this.gitBusyState.set(true);
+    this.gitMessageState.set(null);
+    try {
+      const output =
+        operation === 'fetch'
+          ? await api.gitFetch(project.id)
+          : operation === 'pull'
+            ? await api.gitPull(project.id)
+            : await api.gitPush(project.id);
+      this.gitMessageState.set(output || null);
+      return output;
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+      throw error;
+    } finally {
+      this.gitBusyState.set(false);
+      await this.loadGitStatus(project.id);
+      await this.loadGitInfo(project.id);
+    }
+  }
+
+  clearGitMessage(): void {
+    this.gitMessageState.set(null);
+  }
+
+  async gitFastForward(branch: string, upstream: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitFastForward(project.id, branch, upstream));
+  }
+
+  async gitMerge(branch: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitMerge(project.id, branch));
+  }
+
+  async gitRebase(onto: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitRebase(project.id, onto));
+  }
+
+  async gitRebaseInteractive(onto: string, todo: GitRebaseEntry[]): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitRebaseInteractive(project.id, onto, todo));
+  }
+
+  async getGitRebaseCommits(onto: string): Promise<GitCommit[]> {
+    const project = this.activeProject();
+    if (!project) {
+      return [];
+    }
+    try {
+      return await api.getGitRebaseCommits(project.id, onto);
+    } catch {
+      return [];
+    }
+  }
+
+  async gitBranchCreate(
+    name: string,
+    startPoint: string | null,
+    checkout: boolean,
+  ): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () =>
+      api.gitBranchCreate(project.id, name, startPoint, checkout),
+    );
+  }
+
+  async gitTagCreate(name: string, target: string | null, message: string | null): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitTagCreate(project.id, name, target, message));
+  }
+
+  async gitBranchRename(from: string, to: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitBranchRename(project.id, from, to));
+  }
+
+  async gitBranchDelete(branch: string, remote: boolean): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitBranchDelete(project.id, branch, remote));
+  }
+
+  async gitSetUpstream(branch: string, upstream: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () => api.gitSetUpstream(project.id, branch, upstream));
+  }
+
+  async gitPushBranch(branch: string, remote: string, setUpstream: boolean): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return this.runGitAction(project.id, () =>
+      api.gitPushBranch(project.id, branch, remote, setUpstream),
+    );
+  }
+
+  async gitPullRequestUrl(remote: string, branch: string): Promise<string> {
+    const project = this.activeProject();
+    if (!project) {
+      return '';
+    }
+    return api.gitPullRequestUrl(project.id, remote, branch);
+  }
+
+  async openExternalUrl(url: string): Promise<void> {
+    try {
+      await api.openExternalUrl(url);
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+    }
+  }
+
+  private async runGitAction(projectId: string, operation: () => Promise<string>): Promise<string> {
+    this.gitBusyState.set(true);
+    this.gitMessageState.set(null);
+    try {
+      const output = await operation();
+      this.gitMessageState.set(output || null);
+      await this.reloadGitState(projectId);
+      return output;
+    } catch (error) {
+      this.gitMessageState.set(String(error));
+      throw error;
+    } finally {
+      this.gitBusyState.set(false);
+    }
+  }
+
+  private async reloadGitState(projectId: string): Promise<void> {
+    await Promise.all([
+      this.loadGitStatus(projectId),
+      this.loadGitInfo(projectId),
+      this.loadGitBranches(projectId),
+      this.loadGitRemotes(projectId),
+    ]);
+    if (this.gitViewState() === 'commits') {
+      await this.loadGitCommits(true);
+    }
+  }
+
+  private async afterGitMutation(
+    projectId: string,
+    path: string | null,
+    staged: boolean,
+  ): Promise<void> {
+    await this.loadGitStatus(projectId);
+    const selected = this.gitDiffState();
+    if (path && selected?.path === path) {
+      await this.selectGitChange(path, staged);
     }
   }
 
@@ -1022,6 +1647,13 @@ export class WorkspaceService {
   private async activateSession(sessionId: string): Promise<void> {
     const session = this.sessionsState()[sessionId];
     this.diffState.set(null);
+    this.gitDiffState.set(null);
+    this.gitViewState.set('changes');
+    this.selectedGitBranchState.set(null);
+    this.selectedGitCommitState.set(null);
+    this.gitCommitDetailState.set(null);
+    this.gitCommitFileDiffState.set(null);
+    this.gitCommitsState.set([]);
     this.scrollTargetState.set(null);
     await this.loadMessages(sessionId);
     if (session) {

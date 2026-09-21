@@ -2,10 +2,13 @@ import { ChangeDetectionStrategy, Component, inject, output, signal } from '@ang
 import { TranslocoPipe } from '@jsverse/transloco';
 import { SettingsService } from '../../core/settings.service';
 import { AgentSettings } from './agent-settings';
+import { AppearanceSettings } from './appearance-settings';
+import { ChatSettings } from './chat-settings';
 import { GeneralSettings } from './general-settings';
 import { HotkeysSettings } from './hotkeys-settings';
 import { McpSettings } from './mcp-settings';
 import { AgentRulesSettings } from './agent-rules-settings';
+import { NotificationsSettings } from './notifications-settings';
 import { ProvidersSettings } from './providers-settings';
 import { SettingsDraftService } from './settings-draft.service';
 import { SkillsSettings } from './skills-settings';
@@ -21,6 +24,9 @@ const CATEGORIES: Category[] = [
   { id: 'agent', label: 'settings.categories.agent' },
   { id: 'agentRules', label: 'settings.categories.agentRules' },
   { id: 'general', label: 'settings.categories.general' },
+  { id: 'chat', label: 'settings.categories.chat' },
+  { id: 'appearance', label: 'settings.categories.appearance' },
+  { id: 'notifications', label: 'settings.categories.notifications' },
   { id: 'hotkeys', label: 'settings.categories.hotkeys' },
   { id: 'skills', label: 'settings.categories.skills' },
   { id: 'mcp', label: 'settings.categories.mcp' },
@@ -37,6 +43,9 @@ const CATEGORIES: Category[] = [
     AgentSettings,
     AgentRulesSettings,
     GeneralSettings,
+    ChatSettings,
+    AppearanceSettings,
+    NotificationsSettings,
     SkillsSettings,
     McpSettings,
     WorkspaceSettings,
@@ -98,6 +107,15 @@ const CATEGORIES: Category[] = [
               }
               @case ('general') {
                 <app-general-settings />
+              }
+              @case ('chat') {
+                <app-chat-settings />
+              }
+              @case ('appearance') {
+                <app-appearance-settings />
+              }
+              @case ('notifications') {
+                <app-notifications-settings />
               }
               @case ('hotkeys') {
                 <app-hotkeys-settings />

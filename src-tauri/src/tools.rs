@@ -1,16 +1,17 @@
 use crate::broker::{PermissionBroker, PermissionPrompt, QuestionBroker};
 use crate::error::{AppError, Result};
-use crate::git::{count_line_changes, GitProbe, RepoProbe, ShadowRepo};
+use crate::git::{count_line_changes, ignored_paths, GitProbe, RepoProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
     EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
 };
-use crate::permissions::{self, CommandDecision, LivePermissions, WebsiteDecision};
+use crate::permissions::{self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision};
 use crate::processes::{ProcessRegistry, RunningProcess};
 use globset::Glob;
 use ignore::WalkBuilder;
 use regex::Regex;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +34,7 @@ pub struct ToolRuntime {
     pub permissions: Arc<LivePermissions>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
+    pub file_ignore: Arc<FileIgnoreConfig>,
     pub session_id: String,
     pub shadow: Arc<ShadowRepo>,
     pub processes: Arc<ProcessRegistry>,
@@ -423,6 +425,26 @@ fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// Relative path used for ignore matching, always relative to the project root.
+fn ignore_relative(runtime: &ToolRuntime, path: &Path) -> String {
+    path.strip_prefix(&runtime.project_root)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"))
+}
+
+/// Reason the agent should not touch a path, or `None` if it is allowed.
+fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str> {
+    let relative = ignore_relative(runtime, path);
+    let probe = GitProbe {
+        project_root: &runtime.project_root,
+        shadow: Some(&runtime.shadow),
+    };
+    let gitignored = !relative.is_empty() && probe.is_ignored(&relative);
+    runtime
+        .file_ignore
+        .ignore_reason(path, &relative, gitignored)
+}
+
 async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &str) -> bool {
     if permissions::path_is_inside(
         absolute,
@@ -472,7 +494,7 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
         project_root: &runtime.project_root,
         shadow: Some(&runtime.shadow),
     };
-    let sensitive = permissions::is_sensitive(absolute);
+    let sensitive = runtime.file_ignore.sensitive_reason(absolute).is_some();
     let ignored = permissions::is_ignored_path(absolute, &probe, &relative);
     let tracked = probe.is_tracked(&relative);
     if !sensitive && (ignored || tracked) {
@@ -513,7 +535,13 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     if !ensure_path_access(runtime, &absolute, "file").await {
         return ToolOutcome::denied();
     }
-    if permissions::is_sensitive(&absolute) {
+    if let Some(reason) = file_ignore_reason(runtime, &absolute) {
+        let relative = relative_display(runtime, &absolute);
+        return ToolOutcome::error(format!(
+            "Refusing to read {relative}: {reason}. Change the file access rules in Settings → Agent rules if the assistant should access it."
+        ));
+    }
+    if let Some(sensitive) = runtime.file_ignore.sensitive_reason(&absolute) {
         let relative = relative_display(runtime, &absolute);
         let allowed = runtime
             .broker
@@ -521,7 +549,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                 PermissionPrompt {
                     kind: "file".to_string(),
                     title: format!("Read {relative}?"),
-                    detail: format!("{relative} looks like a sensitive file."),
+                    detail: format!("{relative} looks like a sensitive file: {sensitive}."),
                     command: None,
                     path: Some(relative),
                     folder: None,
@@ -676,6 +704,50 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     }
 }
 
+/// Build a directory walker that never descends into `.git` and that prunes
+/// generated/dependency directories unless the user allowed scanning them.
+/// `.gitignore` is handled separately so user exemptions can override it.
+fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>) -> ignore::Walk {
+    let root = project_root.to_path_buf();
+    let config = config.clone();
+    let mut builder = WalkBuilder::new(base);
+    builder
+        .hidden(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false);
+    builder.filter_entry(move |entry| {
+        let path = entry.path();
+        if path
+            .components()
+            .any(|component| component.as_os_str() == ".git")
+        {
+            return false;
+        }
+        let relative = path
+            .strip_prefix(&root)
+            .map(|value| value.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+        if config.is_exempt(&relative) {
+            return true;
+        }
+        let is_dir = entry
+            .file_type()
+            .map(|kind| kind.is_dir())
+            .unwrap_or(false);
+        if is_dir
+            && !config.scan_generated_files
+            && !config.has_exemptions()
+            && config.is_generated_path(path)
+            && !config.generated_rule_disabled(path)
+        {
+            return false;
+        }
+        true
+    });
+    builder.build()
+}
+
 async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     let pattern = match arg_str(arguments, "pattern") {
         Ok(pattern) => pattern,
@@ -693,22 +765,36 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Ok(glob) => glob.compile_matcher(),
         Err(error) => return ToolOutcome::error(format!("Invalid pattern: {error}")),
     };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
+        if candidates.len() >= 100_000 {
+            break;
+        }
+        candidates.push(entry.path().to_path_buf());
+    }
+    let ignored = if runtime.file_ignore.respect_gitignore {
+        ignored_paths(&runtime.project_root, &candidates)
+    } else {
+        HashSet::new()
+    };
     let mut results: Vec<String> = Vec::new();
-    for entry in WalkBuilder::new(&base).hidden(false).build().flatten() {
+    for path in &candidates {
         if results.len() >= 500 {
             break;
         }
-        let path = entry.path();
-        if path
-            .components()
-            .any(|component| component.as_os_str() == ".git")
+        let relative_to_base = path.strip_prefix(&base).unwrap_or(path);
+        if !matcher.is_match(relative_to_base) {
+            continue;
+        }
+        let relative = ignore_relative(runtime, path);
+        if runtime
+            .file_ignore
+            .ignore_reason(path, &relative, ignored.contains(path))
+            .is_some()
         {
             continue;
         }
-        let relative = path.strip_prefix(&base).unwrap_or(path);
-        if matcher.is_match(relative) {
-            results.push(relative_display(runtime, path));
-        }
+        results.push(relative_display(runtime, path));
     }
     if results.is_empty() {
         return ToolOutcome::ok(format!("No files match '{pattern}'."));
@@ -741,23 +827,39 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     if !ensure_path_access(runtime, &base, "directory").await {
         return ToolOutcome::denied();
     }
-    let mut results: Vec<String> = Vec::new();
-    'outer: for entry in WalkBuilder::new(&base).hidden(false).build().flatten() {
-        let path = entry.path();
-        if path
-            .components()
-            .any(|component| component.as_os_str() == ".git")
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
+        if candidates.len() >= 200_000 {
+            break;
+        }
+        if entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
         {
-            continue;
+            candidates.push(entry.path().to_path_buf());
         }
-        if !path.is_file() {
-            continue;
-        }
-        let relative = path.strip_prefix(&base).unwrap_or(path);
+    }
+    let ignored = if runtime.file_ignore.respect_gitignore {
+        ignored_paths(&runtime.project_root, &candidates)
+    } else {
+        HashSet::new()
+    };
+    let mut results: Vec<String> = Vec::new();
+    'outer: for path in &candidates {
+        let relative_to_base = path.strip_prefix(&base).unwrap_or(path);
         if let Some(include) = &include {
-            if !include.is_match(relative) {
+            if !include.is_match(relative_to_base) {
                 continue;
             }
+        }
+        let relative = ignore_relative(runtime, path);
+        if runtime
+            .file_ignore
+            .ignore_reason(path, &relative, ignored.contains(path))
+            .is_some()
+        {
+            continue;
         }
         let metadata = match std::fs::metadata(path) {
             Ok(metadata) => metadata,
@@ -801,7 +903,7 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             return ToolOutcome::error(format!("Cannot list {}: {error}", base.display()))
         }
     };
-    let mut items: Vec<(bool, String)> = Vec::new();
+    let mut items: Vec<(bool, String, PathBuf)> = Vec::new();
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
         let is_dir = entry
@@ -809,8 +911,21 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             .await
             .map(|file_type| file_type.is_dir())
             .unwrap_or(false);
-        items.push((is_dir, name));
+        items.push((is_dir, name, entry.path()));
     }
+    let paths: Vec<PathBuf> = items.iter().map(|(_, _, path)| path.clone()).collect();
+    let ignored = if runtime.file_ignore.respect_gitignore {
+        ignored_paths(&runtime.project_root, &paths)
+    } else {
+        HashSet::new()
+    };
+    items.retain(|(_, _, path)| {
+        let relative = ignore_relative(runtime, path);
+        runtime
+            .file_ignore
+            .ignore_reason(path, &relative, ignored.contains(path))
+            .is_none()
+    });
     items.sort_by(|a, b| {
         b.0.cmp(&a.0)
             .then(a.1.to_lowercase().cmp(&b.1.to_lowercase()))
@@ -818,7 +933,7 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     let output = items
         .into_iter()
         .take(1000)
-        .map(|(is_dir, name)| if is_dir { format!("{name}/") } else { name })
+        .map(|(is_dir, name, _)| if is_dir { format!("{name}/") } else { name })
         .collect::<Vec<_>>()
         .join("\n");
     ToolOutcome::ok(output)

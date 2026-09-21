@@ -23,7 +23,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 ? 'bg-white/10 text-white shadow-sm'
                 : 'text-mist/50 hover:text-mist'
             "
-            (click)="tab.set('changes')"
+            (click)="workspace.setRightTab('changes')"
           >
             {{ 'right.files' | transloco }}
             @if (changes().length > 0) {
@@ -40,7 +40,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 ? 'bg-white/10 text-white shadow-sm'
                 : 'text-mist/50 hover:text-mist'
             "
-            (click)="tab.set('session')"
+            (click)="workspace.setRightTab('session')"
           >
             {{ 'right.session' | transloco }}
           </button>
@@ -52,7 +52,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 ? 'bg-white/10 text-white shadow-sm'
                 : 'text-mist/50 hover:text-mist'
             "
-            (click)="tab.set('prompts')"
+            (click)="workspace.setRightTab('prompts')"
           >
             {{ 'right.systemPrompts' | transloco }}
           </button>
@@ -64,7 +64,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 ? 'bg-white/10 text-white shadow-sm'
                 : 'text-mist/50 hover:text-mist'
             "
-            (click)="tab.set('modes')"
+            (click)="workspace.setRightTab('modes')"
           >
             {{ 'right.modes' | transloco }}
           </button>
@@ -243,7 +243,7 @@ export class RightPanel {
   protected readonly workspace = inject(WorkspaceService);
   private readonly models = inject(ModelsService);
 
-  protected readonly tab = signal<'changes' | 'session' | 'prompts' | 'modes'>('changes');
+  protected readonly tab = this.workspace.rightTab;
   protected readonly overlay = signal(false);
   protected readonly session = this.workspace.activeSession;
   protected readonly sessionId = computed(() => this.session()?.id ?? null);

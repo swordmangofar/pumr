@@ -154,7 +154,8 @@ html {
    above is unlayered, so it would otherwise win over Tailwind's `outline-none`
    utility and paint a second, offset ring around the field border. */
 .field:focus-visible,
-.field-flush:focus-visible {
+.field-flush:focus-visible,
+.composer-editor:focus-visible {
   outline: none;
 }
 

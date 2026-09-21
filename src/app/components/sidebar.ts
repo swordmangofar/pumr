@@ -6,6 +6,7 @@ import { WorkspaceService } from '../core/workspace.service';
 import { Session } from '../core/models';
 import { AgentStatus } from './agent-status';
 import { AttentionIndicator } from './attention-indicator';
+import { GitSidebar } from './git-sidebar';
 import { ProjectIcon } from './project-icon';
 import { WorkspaceTree } from './workspace-tree';
 
@@ -32,6 +33,7 @@ function startOfDay(timestamp: number): number {
     AttentionIndicator,
     WorkspaceTree,
     ProjectIcon,
+    GitSidebar,
   ],
   template: `
     <div class="flex h-full flex-col">
@@ -60,6 +62,18 @@ function startOfDay(timestamp: number): number {
             (click)="workspace.setLeftTab('workspace')"
           >
             {{ 'sidebar.workspace' | transloco }}
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            [class]="
+              workspace.leftTab() === 'git'
+                ? 'bg-white/10 text-white shadow-sm'
+                : 'text-mist/50 hover:text-mist'
+            "
+            (click)="workspace.setLeftTab('git')"
+          >
+            {{ 'sidebar.git' | transloco }}
           </button>
         </div>
       </div>
@@ -236,7 +250,9 @@ function startOfDay(timestamp: number): number {
         </div>
       </ng-template>
 
-      @if (workspace.leftTab() === 'projects') {
+      @if (workspace.leftTab() === 'git') {
+        <app-git-sidebar class="min-h-0 flex-1" />
+      } @else if (workspace.leftTab() === 'projects') {
         <div class="flex items-center justify-between gap-2 px-4 py-3">
           <div class="flex gap-0.5 rounded-lg bg-white/5 p-0.5">
             <button

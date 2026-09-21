@@ -141,6 +141,11 @@ pub struct Message {
     /// pages, skill instructions). Sent to the model but never displayed.
     #[serde(default)]
     pub context: String,
+    /// Wall-clock duration in milliseconds. For assistant messages this is the
+    /// model call, for tool messages the tool execution (including subagents).
+    /// Zero when unknown (e.g. messages stored before this was tracked).
+    #[serde(default)]
+    pub duration_ms: i64,
 }
 
 /// A file or folder that can be referenced from the composer.
@@ -291,6 +296,74 @@ pub struct GitInfo {
     pub is_repo: bool,
     pub branch: Option<String>,
     pub head: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub name: String,
+    pub current: bool,
+    pub remote: bool,
+    pub upstream: Option<String>,
+    pub hash: Option<String>,
+    pub subject: Option<String>,
+    pub timestamp: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub timestamp: i64,
+    pub subject: String,
+    #[serde(default)]
+    pub refs: Vec<String>,
+    #[serde(default)]
+    pub parents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDetail {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub author_email: String,
+    pub timestamp: i64,
+    pub subject: String,
+    pub body: String,
+    pub parents: Vec<String>,
+    pub refs: Vec<String>,
+    pub changes: Vec<FileChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTag {
+    pub name: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatus {
+    pub is_repo: bool,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+    pub staged: Vec<FileChange>,
+    pub unstaged: Vec<FileChange>,
+    pub branches: Vec<GitBranch>,
+    #[serde(default)]
+    pub tags: Vec<GitTag>,
+    #[serde(default)]
+    pub stashes: Vec<String>,
+    #[serde(default)]
+    pub submodules: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

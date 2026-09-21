@@ -36,6 +36,7 @@ pub struct NewMessage<'a> {
     pub attachments: &'a [Attachment],
     pub mentions: &'a [Mention],
     pub context: &'a str,
+    pub duration_ms: i64,
 }
 
 impl<'a> NewMessage<'a> {
@@ -65,6 +66,7 @@ impl<'a> NewMessage<'a> {
             attachments,
             mentions,
             context,
+            duration_ms: 0,
         }
     }
 
@@ -88,6 +90,7 @@ impl<'a> NewMessage<'a> {
             attachments: &[],
             mentions: &[],
             context: "",
+            duration_ms: 0,
         }
     }
 
@@ -97,6 +100,7 @@ impl<'a> NewMessage<'a> {
         content: &'a str,
         status: &'a str,
         changes: &'a [FileChange],
+        duration_ms: i64,
     ) -> Self {
         Self {
             role: "tool",
@@ -117,6 +121,7 @@ impl<'a> NewMessage<'a> {
             attachments: &[],
             mentions: &[],
             context: "",
+            duration_ms,
         }
     }
 }
@@ -200,6 +205,7 @@ impl Db {
             ("attachments", "TEXT NOT NULL DEFAULT '[]'"),
             ("mentions", "TEXT NOT NULL DEFAULT '[]'"),
             ("context", "TEXT NOT NULL DEFAULT ''"),
+            ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             add_column_if_missing(&conn, "messages", column, definition)?;
         }
@@ -550,7 +556,7 @@ impl Db {
                 r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
                           cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
                           tool_calls, tool_call_id, tool_name, status, changes, base_commit,
-                          attachments, mentions, context
+                          attachments, mentions, context, duration_ms
                    FROM messages WHERE session_id = ?1 ORDER BY seq ASC"#,
             )?;
             let rows = stmt.query_map(params![session_id], map_message)?;
@@ -584,9 +590,9 @@ impl Db {
                    (id, session_id, seq, role, content, reasoning, model, provider, cost,
                     prompt_tokens, completion_tokens, cached_tokens, created_at,
                     tool_calls, tool_call_id, tool_name, status, changes, base_commit,
-                    attachments, mentions, context)
+                    attachments, mentions, context, duration_ms)
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                           ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)"#,
+                           ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)"#,
                 params![
                     id,
                     session_id,
@@ -609,7 +615,8 @@ impl Db {
                     message.base_commit,
                     attachments,
                     mentions,
-                    message.context
+                    message.context,
+                    message.duration_ms
                 ],
             )?;
             conn.execute(
@@ -632,6 +639,7 @@ impl Db {
         cached_tokens: i64,
         tool_calls: &[ToolCallRecord],
         changes: &[FileChange],
+        duration_ms: i64,
     ) -> Result<Message> {
         let tool_calls = serde_json::to_string(tool_calls)?;
         let changes = serde_json::to_string(changes)?;
@@ -639,8 +647,8 @@ impl Db {
             conn.execute(
                 r#"UPDATE messages SET content = ?1, reasoning = ?2, cost = ?3,
                      prompt_tokens = ?4, completion_tokens = ?5, cached_tokens = ?6,
-                     tool_calls = ?7, changes = ?8
-                   WHERE id = ?9"#,
+                     tool_calls = ?7, changes = ?8, duration_ms = ?9
+                   WHERE id = ?10"#,
                 params![
                     content,
                     reasoning,
@@ -650,6 +658,7 @@ impl Db {
                     cached_tokens,
                     tool_calls,
                     changes,
+                    duration_ms,
                     id
                 ],
             )?;
@@ -684,7 +693,7 @@ impl Db {
             r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
                       cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
                       tool_calls, tool_call_id, tool_name, status, changes, base_commit,
-                      attachments, mentions, context
+                      attachments, mentions, context, duration_ms
                FROM messages WHERE id = ?1"#,
             params![id],
             map_message,
@@ -1020,5 +1029,6 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         attachments: serde_json::from_str(&attachments).unwrap_or_default(),
         mentions: serde_json::from_str(&mentions).unwrap_or_default(),
         context: row.get(21)?,
+        duration_ms: row.get(22)?,
     })
 }

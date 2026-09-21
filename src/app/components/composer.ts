@@ -18,6 +18,7 @@ import {
   MentionKind,
   MessageAttachment,
   Mode,
+  TextBlock,
   WorkspaceEntry,
 } from '../core/models';
 import { api } from '../core/api';
@@ -177,6 +178,51 @@ const PROVIDER_PRESETS = [
         cursor: pointer;
       }
       .composer-editor .mention-pill-remove:hover {
+        background: color-mix(in oklab, white 12%, transparent);
+        color: white;
+      }
+      .composer-editor .text-block-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin: 0 0.15rem;
+        padding: 0.15rem 0.4rem 0.15rem 0.5rem;
+        border-radius: 0.6rem;
+        border: 1px solid color-mix(in oklab, white 12%, transparent);
+        background: color-mix(in oklab, white 6%, transparent);
+        font-size: 0.8rem;
+        line-height: 1.4;
+        white-space: nowrap;
+        vertical-align: middle;
+        user-select: none;
+        cursor: pointer;
+      }
+      .composer-editor .text-block-pill:hover {
+        border-color: color-mix(in oklab, var(--color-accent) 45%, transparent);
+        background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+      }
+      .composer-editor .text-block-pill-icon {
+        width: 0.85rem;
+        height: 0.85rem;
+        flex-shrink: 0;
+        color: var(--color-accent);
+      }
+      .composer-editor .text-block-pill-label {
+        max-width: 14rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: color-mix(in oklab, var(--color-mist) 82%, transparent);
+      }
+      .composer-editor .text-block-pill-remove {
+        display: grid;
+        place-items: center;
+        width: 1rem;
+        height: 1rem;
+        border-radius: 9999px;
+        color: color-mix(in oklab, var(--color-mist) 55%, transparent);
+        cursor: pointer;
+      }
+      .composer-editor .text-block-pill-remove:hover {
         background: color-mix(in oklab, white 12%, transparent);
         color: white;
       }
@@ -888,6 +934,40 @@ const PROVIDER_PRESETS = [
             <div class="group relative">
               <button
                 type="button"
+                class="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-mist/60 ring-1 ring-white/10 ring-inset transition-colors hover:bg-white/10 hover:text-white"
+                [attr.aria-label]="'debug.buttonHint' | transloco"
+                (click)="workspace.openDebug()"
+              >
+                <svg
+                  class="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m8 2 1.5 1.5M16 2l-1.5 1.5M9 7a3 3 0 0 1 6 0v3a3 3 0 0 1-6 0Z" />
+                  <path
+                    d="M12 13v8M8 21h8M3 8l3 1M3 13l3-1M21 8l-3 1M21 13l-3-1M6 17l-3 2M18 17l3 2"
+                  />
+                </svg>
+                {{ 'debug.button' | transloco }}
+              </button>
+              <div
+                class="pointer-events-none absolute right-0 bottom-full z-20 mb-2 w-60 rounded-xl border border-white/10 bg-navy px-3 py-2 text-left text-xs leading-relaxed text-mist opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100"
+                role="tooltip"
+              >
+                {{ 'debug.buttonHint' | transloco }}
+              </div>
+            </div>
+          }
+
+          @if (workspace.activeSession()) {
+            <div class="group relative">
+              <button
+                type="button"
                 class="flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent ring-1 ring-accent/30 ring-inset transition-colors hover:bg-accent/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent/15 disabled:hover:text-accent"
                 [disabled]="!canHandover()"
                 [attr.aria-label]="'chat.handoverHint' | transloco"
@@ -979,6 +1059,59 @@ const PROVIDER_PRESETS = [
         </div>
       </div>
     </div>
+
+    @if (editingBlockId()) {
+      <div
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+        (click)="closeTextBlockEditor()"
+        (keydown.escape)="closeTextBlockEditor()"
+      >
+        <div
+          class="flex h-[70vh] w-[46rem] max-w-full flex-col overflow-hidden glass-pop rounded-2xl shadow-2xl"
+          (click)="$event.stopPropagation()"
+        >
+          <header
+            class="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-3"
+          >
+            <h3 class="text-sm font-semibold text-white">
+              {{ 'composer.textBlockTitle' | transloco }}
+            </h3>
+            <button
+              type="button"
+              class="flex h-8 w-8 items-center justify-center rounded-full text-mist/50 transition-colors hover:bg-white/5 hover:text-white"
+              (click)="closeTextBlockEditor()"
+            >
+              ✕
+            </button>
+          </header>
+          <textarea
+            #blockTextarea
+            class="field-flush min-h-0 flex-1 resize-none px-5 py-4 font-mono text-sm text-white"
+          ></textarea>
+          <footer
+            class="flex shrink-0 items-center justify-between gap-3 border-t border-white/5 px-5 py-3"
+          >
+            <span class="text-xs text-mist/40">{{ 'composer.textBlockHint' | transloco }}</span>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="rounded-full border border-white/15 px-4 py-2 text-sm text-mist transition-colors hover:bg-white/5"
+                (click)="closeTextBlockEditor()"
+              >
+                {{ 'composer.textBlockCancel' | transloco }}
+              </button>
+              <button
+                type="button"
+                class="rounded-full bg-accent px-5 py-2 text-sm font-semibold text-ink transition-colors hover:bg-accent/90"
+                (click)="saveTextBlock()"
+              >
+                {{ 'composer.textBlockSave' | transloco }}
+              </button>
+            </div>
+          </footer>
+        </div>
+      </div>
+    }
   `,
 })
 export class Composer {
@@ -1004,6 +1137,9 @@ export class Composer {
   protected readonly mentionKind = signal<MentionKind | null>(null);
   protected readonly mentionTerm = signal('');
   protected readonly mentionItems = signal<MentionItem[]>([]);
+  protected readonly textBlocks = signal<TextBlock[]>([]);
+  protected readonly editingBlockId = signal<string | null>(null);
+  protected readonly blockDraft = signal('');
 
   private readonly workspaceEntries = signal<WorkspaceEntry[]>([]);
   private readonly skillNames = signal<string[]>([]);
@@ -1015,6 +1151,7 @@ export class Composer {
 
   private readonly editorRef = viewChild<ElementRef<HTMLDivElement>>('editor');
   private readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
+  private readonly blockTextareaRef = viewChild<ElementRef<HTMLTextAreaElement>>('blockTextarea');
 
   private readonly modelOverride = signal<{ sessionId: string; value: string } | null>(null);
   private readonly reasoningOverride = signal<{ sessionId: string; value: string } | null>(null);
@@ -1159,6 +1296,17 @@ export class Composer {
       this.draft();
       this.autoGrow();
     });
+    effect(() => {
+      const element = this.blockTextareaRef()?.nativeElement;
+      const id = this.editingBlockId();
+      if (!element || !id) {
+        return;
+      }
+      const text = this.blockDraft();
+      element.value = text;
+      element.focus();
+      element.setSelectionRange(element.value.length, element.value.length);
+    });
   }
 
   protected onEditorInput(): void {
@@ -1195,6 +1343,7 @@ export class Composer {
       return;
     }
     editor.textContent = text;
+    this.textBlocks.set([]);
     this.onEditorInput();
   }
 
@@ -1222,6 +1371,14 @@ export class Composer {
             mentions.push({ kind, value, label });
           }
           text += ' ';
+          return;
+        }
+        if (child.dataset['textBlock']) {
+          const id = child.dataset['textBlockId'] ?? '';
+          const block = this.textBlocks().find((entry) => entry.id === id);
+          if (block) {
+            text += ` ${block.text} `;
+          }
           return;
         }
         if (child.tagName === 'BR') {
@@ -1395,6 +1552,165 @@ export class Composer {
     this.focusInput();
   }
 
+  private wordCount(text: string): number {
+    const trimmed = text.trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+  }
+
+  private newId(prefix: string): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  private addTextBlock(text: string): void {
+    const block: TextBlock = { id: this.newId('text-block'), text };
+    this.textBlocks.update((list) => [...list, block]);
+    this.insertTextBlockPill(block);
+  }
+
+  private createTextBlockPill(block: TextBlock): HTMLSpanElement {
+    const pill = document.createElement('span');
+    pill.className = 'text-block-pill';
+    pill.contentEditable = 'false';
+    pill.dataset['textBlock'] = 'true';
+    pill.dataset['textBlockId'] = block.id;
+    pill.title = block.text.slice(0, 200);
+    pill.addEventListener('mousedown', (event) => event.preventDefault());
+    pill.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('.text-block-pill-remove')) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.openTextBlockEditor(block.id);
+    });
+
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 20 20');
+    icon.setAttribute('width', '14');
+    icon.setAttribute('height', '14');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.setAttribute('class', 'text-block-pill-icon');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M6 3.5h5.5L15 7v9.5H6zM11.5 3.5V7H15M8 10h5M8 12.5h5M8 15h3');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.4');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    icon.appendChild(path);
+
+    const label = document.createElement('span');
+    label.className = 'text-block-pill-label';
+    label.textContent = this.blockLabel(block.text);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'text-block-pill-remove';
+    remove.tabIndex = -1;
+    remove.setAttribute('aria-label', this.transloco.translate('composer.textBlockRemove'));
+    remove.textContent = '\u00d7';
+    remove.addEventListener('mousedown', (event) => event.preventDefault());
+    remove.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.removeTextBlock(block.id, pill);
+    });
+
+    pill.append(icon, label, remove);
+    return pill;
+  }
+
+  private insertTextBlockPill(block: TextBlock): void {
+    const editor = this.editorRef()?.nativeElement;
+    if (!editor) {
+      return;
+    }
+    const selection = window.getSelection();
+    let range: Range | null =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!range || !editor.contains(range.startContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    }
+    const fragment = document.createDocumentFragment();
+    const space = document.createTextNode(' ');
+    fragment.append(this.createTextBlockPill(block), space);
+    range.insertNode(fragment);
+
+    const caret = document.createRange();
+    caret.setStart(space, space.length);
+    caret.collapse(true);
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(caret);
+    }
+    editor.focus();
+    this.onEditorInput();
+  }
+
+  private blockLabel(text: string): string {
+    return this.transloco.translate('composer.textBlockWords', { count: this.wordCount(text) });
+  }
+
+  protected openTextBlockEditor(id: string): void {
+    const block = this.textBlocks().find((entry) => entry.id === id);
+    if (!block) {
+      return;
+    }
+    this.blockDraft.set(block.text);
+    this.editingBlockId.set(id);
+  }
+
+  protected closeTextBlockEditor(): void {
+    this.editingBlockId.set(null);
+    this.blockDraft.set('');
+  }
+
+  protected saveTextBlock(): void {
+    const id = this.editingBlockId();
+    if (!id) {
+      return;
+    }
+    const text = this.blockTextareaRef()?.nativeElement.value ?? this.blockDraft();
+    this.textBlocks.update((list) =>
+      list.map((entry) => (entry.id === id ? { ...entry, text } : entry)),
+    );
+    const editor = this.editorRef()?.nativeElement;
+    const pill = editor?.querySelector<HTMLElement>(`[data-text-block-id="${id}"]`);
+    if (pill) {
+      const label = pill.querySelector('.text-block-pill-label');
+      if (label) {
+        label.textContent = this.blockLabel(text);
+      }
+      pill.title = text.slice(0, 200);
+    }
+    this.closeTextBlockEditor();
+    this.onEditorInput();
+    this.focusInput();
+  }
+
+  protected removeTextBlock(id: string, pill?: HTMLElement): void {
+    const editor = this.editorRef()?.nativeElement;
+    const element =
+      pill ?? editor?.querySelector<HTMLElement>(`[data-text-block-id="${id}"]`) ?? null;
+    if (element) {
+      const next = element.nextSibling;
+      element.remove();
+      if (next && next.nodeType === Node.TEXT_NODE && next.textContent === ' ') {
+        next.remove();
+      }
+    }
+    this.textBlocks.update((list) => list.filter((entry) => entry.id !== id));
+    if (this.editingBlockId() === id) {
+      this.closeTextBlockEditor();
+    }
+    this.onEditorInput();
+    this.focusInput();
+  }
+
   private insertLineBreak(): void {
     const editor = this.editorRef()?.nativeElement;
     if (!editor) {
@@ -1428,6 +1744,11 @@ export class Composer {
     const text = event.clipboardData?.getData('text/plain');
     if (text) {
       event.preventDefault();
+      const limit = this.settings.settings()?.pasteWordLimit ?? 0;
+      if (limit > 0 && this.wordCount(text) > limit) {
+        this.addTextBlock(text);
+        return;
+      }
       document.execCommand('insertText', false, text);
       this.onEditorInput();
     }
@@ -1913,6 +2234,7 @@ export class Composer {
     this.setEditorText('');
     this.attachments.set([]);
     this.mentions.set([]);
+    this.textBlocks.set([]);
     this.attachmentError.set(null);
     this.closeMention();
     await this.workspace.send({

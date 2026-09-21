@@ -1,5 +1,7 @@
 use crate::git::RepoProbe;
-use globset::{Glob, GlobSetBuilder};
+use globset::{Glob, GlobSet, GlobSetBuilder};
+use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
@@ -19,7 +21,162 @@ pub const IGNORED_DIRS: &[&str] = &[
     "__pycache__",
     ".venv",
     "venv",
+    "vendor",
+    ".svelte-kit",
+    ".angular",
+    ".gradle",
+    "Pods",
+    "DerivedData",
+    ".dart_tool",
+    ".tox",
+    ".eggs",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
     ".git",
+];
+
+/// Directories that hold generated or third-party content. Unlike `IGNORED_DIRS`
+/// this list excludes `.git`, which stays hidden unconditionally.
+pub const GENERATED_DIRS: &[&str] = &[
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+    "out",
+    "coverage",
+    ".cache",
+    "tmp",
+    ".turbo",
+    ".parcel-cache",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "vendor",
+    ".svelte-kit",
+    ".angular",
+    ".gradle",
+    "Pods",
+    "DerivedData",
+    ".dart_tool",
+    ".tox",
+    ".eggs",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+];
+
+/// Generated files (logs, compiled output, caches) that the agent skips while
+/// `scan_generated_files` is off.
+const GENERATED_FILE_SUFFIXES: &[&str] = &[
+    ".log",
+    ".pyc",
+    ".pyo",
+    ".class",
+    ".o",
+    ".obj",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".exe",
+    ".map",
+    ".min.js",
+    ".min.css",
+    ".eslintcache",
+    ".stylelintcache",
+];
+
+const DATABASE_EXTENSIONS: &[&str] = &[
+    ".db",
+    ".db3",
+    ".sqlite",
+    ".sqlite3",
+    ".sqlite-wal",
+    ".sqlite-shm",
+    ".realm",
+    ".mdb",
+    ".accdb",
+    ".ldb",
+    ".dbf",
+    ".duckdb",
+    ".mdf",
+];
+
+const ENV_EXAMPLE_MARKERS: &[&str] = &["example", "sample", "template", "dist", "defaults"];
+
+/// File endings that usually carry secrets, credentials or local databases.
+const SENSITIVE_SUFFIXES: &[&str] = &[
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".jks",
+    ".keystore",
+    ".der",
+    ".ppk",
+    ".asc",
+    ".gpg",
+    ".kdbx",
+    ".keychain",
+    ".ovpn",
+    ".mobileconfig",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".sqlite-wal",
+    ".sqlite-shm",
+    ".realm",
+    ".mdb",
+    ".accdb",
+    ".ldb",
+    ".dbf",
+    ".duckdb",
+    ".mdf",
+    ".tfvars",
+    ".tfstate",
+];
+
+/// File name prefixes that mark private keys or credential bundles.
+const SENSITIVE_PREFIXES: &[&str] = &[
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+    "gha-creds-",
+];
+
+/// Substrings that are a strong hint of secrets regardless of extension.
+const SENSITIVE_NAME_PARTS: &[&str] = &[
+    "credential",
+    "secret",
+    "serviceaccount",
+    "service-account",
+    "password",
+    "tfstate",
+];
+
+/// Well-known credential or token files.
+const SENSITIVE_NAMES: &[&str] = &[
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "_netrc",
+    ".git-credentials",
+    ".htpasswd",
+    ".pgpass",
+    ".vault-token",
+    ".sentryclirc",
+    "token.json",
+    "secrets.json",
+    "secrets.yaml",
+    "secrets.yml",
+];
+
+/// Directories that hold credentials or repository internals.
+const SENSITIVE_DIRS: &[&str] = &[
+    ".ssh", ".aws", ".gnupg", ".git", ".gcloud", ".azure", ".kube", ".docker",
 ];
 
 const READ_ONLY_PROGRAMS: &[&str] = &[
@@ -525,6 +682,368 @@ fn relative_path(path: &Path, project_root: &Path, extra_folders: &[PathBuf]) ->
     }
 }
 
+/// A single built-in ignore rule that can be toggled in the advanced settings.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoreCatalogEntry {
+    pub id: String,
+    pub group: String,
+    pub pattern: String,
+}
+
+/// The full built-in ignore catalog, grouped for the settings UI.
+pub fn ignore_catalog() -> Vec<IgnoreCatalogEntry> {
+    let mut entries = Vec::new();
+    for name in GENERATED_DIRS {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("dir:{name}"),
+            group: "generatedFolders".to_string(),
+            pattern: format!("{name}/"),
+        });
+    }
+    for suffix in GENERATED_FILE_SUFFIXES {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("file:{suffix}"),
+            group: "generatedFiles".to_string(),
+            pattern: format!("*{suffix}"),
+        });
+    }
+    entries.push(IgnoreCatalogEntry {
+        id: "env".to_string(),
+        group: "environment".to_string(),
+        pattern: ".env*".to_string(),
+    });
+    for extension in DATABASE_EXTENSIONS {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("db:{extension}"),
+            group: "databases".to_string(),
+            pattern: format!("*{extension}"),
+        });
+    }
+    for suffix in SENSITIVE_SUFFIXES {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("creds:ext:{suffix}"),
+            group: "credentials".to_string(),
+            pattern: format!("*{suffix}"),
+        });
+    }
+    for prefix in SENSITIVE_PREFIXES {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("creds:prefix:{prefix}"),
+            group: "credentials".to_string(),
+            pattern: format!("{prefix}*"),
+        });
+    }
+    for part in SENSITIVE_NAME_PARTS {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("creds:part:{part}"),
+            group: "credentials".to_string(),
+            pattern: format!("*{part}*"),
+        });
+    }
+    for name in SENSITIVE_NAMES {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("creds:name:{name}"),
+            group: "credentials".to_string(),
+            pattern: (*name).to_string(),
+        });
+    }
+    for name in SENSITIVE_DIRS {
+        entries.push(IgnoreCatalogEntry {
+            id: format!("creds:dir:{name}"),
+            group: "credentials".to_string(),
+            pattern: format!("{name}/"),
+        });
+    }
+    entries
+}
+
+/// File access rules derived from the user's Agent settings. These apply to the
+/// discovery and read tools so the agent does not touch files the user marked as
+/// off-limits. User exemptions always win over every other rule.
+#[derive(Debug, Clone)]
+pub struct FileIgnoreConfig {
+    pub respect_gitignore: bool,
+    pub scan_generated_files: bool,
+    pub ignore_local_databases: bool,
+    pub ignore_env_files: bool,
+    exemptions: GlobSet,
+    /// Rules turned off despite their group default.
+    disabled: HashSet<String>,
+    /// Rules turned on despite their group default.
+    enabled: HashSet<String>,
+}
+
+impl Default for FileIgnoreConfig {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+            scan_generated_files: false,
+            ignore_local_databases: false,
+            ignore_env_files: true,
+            exemptions: empty_globset(),
+            disabled: HashSet::new(),
+            enabled: HashSet::new(),
+        }
+    }
+}
+
+impl FileIgnoreConfig {
+    pub fn new(
+        respect_gitignore: bool,
+        scan_generated_files: bool,
+        ignore_local_databases: bool,
+        ignore_env_files: bool,
+        exemptions: &[String],
+    ) -> Self {
+        Self {
+            respect_gitignore,
+            scan_generated_files,
+            ignore_local_databases,
+            ignore_env_files,
+            exemptions: build_exemptions(exemptions),
+            disabled: HashSet::new(),
+            enabled: HashSet::new(),
+        }
+    }
+
+    pub fn with_overrides(mut self, disabled: &[String], enabled: &[String]) -> Self {
+        self.disabled = disabled.iter().cloned().collect();
+        self.enabled = enabled.iter().cloned().collect();
+        self
+    }
+
+    pub fn from_settings(settings: &crate::config::Settings) -> Self {
+        Self::new(
+            settings.ignore_gitignored,
+            settings.scan_generated_files,
+            settings.ignore_local_databases,
+            settings.ignore_env_files,
+            &settings.file_ignore_exemptions,
+        )
+        .with_overrides(
+            &settings.file_ignore_disabled,
+            &settings.file_ignore_enabled,
+        )
+    }
+
+    /// A user exemption overrides every ignore rule.
+    pub fn is_exempt(&self, relative: &str) -> bool {
+        !relative.is_empty() && self.exemptions.is_match(relative)
+    }
+
+    /// Whether the user configured any exemptions.
+    pub fn has_exemptions(&self) -> bool {
+        !self.exemptions.is_empty()
+    }
+
+    /// Resolve a rule against its group default plus the user overrides.
+    fn rule_on(&self, base: bool, id: &str) -> bool {
+        if self.disabled.contains(id) {
+            false
+        } else if self.enabled.contains(id) {
+            true
+        } else {
+            base
+        }
+    }
+
+    /// Pure detection of generated/build directories or files.
+    pub fn is_generated_path(&self, path: &Path) -> bool {
+        self.generated_rule_id(path).is_some()
+    }
+
+    /// True when the matching generated rule was explicitly turned off.
+    pub fn generated_rule_disabled(&self, path: &Path) -> bool {
+        self.generated_rule_id(path)
+            .map(|id| !self.rule_on(!self.scan_generated_files, &id))
+            .unwrap_or(false)
+    }
+
+    fn generated_rule_id(&self, path: &Path) -> Option<String> {
+        for component in path.components() {
+            let value = component.as_os_str().to_string_lossy();
+            if GENERATED_DIRS.contains(&value.as_ref()) {
+                return Some(format!("dir:{value}"));
+            }
+        }
+        if let Some(name) = path.file_name().map(|name| name.to_string_lossy().to_lowercase()) {
+            for suffix in GENERATED_FILE_SUFFIXES {
+                if name.ends_with(suffix) {
+                    return Some(format!("file:{suffix}"));
+                }
+            }
+        }
+        None
+    }
+
+    fn database_rule_id(&self, name: &str) -> Option<String> {
+        DATABASE_EXTENSIONS
+            .iter()
+            .find(|extension| name.ends_with(**extension))
+            .map(|extension| format!("db:{extension}"))
+    }
+
+    /// True when a category rule is turned off, so `.gitignore` must not hide it.
+    fn explicitly_allowed(&self, path: &Path) -> bool {
+        if let Some(name) = path.file_name().map(|name| name.to_string_lossy()) {
+            let lowered = name.to_lowercase();
+            if is_env_file(&lowered)
+                && !is_env_example(&lowered)
+                && !self.rule_on(self.ignore_env_files, "env")
+            {
+                return true;
+            }
+            if let Some(id) = self.database_rule_id(&lowered) {
+                if !self.rule_on(self.ignore_local_databases, &id) {
+                    return true;
+                }
+            }
+        }
+        if let Some(id) = self.generated_rule_id(path) {
+            if !self.rule_on(!self.scan_generated_files, &id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Reasons to hide a path that are independent of `.gitignore`.
+    pub fn category_reason(&self, path: &Path) -> Option<&'static str> {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == ".git")
+        {
+            return Some("it is part of the git internals");
+        }
+        if let Some(name) = path.file_name().map(|name| name.to_string_lossy()) {
+            let lowered = name.to_lowercase();
+            if is_env_file(&lowered)
+                && !is_env_example(&lowered)
+                && self.rule_on(self.ignore_env_files, "env")
+            {
+                return Some("it is an environment file");
+            }
+            if let Some(id) = self.database_rule_id(&lowered) {
+                if self.rule_on(self.ignore_local_databases, &id) {
+                    return Some("it is a local database");
+                }
+            }
+        }
+        if let Some(id) = self.generated_rule_id(path) {
+            if self.rule_on(!self.scan_generated_files, &id) {
+                return Some("it is inside a generated or dependency directory");
+            }
+        }
+        None
+    }
+
+    /// Reason a sensitive file (keys, credentials, tokens) should be guarded.
+    pub fn sensitive_reason(&self, path: &Path) -> Option<&'static str> {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        for suffix in SENSITIVE_SUFFIXES {
+            if name.ends_with(suffix) && self.rule_on(true, &format!("creds:ext:{suffix}")) {
+                return Some("it looks like a key, certificate or credential file");
+            }
+        }
+        for prefix in SENSITIVE_PREFIXES {
+            if name.starts_with(prefix) && self.rule_on(true, &format!("creds:prefix:{prefix}")) {
+                return Some("it looks like a private key");
+            }
+        }
+        for part in SENSITIVE_NAME_PARTS {
+            if name.contains(part) && self.rule_on(true, &format!("creds:part:{part}")) {
+                return Some("it looks like it contains credentials or secrets");
+            }
+        }
+        if SENSITIVE_NAMES.contains(&name.as_str())
+            && self.rule_on(true, &format!("creds:name:{name}"))
+        {
+            return Some("it is a well-known credential file");
+        }
+        for component in path.components() {
+            let value = component.as_os_str().to_string_lossy();
+            if SENSITIVE_DIRS.contains(&value.as_ref())
+                && self.rule_on(true, &format!("creds:dir:{value}"))
+            {
+                return Some("it is stored in a credentials directory");
+            }
+        }
+        None
+    }
+
+    /// Full reason a path should be hidden, combining `.gitignore` status.
+    pub fn ignore_reason(
+        &self,
+        path: &Path,
+        relative: &str,
+        gitignored: bool,
+    ) -> Option<&'static str> {
+        if self.is_exempt(relative) {
+            return None;
+        }
+        if let Some(reason) = self.category_reason(path) {
+            return Some(reason);
+        }
+        if self.respect_gitignore && gitignored {
+            if self.scan_generated_files && self.is_generated_path(path) {
+                return None;
+            }
+            if self.explicitly_allowed(path) {
+                return None;
+            }
+            return Some("it is ignored by .gitignore");
+        }
+        None
+    }
+}
+
+fn empty_globset() -> GlobSet {
+    GlobSetBuilder::new().build().unwrap_or_default()
+}
+
+fn build_exemptions(patterns: &[String]) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+    let mut any = false;
+    for pattern in patterns {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            continue;
+        }
+        if let Ok(glob) = Glob::new(pattern) {
+            builder.add(glob);
+            any = true;
+        }
+        // A bare file name should also match at any depth.
+        if !pattern.contains('/') {
+            if let Ok(glob) = Glob::new(&format!("**/{pattern}")) {
+                builder.add(glob);
+                any = true;
+            }
+        }
+    }
+    if any {
+        builder.build().unwrap_or_else(|_| empty_globset())
+    } else {
+        empty_globset()
+    }
+}
+
+pub fn is_env_file(name: &str) -> bool {
+    let name = name.to_lowercase();
+    name == ".env" || name.starts_with(".env.") || name.ends_with(".env")
+}
+
+pub fn is_env_example(name: &str) -> bool {
+    let name = name.to_lowercase();
+    ENV_EXAMPLE_MARKERS
+        .iter()
+        .any(|marker| name.contains(marker))
+}
+
 pub fn is_ignored_path(path: &Path, probe: &dyn RepoProbe, relative: &str) -> bool {
     if path
         .components()
@@ -543,23 +1062,22 @@ pub fn is_sensitive(path: &Path) -> bool {
     if name == ".env"
         || name.starts_with(".env.")
         || name.ends_with(".env")
-        || name.ends_with(".pem")
-        || name.ends_with(".key")
-        || name.ends_with(".p12")
-        || name.ends_with(".pfx")
-        || name.ends_with(".db")
-        || name.ends_with(".sqlite")
-        || name.ends_with(".sqlite3")
-        || name.starts_with("id_rsa")
-        || name.starts_with("id_ed25519")
-        || name.contains("credential")
-        || name.contains("secret")
+        || SENSITIVE_NAMES.contains(&name.as_str())
+        || SENSITIVE_SUFFIXES
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        || SENSITIVE_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        || SENSITIVE_NAME_PARTS
+            .iter()
+            .any(|part| name.contains(part))
     {
         return true;
     }
     path.components().any(|component| {
         let value = component.as_os_str().to_string_lossy();
-        value == ".ssh" || value == ".aws" || value == ".gnupg" || value == ".git"
+        SENSITIVE_DIRS.contains(&value.as_ref())
     })
 }
 
@@ -724,5 +1242,120 @@ mod tests {
             WebsiteDecision::Allow
         );
         assert!(evaluate_website("github.io", &allowed, &[]).is_ask());
+    }
+
+    #[test]
+    fn env_files_are_ignored_but_examples_are_not() {
+        let config = FileIgnoreConfig::new(true, false, false, true, &[]);
+        assert!(config.category_reason(Path::new("/project/.env")).is_some());
+        assert!(config
+            .category_reason(Path::new("/project/.env.local"))
+            .is_some());
+        assert!(config.category_reason(Path::new("/project/example.env")).is_none());
+        assert!(config
+            .category_reason(Path::new("/project/.env.example"))
+            .is_none());
+    }
+
+    #[test]
+    fn databases_are_only_ignored_when_enabled() {
+        let off = FileIgnoreConfig::new(true, false, false, true, &[]);
+        assert!(off.category_reason(Path::new("/project/data.sqlite")).is_none());
+        let on = FileIgnoreConfig::new(true, false, true, true, &[]);
+        assert!(on.category_reason(Path::new("/project/data.sqlite")).is_some());
+    }
+
+    #[test]
+    fn generated_files_follow_scan_setting() {
+        let no_scan = FileIgnoreConfig::new(true, false, false, true, &[]);
+        assert!(no_scan
+            .ignore_reason(
+                Path::new("/project/node_modules/pkg/index.js"),
+                "node_modules/pkg/index.js",
+                true,
+            )
+            .is_some());
+        let scan = FileIgnoreConfig::new(true, true, false, true, &[]);
+        assert!(scan
+            .ignore_reason(
+                Path::new("/project/node_modules/pkg/index.js"),
+                "node_modules/pkg/index.js",
+                true,
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn exemptions_override_every_rule() {
+        let config = FileIgnoreConfig::new(
+            true,
+            false,
+            true,
+            true,
+            &["config/local.env".to_string()],
+        );
+        assert!(config
+            .ignore_reason(Path::new("/project/config/local.env"), "config/local.env", true)
+            .is_none());
+        assert!(config
+            .ignore_reason(Path::new("/project/config/other.env"), "config/other.env", true)
+            .is_some());
+    }
+
+    #[test]
+    fn additional_sensitive_formats_detected() {
+        for path in [
+            "/project/.npmrc",
+            "/project/.aws/credentials",
+            "/project/.kube/config",
+            "/project/secrets.yaml",
+            "/project/service-account.json",
+            "/project/server.jks",
+            "/project/terraform.tfstate.backup",
+            "/project/id_ecdsa",
+            "/project/.vault-token",
+        ] {
+            assert!(is_sensitive(Path::new(path)), "{path} should be sensitive");
+        }
+        assert!(!is_sensitive(Path::new("/project/src/main.ts")));
+        assert!(!is_sensitive(Path::new("/project/src/tokenizer.ts")));
+    }
+
+    #[test]
+    fn generated_artifact_files_follow_scan_setting() {
+        let no_scan = FileIgnoreConfig::new(true, false, false, true, &[]);
+        assert!(no_scan
+            .ignore_reason(Path::new("/project/app.min.js"), "app.min.js", false)
+            .is_some());
+        assert!(no_scan
+            .ignore_reason(Path::new("/project/notes.log"), "notes.log", false)
+            .is_some());
+        let scan = FileIgnoreConfig::new(true, true, false, true, &[]);
+        assert!(scan
+            .ignore_reason(Path::new("/project/app.min.js"), "app.min.js", false)
+            .is_none());
+    }
+
+    #[test]
+    fn overrides_can_enable_and_disable_individual_rules() {
+        let config = FileIgnoreConfig::new(true, false, false, true, &[])
+            .with_overrides(&[], &["db:.sqlite".to_string()]);
+        assert!(config.category_reason(Path::new("/p/data.sqlite")).is_some());
+        assert!(config.category_reason(Path::new("/p/data.db")).is_none());
+
+        let config = FileIgnoreConfig::new(true, false, false, true, &[])
+            .with_overrides(&["dir:node_modules".to_string()], &[]);
+        assert!(config
+            .category_reason(Path::new("/p/node_modules/x.js"))
+            .is_none());
+        assert!(config.category_reason(Path::new("/p/dist/x.js")).is_some());
+        assert!(config
+            .ignore_reason(Path::new("/p/node_modules/x.js"), "node_modules/x.js", true)
+            .is_none());
+
+        let config = FileIgnoreConfig::new(true, false, false, true, &[])
+            .with_overrides(&["creds:ext:.pem".to_string()], &[]);
+        assert!(config.sensitive_reason(Path::new("/p/cert.pem")).is_none());
+        assert!(config.sensitive_reason(Path::new("/p/id_rsa")).is_some());
     }
 }

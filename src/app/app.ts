@@ -1,8 +1,23 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  ElementRef,
+  OnInit,
+  afterNextRender,
+  afterRenderEffect,
+  computed,
+  inject,
+  signal,
+  untracked,
+  viewChild,
+} from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { AgentStatus } from './components/agent-status';
 import { AttentionIndicator } from './components/attention-indicator';
 import { ChatView } from './components/chat-view';
+import { DebugView } from './components/debug-view';
+import { GitView } from './components/git-view';
 import { ProcessIndicator } from './components/process-indicator';
 import { PumaLoader } from './components/puma-loader';
 import { ProjectAppearanceDialog } from './components/project-appearance-dialog';
@@ -14,9 +29,12 @@ import { SpendIndicator } from './components/spend-indicator';
 import { WorkspaceEditor } from './components/workspace-editor';
 import { isTauri } from './core/api';
 import { matchesHotkey } from './core/hotkeys';
+import { Session } from './core/models';
 import { ModelsService } from './core/models.service';
 import { SettingsService } from './core/settings.service';
 import { WorkspaceService } from './core/workspace.service';
+
+const EMPTY_IDS: ReadonlySet<string> = new Set();
 
 @Component({
   selector: 'app-root',
@@ -24,8 +42,10 @@ import { WorkspaceService } from './core/workspace.service';
   imports: [
     Sidebar,
     ChatView,
+    GitView,
     RightPanel,
     SettingsDialog,
+    DebugView,
     ProcessIndicator,
     PumaLoader,
     SpendIndicator,
@@ -67,7 +87,7 @@ import { WorkspaceService } from './core/workspace.service';
             type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
             [title]="'app.toggleSidebar' | transloco"
-            (click)="leftPanelOpen.set(!leftPanelOpen())"
+            (click)="workspace.toggleLeftPanel()"
           >
             <svg
               viewBox="0 0 24 24"
@@ -85,7 +105,15 @@ import { WorkspaceService } from './core/workspace.service';
           </button>
           @if (workspace.activeProject(); as project) {
             <app-project-icon [project]="project" [size]="22" />
-            <span class="truncate text-sm text-mist/40">{{ project.path }}</span>
+            <span
+              class="flex min-w-0 max-w-[220px] items-baseline gap-1.5"
+              [title]="project.path"
+            >
+              @if (parentPath(project.path); as parent) {
+                <span class="truncate text-xs text-mist/30">{{ parent }}</span>
+              }
+              <span class="truncate text-sm font-medium text-mist/80">{{ project.name }}</span>
+            </span>
           }
           @if (workspace.activeGitInfo(); as git) {
             @if (git.branch) {
@@ -98,7 +126,8 @@ import { WorkspaceService } from './core/workspace.service';
           }
         </div>
         <div
-          class="no-scrollbar flex min-w-0 flex-1 items-center gap-1 glass-inset rounded-2xl p-1"
+          #tabsBar
+          class="no-scrollbar relative flex min-w-0 flex-1 items-center gap-1 glass-inset rounded-2xl p-1"
           [class]="
             (settings.settings()?.tabsMultiline ?? true)
               ? 'flex-wrap'
@@ -106,16 +135,22 @@ import { WorkspaceService } from './core/workspace.service';
           "
         >
           @for (session of workspace.tabs(); track session.id; let i = $index) {
-            @if (i > 0) {
+            @if (i > 0 && !isCollapsed(session.id)) {
               <span class="mx-0.5 h-5 w-px shrink-0 bg-white/10" aria-hidden="true"></span>
             }
             <div
-              class="group relative flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-medium transition-colors"
+              class="group flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-medium transition-colors"
               [class]="
                 session.id === workspace.activeSessionId()
                   ? 'bg-accent/15 text-white ring-1 ring-inset ring-accent/30'
                   : 'text-mist/50 hover:bg-white/5 hover:text-mist'
               "
+              [class.relative]="!isCollapsed(session.id)"
+              [class.absolute]="isCollapsed(session.id)"
+              [class.invisible]="isCollapsed(session.id)"
+              [class.pointer-events-none]="isCollapsed(session.id)"
+              [class.w-max]="isCollapsed(session.id)"
+              [attr.data-session-tab]="session.id"
               (click)="workspace.openTab(session.id)"
             >
               @if (session.id === workspace.activeSessionId()) {
@@ -168,11 +203,117 @@ import { WorkspaceService } from './core/workspace.service';
             </div>
           }
 
+          @if (collapsedTabs().length > 0) {
+            <div class="relative shrink-0">
+              <button
+                type="button"
+                data-tab-overflow
+                class="flex h-8 shrink-0 items-center gap-1 rounded-xl px-2 text-sm font-medium transition-colors"
+                [class]="
+                  activeTabCollapsed()
+                    ? 'bg-accent/15 text-white ring-1 ring-inset ring-accent/30'
+                    : 'text-mist/50 hover:bg-white/5 hover:text-mist'
+                "
+                [attr.aria-expanded]="overflowOpen()"
+                [title]="'tabs.more' | transloco"
+                [attr.aria-label]="'tabs.more' | transloco"
+                (click)="overflowOpen.set(!overflowOpen())"
+              >
+                <span class="text-xs">{{ collapsedTabs().length }}</span>
+                <svg
+                  class="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+
+              @if (overflowOpen()) {
+                <div class="fixed inset-0 z-30" (click)="overflowOpen.set(false)"></div>
+                <div
+                  class="absolute right-0 top-full z-40 mt-2 max-h-[min(20rem,50vh)] w-72 max-w-[80vw] overflow-y-auto glass-pop rounded-2xl p-1 shadow-2xl"
+                >
+                  @for (session of collapsedTabs(); track session.id) {
+                    <div
+                      class="group flex items-center gap-1 rounded-xl pr-1 transition-colors"
+                      [class]="
+                        session.id === workspace.activeSessionId()
+                          ? 'bg-accent/15'
+                          : 'hover:bg-white/5'
+                      "
+                    >
+                      <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm"
+                        [class]="
+                          session.id === workspace.activeSessionId()
+                            ? 'font-medium text-white'
+                            : 'text-mist/50 hover:text-mist'
+                        "
+                        (click)="openFromOverflow(session.id)"
+                      >
+                        @if (projectFor(session.projectId); as project) {
+                          <span class="relative inline-flex shrink-0">
+                            <app-project-icon [project]="project" [size]="20" />
+                            @if (workspace.sessionAttention(session.id); as attention) {
+                              <span
+                                class="absolute -top-1 -left-1 flex h-2 w-2 items-center justify-center rounded-full ring-2 ring-ink"
+                              >
+                                <app-attention-indicator [kind]="attention" />
+                              </span>
+                            }
+                          </span>
+                        } @else if (workspace.sessionAttention(session.id); as attention) {
+                          <app-attention-indicator
+                            [kind]="attention"
+                            [onAccent]="session.id === workspace.activeSessionId()"
+                          />
+                        }
+                        <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
+                        @if (workspace.agentActivity(session.id); as status) {
+                          <app-agent-status
+                            [status]="status"
+                            [small]="true"
+                            [onAccent]="session.id === workspace.activeSessionId()"
+                          />
+                        }
+                      </button>
+                      <button
+                        type="button"
+                        class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-mist/40 transition-all hover:bg-white/10 hover:text-white"
+                        [attr.aria-label]="'tabs.close' | transloco"
+                        (click)="closeTab($event, session.id)"
+                      >
+                        <svg
+                          class="h-3 w-3"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+
           @if (workspace.tabs().length > 0) {
             <span class="mx-0.5 h-5 w-px shrink-0 bg-white/10" aria-hidden="true"></span>
           }
           <button
             type="button"
+            data-tab-plus
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
             [title]="'tabs.new' | transloco"
             [attr.aria-label]="'tabs.new' | transloco"
@@ -197,7 +338,7 @@ import { WorkspaceService } from './core/workspace.service';
             type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
             [title]="'app.toggleRightPanel' | transloco"
-            (click)="rightPanelOpen.set(!rightPanelOpen())"
+            (click)="workspace.toggleRightPanel()"
           >
             <svg
               viewBox="0 0 24 24"
@@ -223,8 +364,8 @@ import { WorkspaceService } from './core/workspace.service';
       </header>
 
       <div class="flex min-h-0 flex-1 gap-2 px-2 pb-2">
-        @if (leftPanelOpen()) {
-          <div class="relative shrink-0" [style.width.px]="leftPanelWidth()">
+        @if (workspace.leftPanelOpen()) {
+          <div class="relative shrink-0" [style.width.px]="workspace.leftPanelWidth()">
             <app-sidebar class="glass block h-full w-full overflow-hidden rounded-2xl" />
             <div
               [class]="
@@ -239,13 +380,15 @@ import { WorkspaceService } from './core/workspace.service';
         <main class="glass flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl">
           @if (workspace.leftTab() === 'workspace') {
             <app-workspace-editor class="min-h-0 flex-1" />
+          } @else if (workspace.leftTab() === 'git') {
+            <app-git-view class="min-h-0 flex-1" />
           } @else {
             <app-chat-view class="min-h-0 flex-1" />
           }
         </main>
 
-        @if (rightPanelOpen()) {
-          <div class="relative shrink-0" [style.width.px]="rightPanelWidth()">
+        @if (workspace.rightPanelOpen() && workspace.leftTab() !== 'git') {
+          <div class="relative shrink-0" [style.width.px]="workspace.rightPanelWidth()">
             <div
               [class]="
                 'absolute inset-y-0 -left-2 w-2 cursor-col-resize rounded-full transition-colors ' +
@@ -262,6 +405,10 @@ import { WorkspaceService } from './core/workspace.service';
         <app-settings-dialog (closed)="settings.close()" />
       }
 
+      @if (workspace.debugOpen()) {
+        <app-debug-view />
+      }
+
       @if (workspace.projectEditorId()) {
         <app-project-appearance-dialog />
       }
@@ -275,11 +422,7 @@ export class App implements OnInit {
 
   protected readonly tauri = isTauri();
 
-  protected readonly rightPanelWidth = signal(512);
-  protected readonly leftPanelWidth = signal(340);
   protected readonly resizing = signal<'left' | 'right' | null>(null);
-  protected readonly leftPanelOpen = signal(true);
-  protected readonly rightPanelOpen = signal(true);
   protected readonly booting = signal(true);
   protected readonly splashVisible = signal(true);
   private readonly minSplashMs = 900;
@@ -287,6 +430,49 @@ export class App implements OnInit {
   private readonly minLeftPanelWidth = 240;
   private readonly minRightPanelWidth = 320;
   private readonly minMainWidth = 360;
+
+  private readonly tabsBar = viewChild<ElementRef<HTMLDivElement>>('tabsBar');
+  private readonly collapsedTabIds = signal<ReadonlySet<string>>(EMPTY_IDS);
+  protected readonly overflowOpen = signal(false);
+  protected readonly collapsedTabs = computed(() => {
+    const ids = this.collapsedTabIds();
+    return ids.size === 0 ? [] : this.workspace.tabs().filter((session) => ids.has(session.id));
+  });
+  protected readonly activeTabCollapsed = computed(() =>
+    this.collapsedTabIds().has(this.workspace.activeSessionId() ?? ''),
+  );
+
+  private readonly destroyRef = inject(DestroyRef);
+  private resizeObserver?: ResizeObserver;
+  private lastBarWidth = -1;
+
+  constructor() {
+    afterRenderEffect({
+      read: () => {
+        this.workspace.tabs();
+        this.settings.settings()?.tabsMultiline;
+        this.measureTabs();
+      },
+    });
+
+    afterNextRender(() => {
+      const bar = this.tabsBar()?.nativeElement;
+      if (!bar || typeof ResizeObserver === 'undefined') {
+        return;
+      }
+      this.resizeObserver = new ResizeObserver(() => {
+        const width = bar.clientWidth;
+        if (width === this.lastBarWidth) {
+          return;
+        }
+        this.lastBarWidth = width;
+        this.measureTabs();
+      });
+      this.resizeObserver.observe(bar);
+    });
+
+    this.destroyRef.onDestroy(() => this.resizeObserver?.disconnect());
+  }
 
   async ngOnInit(): Promise<void> {
     const started = Date.now();
@@ -307,7 +493,8 @@ export class App implements OnInit {
     this.resizing.set(side);
     this.resizeSide = side;
     this.startX = event.clientX;
-    this.startWidth = side === 'left' ? this.leftPanelWidth() : this.rightPanelWidth();
+    this.startWidth =
+      side === 'left' ? this.workspace.leftPanelWidth() : this.workspace.rightPanelWidth();
 
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -325,15 +512,19 @@ export class App implements OnInit {
     const delta = left ? event.clientX - this.startX : this.startX - event.clientX;
     const min = left ? this.minLeftPanelWidth : this.minRightPanelWidth;
     const other = left
-      ? this.rightPanelOpen()
-        ? this.rightPanelWidth()
+      ? this.workspace.rightPanelOpen()
+        ? this.workspace.rightPanelWidth()
         : 0
-      : this.leftPanelOpen()
-        ? this.leftPanelWidth()
+      : this.workspace.leftPanelOpen()
+        ? this.workspace.leftPanelWidth()
         : 0;
     const max = window.innerWidth - this.minMainWidth - other;
     const next = Math.min(Math.max(this.startWidth + delta, min), Math.max(min, max));
-    (left ? this.leftPanelWidth : this.rightPanelWidth).set(next);
+    if (left) {
+      this.workspace.setLeftPanelWidth(next);
+    } else {
+      this.workspace.setRightPanelWidth(next);
+    }
   };
 
   private readonly stopResize = (): void => {
@@ -353,6 +544,139 @@ export class App implements OnInit {
     return this.workspace.projectFor(projectId);
   }
 
+  protected parentPath(path: string): string {
+    const parent = path.split(/[\\/]/).filter(Boolean).slice(0, -1);
+    const home = parent.findIndex((part) => part === 'Users' || part === 'home');
+    if (home !== -1 && parent.length > home + 1) {
+      const rest = parent.slice(home + 2);
+      return rest.length ? `~/${rest.join('/')}` : '~';
+    }
+    return parent.join('/');
+  }
+
+  protected isCollapsed(sessionId: string): boolean {
+    return this.collapsedTabIds().has(sessionId);
+  }
+
+  protected openFromOverflow(sessionId: string): void {
+    this.workspace.openTab(sessionId);
+    this.overflowOpen.set(false);
+  }
+
+  private measureTabs(): void {
+    const bar = this.tabsBar()?.nativeElement;
+    const tabs = this.workspace.tabs();
+    const multiline = this.settings.settings()?.tabsMultiline ?? true;
+    if (!bar || !multiline || tabs.length === 0 || bar.clientWidth === 0) {
+      this.setCollapsedIds(EMPTY_IDS);
+      return;
+    }
+
+    const widths = new Map<string, number>();
+    bar.querySelectorAll<HTMLElement>('[data-session-tab]').forEach((element) => {
+      const id = element.dataset['sessionTab'];
+      if (id) {
+        widths.set(id, element.offsetWidth);
+      }
+    });
+
+    const plus = bar.querySelector<HTMLElement>('[data-tab-plus]');
+    const overflow = bar.querySelector<HTMLElement>('[data-tab-overflow]');
+    this.setCollapsedIds(
+      this.computeCollapsed(
+        tabs,
+        widths,
+        bar.clientWidth - 8,
+        plus?.offsetWidth ?? 32,
+        overflow?.offsetWidth ?? 40,
+      ),
+    );
+  }
+
+  private computeCollapsed(
+    tabs: Session[],
+    widths: Map<string, number>,
+    contentWidth: number,
+    plusWidth: number,
+    overflowWidth: number,
+  ): ReadonlySet<string> {
+    const gap = 4;
+    const tabGap = 13;
+    const widthOf = (session: Session): number => widths.get(session.id) ?? 0;
+
+    const layout = (visible: number) => {
+      const rows: number[] = [];
+      let used = 0;
+      for (let i = 0; i < visible; i++) {
+        const width = widthOf(tabs[i]);
+        const lead = used === 0 ? 0 : tabGap;
+        if (used + lead + width <= contentWidth) {
+          used += lead + width;
+        } else {
+          rows.push(used);
+          used = width;
+        }
+      }
+      rows.push(used);
+
+      if (visible < tabs.length) {
+        let last = rows[rows.length - 1];
+        const lead = last === 0 ? 0 : gap;
+        if (last + lead + overflowWidth <= contentWidth) {
+          rows[rows.length - 1] = last + lead + overflowWidth;
+        } else {
+          rows.push(overflowWidth);
+        }
+      }
+
+      const last = rows[rows.length - 1];
+      const plusLead = last === 0 ? 0 : tabGap;
+      if (last + plusLead + plusWidth > contentWidth) {
+        rows.push(plusWidth);
+      }
+
+      return {
+        rowCount: rows.length,
+        firstGap: contentWidth - rows[0],
+        lastGap: contentWidth - rows[rows.length - 1],
+      };
+    };
+
+    let twoRows = tabs.length;
+    while (twoRows > 0 && layout(twoRows).rowCount > 2) {
+      twoRows--;
+    }
+
+    let oneRow = twoRows;
+    while (oneRow > 0 && layout(oneRow).rowCount > 1) {
+      oneRow--;
+    }
+
+    let visible = twoRows;
+    if (twoRows > oneRow) {
+      const wide = layout(twoRows);
+      const narrow = layout(oneRow);
+      if (narrow.lastGap <= wide.firstGap) {
+        visible = oneRow;
+      }
+    }
+
+    return visible === tabs.length
+      ? EMPTY_IDS
+      : new Set(tabs.slice(visible).map((session) => session.id));
+  }
+
+  private setCollapsedIds(next: ReadonlySet<string>): void {
+    const current = untracked(this.collapsedTabIds);
+    if (next.size === current.size && [...next].every((id) => current.has(id))) {
+      return;
+    }
+    this.collapsedTabIds.set(next);
+    if (next.size === 0) {
+      this.overflowOpen.set(false);
+    }
+  }
+
   protected async startNewSession(): Promise<void> {
     let project = this.workspace.activeProject() ?? this.workspace.projects()[0] ?? null;
     if (!project) {
@@ -370,6 +694,9 @@ export class App implements OnInit {
       return;
     }
     if (this.settings.dialogOpen()) {
+      return;
+    }
+    if (this.workspace.debugOpen()) {
       return;
     }
     const settings = this.settings.settings();

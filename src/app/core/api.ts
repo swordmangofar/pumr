@@ -5,7 +5,13 @@ import {
   EndpointInfo,
   FileChange,
   FileDiff,
+  GitBranch,
+  GitCommit,
+  GitCommitDetail,
   GitInfo,
+  GitRebaseEntry,
+  GitStatus,
+  IgnoreCatalogEntry,
   McpCandidate,
   Message,
   Mode,
@@ -83,9 +89,61 @@ export const api = {
     invoke<Settings>('add_website_rule', { rule, allow }),
   deleteWebsiteRule: (rule: string, allow: boolean) =>
     invoke<Settings>('delete_website_rule', { rule, allow }),
+  getFileIgnoreCatalog: () => invoke<IgnoreCatalogEntry[]>('get_file_ignore_catalog'),
   listProcesses: () => invoke<ProcessInfo[]>('list_processes'),
   stopProcess: (processId: string) => invoke<void>('stop_process', { processId }),
   getGitInfo: (projectId: string) => invoke<GitInfo>('get_git_info', { projectId }),
+  getGitStatus: (projectId: string) => invoke<GitStatus>('get_git_status', { projectId }),
+  getGitBranches: (projectId: string) => invoke<GitBranch[]>('get_git_branches', { projectId }),
+  getGitCommits: (projectId: string, query: string | null = null, skip = 0, limit = 50) =>
+    invoke<GitCommit[]>('get_git_commits', { projectId, query, skip, limit }),
+  getGitCommit: (projectId: string, hash: string) =>
+    invoke<GitCommitDetail>('get_git_commit', { projectId, hash }),
+  getGitCommitFileDiff: (projectId: string, hash: string, path: string) =>
+    invoke<FileDiff>('get_git_commit_file_diff', { projectId, hash, path }),
+  getGitFileDiff: (projectId: string, path: string, staged: boolean) =>
+    invoke<FileDiff>('get_git_file_diff', { projectId, path, staged }),
+  gitStage: (projectId: string, path: string | null = null) =>
+    invoke<void>('git_stage', { projectId, path }),
+  gitUnstage: (projectId: string, path: string | null = null) =>
+    invoke<void>('git_unstage', { projectId, path }),
+  gitDiscard: (projectId: string, path: string) => invoke<void>('git_discard', { projectId, path }),
+  gitCommit: (projectId: string, message: string, amend: boolean) =>
+    invoke<string>('git_commit', { projectId, message, amend }),
+  gitCheckout: (projectId: string, branch: string, track = false, localBranch?: string) =>
+    invoke<string>('git_checkout', { projectId, branch, track, localBranch }),
+  gitFetch: (projectId: string) => invoke<string>('git_fetch', { projectId }),
+  gitPull: (projectId: string) => invoke<string>('git_pull', { projectId }),
+  gitPush: (projectId: string) => invoke<string>('git_push', { projectId }),
+  getGitRemotes: (projectId: string) => invoke<string[]>('get_git_remotes', { projectId }),
+  gitFastForward: (projectId: string, branch: string, upstream: string) =>
+    invoke<string>('git_fast_forward', { projectId, branch, upstream }),
+  gitMerge: (projectId: string, branch: string) =>
+    invoke<string>('git_merge', { projectId, branch }),
+  gitRebase: (projectId: string, onto: string) => invoke<string>('git_rebase', { projectId, onto }),
+  gitRebaseInteractive: (projectId: string, onto: string, todo: GitRebaseEntry[]) =>
+    invoke<string>('git_rebase_interactive', { projectId, onto, todo }),
+  getGitRebaseCommits: (projectId: string, onto: string) =>
+    invoke<GitCommit[]>('get_git_rebase_commits', { projectId, onto }),
+  gitBranchCreate: (
+    projectId: string,
+    name: string,
+    startPoint: string | null,
+    checkout: boolean,
+  ) => invoke<string>('git_branch_create', { projectId, name, startPoint, checkout }),
+  gitTagCreate: (projectId: string, name: string, target: string | null, message: string | null) =>
+    invoke<string>('git_tag_create', { projectId, name, target, message }),
+  gitBranchRename: (projectId: string, from: string, to: string) =>
+    invoke<string>('git_branch_rename', { projectId, from, to }),
+  gitBranchDelete: (projectId: string, branch: string, remote: boolean) =>
+    invoke<string>('git_branch_delete', { projectId, branch, remote }),
+  gitSetUpstream: (projectId: string, branch: string, upstream: string) =>
+    invoke<string>('git_set_upstream', { projectId, branch, upstream }),
+  gitPushBranch: (projectId: string, branch: string, remote: string, setUpstream: boolean) =>
+    invoke<string>('git_push_branch', { projectId, branch, remote, setUpstream }),
+  gitPullRequestUrl: (projectId: string, remote: string, branch: string) =>
+    invoke<string>('git_pull_request_url', { projectId, remote, branch }),
+  openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
   getSessionChanges: (sessionId: string) =>
     invoke<FileChange[]>('get_session_changes', { sessionId }),
   getFileDiff: (sessionId: string, path: string) =>
