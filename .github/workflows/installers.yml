@@ -30,14 +30,14 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             bundles: app,dmg
-            osLabel: macos
-            archLabel: arm64
+            osLabel: mac
+            archLabel: silicone
           - platform: macos-x64
             os: macos-15-intel
             target: x86_64-apple-darwin
             bundles: app,dmg
-            osLabel: macos
-            archLabel: amd64
+            osLabel: mac
+            archLabel: intel
           - platform: linux-x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu

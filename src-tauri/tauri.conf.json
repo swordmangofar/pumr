@@ -42,6 +42,9 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   },
   "plugins": {
