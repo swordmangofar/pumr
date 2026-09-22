@@ -441,6 +441,17 @@
   },
   "settings": {
     "title": "Settings",
+    "update": {
+      "title": "Updates",
+      "available": "Version {{ version }} is available.",
+      "download": "Download & install",
+      "downloading": "Downloading… {{ progress }}%",
+      "checking": "Checking for updates…",
+      "restarting": "Update installed, restarting…",
+      "upToDate": "pumr is up to date.",
+      "check": "Check for updates",
+      "error": "Could not check for updates."
+    },
     "general": {
       "about": "About",
       "version": "Version",

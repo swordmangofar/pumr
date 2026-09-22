@@ -441,6 +441,17 @@
   },
   "settings": {
     "title": "Einstellungen",
+    "update": {
+      "title": "Updates",
+      "available": "Version {{ version }} ist verfügbar.",
+      "download": "Herunterladen & installieren",
+      "downloading": "Wird heruntergeladen… {{ progress }}%",
+      "checking": "Suche nach Updates…",
+      "restarting": "Update installiert, Neustart…",
+      "upToDate": "pumr ist auf dem neuesten Stand.",
+      "check": "Nach Updates suchen",
+      "error": "Updates konnten nicht geladen werden."
+    },
     "general": {
       "about": "Über",
       "version": "Version",

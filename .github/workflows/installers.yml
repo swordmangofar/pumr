@@ -24,29 +24,18 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: nsis,msi
-            artifact: |
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
           - platform: macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
             bundles: app,dmg
-            artifact: |
-              src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - platform: macos-x64
             os: macos-15-intel
             target: x86_64-apple-darwin
             bundles: app,dmg
-            artifact: |
-              src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           - platform: linux-x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,rpm,appimage
-            artifact: |
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
-              src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
 
     steps:
       - name: Checkout
@@ -93,35 +82,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Read version
-        id: version
-        shell: bash
-        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Build
-        run: pnpm exec tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          name: pumr-${{ steps.version.outputs.version }}-${{ matrix.platform }}
-          path: ${{ matrix.artifact }}
-          if-no-files-found: error
-
-  release:
-    name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          generate_release_notes: true
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: 'pumr v__VERSION__'
+          releaseBody: 'See the assets below to download and install this version.'
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}

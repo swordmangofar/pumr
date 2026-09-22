@@ -32,6 +32,7 @@ import { matchesHotkey } from './core/hotkeys';
 import { Session } from './core/models';
 import { ModelsService } from './core/models.service';
 import { SettingsService } from './core/settings.service';
+import { UpdaterService } from './core/updater.service';
 import { WorkspaceService } from './core/workspace.service';
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
@@ -355,10 +356,16 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
           </button>
           <button
             type="button"
-            class="rounded-full bg-white/5 px-4 py-1.5 text-sm text-mist transition-colors hover:bg-white/10 hover:text-accent"
+            class="relative rounded-full bg-white/5 px-4 py-1.5 text-sm text-mist transition-colors hover:bg-white/10 hover:text-accent"
             (click)="settings.open()"
           >
             {{ 'app.settings' | transloco }}
+            @if (updater.available()) {
+              <span
+                class="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-ink"
+                aria-hidden="true"
+              ></span>
+            }
           </button>
         </div>
       </header>
@@ -418,6 +425,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 export class App implements OnInit {
   protected readonly settings = inject(SettingsService);
   protected readonly workspace = inject(WorkspaceService);
+  protected readonly updater = inject(UpdaterService);
   private readonly models = inject(ModelsService);
 
   protected readonly tauri = isTauri();
@@ -479,6 +487,7 @@ export class App implements OnInit {
     await this.settings.init();
     if (this.tauri) {
       await Promise.all([this.models.load(), this.workspace.init()]);
+      void this.updater.check();
     }
     const remaining = this.minSplashMs - (Date.now() - started);
     if (remaining > 0) {

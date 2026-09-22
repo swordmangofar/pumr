@@ -1,5 +1,8 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { getVersion } from '@tauri-apps/api/app';
+import { isTauri } from '../../core/api';
+import { UpdaterService } from '../../core/updater.service';
 import { SettingsDraftService } from './settings-draft.service';
 
 @Component({
@@ -89,13 +92,79 @@ import { SettingsDraftService } from './settings-draft.service';
     </section>
 
     <section class="mt-8">
+      <h3 class="text-sm font-semibold text-white">
+        {{ 'settings.update.title' | transloco }}
+      </h3>
+
+      @if (updater.available()) {
+        <div class="mt-3 rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+          <p class="text-sm text-mist">
+            {{ 'settings.update.available' | transloco: { version: updater.version() } }}
+          </p>
+          @if (updater.notes()) {
+            <p class="mt-2 whitespace-pre-line text-xs leading-relaxed text-mist/40">
+              {{ updater.notes() }}
+            </p>
+          }
+          <button
+            type="button"
+            class="mt-3 rounded-full bg-accent px-4 py-1.5 text-sm font-semibold text-ink transition-colors hover:bg-accent/90"
+            (click)="updater.install()"
+          >
+            {{ 'settings.update.download' | transloco }}
+          </button>
+        </div>
+      } @else if (updater.downloading()) {
+        <div class="mt-3">
+          <div class="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              class="h-full rounded-full bg-accent transition-all"
+              [style.width.%]="updater.progress()"
+            ></div>
+          </div>
+          <p class="mt-2 text-xs text-mist/40">
+            {{ 'settings.update.downloading' | transloco: { progress: updater.progress() } }}
+          </p>
+        </div>
+      } @else {
+        <p class="mt-1 text-xs leading-relaxed text-mist/30">
+          @if (updater.status() === 'checking') {
+            {{ 'settings.update.checking' | transloco }}
+          } @else if (updater.status() === 'ready') {
+            {{ 'settings.update.restarting' | transloco }}
+          } @else if (updater.status() === 'error') {
+            {{ 'settings.update.error' | transloco }}
+          } @else {
+            {{ 'settings.update.upToDate' | transloco }}
+          }
+        </p>
+        @if (tauri) {
+          <button
+            type="button"
+            class="mt-3 rounded-full border border-white/15 px-4 py-1.5 text-sm text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
+            [disabled]="updater.busy()"
+            (click)="updater.check()"
+          >
+            {{ 'settings.update.check' | transloco }}
+          </button>
+        }
+      }
+
+      @if (updater.status() === 'error' && updater.error()) {
+        <p class="mt-2 break-words text-xs leading-relaxed text-red-400/80">
+          {{ updater.error() }}
+        </p>
+      }
+    </section>
+
+    <section class="mt-8">
       <h3 class="mb-3 text-sm font-semibold text-white">
         {{ 'settings.general.about' | transloco }}
       </h3>
       <dl class="space-y-2 text-sm">
         <div class="flex justify-between gap-3">
           <dt class="text-mist/40">{{ 'settings.general.version' | transloco }}</dt>
-          <dd class="text-mist">0.1.0</dd>
+          <dd class="text-mist">{{ appVersion() }}</dd>
         </div>
         <div class="flex justify-between gap-3">
           <dt class="text-mist/40">{{ 'settings.general.model' | transloco }}</dt>
@@ -110,4 +179,15 @@ import { SettingsDraftService } from './settings-draft.service';
 })
 export class GeneralSettings {
   protected readonly draft = inject(SettingsDraftService);
+  protected readonly updater = inject(UpdaterService);
+  protected readonly tauri = isTauri();
+  protected readonly appVersion = signal('0.1.0');
+
+  constructor() {
+    if (this.tauri) {
+      void getVersion()
+        .then((version) => this.appVersion.set(version))
+        .catch(() => undefined);
+    }
+  }
 }

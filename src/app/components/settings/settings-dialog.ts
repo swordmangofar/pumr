@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, output, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { SettingsService } from '../../core/settings.service';
+import { UpdaterService } from '../../core/updater.service';
 import { AgentSettings } from './agent-settings';
 import { AppearanceSettings } from './appearance-settings';
 import { ChatSettings } from './chat-settings';
@@ -81,7 +82,7 @@ const CATEGORIES: Category[] = [
             @for (category of categories; track category.id) {
               <button
                 type="button"
-                class="mb-1 flex w-full items-center rounded-full px-4 py-2 text-left text-sm transition-colors"
+                class="relative mb-1 flex w-full items-center rounded-full px-4 py-2 text-left text-sm transition-colors"
                 [class]="
                   category.id === active()
                     ? 'bg-accent font-medium text-ink'
@@ -90,6 +91,12 @@ const CATEGORIES: Category[] = [
                 (click)="select(category.id)"
               >
                 {{ category.label | transloco }}
+                @if (category.id === 'general' && updater.available()) {
+                  <span
+                    class="absolute right-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-red-500"
+                    aria-hidden="true"
+                  ></span>
+                }
               </button>
             }
           </nav>
@@ -167,6 +174,7 @@ const CATEGORIES: Category[] = [
 })
 export class SettingsDialog {
   private readonly settingsService = inject(SettingsService);
+  protected readonly updater = inject(UpdaterService);
   protected readonly draft = inject(SettingsDraftService);
   readonly closed = output<void>();
 
