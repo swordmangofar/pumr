@@ -24,18 +24,26 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: nsis,msi
+            osLabel: windows
+            archLabel: amd64
           - platform: macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
             bundles: app,dmg
+            osLabel: macos
+            archLabel: arm64
           - platform: macos-x64
             os: macos-15-intel
             target: x86_64-apple-darwin
             bundles: app,dmg
+            osLabel: macos
+            archLabel: amd64
           - platform: linux-x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,rpm,appimage
+            osLabel: linux
+            archLabel: amd64
 
     steps:
       - name: Checkout
@@ -97,4 +105,5 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           tauriScript: pnpm exec tauri
+          assetNamePattern: pumr-[version]-${{ matrix.osLabel }}-${{ matrix.archLabel }}[setup][ext]
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
