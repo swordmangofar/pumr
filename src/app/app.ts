@@ -504,7 +504,7 @@ export class App implements OnInit {
     await this.settings.init();
     if (this.tauri) {
       await Promise.all([this.models.load(), this.workspace.init()]);
-      void this.updater.check();
+      this.updater.start();
     }
     const remaining = this.minSplashMs - (Date.now() - started);
     if (remaining > 0) {

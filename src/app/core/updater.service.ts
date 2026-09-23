@@ -1,12 +1,16 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { isTauri } from './api';
 
 export type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
 
+const UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
+
 @Injectable({ providedIn: 'root' })
 export class UpdaterService {
   private update: Update | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly status = signal<UpdateStatus>('idle');
   readonly version = signal<string | null>(null);
@@ -17,6 +21,29 @@ export class UpdaterService {
   readonly available = computed(() => this.status() === 'available');
   readonly downloading = computed(() => this.status() === 'downloading');
   readonly busy = computed(() => this.status() === 'checking' || this.status() === 'downloading');
+
+  constructor() {
+    this.destroyRef.onDestroy(() => this.stop());
+  }
+
+  start(): void {
+    if (!isTauri() || this.timer) {
+      return;
+    }
+    void this.check();
+    this.timer = setInterval(() => {
+      if (this.status() === 'idle' || this.status() === 'error') {
+        void this.check();
+      }
+    }, UPDATE_POLL_MS);
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
 
   async check(): Promise<void> {
     if (!isTauri() || this.busy()) {
