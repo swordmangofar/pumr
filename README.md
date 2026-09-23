@@ -8,7 +8,7 @@ can be added later.
 
 ## Requirements
 
-- Node.js 20+ and pnpm
+- Node.js 24+ and pnpm
 - Rust (stable) via [rustup](https://rustup.rs)
 - Platform toolchain for Tauri v2 (on macOS: Xcode Command Line Tools)
 
