@@ -6,12 +6,14 @@ import { FALLBACK_SETTINGS, SettingsService } from '../../core/settings.service'
 import { SOUND_PATH_KEYS, SOUND_SELECTION_KEYS, SoundKind } from '../../core/sound.service';
 import { ThemeService } from '../../core/theme.service';
 import { CUSTOM_THEME_ID, CustomTheme } from '../../core/themes';
+import { ZoomService } from '../../core/zoom.service';
 
 @Injectable()
 export class SettingsDraftService {
   private readonly settingsService = inject(SettingsService);
   private readonly theme = inject(ThemeService);
   private readonly background = inject(BackgroundService);
+  private readonly zoom = inject(ZoomService);
 
   readonly draft = signal<Settings>({
     ...FALLBACK_SETTINGS,
@@ -79,6 +81,11 @@ export class SettingsDraftService {
   setGlassOpacity(value: number): void {
     this.patch('glassOpacity', value);
     this.theme.applyGlassOpacity(value);
+  }
+
+  setZoom(value: number): void {
+    const zoom = this.zoom.apply(value);
+    this.patch('zoom', zoom);
   }
 
   async save(): Promise<void> {

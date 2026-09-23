@@ -13,6 +13,7 @@ import { NotificationsSettings } from './notifications-settings';
 import { ProvidersSettings } from './providers-settings';
 import { SettingsDraftService } from './settings-draft.service';
 import { SkillsSettings } from './skills-settings';
+import { WindowSettings } from './window-settings';
 import { WorkspaceSettings } from './workspace-settings';
 
 interface Category {
@@ -29,6 +30,7 @@ const CATEGORIES: Category[] = [
   { id: 'appearance', label: 'settings.categories.appearance' },
   { id: 'notifications', label: 'settings.categories.notifications' },
   { id: 'hotkeys', label: 'settings.categories.hotkeys' },
+  { id: 'window', label: 'settings.categories.window' },
   { id: 'skills', label: 'settings.categories.skills' },
   { id: 'mcp', label: 'settings.categories.mcp' },
   { id: 'workspace', label: 'settings.categories.workspace' },
@@ -51,6 +53,7 @@ const CATEGORIES: Category[] = [
     McpSettings,
     WorkspaceSettings,
     HotkeysSettings,
+    WindowSettings,
   ],
   host: {
     '(document:keydown.escape)': 'onEscape()',
@@ -126,6 +129,9 @@ const CATEGORIES: Category[] = [
               }
               @case ('hotkeys') {
                 <app-hotkeys-settings />
+              }
+              @case ('window') {
+                <app-window-settings />
               }
               @case ('skills') {
                 <app-skills-settings />

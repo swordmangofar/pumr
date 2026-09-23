@@ -104,6 +104,21 @@ describe('GitService', () => {
     expect(git.errorFor('p1')).toBe('git.errors.auth');
   });
 
+  it('shares an in-flight status request between callers', async () => {
+    const git = service();
+    let resolve!: (value: GitStatus) => void;
+    const pending = new Promise<GitStatus>((settle) => (resolve = settle));
+    const spy = vi.spyOn(api, 'getGitStatus').mockReturnValue(pending);
+
+    const first = git.loadStatus('p1');
+    const second = git.loadStatus('p1');
+    resolve(status);
+    await Promise.all([first, second]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(git.statusFor('p1')).toEqual(status);
+  });
+
   it('maps network failures to a friendly message', async () => {
     const git = service();
     vi.spyOn(api, 'gitFetch').mockRejectedValue(

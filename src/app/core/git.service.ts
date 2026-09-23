@@ -3,6 +3,7 @@ import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
   FileDiff,
+  GitBlameLine,
   GitBranch,
   GitCommit,
   GitCommitDetail,
@@ -32,6 +33,7 @@ export class GitService {
   private readonly commitsLoadingState = signal<Record<string, boolean>>({});
   private readonly commitsHasMoreState = signal<Record<string, boolean>>({});
   private readonly commitSearchState = signal<Record<string, string>>({});
+  private readonly commitPathState = signal<Record<string, string | null>>({});
   private readonly commitDetailState = signal<Record<string, GitCommitDetail | null>>({});
   private readonly commitFileDiffState = signal<Record<string, FileDiff | null>>({});
   private readonly selectedCommitState = signal<Record<string, string | null>>({});
@@ -42,6 +44,7 @@ export class GitService {
   private readonly messageState = signal<Record<string, string | null>>({});
   private readonly errorState = signal<Record<string, string | null>>({});
   private readonly commitsRequest = new Map<string, number>();
+  private readonly statusRequests = new Map<string, Promise<void>>();
 
   readonly infoByProject = this.infoState.asReadonly();
   readonly statusByProject = this.statusState.asReadonly();
@@ -72,6 +75,10 @@ export class GitService {
 
   commitSearchFor(projectId: string): string {
     return this.commitSearchState()[projectId] ?? '';
+  }
+
+  commitPathFor(projectId: string): string | null {
+    return this.commitPathState()[projectId] ?? null;
   }
 
   commitDetailFor(projectId: string): GitCommitDetail | null {
@@ -117,6 +124,7 @@ export class GitService {
     this.set(this.commitsState, projectId, []);
     this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
+    this.set(this.commitPathState, projectId, null);
     this.set(this.errorState, projectId, null);
   }
 
@@ -125,7 +133,22 @@ export class GitService {
   }
 
   async loadStatus(projectId: string): Promise<void> {
-    return this.loadInto(this.statusState, projectId, () => api.getGitStatus(projectId));
+    // The git sidebar and the git view both load status when they mount, and
+    // mounting happens together when the user switches to the git tab. Sharing
+    // the in-flight request keeps that from scanning the worktree twice.
+    const existing = this.statusRequests.get(projectId);
+    if (existing) {
+      return existing;
+    }
+    const request = this.loadInto(this.statusState, projectId, () =>
+      api.getGitStatus(projectId),
+    ).finally(() => {
+      if (this.statusRequests.get(projectId) === request) {
+        this.statusRequests.delete(projectId);
+      }
+    });
+    this.statusRequests.set(projectId, request);
+    return request;
   }
 
   async loadBranches(projectId: string): Promise<void> {
@@ -150,8 +173,9 @@ export class GitService {
     this.set(this.commitsLoadingState, projectId, true);
     try {
       const query = this.commitSearchFor(projectId).trim() || null;
+      const path = this.commitPathFor(projectId);
       const skip = reset ? 0 : this.commitsFor(projectId).length;
-      const commits = await api.getGitCommits(projectId, query, skip, GIT_COMMIT_PAGE_SIZE);
+      const commits = await api.getGitCommits(projectId, query, skip, GIT_COMMIT_PAGE_SIZE, path);
       if (request !== this.commitsRequest.get(projectId)) {
         return;
       }
@@ -205,6 +229,7 @@ export class GitService {
     this.set(this.commitsState, projectId, []);
     this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
+    this.set(this.commitPathState, projectId, null);
     await this.loadBranches(projectId);
     await this.loadCommits(projectId, true);
     const tip = branch
@@ -215,6 +240,24 @@ export class GitService {
       this.commitsFor(projectId)[0];
     if (target) {
       await this.selectCommit(projectId, target.hash);
+    }
+  }
+
+  /** Opens the commit history filtered to a single path. */
+  async openFileHistory(projectId: string, path: string): Promise<void> {
+    this.set(this.viewState, projectId, 'commits');
+    this.set(this.selectedBranchState, projectId, null);
+    this.set(this.commitPathState, projectId, path);
+    this.set(this.selectedCommitState, projectId, null);
+    this.set(this.commitDetailState, projectId, null);
+    this.set(this.commitFileDiffState, projectId, null);
+    this.set(this.commitsState, projectId, []);
+    this.set(this.commitsHasMoreState, projectId, false);
+    this.set(this.commitSearchState, projectId, '');
+    await this.loadCommits(projectId, true);
+    const first = this.commitsFor(projectId)[0];
+    if (first) {
+      await this.selectCommit(projectId, first.hash);
     }
   }
 
@@ -264,6 +307,7 @@ export class GitService {
     this.set(this.commitsState, projectId, []);
     this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
+    this.set(this.commitPathState, projectId, null);
   }
 
   async selectChange(projectId: string, path: string, staged: boolean): Promise<void> {
@@ -303,6 +347,28 @@ export class GitService {
       await this.loadStatus(projectId);
     } catch (error) {
       this.setError(projectId, error);
+    }
+  }
+
+  async blame(projectId: string, path: string): Promise<GitBlameLine[]> {
+    return api.getGitBlame(projectId, path);
+  }
+
+  async ignorePath(projectId: string, path: string): Promise<void> {
+    try {
+      await api.gitIgnore(projectId, path);
+      this.set(this.messageState, projectId, this.transloco.translate('git.ignored', { path }));
+      await this.loadStatus(projectId);
+    } catch (error) {
+      this.setError(projectId, error);
+    }
+  }
+
+  async revealPath(projectId: string, path: string): Promise<void> {
+    try {
+      await api.revealPath(projectId, path);
+    } catch (error) {
+      console.error(error);
     }
   }
 

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api } from '../../core/api';
-import { IgnoreCatalogEntry } from '../../core/models';
+import { IgnoreCatalogEntry, PermissionDefaultAction, PermissionDefaults } from '../../core/models';
 import { SettingsService } from '../../core/settings.service';
 import { SettingsDraftService } from './settings-draft.service';
 import { Toggle } from '../toggle';
@@ -336,6 +336,48 @@ import { TypedInput } from '../typed-input';
       </div>
       <p class="mt-2 text-xs text-mist/30">{{ 'settings.websiteRulesHint' | transloco }}</p>
     </section>
+
+    <section class="mt-8">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.permissionPrompts' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.permissionPromptsHint' | transloco }}</p>
+      <div class="space-y-1.5">
+        @for (row of permissionRows; track row.key) {
+          <div
+            class="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-ink/40 px-4 py-2"
+          >
+            <span class="text-sm text-mist">{{ row.labelKey | transloco }}</span>
+            <div class="flex rounded-full border border-white/10 p-0.5">
+              <button
+                type="button"
+                class="rounded-full px-3 py-1 text-xs transition-colors"
+                [class]="
+                  draft.draft().permissionDefaults[row.key] === 'once'
+                    ? 'bg-accent font-medium text-ink'
+                    : 'text-mist/60 hover:text-mist'
+                "
+                (click)="setPermissionDefault(row.key, 'once')"
+              >
+                {{ 'permission.allowOnce' | transloco }}
+              </button>
+              <button
+                type="button"
+                class="rounded-full px-3 py-1 text-xs transition-colors"
+                [class]="
+                  draft.draft().permissionDefaults[row.key] === 'session'
+                    ? 'bg-accent font-medium text-ink'
+                    : 'text-mist/60 hover:text-mist'
+                "
+                (click)="setPermissionDefault(row.key, 'session')"
+              >
+                {{ 'permission.allowSession' | transloco }}
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+    </section>
   `,
 })
 export class AgentRulesSettings {
@@ -461,6 +503,25 @@ export class AgentRulesSettings {
   protected readonly deniedWebsites = computed(
     () => this.settingsService.settings()?.deniedWebsites ?? [],
   );
+
+  protected readonly permissionRows: ReadonlyArray<{
+    key: keyof PermissionDefaults;
+    labelKey: string;
+  }> = [
+    { key: 'website', labelKey: 'permission.kind.web' },
+    { key: 'command', labelKey: 'permission.kind.command' },
+    { key: 'folder', labelKey: 'permission.kind.folder' },
+  ];
+
+  protected setPermissionDefault(
+    key: keyof PermissionDefaults,
+    value: PermissionDefaultAction,
+  ): void {
+    this.draft.patch('permissionDefaults', {
+      ...this.draft.draft().permissionDefaults,
+      [key]: value,
+    });
+  }
 
   protected async addRule(): Promise<void> {
     const rule = this.newRule().trim();

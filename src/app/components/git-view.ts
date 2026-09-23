@@ -15,13 +15,14 @@ import { GitService } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
+import { GitFileMenu } from './git-file-menu';
 
 import { TypedInput } from './typed-input';
 
 @Component({
   selector: 'app-git-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe, ChangeStatusIcon, DiffView, FileIcon],
+  imports: [TypedInput, TranslocoPipe, ChangeStatusIcon, DiffView, FileIcon, GitFileMenu],
   template: `
     <div class="flex h-full min-h-0 flex-col">
       <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/5 px-3 py-2">
@@ -230,6 +231,31 @@ import { TypedInput } from './typed-input';
               <span class="text-[11px] text-mist/30">
                 {{ selectedBranch() ?? ('git.allBranches' | transloco) }}
               </span>
+              @if (commitPath(); as path) {
+                <span
+                  class="flex min-w-0 items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 font-mono text-[11px] text-mist/50"
+                >
+                  <span class="max-w-56 truncate" [title]="path">{{ path }}</span>
+                  <button
+                    type="button"
+                    class="shrink-0 text-mist/40 transition-colors hover:text-rose-400"
+                    [attr.aria-label]="'common.close' | transloco"
+                    (click)="clearCommitPath()"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M4 4l8 8M12 4l-8 8" />
+                    </svg>
+                  </button>
+                </span>
+              }
               <div class="relative ml-auto">
                 <svg
                   viewBox="0 0 16 16"
@@ -457,29 +483,30 @@ import { TypedInput } from './typed-input';
       } @else {
         <div class="flex min-h-0 flex-1">
           <aside class="flex w-80 shrink-0 flex-col border-r border-white/5">
-            <div class="min-h-0 flex-1 overflow-y-auto">
-              <section class="border-b border-white/5">
-                <header class="flex items-center justify-between gap-2 px-3 py-2">
-                  <span class="text-xs font-semibold uppercase tracking-widest text-mist/40">
-                    {{ 'git.unstaged' | transloco }}
-                    <span class="ml-1 text-mist/25">{{ unstaged().length }}</span>
-                  </span>
-                  @if (unstaged().length > 0) {
-                    <button
-                      type="button"
-                      class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                      (click)="stageAll()"
-                    >
-                      {{ 'git.stageAll' | transloco }}
-                    </button>
-                  }
-                </header>
+            <section class="flex min-h-0 flex-1 flex-col border-b border-white/5">
+              <header class="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+                <span class="text-xs font-semibold uppercase tracking-widest text-mist/40">
+                  {{ 'git.unstaged' | transloco }}
+                  <span class="ml-1 text-mist/25">{{ unstaged().length }}</span>
+                </span>
+                @if (unstaged().length > 0) {
+                  <button
+                    type="button"
+                    class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                    (click)="stageAll()"
+                  >
+                    {{ 'git.stageAll' | transloco }}
+                  </button>
+                }
+              </header>
+              <div class="min-h-0 flex-1 overflow-y-auto">
                 @for (change of unstaged(); track change.path) {
                   <div
                     class="group flex items-center gap-2 px-3 py-1.5 text-[13px] transition-colors hover:bg-white/5"
                     [class]="
                       isSelected(change.path, false) ? 'bg-accent/10 text-white' : 'text-mist/70'
                     "
+                    (contextmenu)="openFileMenu($event, change.path, false)"
                   >
                     <button
                       type="button"
@@ -542,30 +569,33 @@ import { TypedInput } from './typed-input';
                 } @empty {
                   <p class="px-3 pb-3 text-xs text-mist/30">{{ 'git.noChanges' | transloco }}</p>
                 }
-              </section>
+              </div>
+            </section>
 
-              <section>
-                <header class="flex items-center justify-between gap-2 px-3 py-2">
-                  <span class="text-xs font-semibold uppercase tracking-widest text-mist/40">
-                    {{ 'git.staged' | transloco }}
-                    <span class="ml-1 text-mist/25">{{ staged().length }}</span>
-                  </span>
-                  @if (staged().length > 0) {
-                    <button
-                      type="button"
-                      class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                      (click)="unstageAll()"
-                    >
-                      {{ 'git.unstageAll' | transloco }}
-                    </button>
-                  }
-                </header>
+            <section class="flex min-h-0 flex-1 flex-col">
+              <header class="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
+                <span class="text-xs font-semibold uppercase tracking-widest text-mist/40">
+                  {{ 'git.staged' | transloco }}
+                  <span class="ml-1 text-mist/25">{{ staged().length }}</span>
+                </span>
+                @if (staged().length > 0) {
+                  <button
+                    type="button"
+                    class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                    (click)="unstageAll()"
+                  >
+                    {{ 'git.unstageAll' | transloco }}
+                  </button>
+                }
+              </header>
+              <div class="min-h-0 flex-1 overflow-y-auto">
                 @for (change of staged(); track change.path) {
                   <div
                     class="group flex items-center gap-2 px-3 py-1.5 text-[13px] transition-colors hover:bg-white/5"
                     [class]="
                       isSelected(change.path, true) ? 'bg-accent/10 text-white' : 'text-mist/70'
                     "
+                    (contextmenu)="openFileMenu($event, change.path, true)"
                   >
                     <button
                       type="button"
@@ -604,8 +634,8 @@ import { TypedInput } from './typed-input';
                 } @empty {
                   <p class="px-3 pb-3 text-xs text-mist/30">{{ 'git.noStaged' | transloco }}</p>
                 }
-              </section>
-            </div>
+              </div>
+            </section>
           </aside>
 
           <section class="flex min-w-0 flex-1 flex-col">
@@ -690,6 +720,16 @@ import { TypedInput } from './typed-input';
         </div>
       }
     </div>
+
+    @if (fileMenu(); as menu) {
+      <app-git-file-menu
+        [path]="menu.path"
+        [staged]="menu.staged"
+        [x]="menu.x"
+        [y]="menu.y"
+        (closed)="closeFileMenu()"
+      />
+    }
   `,
 })
 export class GitView {
@@ -717,6 +757,12 @@ export class GitView {
   protected readonly detailTab = signal<'commit' | 'changes'>('commit');
   protected readonly selectedCommitFile = signal<string | null>(null);
   protected readonly searchTerm = signal('');
+  protected readonly fileMenu = signal<{
+    path: string;
+    staged: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -747,6 +793,10 @@ export class GitView {
 
   protected readonly unstaged = computed(() => this.status()?.unstaged ?? []);
   protected readonly staged = computed(() => this.status()?.staged ?? []);
+  protected readonly commitPath = computed(() => {
+    const project = this.project();
+    return project ? this.git.commitPathFor(project.id) : null;
+  });
   protected readonly ahead = computed(() => this.status()?.ahead ?? 0);
   protected readonly behind = computed(() => this.status()?.behind ?? 0);
   private readonly branches = this.workspace.activeGitBranches;
@@ -791,6 +841,22 @@ export class GitView {
     const projectId = this.project()?.id;
     if (projectId) {
       void this.git.selectChange(projectId, path, staged);
+    }
+  }
+
+  protected openFileMenu(event: MouseEvent, path: string, staged: boolean): void {
+    event.preventDefault();
+    this.fileMenu.set({ path, staged, x: event.clientX, y: event.clientY });
+  }
+
+  protected closeFileMenu(): void {
+    this.fileMenu.set(null);
+  }
+
+  protected clearCommitPath(): void {
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.openHistory(projectId, null);
     }
   }
 

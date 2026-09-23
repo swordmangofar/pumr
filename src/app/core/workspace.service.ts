@@ -10,6 +10,7 @@ import {
   GitPullStrategy,
   LiveToolCall,
   Message,
+  MessageAttachment,
   PendingPermission,
   PendingQuestion,
   Project,
@@ -36,6 +37,7 @@ const RIGHT_TAB_KEY = 'pumr.rightTab';
 const SESSION_VIEW_KEY = 'pumr.sessionView';
 const LAYOUT_KEY = 'pumr.layout';
 const GIT_PULL_STRATEGY_KEY = 'pumr.gitPullStrategy';
+const COMPOSER_DRAFTS_KEY = 'pumr.composerDrafts';
 /** Longest handover title derived from the source session title. */
 const HANDOVER_TITLE_MAX_CHARS = 60;
 
@@ -47,9 +49,14 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isPlainObject(value) && Object.values(value).every((entry) => typeof entry === 'string');
+}
+
 type LeftTab = 'projects' | 'workspace' | 'git';
 type RightTab = 'changes' | 'session' | 'prompts' | 'modes';
 type SessionView = 'projects' | 'history';
+type PanelId = 'left' | 'center' | 'right';
 
 interface PersistedLayout {
   leftPanelOpen?: boolean;
@@ -74,8 +81,11 @@ export class WorkspaceService {
   private readonly tabsState = signal<string[]>([]);
   private readonly activeState = signal<string | null>(null);
   private readonly messagesState = signal<Record<string, Message[]>>({});
+  private readonly messageLoadTokens = new Map<string, number>();
   private readonly streamingState = signal<Record<string, boolean>>({});
   private readonly errorsState = signal<Record<string, string | null>>({});
+  private readonly composerDraftsState = signal<Record<string, string>>({});
+  private readonly composerAttachmentsState = signal<Record<string, MessageAttachment[]>>({});
   private readonly spendState = signal<SpendSummary | null>(null);
   private readonly liveToolsState = signal<Record<string, LiveToolCall[]>>({});
   private readonly changesState = signal<Record<string, FileChange[]>>({});
@@ -88,6 +98,8 @@ export class WorkspaceService {
   private readonly rightPanelOpenState = signal(true);
   private readonly leftPanelWidthState = signal(340);
   private readonly rightPanelWidthState = signal(512);
+  private readonly focusedPanelState = signal<PanelId | null>(null);
+  private readonly composerFocusState = signal(0);
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
@@ -100,6 +112,19 @@ export class WorkspaceService {
   private readonly showArchivedState = signal(false);
   private readonly projectEditorState = signal<string | null>(null);
   private scrollNonce = 0;
+
+  // Streamed text tokens arrive many times per second. Rather than rebuilding
+  // the message array and re-running every dependent computed on each token, we
+  // accumulate deltas and apply them once per animation frame.
+  private readonly pendingMessageText = new Map<
+    string,
+    { sessionId: string; messageId: string; field: 'content' | 'reasoning'; text: string }
+  >();
+  private readonly pendingToolOutput = new Map<
+    string,
+    { sessionId: string; callId: string; text: string }
+  >();
+  private streamFlushScheduled = false;
 
   readonly projects = this.projectsState.asReadonly();
   readonly spend = this.spendState.asReadonly();
@@ -137,6 +162,8 @@ export class WorkspaceService {
   readonly rightPanelOpen = this.rightPanelOpenState.asReadonly();
   readonly leftPanelWidth = this.leftPanelWidthState.asReadonly();
   readonly rightPanelWidth = this.rightPanelWidthState.asReadonly();
+  readonly focusedPanel = this.focusedPanelState.asReadonly();
+  readonly composerFocusNonce = this.composerFocusState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
   readonly debugSessionId = this.debugSessionState.asReadonly();
   readonly debugOpen = computed(() => this.debugSessionState() !== null);
@@ -293,6 +320,9 @@ export class WorkspaceService {
     if (typeof layout.rightPanelWidth === 'number' && Number.isFinite(layout.rightPanelWidth)) {
       this.rightPanelWidthState.set(layout.rightPanelWidth);
     }
+    this.composerDraftsState.set(
+      this.readJson<Record<string, string>>(COMPOSER_DRAFTS_KEY, {}, isStringRecord),
+    );
   }
 
   async init(): Promise<void> {
@@ -352,6 +382,26 @@ export class WorkspaceService {
       }));
     } catch {
       // best effort
+    }
+  }
+
+  hasLoadedMessages(sessionId: string): boolean {
+    return this.messagesState()[sessionId] !== undefined;
+  }
+
+  hasLoadedSubAgents(sessionId: string): boolean {
+    return this.subAgentsState()[sessionId] !== undefined;
+  }
+
+  /**
+   * Loads a session and all of its descendants (subagents of subagents included)
+   * so the debugger can render the full branch tree.
+   */
+  async loadAgentTree(sessionId: string): Promise<void> {
+    await this.loadMessages(sessionId);
+    await this.loadSubAgents(sessionId);
+    for (const child of this.subAgentsState()[sessionId] ?? []) {
+      await this.loadAgentTree(child);
     }
   }
 
@@ -490,10 +540,16 @@ export class WorkspaceService {
   }
 
   async reloadSessions(projectId: string): Promise<void> {
-    const sessions = await api.listSessions(projectId, this.showArchivedState());
+    const [sessions, subSessions] = await Promise.all([
+      api.listSessions(projectId, this.showArchivedState()),
+      api.listSubSessionsForProject(projectId),
+    ]);
     this.sessionsState.update((state) => {
       const next = { ...state };
       for (const session of sessions) {
+        next[session.id] = session;
+      }
+      for (const session of subSessions) {
         next[session.id] = session;
       }
       return next;
@@ -502,6 +558,31 @@ export class WorkspaceService {
       ...state,
       [projectId]: sessions.map((session) => session.id),
     }));
+    const grouped = new Map<string, string[]>();
+    for (const session of subSessions) {
+      const parent = session.parentSessionId;
+      if (!parent) {
+        continue;
+      }
+      const ids = grouped.get(parent);
+      if (ids) {
+        ids.push(session.id);
+      } else {
+        grouped.set(parent, [session.id]);
+      }
+    }
+    this.subAgentsState.update((state) => {
+      const next = { ...state };
+      for (const session of sessions) {
+        const ids = grouped.get(session.id);
+        if (ids) {
+          next[session.id] = ids;
+        } else {
+          delete next[session.id];
+        }
+      }
+      return next;
+    });
   }
 
   async toggleShowArchived(): Promise<void> {
@@ -626,6 +707,9 @@ export class WorkspaceService {
       this.tabsState.update((tabs) => [...tabs, sessionId]);
     }
     this.activeState.set(sessionId);
+    if (this.viewingState()[sessionId]) {
+      this.viewAgent(sessionId, null);
+    }
     this.persistTabs();
     void this.activateSession(sessionId);
   }
@@ -636,7 +720,7 @@ export class WorkspaceService {
       return;
     }
     this.debugSessionState.set(sessionId);
-    void this.loadMessages(sessionId, true);
+    void this.loadAgentTree(sessionId);
   }
 
   closeDebug(): void {
@@ -676,7 +760,14 @@ export class WorkspaceService {
     if (!force && this.messagesState()[sessionId]) {
       return;
     }
+    const token = (this.messageLoadTokens.get(sessionId) ?? 0) + 1;
+    this.messageLoadTokens.set(sessionId, token);
     const messages = await api.listMessages(sessionId);
+    // A revert or a newer turn can issue a reload while this one is in flight.
+    // Dropping the stale response prevents the deleted prompt from reappearing.
+    if (this.messageLoadTokens.get(sessionId) !== token) {
+      return;
+    }
     this.messagesState.update((state) => ({ ...state, [sessionId]: messages }));
   }
 
@@ -745,22 +836,23 @@ export class WorkspaceService {
     channel.onmessage = ({ sessionId, event }) => {
       switch (event.kind) {
         case 'started':
+          this.flushStreamBuffers();
           assistantIds[sessionId] = event.message.id;
           this.appendMessage(sessionId, event.message);
           break;
         case 'delta':
-          this.patchMessage(sessionId, assistantIds[sessionId] ?? null, (message) => ({
-            ...message,
-            content: message.content + event.text,
-          }));
+          this.bufferMessageText(sessionId, assistantIds[sessionId] ?? null, 'content', event.text);
           break;
         case 'reasoning':
-          this.patchMessage(sessionId, assistantIds[sessionId] ?? null, (message) => ({
-            ...message,
-            reasoning: message.reasoning + event.text,
-          }));
+          this.bufferMessageText(
+            sessionId,
+            assistantIds[sessionId] ?? null,
+            'reasoning',
+            event.text,
+          );
           break;
         case 'usage':
+          this.flushStreamBuffers();
           this.patchMessage(sessionId, assistantIds[sessionId] ?? null, (message) => ({
             ...message,
             promptTokens: event.promptTokens,
@@ -770,10 +862,12 @@ export class WorkspaceService {
           }));
           break;
         case 'assistant':
+          this.flushStreamBuffers();
           this.replaceMessage(sessionId, event.message);
           assistantIds[sessionId] = null;
           break;
         case 'toolStart':
+          this.flushStreamBuffers();
           this.upsertLiveTool(sessionId, {
             callId: event.callId,
             name: event.name,
@@ -786,12 +880,10 @@ export class WorkspaceService {
           });
           break;
         case 'toolDelta':
-          this.patchLiveTool(sessionId, event.callId, (tool) => ({
-            ...tool,
-            output: tool.output + event.text,
-          }));
+          this.bufferToolOutput(sessionId, event.callId, event.text);
           break;
         case 'toolEnd':
+          this.flushStreamBuffers();
           this.patchLiveTool(sessionId, event.callId, (tool) => ({
             ...tool,
             status: this.mapToolStatus(event.status),
@@ -818,16 +910,19 @@ export class WorkspaceService {
           );
           break;
         case 'changes':
+          this.flushStreamBuffers();
           this.changesState.update((state) => ({ ...state, [sessionId]: event.changes }));
           void this.reloadSessions(session.projectId);
           break;
         case 'done':
+          this.flushStreamBuffers();
           this.replaceMessage(sessionId, event.message);
           this.upsertSession(event.session);
           void this.refreshSpend();
           this.sound.play('done');
           break;
         case 'stopped':
+          this.flushStreamBuffers();
           this.replaceMessage(sessionId, event.message);
           break;
         case 'subAgentStarted': {
@@ -878,6 +973,7 @@ export class WorkspaceService {
         this.sound.play('error');
       }
     } finally {
+      this.flushStreamBuffers();
       this.setLiveTools(args.sessionId, []);
       // Keep the session marked as streaming until the post-turn refresh has
       // finished, otherwise a new send could start and be clobbered by this
@@ -913,7 +1009,7 @@ export class WorkspaceService {
   }
 
   async resolvePermission(
-    decision: 'allow_once' | 'allow_always' | 'deny' | 'deny_always',
+    decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
     ruleOverride?: string,
   ): Promise<void> {
     const request = this.permission();
@@ -966,6 +1062,8 @@ export class WorkspaceService {
   async deleteSession(sessionId: string): Promise<void> {
     const session = this.sessionsState()[sessionId];
     await api.deleteSession(sessionId);
+    this.clearComposerDraft(sessionId);
+    this.clearComposerAttachments(sessionId);
     this.messagesState.update((state) => {
       const next = { ...state };
       delete next[sessionId];
@@ -1017,7 +1115,12 @@ export class WorkspaceService {
   async loadEditorFile(projectId: string, path: string, force = false): Promise<void> {
     const session = this.activeSession();
     const changed = session ? this.changesFor(session.id).some((c) => c.path === path) : false;
-    return this.editorService.loadFile(projectId, path, force, changed && session ? session.id : null);
+    return this.editorService.loadFile(
+      projectId,
+      path,
+      force,
+      changed && session ? session.id : null,
+    );
   }
 
   setLeftTab(tab: LeftTab): void {
@@ -1041,6 +1144,9 @@ export class WorkspaceService {
 
   setLeftPanelOpen(open: boolean): void {
     this.leftPanelOpenState.set(open);
+    if (!open && this.focusedPanelState() === 'left') {
+      this.focusedPanelState.set('center');
+    }
     this.persistLayout();
   }
 
@@ -1050,6 +1156,9 @@ export class WorkspaceService {
 
   setRightPanelOpen(open: boolean): void {
     this.rightPanelOpenState.set(open);
+    if (!open && this.focusedPanelState() === 'right') {
+      this.focusedPanelState.set('center');
+    }
     this.persistLayout();
   }
 
@@ -1061,6 +1170,58 @@ export class WorkspaceService {
   setRightPanelWidth(width: number): void {
     this.rightPanelWidthState.set(width);
     this.persistLayout();
+  }
+
+  setFocusedPanel(panel: PanelId | null): void {
+    this.focusedPanelState.set(panel);
+  }
+
+  /** Moves focus to the next (`1`) or previous (`-1`) visible panel. */
+  focusAdjacentPanel(direction: 1 | -1): void {
+    const panels = this.visiblePanels();
+    if (panels.length === 0) {
+      return;
+    }
+    const current = this.focusedPanelState();
+    const index = current ? panels.indexOf(current) : -1;
+    const next =
+      index === -1
+        ? direction === 1
+          ? panels[0]
+          : panels[panels.length - 1]
+        : panels[(index + direction + panels.length) % panels.length];
+    this.focusedPanelState.set(next);
+  }
+
+  private visiblePanels(): PanelId[] {
+    const panels: PanelId[] = [];
+    if (this.leftPanelOpenState()) {
+      panels.push('left');
+    }
+    panels.push('center');
+    if (this.rightPanelOpenState() && this.leftTabState() !== 'git') {
+      panels.push('right');
+    }
+    return panels;
+  }
+
+  /** Cycles the tab strip of whichever sidebar currently has focus. */
+  cycleFocusedPanelTab(direction: 1 | -1): void {
+    const panel = this.focusedPanelState();
+    if (panel === 'left') {
+      const tabs: LeftTab[] = ['projects', 'workspace', 'git'];
+      const index = tabs.indexOf(this.leftTabState());
+      this.setLeftTab(tabs[(index + direction + tabs.length) % tabs.length]);
+    } else if (panel === 'right') {
+      const tabs: RightTab[] = ['changes', 'session', 'prompts', 'modes'];
+      const index = tabs.indexOf(this.rightTabState());
+      this.setRightTab(tabs[(index + direction + tabs.length) % tabs.length]);
+    }
+  }
+
+  /** Asks the composer to put keyboard focus in its editor. */
+  requestComposerFocus(): void {
+    this.composerFocusState.update((nonce) => nonce + 1);
   }
 
   private persistLayout(): void {
@@ -1081,24 +1242,107 @@ export class WorkspaceService {
     }
   }
 
-async loadGitInfo(projectId: string): Promise<void> {
+  async loadGitInfo(projectId: string): Promise<void> {
     return this.gitService.loadInfo(projectId);
   }
 
   async revertToMessage(messageId: string, restoreFiles: boolean): Promise<RevertResult> {
+    const sessionId = this.sessionIdForMessage(messageId) ?? this.activeAgent()?.id ?? null;
     const result = await api.revertToMessage(messageId, restoreFiles);
-    const session = this.activeAgent();
-    if (session) {
-      await this.loadMessages(session.id, true);
-      await this.loadChanges(session.id);
+    if (sessionId) {
+      this.pruneMessagesFrom(sessionId, messageId);
+      this.setLiveTools(sessionId, []);
+      await this.loadMessages(sessionId, true);
+      await this.loadChanges(sessionId);
       this.diffState.set(null);
       this.draftState.set(result.prompt);
     }
     return result;
   }
 
+  /** Finds which session holds a message so a revert refreshes the right transcript. */
+  private sessionIdForMessage(messageId: string): string | null {
+    for (const [sessionId, messages] of Object.entries(this.messagesState())) {
+      if (messages.some((message) => message.id === messageId)) {
+        return sessionId;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Removes `messageId` and every message that follows it. The backend deletes
+   * by seq, so mirror that here to keep the transcript correct even before the
+   * reload completes (or if it fails).
+   */
+  private pruneMessagesFrom(sessionId: string, messageId: string): void {
+    const messages = this.messagesState()[sessionId];
+    if (!messages) {
+      return;
+    }
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index === -1) {
+      return;
+    }
+    this.messagesState.update((state) => ({ ...state, [sessionId]: messages.slice(0, index) }));
+  }
+
   consumeDraft(): void {
     this.draftState.set(null);
+  }
+
+  composerDraftFor(sessionId: string): string {
+    return this.composerDraftsState()[sessionId] ?? '';
+  }
+
+  setComposerDraft(sessionId: string, text: string): void {
+    const current = this.composerDraftsState();
+    if ((current[sessionId] ?? '') === text) {
+      return;
+    }
+    if (text.length === 0) {
+      this.clearComposerDraft(sessionId);
+      return;
+    }
+    this.composerDraftsState.set({ ...current, [sessionId]: text });
+    this.persistComposerDrafts();
+  }
+
+  clearComposerDraft(sessionId: string): void {
+    const current = this.composerDraftsState();
+    if (!(sessionId in current)) {
+      return;
+    }
+    const next = { ...current };
+    delete next[sessionId];
+    this.composerDraftsState.set(next);
+    this.persistComposerDrafts();
+  }
+
+  private persistComposerDrafts(): void {
+    localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(this.composerDraftsState()));
+  }
+
+  composerAttachmentsFor(sessionId: string): MessageAttachment[] {
+    return this.composerAttachmentsState()[sessionId] ?? [];
+  }
+
+  setComposerAttachments(sessionId: string, attachments: MessageAttachment[]): void {
+    const current = this.composerAttachmentsState();
+    if (attachments.length === 0) {
+      if (!(sessionId in current)) {
+        return;
+      }
+      const next = { ...current };
+      delete next[sessionId];
+      this.composerAttachmentsState.set(next);
+      return;
+    }
+    this.composerAttachmentsState.set({ ...current, [sessionId]: attachments });
+  }
+
+  clearComposerAttachments(sessionId: string): void {
+    this.setComposerAttachments(sessionId, []);
   }
 
   scrollToMessage(messageId: string): void {
@@ -1149,12 +1393,23 @@ async loadGitInfo(projectId: string): Promise<void> {
   }
 
   private replaceMessage(sessionId: string, message: Message): void {
-    this.messagesState.update((state) => ({
-      ...state,
-      [sessionId]: (state[sessionId] ?? []).map((entry) =>
-        entry.id === message.id ? message : entry,
-      ),
-    }));
+    this.messagesState.update((state) => {
+      const messages = state[sessionId];
+      if (!messages || messages.length === 0) {
+        return state;
+      }
+      const last = messages.length - 1;
+      const index =
+        messages[last].id === message.id
+          ? last
+          : messages.findIndex((entry) => entry.id === message.id);
+      if (index === -1) {
+        return state;
+      }
+      const next = messages.slice();
+      next[index] = message;
+      return { ...state, [sessionId]: next };
+    });
   }
 
   private patchMessage(
@@ -1165,12 +1420,114 @@ async loadGitInfo(projectId: string): Promise<void> {
     if (!messageId) {
       return;
     }
-    this.messagesState.update((state) => ({
-      ...state,
-      [sessionId]: (state[sessionId] ?? []).map((entry) =>
-        entry.id === messageId ? patch(entry) : entry,
-      ),
-    }));
+    this.messagesState.update((state) => {
+      const messages = state[sessionId];
+      if (!messages || messages.length === 0) {
+        return state;
+      }
+      const last = messages.length - 1;
+      const index =
+        messages[last].id === messageId
+          ? last
+          : messages.findIndex((entry) => entry.id === messageId);
+      if (index === -1) {
+        return state;
+      }
+      const next = messages.slice();
+      next[index] = patch(messages[index]);
+      return { ...state, [sessionId]: next };
+    });
+  }
+
+  private bufferMessageText(
+    sessionId: string,
+    messageId: string | null,
+    field: 'content' | 'reasoning',
+    text: string,
+  ): void {
+    if (!messageId || !text) {
+      return;
+    }
+    const key = `${sessionId}:${messageId}:${field}`;
+    const existing = this.pendingMessageText.get(key);
+    if (existing) {
+      existing.text += text;
+    } else {
+      this.pendingMessageText.set(key, { sessionId, messageId, field, text });
+    }
+    this.scheduleStreamFlush();
+  }
+
+  private bufferToolOutput(sessionId: string, callId: string, text: string): void {
+    if (!text) {
+      return;
+    }
+    const key = `${sessionId}:${callId}`;
+    const existing = this.pendingToolOutput.get(key);
+    if (existing) {
+      existing.text += text;
+    } else {
+      this.pendingToolOutput.set(key, { sessionId, callId, text });
+    }
+    this.scheduleStreamFlush();
+  }
+
+  private scheduleStreamFlush(): void {
+    if (this.streamFlushScheduled) {
+      return;
+    }
+    this.streamFlushScheduled = true;
+    const run = (): void => this.flushStreamBuffers();
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(run);
+    } else {
+      setTimeout(run, 16);
+    }
+  }
+
+  private flushStreamBuffers(): void {
+    this.streamFlushScheduled = false;
+
+    if (this.pendingMessageText.size > 0) {
+      const grouped = new Map<
+        string,
+        { sessionId: string; messageId: string; content: string; reasoning: string }
+      >();
+      for (const entry of this.pendingMessageText.values()) {
+        const key = `${entry.sessionId}:${entry.messageId}`;
+        const group = grouped.get(key) ?? {
+          sessionId: entry.sessionId,
+          messageId: entry.messageId,
+          content: '',
+          reasoning: '',
+        };
+        if (entry.field === 'content') {
+          group.content += entry.text;
+        } else {
+          group.reasoning += entry.text;
+        }
+        grouped.set(key, group);
+      }
+      this.pendingMessageText.clear();
+      for (const group of grouped.values()) {
+        this.patchMessage(group.sessionId, group.messageId, (message) => ({
+          ...message,
+          content: group.content ? message.content + group.content : message.content,
+          reasoning: group.reasoning ? message.reasoning + group.reasoning : message.reasoning,
+        }));
+      }
+    }
+
+    if (this.pendingToolOutput.size > 0) {
+      const pending = [...this.pendingToolOutput.values()];
+      this.pendingToolOutput.clear();
+      for (const entry of pending) {
+        this.patchLiveTool(entry.sessionId, entry.callId, (tool) => ({
+          ...tool,
+          output: tool.output + entry.text,
+        }));
+      }
+    }
   }
 
   private mapToolStatus(status: string): LiveToolCall['status'] {

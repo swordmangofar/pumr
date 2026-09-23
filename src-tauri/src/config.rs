@@ -328,6 +328,8 @@ pub struct Settings {
     pub appearance: AppearanceSettings,
     #[serde(flatten)]
     pub interface: InterfaceSettings,
+    #[serde(flatten)]
+    pub window: WindowSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +417,8 @@ pub struct PermissionSettings {
     pub command_rules: Vec<String>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
+    /// Default action of the primary allow button per prompt category.
+    pub permission_defaults: PermissionDefaults,
     pub ignore_gitignored: bool,
     pub scan_generated_files: bool,
     pub ignore_local_databases: bool,
@@ -432,6 +436,7 @@ impl Default for PermissionSettings {
             command_rules: Vec::new(),
             allowed_websites: Vec::new(),
             denied_websites: Vec::new(),
+            permission_defaults: PermissionDefaults::default(),
             ignore_gitignored: true,
             scan_generated_files: false,
             ignore_local_databases: false,
@@ -440,6 +445,27 @@ impl Default for PermissionSettings {
             file_ignore_disabled: Vec::new(),
             file_ignore_enabled: Vec::new(),
             file_ignore_advanced: false,
+        }
+    }
+}
+
+/// Default action used by the primary "allow" button in a permission prompt.
+/// `once` allows a single request, `session` remembers the folder for the rest
+/// of the app session. Stored as `"once"` or `"session"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PermissionDefaults {
+    pub website: String,
+    pub command: String,
+    pub folder: String,
+}
+
+impl Default for PermissionDefaults {
+    fn default() -> Self {
+        Self {
+            website: "once".to_string(),
+            command: "once".to_string(),
+            folder: "once".to_string(),
         }
     }
 }
@@ -530,6 +556,23 @@ pub fn default_close_tab_hotkey() -> String {
     format!("{}+W", default_hotkey_modifier())
 }
 
+pub fn default_new_session_hotkey() -> String {
+    format!("{}+T", default_hotkey_modifier())
+}
+
+pub fn default_delete_session_hotkey() -> String {
+    format!("{}+W", default_hotkey_modifier())
+}
+
+pub fn default_window_toggle_hotkey() -> String {
+    format!("{}+Shift+Space", default_hotkey_modifier())
+}
+
+/// Action applied when the window toggle shortcut is pressed while pumr is
+/// already focused.
+pub const WINDOW_TOGGLE_HIDE: &str = "hide";
+pub const WINDOW_TOGGLE_MINIMIZE: &str = "minimize";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct InterfaceSettings {
@@ -538,6 +581,8 @@ pub struct InterfaceSettings {
     pub paste_word_limit: usize,
     pub open_tab_hotkey: String,
     pub close_tab_hotkey: String,
+    pub new_session_hotkey: String,
+    pub delete_session_hotkey: String,
     pub sounds_enabled: bool,
     pub sound_volume: f64,
     pub done_sound: String,
@@ -556,6 +601,8 @@ impl Default for InterfaceSettings {
             paste_word_limit: 500,
             open_tab_hotkey: default_open_tab_hotkey(),
             close_tab_hotkey: default_close_tab_hotkey(),
+            new_session_hotkey: default_new_session_hotkey(),
+            delete_session_hotkey: default_delete_session_hotkey(),
             sounds_enabled: true,
             sound_volume: 0.6,
             done_sound: "chime".to_string(),
@@ -566,6 +613,51 @@ impl Default for InterfaceSettings {
             error_sound_path: String::new(),
         }
     }
+}
+
+/// Window summoning / Quake-mode behaviour. Disabled by default so pumr never
+/// claims a system-wide shortcut unless the user opts in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WindowSettings {
+    /// Whether the global window-toggle shortcut is registered.
+    pub window_toggle_enabled: bool,
+    /// Canonical global shortcut string, e.g. `Cmd+Shift+F2`.
+    pub window_toggle_hotkey: String,
+    /// What to do when the shortcut is pressed while pumr is focused:
+    /// `hide` or `minimize`.
+    pub window_toggle_action: String,
+    /// Interface zoom / display scaling, where `1.0` is 100%.
+    pub zoom: f64,
+}
+
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self {
+            window_toggle_enabled: false,
+            window_toggle_hotkey: default_window_toggle_hotkey(),
+            window_toggle_action: WINDOW_TOGGLE_HIDE.to_string(),
+            zoom: default_zoom(),
+        }
+    }
+}
+
+/// Default interface zoom (100%).
+pub fn default_zoom() -> f64 {
+    1.0
+}
+
+/// Zoom bounds shared with the frontend so scaling stays usable.
+pub const ZOOM_MIN: f64 = 0.5;
+pub const ZOOM_MAX: f64 = 2.0;
+
+/// Coerces a persisted zoom value into the supported range, falling back to
+/// 100% for corrupt or non-numeric values.
+pub fn clamp_zoom(zoom: f64) -> f64 {
+    if !zoom.is_finite() {
+        return default_zoom();
+    }
+    zoom.clamp(ZOOM_MIN, ZOOM_MAX)
 }
 
 #[derive(Debug, Clone, Serialize)]

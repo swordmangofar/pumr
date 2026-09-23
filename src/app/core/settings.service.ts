@@ -3,10 +3,17 @@ import { TranslocoService } from '@jsverse/transloco';
 import { OPENROUTER_PROVIDER, api } from './api';
 import { BackgroundService } from './background.service';
 import { BACKGROUND_NONE } from './backgrounds';
-import { defaultCloseTabHotkey, defaultOpenTabHotkey } from './hotkeys';
+import {
+  defaultCloseTabHotkey,
+  defaultDeleteSessionHotkey,
+  defaultNewSessionHotkey,
+  defaultOpenTabHotkey,
+  defaultWindowToggleHotkey,
+} from './hotkeys';
 import { DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
 import { ThemeService } from './theme.service';
 import { DEFAULT_THEME_ID, DEFAULT_CUSTOM_THEME } from './themes';
+import { ZoomService } from './zoom.service';
 
 export const FALLBACK_SETTINGS: Settings = {
   defaultSystemPrompt: '',
@@ -37,6 +44,7 @@ export const FALLBACK_SETTINGS: Settings = {
   commandRules: [],
   allowedWebsites: [],
   deniedWebsites: [],
+  permissionDefaults: { website: 'once', command: 'once', folder: 'once' },
   ignoreGitignored: true,
   scanGeneratedFiles: false,
   ignoreLocalDatabases: false,
@@ -59,6 +67,12 @@ export const FALLBACK_SETTINGS: Settings = {
   pasteWordLimit: 500,
   openTabHotkey: defaultOpenTabHotkey(),
   closeTabHotkey: defaultCloseTabHotkey(),
+  newSessionHotkey: defaultNewSessionHotkey(),
+  deleteSessionHotkey: defaultDeleteSessionHotkey(),
+  windowToggleEnabled: false,
+  windowToggleHotkey: defaultWindowToggleHotkey(),
+  windowToggleAction: 'hide',
+  zoom: 1,
   soundsEnabled: true,
   soundVolume: 0.6,
   doneSound: 'chime',
@@ -79,6 +93,7 @@ export class SettingsService {
   private readonly transloco = inject(TranslocoService);
   private readonly theme = inject(ThemeService);
   private readonly background = inject(BackgroundService);
+  private readonly zoom = inject(ZoomService);
   private readonly state = signal<Settings | null>(null);
 
   constructor() {
@@ -119,6 +134,7 @@ export class SettingsService {
     this.theme.applyContrast(settings?.highContrast ?? false);
     this.theme.applyGlassOpacity(settings?.glassOpacity ?? 1);
     this.background.apply(settings);
+    this.zoom.apply(settings?.zoom ?? 1);
     this.dialogOpen.set(false);
     this.focusSection.set(null);
     this.focusAnchor.set(null);
@@ -133,6 +149,7 @@ export class SettingsService {
       this.theme.applyContrast(settings.highContrast);
       this.theme.applyGlassOpacity(settings.glassOpacity);
       this.background.apply(settings);
+      this.zoom.apply(settings.zoom);
       try {
         const defaults = await api.getDefaultSystemPrompts();
         this.originalSystemPrompts.set(defaults);
@@ -165,6 +182,7 @@ export class SettingsService {
     this.theme.applyContrast(saved.highContrast);
     this.theme.applyGlassOpacity(saved.glassOpacity);
     this.background.apply(saved);
+    this.zoom.apply(saved.zoom);
     this.transloco.setActiveLang(saved.language || 'en');
     return saved;
   }

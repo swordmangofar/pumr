@@ -13,6 +13,7 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
 import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { AttachmentPreview } from './attachment-preview';
 import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
 import { PermissionOverlay } from './permission-overlay';
@@ -64,9 +65,11 @@ import { TypedInput } from './typed-input';
 @Component({
   selector: 'app-chat-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, 
+  imports: [
+    TypedInput,
     TranslocoPipe,
     Composer,
+    AttachmentPreview,
     PermissionOverlay,
     QuestionOverlay,
     ToolCard,
@@ -94,6 +97,28 @@ import { TypedInput } from './typed-input';
       }
 
       @if (session(); as active) {
+        @if (viewingSubAgent()) {
+          <div
+            class="flex flex-wrap items-center gap-3 border-b border-accent/40 bg-accent/15 px-6 py-2.5"
+          >
+            <span
+              class="flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/20 px-2.5 py-0.5 text-xs font-semibold tracking-widest text-accent uppercase"
+            >
+              {{ 'agents.sub' | transloco }}
+            </span>
+            <app-agent-status [status]="active.agentStatus" [small]="true" />
+            <span class="min-w-0 flex-1 truncate text-sm font-medium text-white">{{
+              active.title
+            }}</span>
+            <button
+              type="button"
+              class="shrink-0 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-mist transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-white"
+              (click)="backToMain()"
+            >
+              {{ 'agents.back' | transloco }}
+            </button>
+          </div>
+        }
         <div class="relative min-h-0 flex-1">
           <div #scroll class="h-full overflow-y-auto" (scroll)="onScroll()">
             <div class="mx-auto w-full max-w-4xl px-6 py-6">
@@ -186,14 +211,18 @@ import { TypedInput } from './typed-input';
               @for (entry of timeline(); track entry.key) {
                 @if (entry.kind === 'message') {
                   <div
-                    class="mb-6 scroll-mt-6"
+                    class="chat-entry mb-6 scroll-mt-6"
                     [attr.id]="entryAnchor(entry)"
                     [class.msg-flash]="highlightId() === entry.message.id"
                   >
                     @switch (entry.message.role) {
                       @case ('user') {
                         <div class="group flex items-start justify-end gap-2">
-                          <app-puma-loader [compact]="true" [pose]="'sit'" class="mt-1 shrink-0" />
+                          <app-puma-loader
+                            [compact]="true"
+                            [pose]="entry.message.id === delegatedPromptId() ? 'prompt' : 'sit'"
+                            class="mt-1 shrink-0"
+                          />
                           <button
                             type="button"
                             class="mt-2 flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
@@ -214,7 +243,12 @@ import { TypedInput } from './typed-input';
                             </svg>
                           </button>
                           <div
-                            class="max-w-[85%] rounded-2xl rounded-tr-md border border-accent/25 bg-accent/10 px-4 py-3 text-[15px] whitespace-pre-wrap text-white"
+                            class="max-w-[85%] rounded-2xl rounded-tr-md border px-4 py-3 text-[15px] whitespace-pre-wrap text-white"
+                            [class]="
+                              entry.message.id === delegatedPromptId()
+                                ? 'border-sky-400/30 bg-sky-500/10'
+                                : 'border-accent/25 bg-accent/10'
+                            "
                           >
                             @if (entry.message.attachments.length > 0) {
                               <div
@@ -226,14 +260,22 @@ import { TypedInput } from './typed-input';
                                   track attachment.id
                                 ) {
                                   @if (attachment.kind === 'image') {
-                                    <img
-                                      [src]="attachmentPreview(attachment)"
-                                      [alt]="attachment.name"
-                                      class="h-28 w-28 rounded-lg border border-white/10 object-cover"
-                                    />
+                                    <button
+                                      type="button"
+                                      class="cursor-pointer overflow-hidden rounded-lg border border-white/10 transition hover:border-accent/50"
+                                      (click)="previewAttachment.set(attachment)"
+                                    >
+                                      <img
+                                        [src]="attachmentPreview(attachment)"
+                                        [alt]="attachment.name"
+                                        class="h-28 w-28 object-cover"
+                                      />
+                                    </button>
                                   } @else {
-                                    <span
-                                      class="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1"
+                                    <button
+                                      type="button"
+                                      class="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-left transition hover:border-accent/50 hover:bg-white/10"
+                                      (click)="previewAttachment.set(attachment)"
                                     >
                                       @if (attachment.kind === 'pdf') {
                                         <span
@@ -254,7 +296,7 @@ import { TypedInput } from './typed-input';
                                           }}
                                         }
                                       </span>
-                                    </span>
+                                    </button>
                                   }
                                 }
                               </div>
@@ -548,6 +590,10 @@ import { TypedInput } from './typed-input';
         </div>
       </div>
     }
+
+    @if (previewAttachment(); as preview) {
+      <app-attachment-preview [attachment]="preview" (closed)="previewAttachment.set(null)" />
+    }
   `,
 })
 export class ChatView {
@@ -557,6 +603,7 @@ export class ChatView {
 
   protected readonly revertTarget = signal<Message | null>(null);
   protected readonly revertFiles = signal(true);
+  protected readonly previewAttachment = signal<MessageAttachment | null>(null);
   protected readonly atBottom = signal(true);
   protected readonly highlightId = signal<string | null>(null);
   protected readonly composing = signal(false);
@@ -564,8 +611,14 @@ export class ChatView {
 
   private readonly scrollRef = viewChild<ElementRef<HTMLDivElement>>('scroll');
 
+  // Tool-call arguments are immutable once persisted, so parsing them (for the
+  // command/summary shown on tool cards) only needs to happen once per call.
+  private readonly callMetaCache = new Map<string, { command: string; summary: string | null }>();
+  private callMetaCacheRoot: string | undefined;
+
   protected readonly session = this.workspace.activeAgent;
   protected readonly subAgents = this.workspace.activeSubAgents;
+  protected readonly fromSubAgent = computed(() => this.session()?.parentSessionId != null);
   protected readonly viewingSubAgent = computed(() => {
     const root = this.workspace.activeSession();
     const agent = this.workspace.activeAgentId();
@@ -574,6 +627,12 @@ export class ChatView {
   protected readonly messages = computed(() => {
     const session = this.session();
     return session ? this.workspace.messagesFor(session.id) : [];
+  });
+  protected readonly delegatedPromptId = computed(() => {
+    if (!this.fromSubAgent()) {
+      return null;
+    }
+    return this.messages().find((message) => message.role === 'user')?.id ?? null;
   });
   protected readonly liveTools = computed(() => {
     const session = this.session();
@@ -602,13 +661,12 @@ export class ChatView {
     const summaries = new Map<string, string>();
     for (const message of messages) {
       for (const call of message.toolCalls) {
-        const command = this.commandOf(call.name, call.arguments);
-        if (command) {
-          commands.set(call.id, command);
+        const meta = this.callMeta(call.id, call.name, call.arguments);
+        if (meta.command) {
+          commands.set(call.id, meta.command);
         }
-        const summary = this.summaryOf(call.name, call.arguments);
-        if (summary !== null) {
-          summaries.set(call.id, summary);
+        if (meta.summary !== null) {
+          summaries.set(call.id, meta.summary);
         }
       }
     }
@@ -779,17 +837,36 @@ export class ChatView {
   }
 
   private toolEntry(tool: LiveToolCall): ChatEntry {
-    const command = this.commandOf(tool.name, tool.arguments);
+    const meta = this.callMeta(tool.callId, tool.name, tool.arguments);
     return {
       kind: 'tool',
       key: tool.callId,
       name: tool.name,
-      summary: this.toolSummary(tool.name, command, tool.summary),
-      command,
+      summary: this.toolSummary(tool.name, meta.command, tool.summary),
+      command: meta.command,
       output: tool.output,
       status: tool.status,
       changes: tool.changes,
     };
+  }
+
+  private callMeta(
+    id: string,
+    name: string,
+    args: string,
+  ): { command: string; summary: string | null } {
+    const root = this.workspace.activeProject()?.path;
+    if (root !== this.callMetaCacheRoot) {
+      this.callMetaCache.clear();
+      this.callMetaCacheRoot = root;
+    }
+    const cached = this.callMetaCache.get(id);
+    if (cached) {
+      return cached;
+    }
+    const meta = { command: this.commandOf(name, args), summary: this.summaryOf(name, args) };
+    this.callMetaCache.set(id, meta);
+    return meta;
   }
 
   private groupTools(entries: ChatEntry[]): ChatEntry[] {

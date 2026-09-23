@@ -415,6 +415,22 @@ impl Db {
         })
     }
 
+    pub fn list_sub_sessions_for_project(&self, project_id: &str) -> Result<Vec<Session>> {
+        self.with_conn(|conn| {
+            let sql = session_select(
+                "WHERE s.project_id = ?1 AND s.parent_session_id IS NOT NULL \
+                 ORDER BY s.created_at ASC",
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![project_id], map_session)?;
+            let mut sessions = Vec::new();
+            for row in rows {
+                sessions.push(row?);
+            }
+            Ok(sessions)
+        })
+    }
+
     pub fn get_session(&self, id: &str) -> Result<Session> {
         self.with_conn(|conn| self.session_by_id(conn, id))
     }
@@ -617,6 +633,33 @@ impl Db {
             for row in rows {
                 messages.push(row?);
             }
+            Ok(messages)
+        })
+    }
+
+    /// Returns at most the newest `limit` messages in chronological order. When
+    /// `limit` is 0 all messages are returned. Avoids deserializing the entire
+    /// transcript (including large base64 attachments) when only a window is
+    /// needed, e.g. when building the model history.
+    pub fn list_messages_limited(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
+        if limit == 0 {
+            return self.list_messages(session_id);
+        }
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
+                          cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
+                          tool_calls, tool_call_id, tool_name, status, changes, base_commit,
+                          attachments, mentions, context, duration_ms
+                   FROM messages WHERE session_id = ?1
+                   ORDER BY seq DESC LIMIT ?2"#,
+            )?;
+            let rows = stmt.query_map(params![session_id, limit as i64], map_message)?;
+            let mut messages = Vec::new();
+            for row in rows {
+                messages.push(row?);
+            }
+            messages.reverse();
             Ok(messages)
         })
     }

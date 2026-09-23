@@ -44,94 +44,6 @@ import { TypedInput } from '../typed-input';
       <p class="mt-2 text-xs text-mist/30">{{ 'settings.replyLanguageHint' | transloco }}</p>
     </section>
 
-    <section class="mt-8">
-      <div class="mb-2 flex items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <label class="block text-sm font-semibold text-white">
-            {{ 'settings.systemPrompt' | transloco }}
-          </label>
-          @if (customized()) {
-            <span
-              class="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
-            >
-              {{ 'settings.systemPromptCustomized' | transloco }}
-            </span>
-          }
-        </div>
-        @if (customized() || promptChanged()) {
-          <button
-            type="button"
-            class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
-            (click)="resetSystemPrompt()"
-          >
-            {{ 'settings.systemPromptReset' | transloco }}
-          </button>
-        }
-      </div>
-      <textarea
-        class="field h-56 w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed"
-        [value]="draft.draft().defaultSystemPrompt"
-        (typedValue)="draft.patch('defaultSystemPrompt', $event)"
-      ></textarea>
-      @if (promptChanged() && draftCustomized()) {
-        <p
-          class="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-200"
-        >
-          {{ 'settings.systemPromptWarning' | transloco }}
-        </p>
-      } @else if (customized()) {
-        <p class="mt-2 text-xs leading-relaxed text-amber-300/80">
-          {{ 'settings.systemPromptCustomizedHint' | transloco }}
-        </p>
-      }
-      <p class="mt-2 text-xs text-mist/30">{{ 'settings.systemPromptHint' | transloco }}</p>
-    </section>
-
-    @for (prompt of optionalPrompts; track prompt.key) {
-      <section class="mt-8">
-        <div class="mb-2 flex items-center justify-between gap-3">
-          <div class="flex items-center gap-3">
-            <app-toggle [checked]="isEnabled(prompt)" (toggled)="togglePrompt(prompt)" />
-            <div class="flex items-center gap-2">
-              <label class="block text-sm font-semibold text-white">
-                {{ prompt.labelKey | transloco }}
-              </label>
-              @if (isCustomized(prompt)) {
-                <span
-                  class="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
-                >
-                  {{ 'settings.systemPromptCustomized' | transloco }}
-                </span>
-              }
-            </div>
-          </div>
-          @if (isCustomized(prompt) || isChanged(prompt)) {
-            <button
-              type="button"
-              class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
-              (click)="resetPrompt(prompt)"
-            >
-              {{ 'settings.systemPromptReset' | transloco }}
-            </button>
-          }
-        </div>
-        <textarea
-          class="field h-40 w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed transition-opacity"
-          [class.opacity-50]="!isEnabled(prompt)"
-          [value]="promptValue(prompt)"
-          (typedValue)="setPrompt(prompt, $event)"
-        ></textarea>
-        @if (isChanged(prompt) && isCustomized(prompt)) {
-          <p
-            class="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-200"
-          >
-            {{ 'settings.systemPromptWarning' | transloco }}
-          </p>
-        }
-        <p class="mt-2 text-xs text-mist/30">{{ prompt.descriptionKey | transloco }}</p>
-      </section>
-    }
-
     <section class="mt-8 grid grid-cols-2 gap-6">
       <div>
         <label class="mb-2 block text-sm text-mist/50">{{ 'settings.budget' | transloco }}</label>
@@ -193,6 +105,112 @@ import { TypedInput } from '../typed-input';
         {{ 'settings.autoContinueAllSessionsHint' | transloco }}
       </p>
     </section>
+
+    <section class="mt-8">
+      <details class="glass-inset rounded-xl">
+        <summary
+          class="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 select-none"
+        >
+          <span class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-white">
+              {{ 'settings.systemPrompt' | transloco }}
+            </span>
+            @if (customized()) {
+              <span
+                class="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+              >
+                {{ 'settings.systemPromptCustomized' | transloco }}
+              </span>
+            }
+          </span>
+        </summary>
+        <div class="px-4 pb-4">
+          <textarea
+            class="field h-40 w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed"
+            [value]="draft.draft().defaultSystemPrompt"
+            (typedValue)="draft.patch('defaultSystemPrompt', $event)"
+          ></textarea>
+          @if (promptChanged() && draftCustomized()) {
+            <p
+              class="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-200"
+            >
+              {{ 'settings.systemPromptWarning' | transloco }}
+            </p>
+          } @else if (customized()) {
+            <p class="mt-2 text-xs leading-relaxed text-amber-300/80">
+              {{ 'settings.systemPromptCustomizedHint' | transloco }}
+            </p>
+          }
+          <div class="mt-2 flex items-center justify-between gap-3">
+            <p class="text-xs text-mist/30">{{ 'settings.systemPromptHint' | transloco }}</p>
+            @if (customized() || promptChanged()) {
+              <button
+                type="button"
+                class="shrink-0 rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
+                (click)="resetSystemPrompt()"
+              >
+                {{ 'settings.systemPromptReset' | transloco }}
+              </button>
+            }
+          </div>
+        </div>
+      </details>
+    </section>
+
+    @for (prompt of optionalPrompts; track prompt.key) {
+      <section class="mt-4">
+        <details class="glass-inset rounded-xl">
+          <summary
+            class="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 select-none"
+          >
+            <span class="flex items-center gap-3">
+              <span (click)="$event.preventDefault(); $event.stopPropagation()">
+                <app-toggle [checked]="isEnabled(prompt)" (toggled)="togglePrompt(prompt)" />
+              </span>
+              <span class="flex items-center gap-2">
+                <span class="text-sm font-semibold text-white">
+                  {{ prompt.labelKey | transloco }}
+                </span>
+                @if (isCustomized(prompt)) {
+                  <span
+                    class="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+                  >
+                    {{ 'settings.systemPromptCustomized' | transloco }}
+                  </span>
+                }
+              </span>
+            </span>
+          </summary>
+          <div class="px-4 pb-4">
+            <textarea
+              class="field h-32 w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed transition-opacity"
+              [class.opacity-50]="!isEnabled(prompt)"
+              [value]="promptValue(prompt)"
+              (typedValue)="setPrompt(prompt, $event)"
+            ></textarea>
+            @if (isChanged(prompt) && isCustomized(prompt)) {
+              <p
+                class="mt-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-200"
+              >
+                {{ 'settings.systemPromptWarning' | transloco }}
+              </p>
+            }
+            <div class="mt-2 flex items-center justify-between gap-3">
+              <p class="text-xs text-mist/30">{{ prompt.descriptionKey | transloco }}</p>
+              @if (isCustomized(prompt) || isChanged(prompt)) {
+                <button
+                  type="button"
+                  class="shrink-0 rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
+                  (click)="resetPrompt(prompt)"
+                >
+                  {{ 'settings.systemPromptReset' | transloco }}
+                </button>
+              }
+            </div>
+          </div>
+        </details>
+      </section>
+    }
   `,
 })
 export class AgentSettings {

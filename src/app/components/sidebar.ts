@@ -1,9 +1,18 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { confirm, open } from '@tauri-apps/plugin-dialog';
+import { matchesHotkey } from '../core/hotkeys';
 import { WorkspaceService } from '../core/workspace.service';
 import { Session } from '../core/models';
+import { SettingsService } from '../core/settings.service';
 import { AgentStatus } from './agent-status';
 import { AttentionIndicator } from './attention-indicator';
 import { GitSidebar } from './git-sidebar';
@@ -35,13 +44,16 @@ function startOfDay(timestamp: number): number {
     ProjectIcon,
     GitSidebar,
   ],
+  host: {
+    '(document:keydown)': 'onKeydown($event)',
+  },
   template: `
     <div class="flex h-full flex-col">
       <div class="shrink-0 px-3 pt-3">
         <div class="flex gap-1 rounded-xl bg-white/5 p-1">
           <button
             type="button"
-            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               workspace.leftTab() === 'projects'
                 ? 'bg-white/10 text-white shadow-sm'
@@ -53,7 +65,7 @@ function startOfDay(timestamp: number): number {
           </button>
           <button
             type="button"
-            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               workspace.leftTab() === 'workspace'
                 ? 'bg-white/10 text-white shadow-sm'
@@ -65,7 +77,7 @@ function startOfDay(timestamp: number): number {
           </button>
           <button
             type="button"
-            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               workspace.leftTab() === 'git'
                 ? 'bg-white/10 text-white shadow-sm'
@@ -83,11 +95,13 @@ function startOfDay(timestamp: number): number {
           <div
             class="group flex items-center gap-1 rounded-xl pr-1 transition-colors"
             [class]="sessionRowClass(session)"
+            [attr.data-session-row]="session.id"
           >
             @if (workspace.subAgentsFor(session.id).length > 0) {
               <button
                 type="button"
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-mist/40 transition-colors hover:text-mist"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors"
+                [class]="sessionToggleClass(session)"
                 [attr.aria-expanded]="subAgentsExpanded(session.id)"
                 [title]="
                   (subAgentsExpanded(session.id)
@@ -115,7 +129,7 @@ function startOfDay(timestamp: number): number {
               type="button"
               class="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm"
               [class]="sessionTextClass(session)"
-              (click)="workspace.openTab(session.id)"
+              (click)="selectSession(session)"
             >
               @if (showProject && projectFor(session); as project) {
                 <span class="relative inline-flex shrink-0">
@@ -533,8 +547,11 @@ function startOfDay(timestamp: number): number {
 export class Sidebar {
   protected readonly workspace = inject(WorkspaceService);
   private readonly transloco = inject(TranslocoService);
+  private readonly settings = inject(SettingsService);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly expanded = signal<Set<string> | null>(null);
   private readonly expandedSubAgents = signal<Set<string>>(new Set());
+  private readonly focusedSessionId = signal<string | null>(null);
   private readonly now = signal(Date.now());
   protected readonly cloneOpen = signal(false);
   protected readonly cloneUrl = signal('');
@@ -556,6 +573,33 @@ export class Sidebar {
       group.sessions.push(session);
     }
     return groups;
+  });
+
+  /** Sessions in the exact order they are rendered in the active list. */
+  protected readonly visibleSessions = computed<Session[]>(() => {
+    if (this.workspace.sessionView() === 'history') {
+      return this.historyGroups().flatMap((group) => group.sessions);
+    }
+    const sessions: Session[] = [];
+    for (const project of this.workspace.projects()) {
+      if (!this.isExpanded(project.id)) {
+        continue;
+      }
+      sessions.push(...this.workspace.sessionsFor(project.id));
+    }
+    return sessions;
+  });
+
+  protected readonly focusedSession = computed<Session | null>(() => {
+    const sessions = this.visibleSessions();
+    const current = this.focusedSessionId() ?? this.workspace.activeSessionId();
+    if (current) {
+      const match = sessions.find((session) => session.id === current);
+      if (match) {
+        return match;
+      }
+    }
+    return sessions[0] ?? null;
   });
 
   protected historyLabel(dayStart: number): string {
@@ -684,8 +728,16 @@ export class Sidebar {
   }
 
   protected openAgent(rootSessionId: string, agentSessionId: string): void {
+    this.workspace.setFocusedPanel('left');
+    this.focusedSessionId.set(rootSessionId);
     this.workspace.openTab(rootSessionId);
     this.workspace.viewAgent(rootSessionId, agentSessionId);
+  }
+
+  protected selectSession(session: Session): void {
+    this.workspace.setFocusedPanel('left');
+    this.focusedSessionId.set(session.id);
+    this.workspace.openTab(session.id);
   }
 
   protected sessionActive(session: Session): boolean {
@@ -695,13 +747,33 @@ export class Sidebar {
     );
   }
 
+  protected isSessionFocused(session: Session): boolean {
+    if (this.workspace.focusedPanel() !== 'left') {
+      return false;
+    }
+    return session.id === this.focusedSession()?.id;
+  }
+
   protected sessionRowClass(session: Session): string {
-    const base = this.sessionActive(session) ? 'bg-accent' : 'hover:bg-white/5';
+    let base: string;
+    if (this.sessionActive(session)) {
+      base = 'bg-accent';
+    } else if (this.isSessionFocused(session)) {
+      base = 'bg-white/10 ring-1 ring-accent/50 ring-inset';
+    } else {
+      base = 'hover:bg-white/5';
+    }
     return session.archived ? `${base} opacity-60` : base;
   }
 
   protected sessionTextClass(session: Session): string {
     return this.sessionActive(session) ? 'font-medium text-ink' : 'text-mist/50 hover:text-mist';
+  }
+
+  protected sessionToggleClass(session: Session): string {
+    return this.sessionActive(session)
+      ? 'text-ink/70 hover:bg-ink/10 hover:text-ink'
+      : 'text-mist/40 hover:text-mist';
   }
 
   protected sessionActionClass(session: Session, kind: 'archive' | 'delete'): string {
@@ -724,6 +796,78 @@ export class Sidebar {
 
   protected async removeSession(event: Event, session: Session): Promise<void> {
     event.stopPropagation();
+    await this.confirmAndDelete(session);
+  }
+
+  protected onKeydown(event: KeyboardEvent): void {
+    if (this.workspace.focusedPanel() !== 'left' || this.workspace.leftTab() !== 'projects') {
+      return;
+    }
+    if (
+      this.settings.dialogOpen() ||
+      this.workspace.debugOpen() ||
+      this.workspace.permission() ||
+      this.workspace.projectEditorId() ||
+      this.cloneOpen() ||
+      this.isEditableTarget(event.target)
+    ) {
+      return;
+    }
+    const settings = this.settings.settings();
+    if (settings && matchesHotkey(settings.deleteSessionHotkey, event)) {
+      event.preventDefault();
+      void this.deleteFocusedSession();
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.moveFocus(event.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      const session = this.focusedSession();
+      if (session) {
+        event.preventDefault();
+        this.selectSession(session);
+      }
+    }
+  }
+
+  private moveFocus(direction: 1 | -1): void {
+    const sessions = this.visibleSessions();
+    if (sessions.length === 0) {
+      return;
+    }
+    const current = this.focusedSessionId() ?? this.workspace.activeSessionId();
+    let index = current ? sessions.findIndex((session) => session.id === current) : -1;
+    if (index === -1) {
+      index = direction === 1 ? -1 : sessions.length;
+    }
+    const next = Math.min(Math.max(index + direction, 0), sessions.length - 1);
+    const session = sessions[next];
+    this.focusedSessionId.set(session.id);
+    this.scrollSessionIntoView(session.id);
+  }
+
+  private scrollSessionIntoView(sessionId: string): void {
+    const row = this.host.nativeElement.querySelector<HTMLElement>(
+      `[data-session-row="${sessionId}"]`,
+    );
+    row?.scrollIntoView({ block: 'nearest' });
+  }
+
+  private async deleteFocusedSession(): Promise<void> {
+    const session = this.focusedSession();
+    if (!session) {
+      return;
+    }
+    const deleted = await this.confirmAndDelete(session);
+    if (deleted) {
+      this.focusedSessionId.set(null);
+    }
+  }
+
+  private async confirmAndDelete(session: Session): Promise<boolean> {
     const confirmed = await confirm(
       this.transloco.translate('sidebar.deleteSessionConfirm', { title: session.title }),
       {
@@ -732,13 +876,24 @@ export class Sidebar {
       },
     );
     if (!confirmed) {
-      return;
+      return false;
     }
     try {
       await this.workspace.deleteSession(session.id);
+      return true;
     } catch (error) {
       console.error(error);
+      return false;
     }
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    if (!element || !element.tagName) {
+      return false;
+    }
+    const tag = element.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || element.isContentEditable;
   }
 
   protected async toggleArchived(): Promise<void> {

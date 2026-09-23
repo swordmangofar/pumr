@@ -1,5 +1,7 @@
 import { CustomTheme } from './themes';
 
+export type WindowToggleAction = 'hide' | 'minimize';
+
 export interface Project {
   id: string;
   path: string;
@@ -267,6 +269,7 @@ export interface Settings {
   commandRules: string[];
   allowedWebsites: string[];
   deniedWebsites: string[];
+  permissionDefaults: PermissionDefaults;
   ignoreGitignored: boolean;
   scanGeneratedFiles: boolean;
   ignoreLocalDatabases: boolean;
@@ -289,6 +292,12 @@ export interface Settings {
   pasteWordLimit: number;
   openTabHotkey: string;
   closeTabHotkey: string;
+  newSessionHotkey: string;
+  deleteSessionHotkey: string;
+  windowToggleEnabled: boolean;
+  windowToggleHotkey: string;
+  windowToggleAction: WindowToggleAction;
+  zoom: number;
   soundsEnabled: boolean;
   soundVolume: number;
   doneSound: string;
@@ -302,6 +311,14 @@ export interface Settings {
   backgroundOpacity: number;
   backgroundBlur: number;
   glassOpacity: number;
+}
+
+export type PermissionDefaultAction = 'once' | 'session';
+
+export interface PermissionDefaults {
+  website: PermissionDefaultAction;
+  command: PermissionDefaultAction;
+  folder: PermissionDefaultAction;
 }
 
 export interface DefaultSystemPrompts {
@@ -485,6 +502,15 @@ export interface GitCommitDetail {
   parents: string[];
   refs: string[];
   changes: FileChange[];
+}
+
+export interface GitBlameLine {
+  hash: string;
+  shortHash: string;
+  author: string;
+  timestamp: number;
+  line: number;
+  content: string;
 }
 
 export interface GitTag {

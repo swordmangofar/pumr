@@ -16,6 +16,7 @@ mod processes;
 mod providers;
 mod state;
 mod tools;
+mod window;
 
 use tauri::Manager;
 
@@ -25,6 +26,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    log::info!("global shortcut event {shortcut} ({:?})", event.state());
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        window::toggle(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -41,6 +52,7 @@ pub fn run() {
             db.migrate()?;
             let settings_path = data_dir.join("settings.json");
             let settings = config::load_settings(&settings_path);
+            window::apply(app.handle(), &settings.window);
             app.manage(state::AppState::new(db, data_dir, settings_path, settings));
             Ok(())
         })
@@ -49,6 +61,7 @@ pub fn run() {
             commands::get_default_system_prompts,
             commands::get_default_modes,
             commands::save_settings,
+            commands::suspend_window_shortcut,
             commands::set_api_key,
             commands::delete_api_key,
             commands::has_api_key,
@@ -61,6 +74,7 @@ pub fn run() {
             commands::update_project,
             commands::list_sessions,
             commands::list_sub_sessions,
+            commands::list_sub_sessions_for_project,
             commands::create_session,
             commands::update_session,
             commands::set_session_auto_continue,
@@ -102,6 +116,9 @@ pub fn run() {
             commands::git_stage,
             commands::git_unstage,
             commands::git_discard,
+            commands::get_git_blame,
+            commands::git_ignore,
+            commands::reveal_path,
             commands::git_commit,
             commands::git_checkout,
             commands::git_fetch,

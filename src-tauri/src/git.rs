@@ -1,6 +1,6 @@
 use crate::error::{AppError, Result};
 use crate::models::{
-    FileChange, FileDiff, GitBranch, GitCommit, GitCommitDetail, GitStatus, GitTag,
+    FileChange, FileDiff, GitBlameLine, GitBranch, GitCommit, GitCommitDetail, GitStatus, GitTag,
 };
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -521,12 +521,19 @@ const COMMIT_FORMAT: &str = "%H\x1f%h\x1f%an\x1f%at\x1f%D\x1f%P\x1f%s\x1e";
 pub fn project_commits(
     project_root: &Path,
     query: Option<&str>,
+    path: Option<&str>,
     skip: usize,
     limit: usize,
 ) -> Result<Vec<GitCommit>> {
     let query = query
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let path = path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(path) = path {
+        return project_file_commits(project_root, &path, query.as_deref(), skip, limit);
+    }
     match query {
         None => {
             let format_arg = format!("--format={COMMIT_FORMAT}");
@@ -553,6 +560,37 @@ pub fn project_commits(
             Ok(commits.into_iter().skip(skip).take(limit).collect())
         }
     }
+}
+
+/// Lists commits that touched a single path, following renames.
+fn project_file_commits(
+    project_root: &Path,
+    path: &str,
+    query: Option<&str>,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<GitCommit>> {
+    let format_arg = format!("--format={COMMIT_FORMAT}");
+    let skip_arg = format!("--skip={skip}");
+    let limit_arg = format!("--max-count={limit}");
+    let mut args = vec![
+        "log",
+        "--follow",
+        "--decorate=short",
+        format_arg.as_str(),
+        skip_arg.as_str(),
+        limit_arg.as_str(),
+    ];
+    if let Some(query) = query {
+        args.push("--regexp-ignore-case");
+        args.push("--fixed-strings");
+        args.push("--grep");
+        args.push(query);
+    }
+    args.push("--");
+    args.push(path);
+    let output = git_stdout_opt(project_root, &args).unwrap_or_default();
+    Ok(parse_commits(&output))
 }
 
 /// Searches for commits whose message, author or hash matches `query`.
@@ -817,6 +855,37 @@ fn count_file_lines(path: &Path) -> i64 {
     lines
 }
 
+/// Line counts for a set of untracked files, computed with a small worker pool
+/// so a project with many untracked files does not pay for them serially.
+fn count_untracked_lines(project_root: &Path, paths: &[String]) -> HashMap<String, i64> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    if paths.is_empty() {
+        return HashMap::new();
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(8)
+        .min(paths.len());
+    let next = AtomicUsize::new(0);
+    let counts = Mutex::new(HashMap::with_capacity(paths.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(path) = paths.get(index) else {
+                    break;
+                };
+                let lines = count_file_lines(&project_root.join(path));
+                counts.lock().unwrap().insert(path.clone(), lines);
+            });
+        }
+    });
+    counts.into_inner().unwrap()
+}
+
 pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
     if !project_root.join(".git").exists() {
         return Ok(GitStatus {
@@ -883,6 +952,7 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
     let staged_stats = numstat(project_root, true);
     let mut staged = Vec::new();
     let mut unstaged = Vec::new();
+    let mut untracked = Vec::new();
     for line in status_text.lines() {
         if line.len() < 3 {
             continue;
@@ -892,13 +962,7 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
         let worktree_status = bytes[1] as char;
         let path = line[3..].to_string();
         if index_status == '?' && worktree_status == '?' {
-            let additions = count_file_lines(&project_root.join(&path));
-            unstaged.push(FileChange {
-                path,
-                additions,
-                deletions: 0,
-                status: "A".to_string(),
-            });
+            untracked.push(path);
             continue;
         }
         if index_status != ' ' && index_status != '?' {
@@ -919,6 +983,18 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
                 status: worktree_status.to_string(),
             });
         }
+    }
+    // Untracked files have no numstat entry, so their line count has to come
+    // from disk. This is the only part of status that scales with the number of
+    // untracked files, so read them in parallel instead of one at a time.
+    let untracked_lines = count_untracked_lines(project_root, &untracked);
+    for path in untracked {
+        unstaged.push(FileChange {
+            additions: untracked_lines.get(&path).copied().unwrap_or(0),
+            path,
+            deletions: 0,
+            status: "A".to_string(),
+        });
     }
 
     Ok(GitStatus {
@@ -1074,6 +1150,110 @@ pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
         std::fs::remove_dir_all(&absolute)?;
     }
     Ok(())
+}
+
+/// Returns the per-line blame for a tracked file.
+pub fn project_blame(project_root: &Path, path: &str) -> Result<Vec<GitBlameLine>> {
+    let output = git_stdout_raw(project_root, &["blame", "--line-porcelain", "--", path])
+        .ok_or_else(|| AppError::msg(format!("git blame failed for {path}")))?;
+    let mut lines = Vec::new();
+    let mut hash = String::new();
+    let mut author = String::new();
+    let mut timestamp = 0i64;
+    let mut final_line = 0i64;
+    for line in output.lines() {
+        if let Some(content) = line.strip_prefix('\t') {
+            if !hash.is_empty() {
+                lines.push(GitBlameLine {
+                    short_hash: hash.chars().take(7).collect(),
+                    hash: hash.clone(),
+                    author: author.clone(),
+                    timestamp: timestamp * 1000,
+                    line: final_line,
+                    content: content.to_string(),
+                });
+            }
+            continue;
+        }
+        let mut parts = line.split(' ');
+        let candidate = parts.next().unwrap_or("").trim_start_matches('^');
+        if candidate.len() == 40 && candidate.chars().all(|value| value.is_ascii_hexdigit()) {
+            hash = candidate.to_string();
+            let _original_line = parts.next();
+            final_line = parts.next().and_then(|value| value.parse().ok()).unwrap_or(0);
+            author.clear();
+            timestamp = 0;
+        } else if let Some(value) = line.strip_prefix("author ") {
+            author = value.to_string();
+        } else if let Some(value) = line.strip_prefix("author-time ") {
+            timestamp = value.trim().parse().unwrap_or(0);
+        }
+    }
+    Ok(lines)
+}
+
+/// Appends a path to the repository's `.gitignore` (relative to the repo root).
+pub fn git_ignore(project_root: &Path, path: &str) -> Result<()> {
+    let root = git_stdout_opt(project_root, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project_root.to_path_buf());
+    let absolute = project_root.join(path);
+    let entry = absolute
+        .strip_prefix(&root)
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string());
+    let gitignore = root.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if existing.lines().any(|line| line.trim() == entry) {
+        return Ok(());
+    }
+    let mut content = existing;
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(&entry);
+    content.push('\n');
+    std::fs::write(&gitignore, content)?;
+    Ok(())
+}
+
+/// Reveals a path in the platform file manager (Finder, Explorer, xdg-open).
+pub fn reveal_path(project_root: &Path, path: &str) -> Result<()> {
+    let absolute = project_root.join(path);
+    let parent = absolute
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project_root.to_path_buf());
+    let status = {
+        #[cfg(target_os = "macos")]
+        {
+            if absolute.exists() {
+                Command::new("open").arg("-R").arg(&absolute).status()
+            } else {
+                Command::new("open").arg(&parent).status()
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if absolute.exists() {
+                Command::new("explorer")
+                    .arg(format!("/select,{}", absolute.display()))
+                    .status()
+            } else {
+                Command::new("explorer").arg(&parent).status()
+            }
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let target = if absolute.is_dir() { absolute.clone() } else { parent };
+            Command::new("xdg-open").arg(target).status()
+        }
+    };
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err(AppError::msg(format!("could not reveal {path}"))),
+        Err(error) => Err(AppError::msg(error.to_string())),
+    }
 }
 
 pub fn git_commit(project_root: &Path, message: &str, amend: bool) -> Result<String> {
@@ -1696,13 +1876,72 @@ mod tests {
         assert!(current.hash.is_some());
         assert!(current.timestamp.is_some());
 
-        let commits = project_commits(&project, None, 0, 10).unwrap();
+        let commits = project_commits(&project, None, None, 0, 10).unwrap();
         assert_eq!(commits.len(), 1);
         assert_eq!(commits[0].subject, "init");
         assert!(!commits[0].short_hash.is_empty());
 
-        let head_commits = project_commits(&project, None, 0, 10).unwrap();
+        let head_commits = project_commits(&project, None, None, 0, 10).unwrap();
         assert_eq!(head_commits.len(), 1);
+    }
+
+    #[test]
+    fn blame_reports_author_and_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        let blame = project_blame(&project, "tracked.txt").unwrap();
+        assert_eq!(blame.len(), 1);
+        assert_eq!(blame[0].content, "one");
+        assert_eq!(blame[0].author, "test");
+        assert_eq!(blame[0].line, 1);
+        assert_eq!(blame[0].short_hash.len(), 7);
+        assert!(blame[0].timestamp > 0);
+    }
+
+    #[test]
+    fn ignore_appends_to_gitignore_without_duplicates() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        git_ignore(&project, "new.txt").unwrap();
+        git_ignore(&project, "new.txt").unwrap();
+        let gitignore = std::fs::read_to_string(project.join(".gitignore")).unwrap();
+        assert_eq!(gitignore.matches("new.txt").count(), 1);
+    }
+
+    #[test]
+    fn file_history_filters_commits_by_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        std::fs::write(project.join("other.txt"), "other\n").unwrap();
+        git_stdout(&project, &["add", "--", "other.txt"]).unwrap();
+        git_stdout(
+            &project,
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-q",
+                "-m",
+                "other",
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(project_commits(&project, None, None, 0, 10).unwrap().len(), 2);
+        let tracked = project_commits(&project, None, Some("tracked.txt"), 0, 10).unwrap();
+        assert_eq!(tracked.len(), 1);
+        assert_eq!(tracked[0].subject, "init");
+        assert!(project_commits(&project, None, Some("missing.txt"), 0, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1728,7 +1967,7 @@ mod tests {
         )
         .unwrap();
 
-        let commits = project_commits(&project, None, 0, 10).unwrap();
+        let commits = project_commits(&project, None, None, 0, 10).unwrap();
         assert_eq!(commits.len(), 2);
         let head = &commits[0];
         assert_eq!(head.subject, "second");
@@ -1770,18 +2009,18 @@ mod tests {
         )
         .unwrap();
 
-        let by_message = project_commits(&project, Some("feature"), 0, 10).unwrap();
+        let by_message = project_commits(&project, Some("feature"), None, 0, 10).unwrap();
         assert_eq!(by_message.len(), 1);
         assert_eq!(by_message[0].subject, "Add feature");
 
-        let by_author = project_commits(&project, Some("alice"), 0, 10).unwrap();
+        let by_author = project_commits(&project, Some("alice"), None, 0, 10).unwrap();
         assert_eq!(by_author.len(), 1);
 
         let prefix = &by_message[0].short_hash[..4];
-        let by_hash = project_commits(&project, Some(prefix), 0, 10).unwrap();
+        let by_hash = project_commits(&project, Some(prefix), None, 0, 10).unwrap();
         assert_eq!(by_hash.len(), 1);
 
-        let none = project_commits(&project, Some("zzzzz"), 0, 10).unwrap();
+        let none = project_commits(&project, Some("zzzzz"), None, 0, 10).unwrap();
         assert!(none.is_empty());
     }
 
@@ -1881,7 +2120,7 @@ mod tests {
             ("pick".to_string(), commits[2].hash.clone()),
         ];
         git_rebase_interactive(&project, "HEAD~3", &todo).unwrap();
-        let subjects: Vec<String> = project_commits(&project, None, 0, 10)
+        let subjects: Vec<String> = project_commits(&project, None, None, 0, 10)
             .unwrap()
             .into_iter()
             .map(|commit| commit.subject)
@@ -2087,7 +2326,7 @@ mod tests {
         git_stage(&project, None).unwrap();
         git_commit(&project, "", true).unwrap();
 
-        let commits = project_commits(&project, None, 0, 10).unwrap();
+        let commits = project_commits(&project, None, None, 0, 10).unwrap();
         assert_eq!(commits.len(), 2);
         assert_eq!(commits[0].subject, "second");
     }

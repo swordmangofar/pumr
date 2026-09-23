@@ -7,7 +7,7 @@ use crate::git::{
     git_branch_rename as branch_rename_worktree, git_checkout as checkout_worktree,
     git_clone as clone_repository, git_commit as commit_worktree, git_discard as discard_worktree,
     git_fast_forward as fast_forward_worktree, git_fetch as fetch_worktree,
-    git_init as init_worktree, git_merge as merge_worktree,
+    git_ignore as ignore_worktree, git_init as init_worktree, git_merge as merge_worktree,
     git_operation_abort as abort_operation_worktree,
     git_operation_continue as continue_operation_worktree, git_pull as pull_worktree,
     git_pull_request_url as pull_request_url_worktree, git_push as push_worktree,
@@ -17,15 +17,16 @@ use crate::git::{
     git_stash_drop as stash_drop_worktree, git_stash_pop as stash_pop_worktree,
     git_stash_push as stash_push_worktree, git_submodule_update as submodule_update_worktree,
     git_tag_create as tag_create_worktree, git_tag_delete as tag_delete_worktree,
-    git_tag_push as tag_push_worktree, git_unstage as unstage_worktree, project_branches,
-    project_commit_detail, project_commit_file_diff, project_commits, project_file_diff,
-    project_git_info, project_git_status, project_rebase_commits, project_remotes, ShadowRepo,
+    git_tag_push as tag_push_worktree, git_unstage as unstage_worktree, project_blame,
+    project_branches, project_commit_detail, project_commit_file_diff, project_commits,
+    project_file_diff, project_git_info, project_git_status, project_rebase_commits,
+    project_remotes, reveal_path as reveal_path_worktree, ShadowRepo,
 };
 use crate::mcp::McpManager;
 use crate::mentions;
 use crate::permissions::FileIgnoreConfig;
 use crate::models::{
-    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitBranch, GitCommit,
+    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine, GitBranch, GitCommit,
     GitCommitDetail, GitInfo, GitStatus, Mention, Message, ModelInfo, PermissionDecision,
     ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer, RoutedEvent, Session,
     SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
@@ -65,11 +66,32 @@ pub fn get_default_modes() -> Vec<config::Mode> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<Settings> {
+pub fn save_settings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings> {
     config::save_settings(&state.settings_path, &settings)?;
     state.power.set_enabled(settings.interface.keep_awake);
+    crate::window::apply(&app, &settings.window);
     state.set_settings(settings.clone());
     Ok(settings)
+}
+
+/// Temporarily releases (or re-applies) the global window-toggle shortcut while
+/// the settings recorder listens for a new combination.
+#[tauri::command]
+pub fn suspend_window_shortcut(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    suspended: bool,
+) -> Result<()> {
+    if suspended {
+        crate::window::suspend(&app);
+    } else {
+        crate::window::apply(&app, &state.settings().window);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -186,6 +208,14 @@ pub fn list_sessions(
 #[tauri::command]
 pub fn list_sub_sessions(state: State<'_, AppState>, session_id: String) -> Result<Vec<Session>> {
     state.db.list_sub_sessions(&session_id)
+}
+
+#[tauri::command]
+pub fn list_sub_sessions_for_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<Session>> {
+    state.db.list_sub_sessions_for_project(&project_id)
 }
 
 #[tauri::command]
@@ -581,10 +611,11 @@ pub fn resolve_permission(
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
         }
-    } else if allowed && decision == "allow_once" {
-        // A folder granted once stays available for the rest of the app
-        // session (including every file and subfolder below it), but is not
-        // written to settings.
+    } else if allowed && decision == "allow_session" {
+        // A folder granted for the session stays available until the app
+        // restarts (including every file and subfolder below it), but is not
+        // written to settings. Commands and websites are resolved for this
+        // prompt only and are not remembered for the session.
         if let Some(folder) = &folder {
             state.permissions.add_session_folder(folder);
         }
@@ -687,9 +718,10 @@ pub fn stop_process(state: State<'_, AppState>, process_id: String) -> Result<()
 }
 
 #[tauri::command]
-pub fn get_git_info(state: State<'_, AppState>, project_id: String) -> Result<GitInfo> {
+pub async fn get_git_info(state: State<'_, AppState>, project_id: String) -> Result<GitInfo> {
     let project = state.db.get_project(&project_id)?;
-    Ok(project_git_info(Path::new(&project.path)))
+    let root = PathBuf::from(project.path);
+    blocking(move || Ok(project_git_info(&root))).await
 }
 
 fn project_root(state: &AppState, project_id: &str) -> Result<PathBuf> {
@@ -709,64 +741,72 @@ where
 }
 
 #[tauri::command]
-pub fn get_git_status(state: State<'_, AppState>, project_id: String) -> Result<GitStatus> {
+pub async fn get_git_status(state: State<'_, AppState>, project_id: String) -> Result<GitStatus> {
     let root = project_root(&state, &project_id)?;
-    project_git_status(&root)
+    blocking(move || project_git_status(&root)).await
 }
 
 #[tauri::command]
-pub fn get_git_branches(state: State<'_, AppState>, project_id: String) -> Result<Vec<GitBranch>> {
+pub async fn get_git_branches(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<GitBranch>> {
     let root = project_root(&state, &project_id)?;
-    Ok(project_branches(&root))
+    blocking(move || Ok(project_branches(&root))).await
 }
 
 #[tauri::command]
-pub fn get_git_commits(
+pub async fn get_git_commits(
     state: State<'_, AppState>,
     project_id: String,
     query: Option<String>,
+    path: Option<String>,
     skip: Option<usize>,
     limit: Option<usize>,
 ) -> Result<Vec<GitCommit>> {
     let root = project_root(&state, &project_id)?;
-    project_commits(
-        &root,
-        query.as_deref(),
-        skip.unwrap_or(0),
-        limit.unwrap_or(50),
-    )
+    blocking(move || {
+        project_commits(
+            &root,
+            query.as_deref(),
+            path.as_deref(),
+            skip.unwrap_or(0),
+            limit.unwrap_or(50),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_git_commit(
+pub async fn get_git_commit(
     state: State<'_, AppState>,
     project_id: String,
     hash: String,
 ) -> Result<GitCommitDetail> {
     let root = project_root(&state, &project_id)?;
-    project_commit_detail(&root, &hash)
+    blocking(move || project_commit_detail(&root, &hash)).await
 }
 
 #[tauri::command]
-pub fn get_git_commit_file_diff(
+pub async fn get_git_commit_file_diff(
     state: State<'_, AppState>,
     project_id: String,
     hash: String,
     path: String,
 ) -> Result<FileDiff> {
     let root = project_root(&state, &project_id)?;
-    project_commit_file_diff(&root, &hash, &path)
+    blocking(move || project_commit_file_diff(&root, &hash, &path)).await
 }
 
 #[tauri::command]
-pub fn get_git_file_diff(
+pub async fn get_git_file_diff(
     state: State<'_, AppState>,
     project_id: String,
     path: String,
     staged: bool,
 ) -> Result<FileDiff> {
     let root = project_root(&state, &project_id)?;
-    project_file_diff(&root, &path, staged)
+    blocking(move || project_file_diff(&root, &path, staged)).await
 }
 
 #[tauri::command]
@@ -793,6 +833,28 @@ pub fn git_unstage(
 pub fn git_discard(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
     let root = project_root(&state, &project_id)?;
     discard_worktree(&root, &path)
+}
+
+#[tauri::command]
+pub async fn get_git_blame(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+) -> Result<Vec<GitBlameLine>> {
+    let root = project_root(&state, &project_id)?;
+    blocking(move || project_blame(&root, &path)).await
+}
+
+#[tauri::command]
+pub fn git_ignore(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    ignore_worktree(&root, &path)
+}
+
+#[tauri::command]
+pub fn reveal_path(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    reveal_path_worktree(&root, &path)
 }
 
 #[tauri::command]
@@ -841,9 +903,12 @@ pub async fn git_push(state: State<'_, AppState>, project_id: String) -> Result<
 }
 
 #[tauri::command]
-pub fn get_git_remotes(state: State<'_, AppState>, project_id: String) -> Result<Vec<String>> {
+pub async fn get_git_remotes(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<String>> {
     let root = project_root(&state, &project_id)?;
-    Ok(project_remotes(&root))
+    blocking(move || Ok(project_remotes(&root))).await
 }
 
 #[tauri::command]
@@ -896,13 +961,13 @@ pub fn git_rebase_interactive(
 }
 
 #[tauri::command]
-pub fn get_git_rebase_commits(
+pub async fn get_git_rebase_commits(
     state: State<'_, AppState>,
     project_id: String,
     onto: String,
 ) -> Result<Vec<GitCommit>> {
     let root = project_root(&state, &project_id)?;
-    project_rebase_commits(&root, &onto)
+    blocking(move || project_rebase_commits(&root, &onto)).await
 }
 
 #[tauri::command]
@@ -1397,15 +1462,19 @@ pub async fn send_message(
     let system_prompt =
         build_system_prompt(&setup.settings, &setup.session, &mode, &mcp_manager, &rules);
 
-    let fallback_pricing = state
+    let cached_model = state
         .cached_models()
-        .and_then(|models| models.into_iter().find(|entry| entry.id == model))
-        .map(|entry| {
-            (
-                entry.prompt_price_per_m / 1_000_000.0,
-                entry.completion_price_per_m / 1_000_000.0,
-            )
-        });
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model));
+    let fallback_pricing = cached_model.as_ref().map(|entry| {
+        (
+            entry.prompt_price_per_m / 1_000_000.0,
+            entry.completion_price_per_m / 1_000_000.0,
+        )
+    });
+    let context_length = cached_model
+        .as_ref()
+        .map(|entry| entry.context_length)
+        .unwrap_or(0);
 
     let request = TurnRequest {
         api_key: setup.api_key,
@@ -1427,6 +1496,7 @@ pub async fn send_message(
         command_rules: setup.settings.permissions.command_rules.clone(),
         file_ignore,
         context_message_limit: setup.settings.model.context_message_limit,
+        context_length,
         max_tool_iterations: setup.settings.model.max_tool_iterations,
         auto_continue: setup.session.auto_continue
             || setup.settings.model.auto_continue_all_sessions,

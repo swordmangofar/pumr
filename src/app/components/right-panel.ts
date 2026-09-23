@@ -18,7 +18,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
         <div class="flex gap-1 rounded-xl bg-white/5 p-1">
           <button
             type="button"
-            class="flex flex-1 items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="flex min-w-0 flex-1 items-center justify-center rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               tab() === 'changes'
                 ? 'bg-white/10 text-white shadow-sm'
@@ -26,16 +26,16 @@ import { SystemPromptsPanel } from './system-prompts-panel';
             "
             (click)="workspace.setRightTab('changes')"
           >
-            {{ 'right.files' | transloco }}
+            <span class="min-w-0 truncate">{{ 'right.files' | transloco }}</span>
             @if (changes().length > 0) {
-              <span class="ml-1.5 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
+              <span class="ml-1.5 shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
                 {{ changes().length }}
               </span>
             }
           </button>
           <button
             type="button"
-            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               tab() === 'session'
                 ? 'bg-white/10 text-white shadow-sm'
@@ -47,7 +47,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
           </button>
           <button
             type="button"
-            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               tab() === 'prompts'
                 ? 'bg-white/10 text-white shadow-sm'
@@ -59,7 +59,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
           </button>
           <button
             type="button"
-            class="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+            class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
               tab() === 'modes'
                 ? 'bg-white/10 text-white shadow-sm'

@@ -29,11 +29,13 @@ import { SpendIndicator } from './components/spend-indicator';
 import { WorkspaceEditor } from './components/workspace-editor';
 import { isTauri } from './core/api';
 import { matchesHotkey } from './core/hotkeys';
-import { Session } from './core/models';
+import { Session, Settings } from './core/models';
 import { ModelsService } from './core/models.service';
 import { SettingsService } from './core/settings.service';
 import { UpdaterService } from './core/updater.service';
 import { WorkspaceService } from './core/workspace.service';
+import { stepZoom, ZOOM_DEFAULT } from './core/zoom';
+import { ZoomService } from './core/zoom.service';
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 
@@ -372,7 +374,12 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 
       <div class="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         @if (workspace.leftPanelOpen()) {
-          <div class="relative shrink-0" [style.width.px]="workspace.leftPanelWidth()">
+          <div
+            class="relative shrink-0 rounded-2xl"
+            [class]="workspace.focusedPanel() === 'left' ? 'ring-2 ring-accent/40' : ''"
+            [style.width.px]="workspace.leftPanelWidth()"
+            (mousedown)="workspace.setFocusedPanel('left')"
+          >
             <app-sidebar class="glass block h-full w-full overflow-hidden rounded-2xl" />
             <div
               [class]="
@@ -384,7 +391,11 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
           </div>
         }
 
-        <main class="glass flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl">
+        <main
+          class="glass flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl"
+          [class]="workspace.focusedPanel() === 'center' ? 'ring-2 ring-accent/40' : ''"
+          (mousedown)="workspace.setFocusedPanel('center')"
+        >
           @if (workspace.leftTab() === 'workspace') {
             <app-workspace-editor class="min-h-0 flex-1" />
           } @else if (workspace.leftTab() === 'git') {
@@ -395,7 +406,12 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
         </main>
 
         @if (workspace.rightPanelOpen() && workspace.leftTab() !== 'git') {
-          <div class="relative shrink-0" [style.width.px]="workspace.rightPanelWidth()">
+          <div
+            class="relative shrink-0 rounded-2xl"
+            [class]="workspace.focusedPanel() === 'right' ? 'ring-2 ring-accent/40' : ''"
+            [style.width.px]="workspace.rightPanelWidth()"
+            (mousedown)="workspace.setFocusedPanel('right')"
+          >
             <div
               [class]="
                 'absolute inset-y-0 -left-2 w-2 cursor-col-resize rounded-full transition-colors ' +
@@ -427,6 +443,7 @@ export class App implements OnInit {
   protected readonly workspace = inject(WorkspaceService);
   protected readonly updater = inject(UpdaterService);
   private readonly models = inject(ModelsService);
+  private readonly zoom = inject(ZoomService);
 
   protected readonly tauri = isTauri();
 
@@ -712,17 +729,90 @@ export class App implements OnInit {
     if (!settings) {
       return;
     }
+    if (this.handleZoomHotkey(event, settings)) {
+      return;
+    }
     if (matchesHotkey(settings.openTabHotkey, event)) {
       event.preventDefault();
       void this.startNewSession();
       return;
     }
+    if (matchesHotkey(settings.newSessionHotkey, event)) {
+      event.preventDefault();
+      void this.startNewSession();
+      return;
+    }
     if (matchesHotkey(settings.closeTabHotkey, event)) {
+      const sidebarFocused =
+        this.workspace.focusedPanel() === 'left' && this.workspace.leftTab() === 'projects';
+      if (sidebarFocused && matchesHotkey(settings.deleteSessionHotkey, event)) {
+        // The sidebar handles this key as "delete the highlighted session".
+        return;
+      }
       event.preventDefault();
       const sessionId = this.workspace.activeSessionId();
       if (sessionId) {
         this.workspace.closeTab(sessionId, true);
       }
+      return;
     }
+    if (
+      event.key === 'Tab' &&
+      !event.defaultPrevented &&
+      this.workspace.focusedPanel() &&
+      (!this.isEditableTarget(event.target) || this.isComposerTarget(event.target))
+    ) {
+      if (event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        this.workspace.cycleFocusedPanelTab(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        this.workspace.focusAdjacentPanel(event.shiftKey ? -1 : 1);
+        if (this.workspace.focusedPanel() === 'center') {
+          this.workspace.requestComposerFocus();
+        }
+      }
+    }
+  }
+
+  private handleZoomHotkey(event: KeyboardEvent, settings: Settings): boolean {
+    const modifier = event.metaKey || event.ctrlKey;
+    if (!modifier || event.altKey) {
+      return false;
+    }
+    const current = settings.zoom ?? ZOOM_DEFAULT;
+    let next: number;
+    if (event.key === '+' || event.key === '=') {
+      next = stepZoom(current, 1);
+    } else if (event.key === '-' || event.key === '_') {
+      next = stepZoom(current, -1);
+    } else if (event.key === '0') {
+      next = ZOOM_DEFAULT;
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    if (next === current) {
+      return true;
+    }
+    this.zoom.apply(next);
+    void this.settings.patch({ zoom: next });
+    return true;
+  }
+
+  private isComposerTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    return !!element?.closest?.('app-composer');
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    if (!element || !element.tagName) {
+      return false;
+    }
+    const tag = element.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || element.isContentEditable;
   }
 }

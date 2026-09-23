@@ -17,18 +17,37 @@ const KEY_LABELS: Record<string, string> = {
 const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta', 'CapsLock', 'OS']);
 
 export function normalizeKey(event: KeyboardEvent): string {
+  if (KEY_LABELS[event.key]) {
+    return KEY_LABELS[event.key];
+  }
   if (event.key.length === 1) {
     return event.key.toUpperCase();
   }
-  return KEY_LABELS[event.key] ?? event.key;
+  return event.key;
+}
+
+export interface HotkeyFormatOptions {
+  /** Accept bare function keys (`F1`–`F24`) without a modifier. */
+  functionKeys?: boolean;
+  /** Accept any bare non-modifier key, e.g. `Delete` or `Backspace`. */
+  anyKey?: boolean;
 }
 
 /**
  * Serializes a keyboard event into a canonical hotkey string such as
  * `Ctrl+Shift+K` or `Cmd+W`. Returns `null` for plain keys (no modifier) and
- * for modifier-only presses so that single letters cannot be captured.
+ * for modifier-only presses so that single letters cannot be captured. Bare
+ * function keys are accepted when `functionKeys` is set, and any bare key when
+ * `anyKey` is set.
  */
-export function formatHotkey(event: KeyboardEvent): string | null {
+export function formatHotkey(
+  event: KeyboardEvent,
+  options: boolean | HotkeyFormatOptions = false,
+): string | null {
+  const { functionKeys, anyKey } =
+    typeof options === 'boolean'
+      ? { functionKeys: options, anyKey: false }
+      : { functionKeys: options.functionKeys ?? false, anyKey: options.anyKey ?? false };
   if (MODIFIER_KEYS.has(event.key)) {
     return null;
   }
@@ -45,10 +64,18 @@ export function formatHotkey(event: KeyboardEvent): string | null {
   if (event.metaKey) {
     modifiers.push('Cmd');
   }
+  const key = normalizeKey(event);
   if (modifiers.length === 0) {
-    return null;
+    if (anyKey) {
+      return key;
+    }
+    return functionKeys && isFunctionKey(key) ? key : null;
   }
-  return [...modifiers, normalizeKey(event)].join('+');
+  return [...modifiers, key].join('+');
+}
+
+export function isFunctionKey(key: string): boolean {
+  return /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
 }
 
 export function matchesHotkey(hotkey: string | null | undefined, event: KeyboardEvent): boolean {
@@ -59,7 +86,7 @@ export function matchesHotkey(hotkey: string | null | undefined, event: Keyboard
     .split('+')
     .map((part) => part.trim())
     .filter(Boolean);
-  if (parts.length < 2) {
+  if (parts.length === 0) {
     return false;
   }
   const key = parts[parts.length - 1];
@@ -91,4 +118,16 @@ export function defaultOpenTabHotkey(): string {
 
 export function defaultCloseTabHotkey(): string {
   return isMacPlatform() ? 'Cmd+W' : 'Ctrl+W';
+}
+
+export function defaultNewSessionHotkey(): string {
+  return isMacPlatform() ? 'Cmd+T' : 'Ctrl+T';
+}
+
+export function defaultDeleteSessionHotkey(): string {
+  return isMacPlatform() ? 'Cmd+W' : 'Ctrl+W';
+}
+
+export function defaultWindowToggleHotkey(): string {
+  return isMacPlatform() ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space';
 }

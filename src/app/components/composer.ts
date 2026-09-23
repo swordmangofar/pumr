@@ -27,6 +27,7 @@ import { ModelsService } from '../core/models.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { MessageQueueService } from '../core/message-queue.service';
+import { AttachmentPreview } from './attachment-preview';
 import { ComposerEditorService, MentionQuery } from './composer-editor.service';
 
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
@@ -130,7 +131,7 @@ const PROVIDER_PRESETS = [
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [ComposerEditorService],
   encapsulation: ViewEncapsulation.None,
-  imports: [TranslocoPipe],
+  imports: [TranslocoPipe, AttachmentPreview],
   styles: [
     `
       .composer-editor:empty::before {
@@ -242,7 +243,8 @@ const PROVIDER_PRESETS = [
           <div class="flex flex-wrap gap-2 px-4 pt-3">
             @for (attachment of attachments(); track attachment.id) {
               <div
-                class="relative flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 py-1.5 pr-7 pl-1.5"
+                class="relative flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/5 py-1.5 pr-7 pl-1.5 transition hover:border-accent/50 hover:bg-white/10"
+                (click)="previewAttachment.set(attachment)"
               >
                 @if (attachment.kind === 'image') {
                   <img
@@ -287,7 +289,7 @@ const PROVIDER_PRESETS = [
                   class="absolute top-1 right-1 grid h-5 w-5 place-items-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
                   [attr.aria-label]="'composer.removeAttachment' | transloco"
                   [attr.title]="'composer.removeAttachment' | transloco"
-                  (click)="removeAttachment(attachment.id)"
+                  (click)="removeAttachment(attachment.id); $event.stopPropagation()"
                 >
                   <svg class="h-3 w-3" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                     <path
@@ -1182,6 +1184,15 @@ const PROVIDER_PRESETS = [
         </div>
       </div>
     }
+
+    @if (previewAttachment(); as preview) {
+      <app-attachment-preview
+        [attachment]="preview"
+        [editable]="true"
+        (closed)="previewAttachment.set(null)"
+        (applied)="onImageAnnotated(preview, $event)"
+      />
+    }
   `,
 })
 export class Composer {
@@ -1197,6 +1208,7 @@ export class Composer {
   readonly composing = output<boolean>();
   protected readonly draft = signal('');
   protected readonly attachments = signal<MessageAttachment[]>([]);
+  protected readonly previewAttachment = signal<MessageAttachment | null>(null);
   protected readonly mentions = signal<Mention[]>([]);
   protected readonly attachmentError = signal<string | null>(null);
   protected readonly dragging = signal(false);
@@ -1218,6 +1230,10 @@ export class Composer {
   private readonly mcpServers = signal<string[]>([]);
   private mentionQuery: MentionQuery | null = null;
   private loadedEntriesFor = '';
+  private lastSessionId: string | null = null;
+  private pendingDraftSessionId: string | null = null;
+  private lastComposerFocusNonce = this.workspace.composerFocusNonce();
+  private readonly pendingEditorText = signal<string | null>(null);
 
   private readonly transloco = inject(TranslocoService);
 
@@ -1372,6 +1388,7 @@ export class Composer {
     effect(() => {
       const draft = this.workspace.pendingDraft();
       if (draft !== null) {
+        this.pendingDraftSessionId = this.workspace.activeAgent()?.id ?? null;
         this.setEditorText(draft);
         this.workspace.consumeDraft();
       }
@@ -1391,12 +1408,70 @@ export class Composer {
       element.focus();
       element.setSelectionRange(element.value.length, element.value.length);
     });
+    effect(() => {
+      const editor = this.editorRef()?.nativeElement;
+      const text = this.pendingEditorText();
+      if (!editor || text === null) {
+        return;
+      }
+      untracked(() => {
+        this.pendingEditorText.set(null);
+        this.setEditorText(text);
+      });
+    });
+    effect(() => {
+      const sessionId = this.workspace.activeAgent()?.id ?? null;
+      if (sessionId === this.lastSessionId) {
+        return;
+      }
+      const previous = this.lastSessionId;
+      this.lastSessionId = sessionId;
+      untracked(() => {
+        if (previous !== null) {
+          this.workspace.setComposerDraft(previous, this.draft());
+          this.workspace.setComposerAttachments(previous, this.attachments());
+        }
+        this.previewAttachment.set(null);
+        this.attachmentError.set(null);
+        if (sessionId !== null && sessionId !== this.pendingDraftSessionId) {
+          const text = this.workspace.composerDraftFor(sessionId);
+          if (this.editorRef()) {
+            this.setEditorText(text);
+          } else if (text.length > 0) {
+            this.pendingEditorText.set(text);
+          }
+        }
+        this.attachments.set(
+          sessionId !== null ? this.workspace.composerAttachmentsFor(sessionId) : [],
+        );
+        this.pendingDraftSessionId = null;
+      });
+    });
+    effect(() => {
+      const nonce = this.workspace.composerFocusNonce();
+      if (nonce === this.lastComposerFocusNonce) {
+        return;
+      }
+      this.lastComposerFocusNonce = nonce;
+      untracked(() => this.focusInput());
+    });
+  }
+
+  private persistAttachments(): void {
+    const session = this.workspace.activeAgent();
+    if (session) {
+      this.workspace.setComposerAttachments(session.id, this.attachments());
+    }
   }
 
   protected onEditorInput(): void {
     const { content, mentions } = this.serializeEditor();
     this.draft.set(content);
     this.mentions.set(mentions);
+    const session = this.workspace.activeAgent();
+    if (session) {
+      this.workspace.setComposerDraft(session.id, content);
+    }
     this.composing.emit(content.trim().length > 0 || mentions.length > 0);
     this.autoGrow();
     this.updateMention();
@@ -1649,6 +1724,15 @@ export class Composer {
   protected removeAttachment(id: string): void {
     this.attachments.update((list) => list.filter((attachment) => attachment.id !== id));
     this.attachmentError.set(null);
+    this.persistAttachments();
+  }
+
+  protected onImageAnnotated(source: MessageAttachment, edited: MessageAttachment): void {
+    this.attachments.update((list) =>
+      list.map((attachment) => (attachment.id === source.id ? edited : attachment)),
+    );
+    this.previewAttachment.set(null);
+    this.persistAttachments();
   }
 
   protected preview(attachment: MessageAttachment): string {
@@ -1696,6 +1780,7 @@ export class Composer {
     }
     if (accepted.length > 0) {
       this.attachments.set([...current, ...accepted]);
+      this.persistAttachments();
     }
     if (tooMany) {
       this.attachmentError.set('composer.attachmentTooMany');
@@ -2149,8 +2234,14 @@ export class Composer {
   }
 
   private clearComposer(): void {
+    const session = this.workspace.activeAgent();
+    if (session) {
+      this.workspace.clearComposerDraft(session.id);
+      this.workspace.clearComposerAttachments(session.id);
+    }
     this.setEditorText('');
     this.attachments.set([]);
+    this.previewAttachment.set(null);
     this.mentions.set([]);
     this.textBlocks.set([]);
     this.attachmentError.set(null);

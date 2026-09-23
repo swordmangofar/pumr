@@ -36,6 +36,9 @@ pub struct TurnRequest {
     pub command_rules: Vec<String>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub context_message_limit: usize,
+    /// The selected model's context window in tokens (0 when unknown). Used to
+    /// trim history so large projects don't overflow the provider's limit.
+    pub context_length: i64,
     /// Maximum number of consecutive tool-requesting model turns before the
     /// loop pauses (or auto-continues).
     pub max_tool_iterations: usize,
@@ -126,7 +129,7 @@ pub async fn run_turn(
             message: placeholder.clone(),
         });
 
-        let history = build_history(deps, &request)?;
+        let history = build_history(deps, &request, &tool_schemas)?;
         let routing = request
             .provider
             .as_deref()
@@ -301,16 +304,22 @@ async fn execute_tool_calls(
     )> = Vec::new();
     let mut cancelled = false;
     for call in tool_calls {
-        if request.cancel.is_cancelled() {
-            cancelled = true;
-            break;
-        }
         emit(StreamEvent::ToolStart {
             call_id: call.id.clone(),
             name: call.name.clone(),
             summary: summarize(request, &call.name, &call.arguments),
             arguments: call.arguments.clone(),
         });
+
+        // A cancelled turn must still leave a tool output for every requested
+        // call, otherwise the stored transcript is invalid for strict providers
+        // (Azure/OpenAI reject calls without a matching output).
+        if request.cancel.is_cancelled() {
+            cancelled = true;
+            let outcome = ToolOutcome::error("Tool call cancelled before it ran.");
+            record_tool_outcome(deps, request, call, &outcome, 0, emit)?;
+            continue;
+        }
 
         if call.name == "task" {
             let arguments: Value =
@@ -466,6 +475,7 @@ fn run_subagent<'a>(
             command_rules: request.command_rules.clone(),
             file_ignore: request.file_ignore.clone(),
             context_message_limit: request.context_message_limit,
+            context_length: request.context_length,
             max_tool_iterations: request.max_tool_iterations,
             auto_continue: false,
             fallback_pricing: request.fallback_pricing,
@@ -550,12 +560,14 @@ fn provider_routing(provider: &str) -> Option<ProviderRouting> {
     }
 }
 
-fn build_history(deps: &TurnDeps, request: &TurnRequest) -> Result<Vec<ChatMessage>> {
-    let mut messages = deps.db.list_messages(&request.session_id)?;
-    let limit = request.context_message_limit;
-    if limit > 0 && messages.len() > limit {
-        messages.drain(..messages.len() - limit);
-    }
+fn build_history(
+    deps: &TurnDeps,
+    request: &TurnRequest,
+    tool_schemas: &[Value],
+) -> Result<Vec<ChatMessage>> {
+    let messages = deps
+        .db
+        .list_messages_limited(&request.session_id, request.context_message_limit)?;
 
     let mut history = vec![ChatMessage::text("system", request.system_prompt.clone())];
     for message in messages {
@@ -599,7 +611,176 @@ fn build_history(deps: &TurnDeps, request: &TurnRequest) -> Result<Vec<ChatMessa
             _ => {}
         }
     }
+
+    let overhead: usize = tool_schemas
+        .iter()
+        .map(|schema| estimate_tokens(&schema.to_string()))
+        .sum();
+    let history = trim_to_budget(history, request.context_length, overhead);
     Ok(sanitize(history))
+}
+
+/// Rough token estimate. ASCII text averages ~4 characters per token while
+/// non-ASCII (CJK, emoji, ...) is closer to one token per character.
+fn estimate_tokens(text: &str) -> usize {
+    let mut ascii = 0usize;
+    let mut other = 0usize;
+    for ch in text.chars() {
+        if ch.is_ascii() {
+            ascii += 1;
+        } else {
+            other += 1;
+        }
+    }
+    ascii.div_ceil(4) + other
+}
+
+fn part_token_estimate(part: &Value) -> usize {
+    match part.get("type").and_then(Value::as_str) {
+        Some("text") => part
+            .get("text")
+            .and_then(Value::as_str)
+            .map(estimate_tokens)
+            .unwrap_or(0),
+        // Images and files are tokenized by the provider from their decoded
+        // content, not their base64 size, so use a conservative flat estimate.
+        Some("image_url") => 1_000,
+        Some("file") => 4_000,
+        _ => 0,
+    }
+}
+
+fn content_token_estimate(content: &Value) -> usize {
+    match content {
+        Value::String(text) => estimate_tokens(text),
+        Value::Array(parts) => parts.iter().map(part_token_estimate).sum(),
+        _ => 0,
+    }
+}
+
+fn message_token_estimate(message: &ChatMessage) -> usize {
+    let tool_calls = message
+        .tool_calls
+        .as_ref()
+        .map(|calls| estimate_tokens(&calls.to_string()))
+        .unwrap_or(0);
+    content_token_estimate(&message.content) + tool_calls + 4
+}
+
+/// Input token budget derived from the model's context window. We reserve
+/// roughly a quarter (capped) for the model's output, then subtract the tool
+/// schemas that are sent alongside the messages.
+fn context_token_budget(context_length: i64, overhead: usize) -> Option<usize> {
+    if context_length <= 0 {
+        return None;
+    }
+    let context_length = context_length as usize;
+    let reserve = (context_length / 4).clamp(2_048, 16_384);
+    Some(context_length.saturating_sub(reserve).saturating_sub(overhead).max(1_024))
+}
+
+fn truncate_text(text: &str, budget: usize) -> String {
+    let mut result = String::new();
+    let mut ascii = 0usize;
+    let mut other = 0usize;
+    for ch in text.chars() {
+        if ch.is_ascii() {
+            ascii += 1;
+        } else {
+            other += 1;
+        }
+        if ascii.div_ceil(4) + other > budget {
+            break;
+        }
+        result.push(ch);
+    }
+    result
+}
+
+/// Shrinks a single message to fit `budget`, preferring to keep the most recent
+/// content and dropping any tool call.
+fn truncate_message(mut message: ChatMessage, budget: usize) -> ChatMessage {
+    if message_token_estimate(&message) <= budget {
+        return message;
+    }
+    match message.content {
+        Value::Array(parts) => {
+            let mut remaining = budget;
+            let mut kept: Vec<Value> = Vec::new();
+            for part in parts.into_iter().rev() {
+                let is_text = part.get("type").and_then(Value::as_str) == Some("text");
+                if is_text {
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
+                        let truncated = truncate_text(text, remaining);
+                        if !truncated.is_empty() {
+                            remaining = remaining.saturating_sub(estimate_tokens(&truncated));
+                            kept.push(json!({ "type": "text", "text": truncated }));
+                        }
+                    }
+                } else {
+                    let cost = part_token_estimate(&part);
+                    if cost <= remaining {
+                        remaining -= cost;
+                        kept.push(part);
+                    }
+                }
+            }
+            kept.reverse();
+            message.content = Value::Array(kept);
+        }
+        _ => {
+            let text = content_to_text(&message.content);
+            message.content = Value::String(truncate_text(&text, budget));
+        }
+    }
+    message.tool_calls = None;
+    message
+}
+
+/// Drops the oldest messages (and, if needed, shrinks the newest) until the
+/// estimated token count fits the model's context window. The system prompt is
+/// always kept but capped so it cannot consume the whole budget.
+fn trim_to_budget(
+    history: Vec<ChatMessage>,
+    context_length: i64,
+    overhead: usize,
+) -> Vec<ChatMessage> {
+    let Some(budget) = context_token_budget(context_length, overhead) else {
+        return history;
+    };
+    let mut history = history;
+    if history.is_empty() {
+        return history;
+    }
+
+    if message_token_estimate(&history[0]) > budget / 2 {
+        history[0] = truncate_message(history[0].clone(), budget / 2);
+    }
+
+    // Estimate once, then subtract as messages are dropped so the total is not
+    // recomputed over the whole transcript on every removal.
+    let mut total: usize = history.iter().map(message_token_estimate).sum();
+    let mut drop_end = 1;
+    while history.len() - drop_end > 1 && total > budget {
+        total -= message_token_estimate(&history[drop_end]);
+        drop_end += 1;
+    }
+    if drop_end > 1 {
+        history.drain(1..drop_end);
+    }
+
+    if history.len() > 1 && total > budget {
+        let remaining = budget.saturating_sub(message_token_estimate(&history[0]));
+        let index = history.len() - 1;
+        let shrunk = truncate_message(history[index].clone(), remaining);
+        if content_token_estimate(&shrunk.content) == 0 && shrunk.tool_calls.is_none() {
+            history.remove(index);
+        } else {
+            history[index] = shrunk;
+        }
+    }
+
+    history
 }
 
 fn user_content(text: &str, attachments: &[Attachment], context: &str) -> Option<Value> {
@@ -663,46 +844,81 @@ fn content_to_text(content: &Value) -> String {
     }
 }
 
+fn call_id(call: &Value) -> Option<&str> {
+    call.get("id").and_then(Value::as_str)
+}
+
+/// Repairs the transcript so every assistant tool call has exactly one matching
+/// tool output and every tool output has a preceding call. Strict providers
+/// (Azure/OpenAI) reject requests where the two are out of sync, which happens
+/// after a cancelled turn or when older messages are trimmed away.
 fn sanitize(history: Vec<ChatMessage>) -> Vec<ChatMessage> {
     let mut sanitized: Vec<ChatMessage> = Vec::new();
-    for message in history {
-        if message.role == "tool" {
-            if sanitized
-                .last()
-                .map(|previous| previous.tool_calls.is_some())
-                .unwrap_or(false)
-            {
-                sanitized.push(message);
+    let mut index = 0usize;
+    while index < history.len() {
+        let message = history[index].clone();
+
+        if message.role == "assistant" && message.tool_calls.is_some() {
+            let calls = message
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+
+            let mut results: Vec<ChatMessage> = Vec::new();
+            let mut next = index + 1;
+            while next < history.len() && history[next].role == "tool" {
+                let result = history[next].clone();
+                let matches = result
+                    .tool_call_id
+                    .as_deref()
+                    .is_some_and(|id| calls.iter().any(|call| call_id(call) == Some(id)));
+                if matches {
+                    results.push(result);
+                }
+                next += 1;
             }
-            continue;
-        }
-        if message.tool_calls.is_none() && !sanitized.is_empty() {
-            let previous_has_dangling_calls = sanitized
-                .last()
-                .map(|previous| previous.tool_calls.is_some())
-                .unwrap_or(false);
-            if previous_has_dangling_calls {
-                if let Some(previous) = sanitized.pop() {
-                    let text = content_to_text(&previous.content);
-                    if !text.is_empty() {
-                        sanitized.push(ChatMessage::text("assistant", text));
+
+            // Keep only calls that produced an output, ordered to match the
+            // call order the model requested them in.
+            let mut answered: Vec<Value> = Vec::new();
+            let mut ordered_results: Vec<ChatMessage> = Vec::new();
+            for call in &calls {
+                if let Some(id) = call_id(call) {
+                    if let Some(result) = results
+                        .iter()
+                        .find(|result| result.tool_call_id.as_deref() == Some(id))
+                    {
+                        answered.push(call.clone());
+                        ordered_results.push(result.clone());
                     }
                 }
             }
-        }
-        sanitized.push(message);
-    }
-    if sanitized
-        .last()
-        .map(|previous| previous.tool_calls.is_some())
-        .unwrap_or(false)
-    {
-        if let Some(previous) = sanitized.pop() {
-            let text = content_to_text(&previous.content);
-            if !text.is_empty() {
-                sanitized.push(ChatMessage::text("assistant", text));
+
+            if answered.is_empty() {
+                let text = content_to_text(&message.content);
+                if !text.is_empty() {
+                    sanitized.push(ChatMessage::text("assistant", text));
+                }
+            } else {
+                let mut assistant = message.clone();
+                assistant.tool_calls = Some(Value::Array(answered));
+                sanitized.push(assistant);
+                sanitized.extend(ordered_results);
             }
+            index = next;
+            continue;
         }
+
+        // Orphan tool output (its call was trimmed away or never existed).
+        if message.role == "tool" {
+            index += 1;
+            continue;
+        }
+
+        sanitized.push(message);
+        index += 1;
     }
     sanitized
 }
@@ -944,5 +1160,131 @@ mod tests {
         let slug = provider_routing("relace").expect("slug");
         assert_eq!(slug.order, vec!["relace".to_string()]);
         assert!(slug.sort.is_none());
+    }
+
+    #[test]
+    fn estimate_tokens_counts_ascii_and_non_ascii() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("abcd"), 1);
+        assert_eq!(estimate_tokens("abcde"), 2);
+        assert_eq!(estimate_tokens("日本語"), 3);
+    }
+
+    #[test]
+    fn context_budget_reserves_output_room() {
+        assert!(context_token_budget(0, 0).is_none());
+        let budget = context_token_budget(128_000, 0).expect("budget");
+        assert_eq!(budget, 128_000 - 16_384);
+        let small = context_token_budget(8_000, 3_000).expect("budget");
+        assert_eq!(small, 8_000 - 2_048 - 3_000);
+        assert_eq!(context_token_budget(100, 0), Some(1_024));
+    }
+
+    #[test]
+    fn trim_drops_oldest_messages_to_fit_budget() {
+        let system = ChatMessage::text("system", "sys");
+        let old = ChatMessage::text("user", "a".repeat(40_000));
+        let recent = ChatMessage::text("user", "recent question");
+        let trimmed = trim_to_budget(vec![system, old, recent], 12_000, 0);
+        assert_eq!(trimmed.len(), 2);
+        assert_eq!(trimmed[0].role, "system");
+        assert!(content_to_text(&trimmed[1].content).contains("recent question"));
+    }
+
+    #[test]
+    fn trim_shrinks_a_single_oversized_message() {
+        let system = ChatMessage::text("system", "sys");
+        let huge = ChatMessage::text("user", "x".repeat(400_000));
+        let trimmed = trim_to_budget(vec![system, huge], 20_000, 0);
+        assert_eq!(trimmed.len(), 2);
+        let total: usize = trimmed.iter().map(message_token_estimate).sum();
+        assert!(total <= 20_000, "expected {total} to fit within budget");
+    }
+
+    #[test]
+    fn trim_caps_the_system_prompt() {
+        let system = ChatMessage::text("system", "s".repeat(400_000));
+        let trimmed = trim_to_budget(vec![system], 20_000, 0);
+        assert_eq!(trimmed.len(), 1);
+        assert!(message_token_estimate(&trimmed[0]) <= 10_000);
+    }
+
+    fn calls(ids: &[&str]) -> Value {
+        Value::Array(
+            ids.iter()
+                .map(|id| {
+                    json!({
+                        "id": id,
+                        "type": "function",
+                        "function": { "name": "read", "arguments": "{}" }
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn sanitize_drops_unanswered_tool_calls() {
+        let history = vec![
+            ChatMessage::text("user", "go"),
+            ChatMessage::assistant_tool_calls("working".into(), calls(&["a", "b"])),
+            ChatMessage::tool_result("a", "result a"),
+            ChatMessage::text("user", "next"),
+        ];
+        let sanitized = sanitize(history);
+        let assistant = sanitized
+            .iter()
+            .find(|message| message.tool_calls.is_some())
+            .expect("assistant with calls");
+        assert_eq!(
+            assistant
+                .tool_calls
+                .as_ref()
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            sanitized.iter().filter(|message| message.role == "tool").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn sanitize_orders_tool_outputs_to_match_calls() {
+        let history = vec![
+            ChatMessage::assistant_tool_calls("".into(), calls(&["a", "b"])),
+            ChatMessage::tool_result("b", "result b"),
+            ChatMessage::tool_result("a", "result a"),
+        ];
+        let sanitized = sanitize(history);
+        assert_eq!(sanitized.len(), 3);
+        assert_eq!(sanitized[1].tool_call_id.as_deref(), Some("a"));
+        assert_eq!(sanitized[2].tool_call_id.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn sanitize_drops_orphan_tool_outputs() {
+        let history = vec![
+            ChatMessage::text("user", "go"),
+            ChatMessage::tool_result("missing", "stray"),
+        ];
+        let sanitized = sanitize(history);
+        assert_eq!(sanitized.len(), 1);
+        assert_eq!(sanitized[0].role, "user");
+    }
+
+    #[test]
+    fn sanitize_turns_fully_unanswered_call_into_text() {
+        let history = vec![
+            ChatMessage::text("user", "go"),
+            ChatMessage::assistant_tool_calls("partial answer".into(), calls(&["a"])),
+        ];
+        let sanitized = sanitize(history);
+        assert_eq!(sanitized.len(), 2);
+        assert!(sanitized[1].tool_calls.is_none());
+        assert_eq!(content_to_text(&sanitized[1].content), "partial answer");
     }
 }

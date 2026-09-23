@@ -325,14 +325,31 @@ impl OpenRouterClient {
             }
         }
 
-        let response = self
-            .request(reqwest::Method::POST, "/chat/completions", api_key)
-            .json(&body)
-            .send()
-            .await?;
+        let response = tokio::select! {
+            _ = cancel.cancelled() => {
+                return Ok(ChatOutcome {
+                    usage: ChatUsage::default(),
+                    cancelled: true,
+                    tool_calls: Vec::new(),
+                });
+            }
+            response = self
+                .request(reqwest::Method::POST, "/chat/completions", api_key)
+                .json(&body)
+                .send() => response?,
+        };
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = tokio::select! {
+                _ = cancel.cancelled() => {
+                    return Ok(ChatOutcome {
+                        usage: ChatUsage::default(),
+                        cancelled: true,
+                        tool_calls: Vec::new(),
+                    });
+                }
+                body = response.text() => body.unwrap_or_default(),
+            };
             return Err(openrouter_error(status.as_u16(), &body));
         }
 
@@ -371,11 +388,7 @@ impl OpenRouterClient {
                     continue;
                 };
                 if let Some(error) = value.get("error") {
-                    let message = error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown provider error");
-                    return Err(AppError::msg(message.to_string()));
+                    return Err(AppError::msg(describe_error(error)));
                 }
                 if let Some(delta) = value
                     .get("choices")
@@ -567,16 +580,43 @@ fn provider_icon_url(terms: Option<&str>, privacy: Option<&str>) -> Option<Strin
     ))
 }
 
+fn describe_error(error: &Value) -> String {
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown provider error");
+    let metadata = error.get("metadata");
+    let mut detail = message.to_string();
+    if let Some(error_type) = metadata
+        .and_then(|metadata| metadata.get("error_type"))
+        .and_then(Value::as_str)
+    {
+        detail.push_str(&format!(" [error_type: {error_type}]"));
+    }
+    if let Some(provider) = metadata
+        .and_then(|metadata| metadata.get("provider_name"))
+        .and_then(Value::as_str)
+    {
+        detail.push_str(&format!(" [provider: {provider}]"));
+    }
+    if let Some(raw) = metadata
+        .and_then(|metadata| metadata.get("raw"))
+        .and_then(Value::as_str)
+    {
+        detail.push_str(&format!(": {raw}"));
+    } else if let Some(provider_code) = metadata
+        .and_then(|metadata| metadata.get("provider_code"))
+        .and_then(Value::as_str)
+    {
+        detail.push_str(&format!(" [provider_code: {provider_code}]"));
+    }
+    detail
+}
+
 fn openrouter_error(status: u16, body: &str) -> AppError {
     let message = serde_json::from_str::<Value>(body)
         .ok()
-        .and_then(|value| {
-            value
-                .get("error")
-                .and_then(|error| error.get("message"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
+        .and_then(|value| value.get("error").map(describe_error))
         .unwrap_or_else(|| body.chars().take(500).collect());
     AppError::msg(format!("OpenRouter error ({status}): {message}"))
 }
@@ -694,6 +734,22 @@ mod tests {
         assert_eq!(workload_metric(Some(&workloads), "throughput"), Some(42.0));
         assert_eq!(workload_metric(Some(&workloads), "latency"), Some(120.0));
         assert_eq!(workload_metric(None, "throughput"), None);
+    }
+
+    #[test]
+    fn provider_error_surfaces_metadata() {
+        let body = r#"{"error":{"code":400,"message":"Provider returned error","metadata":{"error_type":"context_length_exceeded","provider_name":"OpenAI","raw":"maximum context length is 128000 tokens"}}}"#;
+        let error = openrouter_error(400, body).to_string();
+        assert!(error.contains("Provider returned error"));
+        assert!(error.contains("error_type: context_length_exceeded"));
+        assert!(error.contains("provider: OpenAI"));
+        assert!(error.contains("maximum context length is 128000 tokens"));
+    }
+
+    #[test]
+    fn provider_error_falls_back_to_body() {
+        let error = openrouter_error(500, "upstream exploded").to_string();
+        assert!(error.contains("upstream exploded"));
     }
 
     #[tokio::test]

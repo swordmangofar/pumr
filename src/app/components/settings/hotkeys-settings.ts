@@ -1,14 +1,23 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { api, isTauri } from '../../core/api';
 import {
   defaultCloseTabHotkey,
+  defaultDeleteSessionHotkey,
+  defaultNewSessionHotkey,
   defaultOpenTabHotkey,
+  defaultWindowToggleHotkey,
   displayHotkey,
   formatHotkey,
 } from '../../core/hotkeys';
 import { SettingsDraftService } from './settings-draft.service';
 
-type HotkeyField = 'openTabHotkey' | 'closeTabHotkey';
+type HotkeyField =
+  | 'openTabHotkey'
+  | 'closeTabHotkey'
+  | 'newSessionHotkey'
+  | 'deleteSessionHotkey'
+  | 'windowToggleHotkey';
 
 @Component({
   selector: 'app-hotkeys-settings',
@@ -89,6 +98,24 @@ export class HotkeysSettings {
       hint: 'settings.hotkeys.closeTabHint',
       default: defaultCloseTabHotkey(),
     },
+    {
+      field: 'newSessionHotkey',
+      label: 'settings.hotkeys.newSession',
+      hint: 'settings.hotkeys.newSessionHint',
+      default: defaultNewSessionHotkey(),
+    },
+    {
+      field: 'deleteSessionHotkey',
+      label: 'settings.hotkeys.deleteSession',
+      hint: 'settings.hotkeys.deleteSessionHint',
+      default: defaultDeleteSessionHotkey(),
+    },
+    {
+      field: 'windowToggleHotkey',
+      label: 'settings.hotkeys.windowToggle',
+      hint: 'settings.hotkeys.windowToggleHint',
+      default: defaultWindowToggleHotkey(),
+    },
   ];
 
   constructor() {
@@ -106,6 +133,9 @@ export class HotkeysSettings {
     }
     this.active.set(field);
     this.draft.recording.set(true);
+    if (field === 'windowToggleHotkey') {
+      void this.setSuspended(true);
+    }
   }
 
   protected capture(event: KeyboardEvent): void {
@@ -119,12 +149,24 @@ export class HotkeysSettings {
       this.stop();
       return;
     }
-    const hotkey = formatHotkey(event);
+    const hotkey = formatHotkey(
+      event,
+      field === 'deleteSessionHotkey'
+        ? { anyKey: true }
+        : field === 'windowToggleHotkey',
+    );
     if (!hotkey) {
+      return;
+    }
+    if (field === 'deleteSessionHotkey' && !this.isValidDeleteHotkey(hotkey)) {
       return;
     }
     this.draft.patch(field, hotkey);
     this.stop();
+  }
+
+  private isValidDeleteHotkey(hotkey: string): boolean {
+    return hotkey.includes('+') || hotkey === 'Delete' || hotkey === 'Backspace';
   }
 
   protected reset(field: HotkeyField, value: string): void {
@@ -133,7 +175,22 @@ export class HotkeysSettings {
   }
 
   private stop(): void {
+    const field = this.active();
     this.active.set(null);
     this.draft.recording.set(false);
+    if (field === 'windowToggleHotkey') {
+      void this.setSuspended(false);
+    }
+  }
+
+  private async setSuspended(suspended: boolean): Promise<void> {
+    if (!isTauri()) {
+      return;
+    }
+    try {
+      await api.suspendWindowShortcut(suspended);
+    } catch {
+      // Ignore: the shortcut is re-applied whenever settings are saved.
+    }
   }
 }

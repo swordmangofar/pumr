@@ -6,6 +6,7 @@ import {
   EndpointInfo,
   FileChange,
   FileDiff,
+  GitBlameLine,
   GitBranch,
   GitCommit,
   GitCommitDetail,
@@ -52,6 +53,8 @@ export const api = {
   getDefaultSystemPrompts: () => invoke<DefaultSystemPrompts>('get_default_system_prompts'),
   getDefaultModes: () => invoke<Mode[]>('get_default_modes'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
+  suspendWindowShortcut: (suspended: boolean) =>
+    invoke<void>('suspend_window_shortcut', { suspended }),
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
   hasApiKey: (provider: string) => invoke<boolean>('has_api_key', { provider }),
@@ -71,6 +74,8 @@ export const api = {
   listSessions: (projectId: string, includeArchived = false) =>
     invoke<Session[]>('list_sessions', { projectId, includeArchived }),
   listSubSessions: (sessionId: string) => invoke<Session[]>('list_sub_sessions', { sessionId }),
+  listSubSessionsForProject: (projectId: string) =>
+    invoke<Session[]>('list_sub_sessions_for_project', { projectId }),
   createSession: (args: CreateSessionArgs) => invoke<Session>('create_session', { ...args }),
   updateSession: (args: UpdateSessionArgs) => invoke<Session>('update_session', { ...args }),
   setSessionAutoContinue: (sessionId: string, autoContinue: boolean) =>
@@ -85,7 +90,7 @@ export const api = {
   stopGeneration: (sessionId: string) => invoke<void>('stop_generation', { sessionId }),
   resolvePermission: (
     requestId: string,
-    decision: 'allow_once' | 'allow_always' | 'deny' | 'deny_always',
+    decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
     rule: string | null = null,
     folder: string | null = null,
     promptKind: string | null = null,
@@ -104,8 +109,13 @@ export const api = {
   getGitInfo: (projectId: string) => invoke<GitInfo>('get_git_info', { projectId }),
   getGitStatus: (projectId: string) => invoke<GitStatus>('get_git_status', { projectId }),
   getGitBranches: (projectId: string) => invoke<GitBranch[]>('get_git_branches', { projectId }),
-  getGitCommits: (projectId: string, query: string | null, skip: number, limit: number) =>
-    invoke<GitCommit[]>('get_git_commits', { projectId, query, skip, limit }),
+  getGitCommits: (
+    projectId: string,
+    query: string | null,
+    skip: number,
+    limit: number,
+    path: string | null = null,
+  ) => invoke<GitCommit[]>('get_git_commits', { projectId, query, path, skip, limit }),
   getGitCommit: (projectId: string, hash: string) =>
     invoke<GitCommitDetail>('get_git_commit', { projectId, hash }),
   getGitCommitFileDiff: (projectId: string, hash: string, path: string) =>
@@ -117,6 +127,10 @@ export const api = {
   gitUnstage: (projectId: string, path: string | null = null) =>
     invoke<void>('git_unstage', { projectId, path }),
   gitDiscard: (projectId: string, path: string) => invoke<void>('git_discard', { projectId, path }),
+  getGitBlame: (projectId: string, path: string) =>
+    invoke<GitBlameLine[]>('get_git_blame', { projectId, path }),
+  gitIgnore: (projectId: string, path: string) => invoke<void>('git_ignore', { projectId, path }),
+  revealPath: (projectId: string, path: string) => invoke<void>('reveal_path', { projectId, path }),
   gitCommit: (projectId: string, message: string, amend: boolean) =>
     invoke<string>('git_commit', { projectId, message, amend }),
   gitCheckout: (projectId: string, branch: string, track = false, localBranch?: string) =>

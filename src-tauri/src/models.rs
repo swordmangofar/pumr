@@ -349,6 +349,17 @@ pub struct GitCommitDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitBlameLine {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub timestamp: i64,
+    pub line: i64,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitTag {
     pub name: String,
     pub hash: String,

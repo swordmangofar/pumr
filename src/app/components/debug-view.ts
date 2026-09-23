@@ -8,13 +8,21 @@ import {
   untracked,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { FileChange, LiveToolCall, Message, Mode } from '../core/models';
+import {
+  AGENT_GRAPH_LANE_WIDTH,
+  AGENT_GRAPH_RADIUS,
+  AGENT_GRAPH_ROW_HEIGHT,
+  AgentGraphSession,
+  buildAgentGraph,
+} from '../core/agent-graph';
+import { FileChange, LiveToolCall, Message, Mode, Session } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 
 type DebugKind =
   'context' | 'user' | 'assistant' | 'tool' | 'subagent' | 'question' | 'mcp' | 'skill' | 'error';
 type DebugStatus = 'ok' | 'error' | 'running';
+type DebugViewMode = 'timeline' | 'branches';
 
 interface DebugField {
   labelKey: string;
@@ -32,6 +40,7 @@ interface DebugSection {
 
 interface DebugStep {
   id: string;
+  sessionId: string;
   kind: DebugKind;
   tags: DebugKind[];
   titleKey: string;
@@ -42,6 +51,10 @@ interface DebugStep {
   durationMs?: number | null;
   fields: DebugField[];
   sections: DebugSection[];
+  /** Task tool-call ids issued by this step; each spawns a child branch. */
+  taskCallIds: string[];
+  /** Tool-call id this step answers, used to merge a spawned branch back. */
+  toolCallId: string | null;
 }
 
 const DEBUG_KINDS: readonly DebugKind[] = [
@@ -143,6 +156,23 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
           <div
             class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-white/5 px-6 py-2"
           >
+            <div class="mr-2 flex gap-0.5 rounded-lg bg-white/5 p-0.5">
+              @for (mode of views; track mode) {
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-0.5 text-xs transition-colors"
+                  [class]="
+                    view() === mode ? 'bg-accent/20 text-white' : 'text-mist/50 hover:text-mist'
+                  "
+                  (click)="view.set(mode)"
+                >
+                  {{ 'debug.view.' + mode | transloco }}
+                </button>
+              }
+            </div>
+
+            <span class="mx-1.5 h-4 w-px bg-white/10"></span>
+
             <span class="mr-1 text-[10px] font-semibold tracking-wider uppercase text-mist/30">
               {{ 'debug.filters.type' | transloco }}
             </span>
@@ -182,7 +212,11 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
             }
 
             <span class="ml-auto text-[10px] tabular-nums text-mist/30">
-              {{ filteredSteps().length }} / {{ steps().length }}
+              @if (view() === 'branches') {
+                {{ branches().length }}
+              } @else {
+                {{ filteredSteps().length }} / {{ steps().length }}
+              }
             </span>
             @if (hasFilters()) {
               <button
@@ -196,81 +230,187 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
           </div>
 
           <div class="flex min-h-0 flex-1 flex-col">
-            <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              @if (steps().length === 0) {
-                <div class="flex h-full items-center justify-center text-sm text-mist/40">
-                  {{ 'debug.empty' | transloco }}
-                </div>
-              } @else if (filteredSteps().length === 0) {
-                <div class="flex h-full items-center justify-center text-sm text-mist/40">
-                  {{ 'debug.noMatches' | transloco }}
-                </div>
-              } @else {
-                <ol class="relative ml-1 border-l border-white/10">
-                  @for (step of filteredSteps(); track step.id) {
-                    <li class="relative pl-5 pb-1">
-                      <span
-                        class="absolute top-3.5 left-0 h-2.5 w-2.5 -translate-x-1/2 rounded-full ring-2 ring-navy"
-                        [class]="nodeClass(step.kind)"
-                      ></span>
-                      <button
-                        type="button"
-                        class="w-full rounded-xl px-3 py-2 text-left transition-colors"
-                        [class]="
-                          step.id === selectedId()
-                            ? 'bg-accent/10 ring-1 ring-accent/30 ring-inset'
-                            : 'hover:bg-white/5'
-                        "
-                        (click)="select(step.id)"
-                      >
-                        <div class="flex items-center gap-2">
-                          <span
-                            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase"
-                            [class]="badgeClass(step.kind)"
+            @if (view() === 'branches') {
+              <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                @if (branches().length === 0) {
+                  <div class="flex h-full items-center justify-center text-sm text-mist/40">
+                    {{ 'debug.empty' | transloco }}
+                  </div>
+                } @else {
+                  <div class="mx-auto max-w-3xl">
+                    @for (row of branches(); track row.id) {
+                      @if (stepById().get(row.id); as step) {
+                        <button
+                          type="button"
+                          class="relative flex w-full items-stretch rounded-xl pr-3 text-left transition-colors"
+                          [class]="
+                            row.id === selectedId()
+                              ? 'bg-accent/10 ring-1 ring-accent/30 ring-inset'
+                              : 'hover:bg-white/5'
+                          "
+                          (click)="select(row.id)"
+                        >
+                          <svg
+                            class="shrink-0 self-stretch overflow-visible"
+                            [attr.width]="graph().width"
+                            [attr.viewBox]="'0 0 ' + graph().width + ' ' + rowHeight"
+                            preserveAspectRatio="none"
+                            aria-hidden="true"
                           >
-                            {{ 'debug.kinds.' + step.kind | transloco }}
+                            @for (path of row.paths; track $index) {
+                              <path
+                                [attr.d]="path.d"
+                                [attr.stroke]="path.color"
+                                fill="none"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                vector-effect="non-scaling-stroke"
+                              />
+                            }
+                          </svg>
+                          <span
+                            class="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                            [style.left.px]="row.nodeX"
+                            [style.width.px]="radius * 2"
+                            [style.height.px]="radius * 2"
+                            [style.background]="row.nodeColor"
+                          ></span>
+                          @if (row.open) {
+                            <span
+                              class="pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed"
+                              [style.left.px]="row.nodeX"
+                              [style.width.px]="radius * 2 + 7"
+                              [style.height.px]="radius * 2 + 7"
+                              [style.borderColor]="row.nodeColor"
+                            ></span>
+                          }
+                          <span class="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-1.5">
+                            <span class="flex items-center gap-2">
+                              @if (row.branchStart) {
+                                <span
+                                  class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase"
+                                  [style.color]="row.nodeColor"
+                                  [style.background]="row.nodeColor + '22'"
+                                >
+                                  @if (row.sessionId === sessionId()) {
+                                    {{ 'agents.main' | transloco }}
+                                  } @else {
+                                    {{ agentTitle(row.sessionId) }}
+                                  }
+                                </span>
+                              }
+                              <span
+                                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase"
+                                [class]="badgeClass(step.kind)"
+                              >
+                                {{ 'debug.kinds.' + step.kind | transloco }}
+                              </span>
+                              <span class="min-w-0 flex-1 truncate text-sm text-mist">
+                                {{ step.titleKey | transloco }}
+                              </span>
+                              @if (step.status; as status) {
+                                <span
+                                  class="shrink-0 text-[10px] font-medium"
+                                  [class]="statusClass(status)"
+                                >
+                                  {{ status }}
+                                </span>
+                              }
+                              @if (step.time !== null) {
+                                <span class="shrink-0 text-[10px] tabular-nums text-mist/30">
+                                  {{ formatTime(step.time) }}
+                                </span>
+                              }
+                            </span>
+                            @if (step.subtitle) {
+                              <span class="truncate font-mono text-xs text-mist/40">{{
+                                step.subtitle
+                              }}</span>
+                            }
                           </span>
-                          @for (tag of secondaryTags(step); track tag) {
+                        </button>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            } @else {
+              <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                @if (steps().length === 0) {
+                  <div class="flex h-full items-center justify-center text-sm text-mist/40">
+                    {{ 'debug.empty' | transloco }}
+                  </div>
+                } @else if (filteredSteps().length === 0) {
+                  <div class="flex h-full items-center justify-center text-sm text-mist/40">
+                    {{ 'debug.noMatches' | transloco }}
+                  </div>
+                } @else {
+                  <ol class="relative ml-1 border-l border-white/10">
+                    @for (step of filteredSteps(); track step.id) {
+                      <li class="relative pl-5 pb-1">
+                        <span
+                          class="absolute top-3.5 left-0 h-2.5 w-2.5 -translate-x-1/2 rounded-full ring-2 ring-navy"
+                          [class]="nodeClass(step.kind)"
+                        ></span>
+                        <button
+                          type="button"
+                          class="w-full rounded-xl px-3 py-2 text-left transition-colors"
+                          [class]="
+                            step.id === selectedId()
+                              ? 'bg-accent/10 ring-1 ring-accent/30 ring-inset'
+                              : 'hover:bg-white/5'
+                          "
+                          (click)="select(step.id)"
+                        >
+                          <div class="flex items-center gap-2">
                             <span
                               class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase"
-                              [class]="badgeClass(tag)"
+                              [class]="badgeClass(step.kind)"
                             >
-                              {{ 'debug.kinds.' + tag | transloco }}
+                              {{ 'debug.kinds.' + step.kind | transloco }}
                             </span>
-                          }
-                          <span class="min-w-0 flex-1 truncate text-sm text-mist">
-                            {{ step.titleKey | transloco }}
-                          </span>
-                          @if (step.status; as status) {
-                            <span
-                              class="shrink-0 text-[10px] font-medium"
-                              [class]="statusClass(status)"
-                            >
-                              {{ status }}
+                            @for (tag of secondaryTags(step); track tag) {
+                              <span
+                                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase"
+                                [class]="badgeClass(tag)"
+                              >
+                                {{ 'debug.kinds.' + tag | transloco }}
+                              </span>
+                            }
+                            <span class="min-w-0 flex-1 truncate text-sm text-mist">
+                              {{ step.titleKey | transloco }}
                             </span>
-                          }
-                          @if (step.durationMs) {
-                            <span class="shrink-0 text-[10px] tabular-nums text-accent/70">
-                              {{ formatDuration(step.durationMs) }}
-                            </span>
-                          }
-                          @if (step.time !== null) {
-                            <span class="shrink-0 text-[10px] tabular-nums text-mist/30">
-                              {{ formatTime(step.time) }}
-                            </span>
-                          }
-                        </div>
-                        @if (step.subtitle) {
-                          <div class="mt-0.5 truncate font-mono text-xs text-mist/40">
-                            {{ step.subtitle }}
+                            @if (step.status; as status) {
+                              <span
+                                class="shrink-0 text-[10px] font-medium"
+                                [class]="statusClass(status)"
+                              >
+                                {{ status }}
+                              </span>
+                            }
+                            @if (step.durationMs) {
+                              <span class="shrink-0 text-[10px] tabular-nums text-accent/70">
+                                {{ formatDuration(step.durationMs) }}
+                              </span>
+                            }
+                            @if (step.time !== null) {
+                              <span class="shrink-0 text-[10px] tabular-nums text-mist/30">
+                                {{ formatTime(step.time) }}
+                              </span>
+                            }
                           </div>
-                        }
-                      </button>
-                    </li>
-                  }
-                </ol>
-              }
-            </div>
+                          @if (step.subtitle) {
+                            <div class="mt-0.5 truncate font-mono text-xs text-mist/40">
+                              {{ step.subtitle }}
+                            </div>
+                          }
+                        </button>
+                      </li>
+                    }
+                  </ol>
+                }
+              </div>
+            }
 
             <div
               class="max-h-[46%] min-h-48 shrink-0 overflow-y-auto border-t border-white/10 bg-ink/30 px-6 py-4"
@@ -377,183 +517,195 @@ export class DebugView {
     return settings.modes.find((entry) => entry.id === id) ?? null;
   });
 
-  protected readonly steps = computed<DebugStep[]>(() => {
-    const session = this.session();
-    if (!session) {
-      return [];
-    }
+  private buildSteps(session: Session, includeContext: boolean): DebugStep[] {
     const settings = this.settings.settings();
     const mode = this.mode();
     const steps: DebugStep[] = [];
 
-    const systemPrompt = (
-      session.systemPrompt?.trim() ||
-      settings?.defaultSystemPrompt ||
-      ''
-    ).trim();
-    if (systemPrompt) {
-      steps.push({
-        id: 'context:system',
-        kind: 'context',
-        tags: ['context'],
-        titleKey: 'debug.steps.systemPrompt',
-        subtitle: firstLine(systemPrompt),
-        time: null,
-        status: null,
-        fields: [
-          {
-            labelKey: 'debug.fields.source',
-            value: '',
-            valueKey: session.systemPrompt?.trim()
-              ? 'debug.sources.session'
-              : 'debug.sources.default',
-            mono: false,
-            tone: 'muted',
-          },
-          charField(systemPrompt),
-        ],
-        sections: [{ labelKey: 'debug.sections.systemPrompt', text: systemPrompt, mono: false }],
-      });
-    }
-
-    if (mode?.includeGlobalPrompts && settings) {
-      const globals: string[] = [];
-      for (const [enabled, prompt] of [
-        [settings.securitySystemPromptEnabled, settings.securitySystemPrompt],
-        [settings.testingSystemPromptEnabled, settings.testingSystemPrompt],
-        [settings.architectureSystemPromptEnabled, settings.architectureSystemPrompt],
-      ] as [boolean, string][]) {
-        if (enabled && prompt.trim()) {
-          globals.push(prompt);
-        }
-      }
-      for (const prompt of settings.userSystemPrompts) {
-        if (prompt.enabled && prompt.prompt.trim()) {
-          globals.push(prompt.prompt);
-        }
-      }
-      if (globals.length > 0) {
+    if (includeContext) {
+      const systemPrompt = (
+        session.systemPrompt?.trim() ||
+        settings?.defaultSystemPrompt ||
+        ''
+      ).trim();
+      if (systemPrompt) {
         steps.push({
-          id: 'context:globals',
+          id: `${session.id}:context:system`,
+          sessionId: session.id,
           kind: 'context',
           tags: ['context'],
-          titleKey: 'debug.steps.globalPrompts',
-          subtitle: '',
+          titleKey: 'debug.steps.systemPrompt',
+          subtitle: firstLine(systemPrompt),
+          time: null,
+          status: null,
+          fields: [
+            {
+              labelKey: 'debug.fields.source',
+              value: '',
+              valueKey: session.systemPrompt?.trim()
+                ? 'debug.sources.session'
+                : 'debug.sources.default',
+              mono: false,
+              tone: 'muted',
+            },
+            charField(systemPrompt),
+          ],
+          sections: [{ labelKey: 'debug.sections.systemPrompt', text: systemPrompt, mono: false }],
+          taskCallIds: [],
+          toolCallId: null,
+        });
+      }
+
+      if (mode?.includeGlobalPrompts && settings) {
+        const globals: string[] = [];
+        for (const [enabled, prompt] of [
+          [settings.securitySystemPromptEnabled, settings.securitySystemPrompt],
+          [settings.testingSystemPromptEnabled, settings.testingSystemPrompt],
+          [settings.architectureSystemPromptEnabled, settings.architectureSystemPrompt],
+        ] as [boolean, string][]) {
+          if (enabled && prompt.trim()) {
+            globals.push(prompt);
+          }
+        }
+        for (const prompt of settings.userSystemPrompts) {
+          if (prompt.enabled && prompt.prompt.trim()) {
+            globals.push(prompt.prompt);
+          }
+        }
+        if (globals.length > 0) {
+          steps.push({
+            id: `${session.id}:context:globals`,
+            sessionId: session.id,
+            kind: 'context',
+            tags: ['context'],
+            titleKey: 'debug.steps.globalPrompts',
+            subtitle: '',
+            time: null,
+            status: null,
+            fields: [
+              {
+                labelKey: 'debug.fields.count',
+                value: String(globals.length),
+                mono: true,
+                tone: 'default',
+              },
+              charField(globals.join('\n\n')),
+            ],
+            sections: [
+              { labelKey: 'debug.sections.globalPrompts', text: globals.join('\n\n'), mono: false },
+            ],
+            taskCallIds: [],
+            toolCallId: null,
+          });
+        }
+      }
+
+      if (mode) {
+        const modeFields: DebugField[] = [
+          { labelKey: 'debug.fields.mode', value: mode.name, mono: false, tone: 'default' },
+          {
+            labelKey: 'debug.fields.planOnly',
+            value: String(mode.planOnly),
+            mono: true,
+            tone: 'muted',
+          },
+        ];
+        if (mode.skills.length > 0) {
+          modeFields.push({
+            labelKey: 'debug.fields.skills',
+            value: mode.skills.join(', '),
+            mono: true,
+            tone: 'muted',
+          });
+        }
+        if (mode.mcpServers.length > 0) {
+          modeFields.push({
+            labelKey: 'debug.fields.mcpServers',
+            value: mode.mcpServers.join(', '),
+            mono: true,
+            tone: 'muted',
+          });
+        }
+        const modeTags: DebugKind[] = ['context'];
+        if (mode.skills.length > 0) {
+          modeTags.push('skill');
+        }
+        if (mode.mcpServers.length > 0) {
+          modeTags.push('mcp');
+        }
+        steps.push({
+          id: `${session.id}:context:mode`,
+          sessionId: session.id,
+          kind: 'context',
+          tags: modeTags,
+          titleKey: 'debug.steps.mode',
+          subtitle: mode.description,
+          time: null,
+          status: null,
+          fields: modeFields,
+          sections: mode.systemPrompt.trim()
+            ? [{ labelKey: 'debug.sections.mode', text: mode.systemPrompt, mono: false }]
+            : [],
+          taskCallIds: [],
+          toolCallId: null,
+        });
+      }
+
+      const rules = this.workspace.rules();
+      if (rules.length > 0) {
+        const text = rules
+          .map((rule) => `## ${rule.scope} (${rule.path})\n${rule.content}`)
+          .join('\n\n');
+        steps.push({
+          id: `${session.id}:context:rules`,
+          sessionId: session.id,
+          kind: 'context',
+          tags: ['context'],
+          titleKey: 'debug.steps.projectRules',
+          subtitle: rules.map((rule) => rule.path).join(', '),
           time: null,
           status: null,
           fields: [
             {
               labelKey: 'debug.fields.count',
-              value: String(globals.length),
+              value: String(rules.length),
               mono: true,
               tone: 'default',
             },
-            charField(globals.join('\n\n')),
           ],
-          sections: [
-            { labelKey: 'debug.sections.globalPrompts', text: globals.join('\n\n'), mono: false },
-          ],
+          sections: [{ labelKey: 'debug.sections.projectRules', text, mono: false }],
+          taskCallIds: [],
+          toolCallId: null,
         });
       }
     }
 
-    if (mode) {
-      const modeFields: DebugField[] = [
-        { labelKey: 'debug.fields.mode', value: mode.name, mono: false, tone: 'default' },
-        {
-          labelKey: 'debug.fields.planOnly',
-          value: String(mode.planOnly),
-          mono: true,
-          tone: 'muted',
-        },
-      ];
-      if (mode.skills.length > 0) {
-        modeFields.push({
-          labelKey: 'debug.fields.skills',
-          value: mode.skills.join(', '),
-          mono: true,
-          tone: 'muted',
-        });
-      }
-      if (mode.mcpServers.length > 0) {
-        modeFields.push({
-          labelKey: 'debug.fields.mcpServers',
-          value: mode.mcpServers.join(', '),
-          mono: true,
-          tone: 'muted',
-        });
-      }
-      const modeTags: DebugKind[] = ['context'];
-      if (mode.skills.length > 0) {
-        modeTags.push('skill');
-      }
-      if (mode.mcpServers.length > 0) {
-        modeTags.push('mcp');
-      }
-      steps.push({
-        id: 'context:mode',
-        kind: 'context',
-        tags: modeTags,
-        titleKey: 'debug.steps.mode',
-        subtitle: mode.description,
-        time: null,
-        status: null,
-        fields: modeFields,
-        sections: mode.systemPrompt.trim()
-          ? [{ labelKey: 'debug.sections.mode', text: mode.systemPrompt, mono: false }]
-          : [],
-      });
-    }
-
-    const rules = this.workspace.rules();
-    if (rules.length > 0) {
-      const text = rules
-        .map((rule) => `## ${rule.scope} (${rule.path})\n${rule.content}`)
-        .join('\n\n');
-      steps.push({
-        id: 'context:rules',
-        kind: 'context',
-        tags: ['context'],
-        titleKey: 'debug.steps.projectRules',
-        subtitle: rules.map((rule) => rule.path).join(', '),
-        time: null,
-        status: null,
-        fields: [
-          {
-            labelKey: 'debug.fields.count',
-            value: String(rules.length),
-            mono: true,
-            tone: 'default',
-          },
-        ],
-        sections: [{ labelKey: 'debug.sections.projectRules', text, mono: false }],
-      });
-    }
-
+    const messages = this.workspace.messagesFor(session.id);
     const calls = new Map<string, { name: string; arguments: string }>();
-    for (const message of this.messages()) {
+    for (const message of messages) {
       for (const call of message.toolCalls) {
         calls.set(call.id, { name: call.name, arguments: call.arguments });
       }
     }
 
     const seenTools = new Set<string>();
-    for (const message of this.messages()) {
-      steps.push(this.messageStep(message, calls, seenTools));
+    for (const message of messages) {
+      steps.push(this.messageStep(session, message, calls, seenTools));
     }
 
-    for (const tool of this.liveTools()) {
+    for (const tool of this.workspace.liveToolsFor(session.id)) {
       if (seenTools.has(tool.callId)) {
         continue;
       }
       seenTools.add(tool.callId);
-      steps.push(this.liveToolStep(tool));
+      steps.push(this.liveToolStep(session, tool));
     }
 
     const error = this.workspace.errorFor(session.id);
     if (error) {
       steps.push({
-        id: 'error',
+        id: `${session.id}:error`,
+        sessionId: session.id,
         kind: 'error',
         tags: ['error'],
         titleKey: 'debug.steps.error',
@@ -562,11 +714,101 @@ export class DebugView {
         status: 'error',
         fields: [],
         sections: [{ labelKey: 'debug.sections.error', text: error, mono: true }],
+        taskCallIds: [],
+        toolCallId: null,
       });
     }
 
     return steps;
+  }
+
+  protected readonly views: readonly DebugViewMode[] = ['timeline', 'branches'];
+  protected readonly view = signal<DebugViewMode>('timeline');
+  protected readonly rowHeight = AGENT_GRAPH_ROW_HEIGHT;
+  protected readonly laneWidth = AGENT_GRAPH_LANE_WIDTH;
+  protected readonly radius = AGENT_GRAPH_RADIUS;
+  protected readonly sessionId = computed(() => this.session()?.id ?? null);
+
+  /** The main session followed by every descendant subagent, breadth first. */
+  protected readonly agents = computed<Session[]>(() => {
+    const root = this.session();
+    if (!root) {
+      return [];
+    }
+    const result: Session[] = [root];
+    const queue: Session[] = [root];
+    while (queue.length > 0) {
+      const parent = queue.shift() as Session;
+      for (const child of this.workspace.subAgentsFor(parent.id)) {
+        result.push(child);
+        queue.push(child);
+      }
+    }
+    return result;
   });
+
+  protected readonly stepsBySession = computed<Record<string, DebugStep[]>>(() => {
+    const map: Record<string, DebugStep[]> = {};
+    const root = this.session();
+    for (const agent of this.agents()) {
+      map[agent.id] = this.buildSteps(agent, agent.id === root?.id);
+    }
+    return map;
+  });
+
+  protected readonly steps = computed<DebugStep[]>(() => {
+    const id = this.session()?.id;
+    return id ? (this.stepsBySession()[id] ?? []) : [];
+  });
+
+  protected readonly allSteps = computed<DebugStep[]>(() =>
+    Object.values(this.stepsBySession()).flat(),
+  );
+
+  protected readonly stepById = computed(() => {
+    const map = new Map<string, DebugStep>();
+    for (const step of this.allSteps()) {
+      map.set(step.id, step);
+    }
+    return map;
+  });
+
+  private readonly agentTitles = computed(() => {
+    const map = new Map<string, string>();
+    for (const agent of this.agents()) {
+      map.set(agent.id, agent.title);
+    }
+    return map;
+  });
+
+  protected agentTitle(sessionId: string): string {
+    return this.agentTitles().get(sessionId) ?? sessionId;
+  }
+
+  /** Subagent branches forked from the main session, git-graph style. */
+  protected readonly graph = computed(() => {
+    const root = this.session();
+    if (!root) {
+      return { rows: [], width: 0 };
+    }
+    const sessions: AgentGraphSession[] = this.agents().map((agent) => ({
+      id: agent.id,
+      parentSessionId: agent.parentSessionId,
+      title: agent.title,
+      status: agent.agentStatus,
+      createdAt: agent.createdAt,
+      nodes: (this.stepsBySession()[agent.id] ?? []).map((step) => ({
+        id: step.id,
+        at: step.time,
+        phase: (step.time !== null ? 1 : step.kind === 'context' ? 0 : 2) as 0 | 1 | 2,
+        taskCallIds: step.taskCallIds,
+        toolCallId: step.toolCallId,
+      })),
+    }));
+    return buildAgentGraph(sessions, root.id);
+  });
+
+  protected readonly branches = computed(() => this.graph().rows);
 
   protected readonly filteredSteps = computed(() => {
     const types = this.typeFilter();
@@ -592,18 +834,34 @@ export class DebugView {
 
   protected readonly selectedStep = computed(() => {
     const id = this.selectedId();
-    return id ? (this.steps().find((step) => step.id === id) ?? null) : null;
+    return id ? (this.stepById().get(id) ?? null) : null;
   });
 
   constructor() {
+    // Discover the full subagent tree lazily so the branch view stays complete
+    // even for subagents spawned after the debugger was opened.
     effect(() => {
-      const steps = this.filteredSteps();
+      for (const agent of this.agents()) {
+        if (!this.workspace.hasLoadedSubAgents(agent.id)) {
+          void this.workspace.loadSubAgents(agent.id);
+        }
+        if (!this.workspace.hasLoadedMessages(agent.id)) {
+          void this.workspace.loadMessages(agent.id);
+        }
+      }
+    });
+
+    effect(() => {
+      const ids =
+        this.view() === 'branches'
+          ? this.branches().map((row) => row.id)
+          : this.filteredSteps().map((step) => step.id);
       const current = untracked(this.selectedId);
-      if (steps.length === 0) {
+      if (ids.length === 0) {
         return;
       }
-      if (!current || !steps.some((step) => step.id === current)) {
-        this.selectedId.set(steps[steps.length - 1].id);
+      if (!current || !ids.includes(current)) {
+        this.selectedId.set(ids[ids.length - 1]);
       }
     });
   }
@@ -730,6 +988,7 @@ export class DebugView {
   }
 
   private messageStep(
+    session: Session,
     message: Message,
     calls: Map<string, { name: string; arguments: string }>,
     seenTools: Set<string>,
@@ -794,7 +1053,8 @@ export class DebugView {
         tags.push('mcp');
       }
       return {
-        id: message.id,
+        id: `${session.id}:${message.id}`,
+        sessionId: session.id,
         kind: 'user',
         tags,
         titleKey: 'debug.steps.user',
@@ -803,6 +1063,8 @@ export class DebugView {
         status: null,
         fields,
         sections,
+        taskCallIds: [],
+        toolCallId: null,
       };
     }
 
@@ -881,11 +1143,12 @@ export class DebugView {
       if (message.content.trim()) {
         sections.push({ labelKey: 'debug.sections.content', text: message.content, mono: false });
       }
-      const messages = this.messages();
+      const messages = this.workspace.messagesFor(session.id);
       const isLast = messages[messages.length - 1]?.id === message.id;
-      const running = this.streaming() && isLast && !message.content;
+      const running = this.workspace.isStreaming(session.id) && isLast && !message.content;
       return {
-        id: message.id,
+        id: `${session.id}:${message.id}`,
+        sessionId: session.id,
         kind: 'assistant',
         tags: ['assistant'],
         titleKey: 'debug.steps.assistant',
@@ -896,6 +1159,10 @@ export class DebugView {
         durationMs: message.durationMs > 0 ? message.durationMs : null,
         fields,
         sections,
+        taskCallIds: message.toolCalls
+          .filter((call) => call.name === 'task')
+          .map((call) => call.id),
+        toolCallId: null,
       };
     }
 
@@ -904,7 +1171,8 @@ export class DebugView {
       seenTools.add(callId);
       const call = message.toolCallId ? calls.get(message.toolCallId) : undefined;
       return this.toolStep({
-        id: message.id,
+        id: `${session.id}:${message.id}`,
+        sessionId: session.id,
         callId,
         name: message.toolName ?? call?.name ?? 'tool',
         arguments: call?.arguments ?? '',
@@ -917,7 +1185,8 @@ export class DebugView {
     }
 
     return {
-      id: message.id,
+      id: `${session.id}:${message.id}`,
+      sessionId: session.id,
       kind: 'context',
       tags: ['context'],
       titleKey: 'debug.steps.systemMessage',
@@ -926,12 +1195,15 @@ export class DebugView {
       status: null,
       fields: [],
       sections: [{ labelKey: 'debug.sections.content', text: message.content, mono: false }],
+      taskCallIds: [],
+      toolCallId: null,
     };
   }
 
-  private liveToolStep(tool: LiveToolCall): DebugStep {
+  private liveToolStep(session: Session, tool: LiveToolCall): DebugStep {
     return this.toolStep({
-      id: tool.callId,
+      id: `${session.id}:${tool.callId}`,
+      sessionId: session.id,
       callId: tool.callId,
       name: tool.name,
       arguments: tool.arguments,
@@ -945,6 +1217,7 @@ export class DebugView {
 
   private toolStep(input: {
     id: string;
+    sessionId: string;
     callId: string;
     name: string;
     arguments: string;
@@ -988,10 +1261,20 @@ export class DebugView {
         tone: 'default',
       });
     }
-    const sections: DebugSection[] = [
+    const isTask = input.name === 'task';
+    const taskArgs = isTask ? parseTaskArguments(input.arguments) : null;
+    const sections: DebugSection[] = [];
+    if (taskArgs?.prompt) {
+      sections.push({
+        labelKey: 'debug.sections.subagentPrompt',
+        text: taskArgs.prompt,
+        mono: false,
+      });
+    }
+    sections.push(
       { labelKey: 'debug.sections.arguments', text: prettyJson(input.arguments), mono: true },
       { labelKey: 'debug.sections.output', text: input.output, mono: true },
-    ];
+    );
     if (input.changes.length > 0) {
       sections.push({
         labelKey: 'debug.sections.changes',
@@ -1004,7 +1287,6 @@ export class DebugView {
         mono: true,
       });
     }
-    const isTask = input.name === 'task';
     const isQuestion = input.name === 'question';
     const isMcp = input.name.startsWith('mcp__');
     const kind: DebugKind = isTask ? 'subagent' : isQuestion ? 'question' : isMcp ? 'mcp' : 'tool';
@@ -1027,16 +1309,19 @@ export class DebugView {
           : 'debug.steps.tool';
     return {
       id: input.id,
+      sessionId: input.sessionId,
       kind,
       tags,
       titleKey,
-      subtitle: input.name,
+      subtitle: taskArgs?.description || input.name,
       time: input.time,
       status: input.status,
       statusCategory: statusCategoryOf(input.status),
       durationMs: input.durationMs,
       fields,
       sections,
+      taskCallIds: [],
+      toolCallId: input.callId,
     };
   }
 }
@@ -1086,5 +1371,20 @@ function prettyJson(value: string): string {
     return JSON.stringify(JSON.parse(value), null, 2);
   } catch {
     return value;
+  }
+}
+
+function parseTaskArguments(value: string): { description: string; prompt: string } {
+  if (!value.trim()) {
+    return { description: '', prompt: '' };
+  }
+  try {
+    const parsed = JSON.parse(value) as { description?: unknown; prompt?: unknown };
+    return {
+      description: typeof parsed.description === 'string' ? parsed.description : '',
+      prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
+    };
+  } catch {
+    return { description: '', prompt: '' };
   }
 }
