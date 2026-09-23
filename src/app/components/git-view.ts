@@ -8,17 +8,20 @@ import {
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { GitCommit } from '../core/models';
+import { GitCommit, GitPullStrategy } from '../core/models';
 import { GIT_GRAPH_RADIUS, GIT_GRAPH_ROW_HEIGHT, buildGitGraph } from '../core/git-graph';
 import { WorkspaceService } from '../core/workspace.service';
+import { GitService } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-git-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, ChangeStatusIcon, DiffView, FileIcon],
+  imports: [TypedInput, TranslocoPipe, ChangeStatusIcon, DiffView, FileIcon],
   template: `
     <div class="flex h-full min-h-0 flex-col">
       <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/5 px-3 py-2">
@@ -86,6 +89,16 @@ import { FileIcon } from './file-icon';
             </svg>
             <span>{{ 'git.fetch' | transloco }}</span>
           </button>
+          <select
+            class="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-mist/60 focus:border-accent/50 focus:outline-none"
+            [title]="'git.pullStrategy.label' | transloco"
+            [value]="pullStrategy()"
+            (change)="setPullStrategy($any($event.target).value)"
+          >
+            <option value="ff-only">{{ 'git.pullStrategy.ffOnly' | transloco }}</option>
+            <option value="merge">{{ 'git.pullStrategy.merge' | transloco }}</option>
+            <option value="rebase">{{ 'git.pullStrategy.rebase' | transloco }}</option>
+          </select>
           <button
             type="button"
             class="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs text-mist/60 transition-colors hover:bg-white/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
@@ -151,11 +164,60 @@ import { FileIcon } from './file-icon';
         </div>
       </div>
 
-      @if (!project()) {
-        <p class="p-4 text-sm text-mist/40">{{ 'workspace.noSession' | transloco }}</p>
-      } @else if (!status()?.isRepo) {
-        <p class="p-4 text-sm text-mist/40">{{ 'git.noRepo' | transloco }}</p>
-      } @else if (view() === 'commits') {
+        @if (error(); as text) {
+          <div
+            class="flex shrink-0 items-center gap-2 border-y border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-[11px] text-rose-300"
+          >
+            <span class="min-w-0 flex-1 truncate" [title]="text">{{ text }}</span>
+          </div>
+        }
+
+        @if (operation(); as op) {
+          <div
+            class="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300"
+          >
+            <span>{{ 'git.conflict.banner' | transloco: { operation: op } }}</span>
+            @if (conflicted().length > 0) {
+              <span class="text-amber-300/70">{{
+                'git.conflict.files' | transloco: { count: conflicted().length }
+              }}</span>
+            }
+            <div class="ml-auto flex items-center gap-1">
+              @if (op === 'rebase') {
+                <button
+                  type="button"
+                  class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10"
+                  (click)="continueOperation()"
+                >
+                  {{ 'git.conflict.continue' | transloco }}
+                </button>
+              }
+              <button
+                type="button"
+                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10"
+                (click)="abortOperation()"
+              >
+                {{ 'git.conflict.abort' | transloco }}
+              </button>
+            </div>
+          </div>
+        }
+
+        @if (!project()) {
+          <p class="p-4 text-sm text-mist/40">{{ 'workspace.noSession' | transloco }}</p>
+        } @else if (!status()?.isRepo) {
+          <div class="flex flex-col items-start gap-3 p-4">
+            <p class="text-sm text-mist/40">{{ 'git.noRepo' | transloco }}</p>
+            <button
+              type="button"
+              class="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-accent/90 disabled:opacity-40"
+              [disabled]="busy()"
+              (click)="initRepo()"
+            >
+              {{ 'git.initRepo' | transloco }}
+            </button>
+          </div>
+        } @else if (view() === 'commits') {
         <div class="flex min-h-0 flex-1 flex-col">
           <div
             class="flex min-h-0 flex-[3] flex-col overflow-y-auto"
@@ -186,7 +248,7 @@ import { FileIcon } from './file-icon';
                   class="w-56 rounded-lg border border-white/10 bg-white/5 py-1 pr-2 pl-7 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
                   [placeholder]="'git.searchCommits' | transloco"
                   [value]="searchTerm()"
-                  (input)="onSearchInput($any($event.target).value)"
+                  (typedValue)="onSearchInput($event)"
                 />
               </div>
               <span class="w-8 shrink-0 text-right text-[11px] text-mist/25">{{
@@ -585,14 +647,14 @@ import { FileIcon } from './file-icon';
                 class="w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
                 [placeholder]="'git.commitSubject' | transloco"
                 [value]="subject()"
-                (input)="subject.set($any($event.target).value)"
+                (typedValue)="subject.set($event)"
               />
               <textarea
                 rows="2"
                 class="mt-1.5 w-full resize-none rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
                 [placeholder]="'git.commitDescription' | transloco"
                 [value]="description()"
-                (input)="description.set($any($event.target).value)"
+                (typedValue)="description.set($event)"
               ></textarea>
               <div class="mt-2 flex items-center gap-2">
                 <label class="flex cursor-pointer items-center gap-2 text-xs text-mist/60">
@@ -600,7 +662,7 @@ import { FileIcon } from './file-icon';
                     type="checkbox"
                     class="accent-[var(--color-accent)]"
                     [checked]="amend()"
-                    (change)="amend.set($any($event.target).checked)"
+                    (change)="toggleAmend()"
                   />
                   {{ 'git.amend' | transloco }}
                 </label>
@@ -632,18 +694,19 @@ import { FileIcon } from './file-icon';
 })
 export class GitView {
   private readonly workspace = inject(WorkspaceService);
+  private readonly git = inject(GitService);
   private readonly transloco = inject(TranslocoService);
 
   protected readonly project = this.workspace.activeProject;
   protected readonly status = this.workspace.activeGitStatus;
   protected readonly busy = this.workspace.gitBusy;
   protected readonly message = this.workspace.gitMessage;
+  protected readonly error = this.workspace.gitError;
   protected readonly diff = this.workspace.gitDiff;
   protected readonly view = this.workspace.gitView;
   protected readonly selectedBranch = this.workspace.selectedGitBranch;
   protected readonly commits = this.workspace.gitCommits;
   protected readonly commitsLoading = this.workspace.gitCommitsLoading;
-  protected readonly commitsHasMore = this.workspace.gitCommitsHasMore;
   protected readonly selectedCommit = this.workspace.selectedGitCommit;
   protected readonly commitDetail = this.workspace.gitCommitDetail;
   protected readonly commitFileDiff = this.workspace.gitCommitFileDiff;
@@ -660,11 +723,12 @@ export class GitView {
     effect(() => {
       const project = this.project();
       if (project) {
-        void this.workspace.loadGitStatus(project.id);
+        void this.git.loadStatus(project.id);
       }
     });
     effect(() => {
-      this.searchTerm.set(this.workspace.gitCommitSearch());
+      const project = this.project();
+      this.searchTerm.set(project ? this.git.commitSearchFor(project.id) : '');
     });
     effect(() => {
       const diff = this.commitFileDiff();
@@ -702,8 +766,12 @@ export class GitView {
   protected readonly rowHeight = GIT_GRAPH_ROW_HEIGHT;
   protected readonly radius = GIT_GRAPH_RADIUS;
   protected readonly canCommit = computed(
-    () => this.staged().length > 0 && this.subject().trim().length > 0,
+    () =>
+      (this.staged().length > 0 || this.amend()) && this.subject().trim().length > 0,
   );
+  protected readonly operation = computed(() => this.status()?.operation ?? null);
+  protected readonly conflicted = computed(() => this.status()?.conflicted ?? []);
+  protected readonly pullStrategy = this.workspace.gitPullStrategy;
 
   protected baseName(path: string): string {
     const segments = path.split('/');
@@ -720,12 +788,18 @@ export class GitView {
   }
 
   protected select(path: string, staged: boolean): void {
-    void this.workspace.selectGitChange(path, staged);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.selectChange(projectId, path, staged);
+    }
   }
 
   protected selectCommit(commit: GitCommit): void {
     this.detailTab.set('commit');
-    void this.workspace.selectGitCommit(commit.hash);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.selectCommit(projectId, commit.hash);
+    }
   }
 
   protected onCommitsScroll(event: Event): void {
@@ -733,7 +807,10 @@ export class GitView {
     if (element.scrollHeight - element.scrollTop - element.clientHeight > 240) {
       return;
     }
-    void this.workspace.loadMoreGitCommits();
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.loadMoreCommits(projectId);
+    }
   }
 
   protected onSearchInput(value: string): void {
@@ -743,44 +820,72 @@ export class GitView {
     }
     this.searchTimer = setTimeout(() => {
       this.searchTimer = null;
-      void this.workspace.searchGitCommits(this.searchTerm());
+      const projectId = this.project()?.id;
+      if (projectId) {
+        void this.git.searchCommits(projectId, this.searchTerm());
+      }
     }, 300);
   }
 
   protected selectCommitFile(path: string): void {
-    void this.workspace.selectGitCommitFile(path);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.selectCommitFile(projectId, path);
+    }
   }
 
   protected refresh(): void {
-    void this.workspace.refreshGit();
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.refresh(projectId);
+    }
   }
 
   protected stageAll(): void {
-    void this.workspace.stageGitPath(null);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.stagePath(projectId, null);
+    }
   }
 
   protected unstageAll(): void {
-    void this.workspace.unstageGitPath(null);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.unstagePath(projectId, null);
+    }
   }
 
   protected stage(path: string): void {
-    void this.workspace.stageGitPath(path);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.stagePath(projectId, path);
+    }
   }
 
   protected unstage(path: string): void {
-    void this.workspace.unstageGitPath(path);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.unstagePath(projectId, path);
+    }
   }
 
   protected async discard(path: string): Promise<void> {
-    const confirmed = await confirm(`Discard changes to "${path}"? This cannot be undone.`, {
-      title: 'pumr',
-      kind: 'warning',
-    });
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    const confirmed = await confirm(
+      this.transloco.translate('git.discardConfirm', { path }),
+      {
+        title: 'pumr',
+        kind: 'warning',
+      },
+    );
     if (!confirmed) {
       return;
     }
     try {
-      await this.workspace.discardGitPath(path);
+      await this.git.discardPath(projectId, path);
     } catch (error) {
       console.error(error);
     }
@@ -790,25 +895,88 @@ export class GitView {
     if (!this.canCommit()) {
       return;
     }
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
     const message = [this.subject().trim(), this.description().trim()]
       .filter((part) => part.length > 0)
       .join('\n\n');
     try {
-      await this.workspace.commitGit(message, this.amend());
+      await this.git.commit(projectId, message, this.amend());
       this.subject.set('');
       this.description.set('');
       this.amend.set(false);
       if (push) {
-        await this.workspace.runGitOperation('push');
+        await this.git.runOperation(projectId, 'push');
       }
     } catch (error) {
       console.error(error);
     }
   }
 
-  protected async run(operation: 'fetch' | 'pull' | 'push'): Promise<void> {
+  protected async toggleAmend(): Promise<void> {
+    const next = !this.amend();
+    this.amend.set(next);
+    const projectId = this.project()?.id;
+    if (!next || !projectId || this.subject().trim().length > 0) {
+      return;
+    }
+    const head = await this.git.headMessage(projectId);
+    if (head) {
+      this.subject.set(head.subject);
+      this.description.set(head.body);
+    }
+  }
+
+  protected setPullStrategy(strategy: GitPullStrategy): void {
+    this.workspace.setGitPullStrategy(strategy);
+  }
+
+  protected async abortOperation(): Promise<void> {
+    const projectId = this.project()?.id;
+    const operation = this.operation();
+    if (!projectId || !operation) {
+      return;
+    }
     try {
-      await this.workspace.runGitOperation(operation);
+      await this.git.abortOperation(projectId, operation);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async continueOperation(): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.continueOperation(projectId);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async initRepo(): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.init(projectId);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async run(operation: 'fetch' | 'pull' | 'push'): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.runOperation(projectId, operation, this.pullStrategy());
     } catch (error) {
       console.error(error);
     }

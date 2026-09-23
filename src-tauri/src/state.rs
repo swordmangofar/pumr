@@ -1,6 +1,7 @@
 use crate::broker::{PermissionBroker, QuestionBroker};
 use crate::config::Settings;
 use crate::db::Db;
+use crate::marketplace::MarketplaceService;
 use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
 use crate::permissions::LivePermissions;
 use crate::power::PowerManager;
@@ -22,6 +23,7 @@ pub struct AppState {
     pub questions: Arc<QuestionBroker>,
     pub permissions: Arc<LivePermissions>,
     pub power: PowerManager,
+    pub marketplace: MarketplaceService,
     cancels: Mutex<HashMap<String, CancellationToken>>,
     models_cache: Mutex<Option<Vec<ModelInfo>>>,
     endpoints_cache: Mutex<HashMap<String, Vec<EndpointInfo>>>,
@@ -34,10 +36,13 @@ impl AppState {
             .user_agent("pumr/0.1")
             .build()
             .expect("failed to build http client");
-        let power = PowerManager::new(settings.keep_awake);
+        let power = PowerManager::new(settings.interface.keep_awake);
+        let marketplace = MarketplaceService::new(http.clone(), data_dir.join("marketplaces"));
         let permissions = Arc::new(LivePermissions::new(
-            settings.command_rules.clone(),
-            settings.extra_folders.clone(),
+            settings.permissions.command_rules.clone(),
+            settings.permissions.extra_folders.clone(),
+            settings.permissions.allowed_websites.clone(),
+            settings.permissions.denied_websites.clone(),
         ));
         Self {
             db: Arc::new(db),
@@ -50,6 +55,7 @@ impl AppState {
             questions: Arc::new(QuestionBroker::new()),
             permissions,
             power,
+            marketplace,
             cancels: Mutex::new(HashMap::new()),
             models_cache: Mutex::new(None),
             endpoints_cache: Mutex::new(HashMap::new()),
@@ -63,15 +69,17 @@ impl AppState {
 
     pub fn set_settings(&self, settings: Settings) {
         self.permissions.replace(
-            settings.command_rules.clone(),
-            settings.extra_folders.clone(),
+            settings.permissions.command_rules.clone(),
+            settings.permissions.extra_folders.clone(),
+            settings.permissions.allowed_websites.clone(),
+            settings.permissions.denied_websites.clone(),
         );
         *self.settings.lock().unwrap() = settings;
     }
 
     pub fn provider(&self) -> OpenRouterClient {
         let settings = self.settings();
-        OpenRouterClient::new(self.http.clone(), settings.openrouter_base_url)
+        OpenRouterClient::new(self.http.clone(), settings.model.openrouter_base_url)
     }
 
     pub fn cached_models(&self) -> Option<Vec<ModelInfo>> {

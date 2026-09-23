@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api } from '../../core/api';
 import { IgnoreCatalogEntry } from '../../core/models';
 import { SettingsService } from '../../core/settings.service';
 import { SettingsDraftService } from './settings-draft.service';
+import { Toggle } from '../toggle';
 
 type FileToggleKey =
   'ignoreGitignored' | 'scanGeneratedFiles' | 'ignoreLocalDatabases' | 'ignoreEnvFiles';
@@ -45,10 +46,12 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
   },
 ];
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-agent-rules-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe, Toggle],
   template: `
     <section>
       <div class="mb-1 flex items-center justify-between gap-3">
@@ -57,19 +60,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
         </h3>
         <label class="flex cursor-pointer items-center gap-2 text-xs text-mist/50">
           {{ 'settings.advancedMode' | transloco }}
-          <button
-            type="button"
-            role="switch"
-            [attr.aria-checked]="draft.draft().fileIgnoreAdvanced"
-            class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-            [class]="draft.draft().fileIgnoreAdvanced ? 'bg-accent' : 'bg-white/15'"
-            (click)="toggleAdvanced()"
-          >
-            <span
-              class="absolute top-0.5 h-4 w-4 rounded-full transition-all"
-              [class]="draft.draft().fileIgnoreAdvanced ? 'left-4.5 bg-ink' : 'left-0.5 bg-white'"
-            ></span>
-          </button>
+          <app-toggle
+            size="sm"
+            [checked]="draft.draft().fileIgnoreAdvanced"
+            (toggled)="toggleAdvanced()"
+          />
         </label>
       </div>
       <p class="mb-4 text-xs text-mist/30">{{ 'settings.fileAccessRulesHint' | transloco }}</p>
@@ -77,19 +72,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
       <div class="space-y-3">
         <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
           <div class="flex items-start gap-3">
-            <button
-              type="button"
-              role="switch"
-              [attr.aria-checked]="isOn('ignoreGitignored')"
-              class="relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors"
-              [class]="isOn('ignoreGitignored') ? 'bg-accent' : 'bg-white/15'"
-              (click)="toggle('ignoreGitignored')"
-            >
-              <span
-                class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-                [class]="isOn('ignoreGitignored') ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
-              ></span>
-            </button>
+            <app-toggle
+              class="mt-0.5"
+              [checked]="isOn('ignoreGitignored')"
+              (toggled)="toggle('ignoreGitignored')"
+            />
             <div>
               <label class="block text-sm font-medium text-mist">
                 {{ 'settings.ignoreGitignored' | transloco }}
@@ -102,19 +89,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
 
           @if (isOn('ignoreGitignored')) {
             <div class="mt-3 flex items-start gap-3 border-l border-white/10 pl-4">
-              <button
-                type="button"
-                role="switch"
-                [attr.aria-checked]="isOn('scanGeneratedFiles')"
-                class="relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors"
-                [class]="isOn('scanGeneratedFiles') ? 'bg-accent' : 'bg-white/15'"
-                (click)="toggle('scanGeneratedFiles')"
-              >
-                <span
-                  class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-                  [class]="isOn('scanGeneratedFiles') ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
-                ></span>
-              </button>
+              <app-toggle
+                class="mt-0.5"
+                [checked]="isOn('scanGeneratedFiles')"
+                (toggled)="toggle('scanGeneratedFiles')"
+              />
               <div>
                 <label class="block text-sm text-mist">
                   {{ 'settings.scanGeneratedFiles' | transloco }}
@@ -129,19 +108,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
 
         <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
           <div class="flex items-start gap-3">
-            <button
-              type="button"
-              role="switch"
-              [attr.aria-checked]="isOn('ignoreLocalDatabases')"
-              class="relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors"
-              [class]="isOn('ignoreLocalDatabases') ? 'bg-accent' : 'bg-white/15'"
-              (click)="toggle('ignoreLocalDatabases')"
-            >
-              <span
-                class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-                [class]="isOn('ignoreLocalDatabases') ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
-              ></span>
-            </button>
+            <app-toggle
+              class="mt-0.5"
+              [checked]="isOn('ignoreLocalDatabases')"
+              (toggled)="toggle('ignoreLocalDatabases')"
+            />
             <div>
               <label class="block text-sm font-medium text-mist">
                 {{ 'settings.ignoreLocalDatabases' | transloco }}
@@ -155,19 +126,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
 
         <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
           <div class="flex items-start gap-3">
-            <button
-              type="button"
-              role="switch"
-              [attr.aria-checked]="isOn('ignoreEnvFiles')"
-              class="relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors"
-              [class]="isOn('ignoreEnvFiles') ? 'bg-accent' : 'bg-white/15'"
-              (click)="toggle('ignoreEnvFiles')"
-            >
-              <span
-                class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-                [class]="isOn('ignoreEnvFiles') ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
-              ></span>
-            </button>
+            <app-toggle
+              class="mt-0.5"
+              [checked]="isOn('ignoreEnvFiles')"
+              (toggled)="toggle('ignoreEnvFiles')"
+            />
             <div>
               <label class="block text-sm font-medium text-mist">
                 {{ 'settings.ignoreEnvFiles' | transloco }}
@@ -199,19 +162,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
                   {{ group.labelKey | transloco }}
                 </h4>
                 @if (group.master) {
-                  <button
-                    type="button"
-                    role="switch"
-                    [attr.aria-checked]="groupActive(group.key)"
-                    class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-                    [class]="groupActive(group.key) ? 'bg-accent' : 'bg-white/15'"
-                    (click)="toggleGroup(group.key)"
-                  >
-                    <span
-                      class="absolute top-0.5 h-4 w-4 rounded-full transition-all"
-                      [class]="groupActive(group.key) ? 'left-4.5 bg-ink' : 'left-0.5 bg-white'"
-                    ></span>
-                  </button>
+                  <app-toggle
+                    size="sm"
+                    [checked]="groupActive(group.key)"
+                    (toggled)="toggleGroup(group.key)"
+                  />
                 }
               </div>
               <div class="grid grid-cols-2 gap-1.5">
@@ -220,19 +175,11 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
                     class="flex items-center justify-between gap-2 rounded-lg border border-white/10 px-3 py-1.5"
                   >
                     <code class="truncate font-mono text-xs text-mist/70">{{ entry.pattern }}</code>
-                    <button
-                      type="button"
-                      role="switch"
-                      [attr.aria-checked]="isRuleOn(entry)"
-                      class="relative h-4 w-7 shrink-0 rounded-full transition-colors"
-                      [class]="isRuleOn(entry) ? 'bg-accent' : 'bg-white/15'"
-                      (click)="toggleRule(entry)"
-                    >
-                      <span
-                        class="absolute top-0.5 h-3 w-3 rounded-full transition-all"
-                        [class]="isRuleOn(entry) ? 'left-3.5 bg-ink' : 'left-0.5 bg-white'"
-                      ></span>
-                    </button>
+                    <app-toggle
+                      size="xs"
+                      [checked]="isRuleOn(entry)"
+                      (toggled)="toggleRule(entry)"
+                    />
                   </div>
                 }
               </div>
@@ -269,7 +216,7 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
           class="field min-w-0 flex-1 rounded-xl px-4 py-2 font-mono text-sm"
           [placeholder]="'settings.fileIgnoreExemptionPlaceholder' | transloco"
           [value]="newExemption()"
-          (input)="newExemption.set($any($event.target).value)"
+          (typedValue)="newExemption.set($event)"
           (keydown.enter)="addExemption()"
         />
         <button
@@ -310,7 +257,7 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
           class="field min-w-0 flex-1 rounded-xl px-4 py-2 font-mono text-sm"
           [placeholder]="'settings.rulePlaceholder' | transloco"
           [value]="newRule()"
-          (input)="newRule.set($any($event.target).value)"
+          (typedValue)="newRule.set($event)"
           (keydown.enter)="addRule()"
         />
         <button
@@ -369,7 +316,7 @@ const CATALOG_GROUPS: readonly CatalogGroup[] = [
           class="field min-w-0 flex-1 rounded-xl px-4 py-2 font-mono text-sm"
           [placeholder]="'settings.websitePlaceholder' | transloco"
           [value]="newWebsite()"
-          (input)="newWebsite.set($any($event.target).value)"
+          (typedValue)="newWebsite.set($event)"
           (keydown.enter)="addWebsite(true)"
         />
         <button
@@ -396,7 +343,9 @@ export class AgentRulesSettings {
   protected readonly draft = inject(SettingsDraftService);
 
   protected readonly newExemption = signal('');
-  protected readonly fileIgnoreExemptions = () => this.draft.draft().fileIgnoreExemptions;
+  protected readonly fileIgnoreExemptions = computed(
+    () => this.draft.draft().fileIgnoreExemptions,
+  );
 
   protected isOn(key: FileToggleKey): boolean {
     return this.draft.draft()[key];
@@ -502,10 +451,16 @@ export class AgentRulesSettings {
   }
 
   protected readonly newRule = signal('');
-  protected readonly commandRules = () => this.settingsService.settings()?.commandRules ?? [];
+  protected readonly commandRules = computed(
+    () => this.settingsService.settings()?.commandRules ?? [],
+  );
   protected readonly newWebsite = signal('');
-  protected readonly allowedWebsites = () => this.settingsService.settings()?.allowedWebsites ?? [];
-  protected readonly deniedWebsites = () => this.settingsService.settings()?.deniedWebsites ?? [];
+  protected readonly allowedWebsites = computed(
+    () => this.settingsService.settings()?.allowedWebsites ?? [],
+  );
+  protected readonly deniedWebsites = computed(
+    () => this.settingsService.settings()?.deniedWebsites ?? [],
+  );
 
   protected async addRule(): Promise<void> {
     const rule = this.newRule().trim();

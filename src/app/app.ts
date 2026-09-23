@@ -546,7 +546,7 @@ export class App implements OnInit {
 
   protected closeTab(event: Event, sessionId: string): void {
     event.stopPropagation();
-    this.workspace.closeTab(sessionId);
+    this.workspace.closeTab(sessionId, true);
   }
 
   protected projectFor(projectId: string) {
@@ -721,7 +721,7 @@ export class App implements OnInit {
       event.preventDefault();
       const sessionId = this.workspace.activeSessionId();
       if (sessionId) {
-        this.workspace.closeTab(sessionId);
+        this.workspace.closeTab(sessionId, true);
       }
     }
   }

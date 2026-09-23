@@ -1,22 +1,17 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Channel } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
   FileChange,
   FileDiff,
-  GitBranch,
-  GitCommit,
-  GitCommitDetail,
   GitInfo,
-  GitRebaseEntry,
-  GitStatus,
-  GitTag,
+  GitPullStrategy,
   LiveToolCall,
   Message,
   PendingPermission,
   PendingQuestion,
-  ProcessInfo,
   Project,
   ProjectRule,
   QuestionAnswer,
@@ -26,29 +21,35 @@ import {
   Session,
   SpendSummary,
   UpdateSessionArgs,
-  WorkspaceEntry,
-  WorkspaceFile,
 } from './models';
 import { SettingsService } from './settings.service';
 import { SoundService } from './sound.service';
+import { ProcessService } from './process.service';
+import { MessageQueueService } from './message-queue.service';
+import { GitService } from './git.service';
+import { WorkspaceEditorService } from './workspace-editor.service';
 
 const TABS_KEY = 'pumr.tabs';
 const ACTIVE_KEY = 'pumr.activeTab';
-const OPEN_FILES_KEY = 'pumr.workspace.openFiles';
 const LEFT_TAB_KEY = 'pumr.leftTab';
 const RIGHT_TAB_KEY = 'pumr.rightTab';
 const SESSION_VIEW_KEY = 'pumr.sessionView';
 const LAYOUT_KEY = 'pumr.layout';
-const GIT_COMMIT_PAGE_SIZE = 50;
+const GIT_PULL_STRATEGY_KEY = 'pumr.gitPullStrategy';
+/** Longest handover title derived from the source session title. */
+const HANDOVER_TITLE_MAX_CHARS = 60;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
 
 type LeftTab = 'projects' | 'workspace' | 'git';
 type RightTab = 'changes' | 'session' | 'prompts' | 'modes';
 type SessionView = 'projects' | 'history';
-
-interface PersistedOpenFiles {
-  files?: string[];
-  active?: string | null;
-}
 
 interface PersistedLayout {
   leftPanelOpen?: boolean;
@@ -61,6 +62,11 @@ interface PersistedLayout {
 export class WorkspaceService {
   private readonly settings = inject(SettingsService);
   private readonly sound = inject(SoundService);
+  private readonly transloco = inject(TranslocoService);
+  private readonly processesService = inject(ProcessService);
+  private readonly queueService = inject(MessageQueueService);
+  private readonly gitService = inject(GitService);
+  private readonly editorService = inject(WorkspaceEditorService);
 
   private readonly projectsState = signal<Project[]>([]);
   private readonly sessionsState = signal<Record<string, Session>>({});
@@ -75,12 +81,6 @@ export class WorkspaceService {
   private readonly changesState = signal<Record<string, FileChange[]>>({});
   private readonly selectedPathState = signal<Record<string, string | null>>({});
   private readonly diffState = signal<FileDiff | null>(null);
-  private readonly workspaceEntriesState = signal<Record<string, WorkspaceEntry[]>>({});
-  private readonly openFilesState = signal<Record<string, string[]>>({});
-  private readonly activeOpenFileState = signal<Record<string, string | null>>({});
-  private readonly editorContentState = signal<Record<string, WorkspaceFile>>({});
-  private readonly editorDiffState = signal<Record<string, FileDiff>>({});
-  private readonly editorDirtyState = signal<Record<string, boolean>>({});
   private readonly leftTabState = signal<LeftTab>('projects');
   private readonly rightTabState = signal<RightTab>('changes');
   private readonly sessionViewState = signal<SessionView>('projects');
@@ -89,25 +89,6 @@ export class WorkspaceService {
   private readonly leftPanelWidthState = signal(340);
   private readonly rightPanelWidthState = signal(512);
   private readonly rulesState = signal<ProjectRule[]>([]);
-  private readonly gitState = signal<Record<string, GitInfo>>({});
-  private readonly gitStatusState = signal<Record<string, GitStatus>>({});
-  private readonly gitBranchesState = signal<Record<string, GitBranch[]>>({});
-  private readonly gitRemotesState = signal<Record<string, string[]>>({});
-  private readonly gitCommitsState = signal<GitCommit[]>([]);
-  private readonly gitCommitsLoadingState = signal(false);
-  private readonly gitCommitsHasMoreState = signal(false);
-  private readonly gitCommitSearchState = signal('');
-  private readonly gitCommitDetailState = signal<GitCommitDetail | null>(null);
-  private readonly gitCommitFileDiffState = signal<FileDiff | null>(null);
-  private readonly selectedGitCommitState = signal<string | null>(null);
-  private readonly gitViewState = signal<'changes' | 'commits'>('changes');
-  private readonly selectedGitBranchState = signal<string | null>(null);
-  private readonly gitDiffState = signal<{ path: string; staged: boolean; diff: FileDiff } | null>(
-    null,
-  );
-  private readonly gitBusyState = signal(false);
-  private readonly gitMessageState = signal<string | null>(null);
-  private readonly processesState = signal<ProcessInfo[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
   private readonly draftState = signal<string | null>(null);
@@ -119,9 +100,6 @@ export class WorkspaceService {
   private readonly showArchivedState = signal(false);
   private readonly projectEditorState = signal<string | null>(null);
   private scrollNonce = 0;
-  private gitCommitsRequest = 0;
-  private processTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   readonly projects = this.projectsState.asReadonly();
   readonly spend = this.spendState.asReadonly();
@@ -149,11 +127,9 @@ export class WorkspaceService {
     const ids = this.activeContextIds();
     return this.questionState().find((entry) => ids.has(entry.sessionId)) ?? null;
   });
-  readonly processes = this.processesState.asReadonly();
+  readonly processes = this.processesService.processes;
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
-  readonly editorContent = this.editorContentState.asReadonly();
-  readonly editorDiff = this.editorDiffState.asReadonly();
   readonly leftTab = this.leftTabState.asReadonly();
   readonly rightTab = this.rightTabState.asReadonly();
   readonly sessionView = this.sessionViewState.asReadonly();
@@ -162,7 +138,6 @@ export class WorkspaceService {
   readonly leftPanelWidth = this.leftPanelWidthState.asReadonly();
   readonly rightPanelWidth = this.rightPanelWidthState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
-  readonly handovers = this.handoverState.asReadonly();
   readonly debugSessionId = this.debugSessionState.asReadonly();
   readonly debugOpen = computed(() => this.debugSessionState() !== null);
   readonly scrollTarget = this.scrollTargetState.asReadonly();
@@ -202,47 +177,88 @@ export class WorkspaceService {
   });
   readonly activeGitInfo = computed(() => {
     const project = this.activeProject();
-    return project ? (this.gitState()[project.id] ?? null) : null;
+    return project ? (this.gitService.infoByProject()[project.id] ?? null) : null;
   });
-  readonly gitDiff = this.gitDiffState.asReadonly();
-  readonly gitBusy = this.gitBusyState.asReadonly();
-  readonly gitMessage = this.gitMessageState.asReadonly();
-  readonly gitView = this.gitViewState.asReadonly();
-  readonly selectedGitBranch = this.selectedGitBranchState.asReadonly();
-  readonly gitCommits = this.gitCommitsState.asReadonly();
-  readonly gitCommitsLoading = this.gitCommitsLoadingState.asReadonly();
-  readonly gitCommitsHasMore = this.gitCommitsHasMoreState.asReadonly();
-  readonly gitCommitSearch = this.gitCommitSearchState.asReadonly();
-  readonly gitCommitDetail = this.gitCommitDetailState.asReadonly();
-  readonly gitCommitFileDiff = this.gitCommitFileDiffState.asReadonly();
-  readonly selectedGitCommit = this.selectedGitCommitState.asReadonly();
+  readonly gitDiff = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.diffFor(project.id) : null;
+  });
+  readonly gitBusy = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.busyFor(project.id) : false;
+  });
+  readonly gitMessage = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.messageFor(project.id) : null;
+  });
+  readonly gitError = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.errorFor(project.id) : null;
+  });
+  readonly gitView = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.viewFor(project.id) : 'changes';
+  });
+  readonly selectedGitBranch = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.selectedBranchFor(project.id) : null;
+  });
+  readonly gitCommits = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.commitsFor(project.id) : [];
+  });
+  readonly gitCommitsLoading = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.commitsLoadingFor(project.id) : false;
+  });
+  readonly gitCommitsHasMore = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.commitsHasMoreFor(project.id) : false;
+  });
+  readonly gitCommitSearch = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.commitSearchFor(project.id) : '';
+  });
+  readonly gitCommitDetail = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.commitDetailFor(project.id) : null;
+  });
+  readonly gitCommitFileDiff = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.commitFileDiffFor(project.id) : null;
+  });
+  readonly selectedGitCommit = computed(() => {
+    const project = this.activeProject();
+    return project ? this.gitService.selectedCommitFor(project.id) : null;
+  });
   readonly activeGitBranches = computed(() => {
     const project = this.activeProject();
     if (!project) {
       return [];
     }
-    return this.gitBranchesState()[project.id] ?? this.gitStatusState()[project.id]?.branches ?? [];
+    return (
+      this.gitService.branchesByProject()[project.id] ??
+      this.gitService.statusByProject()[project.id]?.branches ??
+      []
+    );
   });
   readonly activeGitStatus = computed(() => {
     const project = this.activeProject();
-    return project ? (this.gitStatusState()[project.id] ?? null) : null;
+    return project ? (this.gitService.statusByProject()[project.id] ?? null) : null;
   });
   readonly activeGitRemotes = computed(() => {
     const project = this.activeProject();
-    return project ? (this.gitRemotesState()[project.id] ?? []) : [];
+    return project ? (this.gitService.remotesByProject()[project.id] ?? []) : [];
   });
+  private readonly gitPullStrategyState = signal<GitPullStrategy>('ff-only');
+  readonly gitPullStrategy = this.gitPullStrategyState.asReadonly();
+
+  setGitPullStrategy(strategy: GitPullStrategy): void {
+    this.gitPullStrategyState.set(strategy);
+    localStorage.setItem(GIT_PULL_STRATEGY_KEY, strategy);
+  }
 
   constructor() {
-    const stored = this.readJson<Record<string, PersistedOpenFiles>>(OPEN_FILES_KEY, {});
-    const files: Record<string, string[]> = {};
-    const active: Record<string, string | null> = {};
-    for (const [projectId, entry] of Object.entries(stored)) {
-      files[projectId] = Array.isArray(entry?.files) ? entry.files : [];
-      active[projectId] = entry?.active ?? null;
-    }
-    this.openFilesState.set(files);
-    this.activeOpenFileState.set(active);
-
     const leftTab = localStorage.getItem(LEFT_TAB_KEY);
     if (leftTab === 'projects' || leftTab === 'workspace' || leftTab === 'git') {
       this.leftTabState.set(leftTab);
@@ -260,7 +276,11 @@ export class WorkspaceService {
     if (sessionView === 'projects' || sessionView === 'history') {
       this.sessionViewState.set(sessionView);
     }
-    const layout = this.readJson<PersistedLayout>(LAYOUT_KEY, {});
+    const pullStrategy = localStorage.getItem(GIT_PULL_STRATEGY_KEY);
+    if (pullStrategy === 'ff-only' || pullStrategy === 'merge' || pullStrategy === 'rebase') {
+      this.gitPullStrategyState.set(pullStrategy);
+    }
+    const layout = this.readJson<PersistedLayout>(LAYOUT_KEY, {}, isPlainObject);
     if (typeof layout.leftPanelOpen === 'boolean') {
       this.leftPanelOpenState.set(layout.leftPanelOpen);
     }
@@ -278,9 +298,9 @@ export class WorkspaceService {
   async init(): Promise<void> {
     await this.reloadProjects();
     await this.refreshSpend();
-    await this.refreshProcesses();
-    this.startProcessPolling();
-    const storedTabs = this.readJson<string[]>(TABS_KEY, []);
+    await this.processesService.refresh();
+    this.processesService.startPolling();
+    const storedTabs = this.readJson<string[]>(TABS_KEY, [], isStringArray);
     const known = new Set(Object.keys(this.sessionsState()));
     const tabs = storedTabs.filter((id) => known.has(id));
     this.tabsState.set(tabs);
@@ -372,7 +392,7 @@ export class WorkspaceService {
   }
 
   gitInfoFor(projectId: string): GitInfo | null {
-    return this.gitState()[projectId] ?? null;
+    return this.gitService.infoByProject()[projectId] ?? null;
   }
 
   isStreaming(sessionId: string): boolean {
@@ -424,6 +444,43 @@ export class WorkspaceService {
     return this.errorsState()[sessionId] ?? null;
   }
 
+  /**
+   * Whether the last turn of a session paused at the tool-iteration limit and
+   * is waiting for the user to continue.
+   */
+  limitReachedFor(sessionId: string): boolean {
+    return this.sessionsState()[sessionId]?.limitReached ?? false;
+  }
+
+  /**
+   * Resumes a session that paused at the tool-iteration limit. With
+   * `autoContinue`, the session keeps going past future limits too.
+   */
+  async continueSession(
+    sessionId: string,
+    options: { autoContinue?: boolean } = {},
+  ): Promise<void> {
+    const session = this.sessionsState()[sessionId];
+    if (!session || this.isStreaming(sessionId)) {
+      return;
+    }
+    if (options.autoContinue) {
+      this.upsertSession(await api.setSessionAutoContinue(sessionId, true));
+    }
+    const model = session.model ?? this.settings.settings()?.defaultModel ?? '';
+    if (!model) {
+      return;
+    }
+    await this.send({
+      sessionId,
+      content: '',
+      model,
+      reasoningEffort: session.reasoningEffort,
+      provider: session.provider,
+      resume: true,
+    });
+  }
+
   async reloadProjects(): Promise<void> {
     const projects = await api.listProjects();
     this.projectsState.set(projects);
@@ -456,13 +513,19 @@ export class WorkspaceService {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: 'Select project folder',
+      title: this.transloco.translate('workspace.selectProjectFolder'),
     });
     if (!selected || Array.isArray(selected)) {
       return;
     }
     await api.addProject(selected);
     await this.reloadProjects();
+  }
+
+  async cloneProject(url: string, path: string): Promise<Project> {
+    const project = await api.gitClone(url, path);
+    await this.reloadProjects();
+    return project;
   }
 
   async removeProject(projectId: string): Promise<void> {
@@ -532,7 +595,9 @@ export class WorkspaceService {
       const settings = this.settings.settings();
       const created = await api.createSession({
         projectId: session.projectId,
-        title: `Handover: ${session.title}`.slice(0, 60),
+        title: this.transloco
+          .translate('chat.handoverTitle', { title: session.title })
+          .slice(0, HANDOVER_TITLE_MAX_CHARS),
         model: session.model ?? settings?.defaultModel ?? null,
         reasoningEffort: session.reasoningEffort ?? settings?.defaultReasoningEffort ?? 'medium',
         provider: session.provider,
@@ -578,7 +643,7 @@ export class WorkspaceService {
     this.debugSessionState.set(null);
   }
 
-  closeTab(sessionId: string): void {
+  closeTab(sessionId: string, deleteIfEmpty = false): void {
     const tabs = this.tabsState().filter((id) => id !== sessionId);
     this.tabsState.set(tabs);
     if (this.activeState() === sessionId) {
@@ -590,6 +655,21 @@ export class WorkspaceService {
     }
     this.persistTabs();
     void this.refreshSpend();
+
+    if (deleteIfEmpty && this.isEmptySession(sessionId)) {
+      void this.deleteSession(sessionId);
+    }
+  }
+
+  private isEmptySession(sessionId: string): boolean {
+    if ((this.subAgentsState()[sessionId] ?? []).length > 0) {
+      return false;
+    }
+    const messages = this.messagesState()[sessionId];
+    if (messages) {
+      return messages.length === 0;
+    }
+    return (this.sessionsState()[sessionId]?.messageCount ?? 1) === 0;
   }
 
   async loadMessages(sessionId: string, force = false): Promise<void> {
@@ -600,38 +680,63 @@ export class WorkspaceService {
     this.messagesState.update((state) => ({ ...state, [sessionId]: messages }));
   }
 
-  async send(args: SendMessageArgs): Promise<void> {
-    const session = this.sessionsState()[args.sessionId];
-    if (!session || this.isStreaming(args.sessionId)) {
+  private drainQueue(sessionId: string): void {
+    if (this.isStreaming(sessionId) || !this.sessionsState()[sessionId]) {
       return;
     }
+    const next = this.queueService.first(sessionId);
+    if (!next) {
+      return;
+    }
+    void this.dispatchQueued(sessionId, next);
+  }
+
+  /// Sends the head of a session's queue and removes it only once the send has
+  /// actually started, so a racing stream or a removed session cannot make a
+  /// queued prompt vanish silently.
+  private async dispatchQueued(sessionId: string, args: SendMessageArgs): Promise<void> {
+    const dispatched = await this.send(args);
+    if (!dispatched) {
+      return;
+    }
+    this.queueService.removeFirst(sessionId, args);
+  }
+
+  async send(args: SendMessageArgs): Promise<boolean> {
+    const session = this.sessionsState()[args.sessionId];
+    if (!session || this.isStreaming(args.sessionId)) {
+      return false;
+    }
     const now = Date.now();
-    this.appendMessage(args.sessionId, {
-      id: `local-${now}`,
-      sessionId: args.sessionId,
-      seq: now,
-      role: 'user',
-      content: args.content,
-      reasoning: '',
-      model: null,
-      provider: null,
-      cost: 0,
-      promptTokens: 0,
-      completionTokens: 0,
-      cachedTokens: 0,
-      createdAt: now,
-      toolCalls: [],
-      toolCallId: null,
-      toolName: null,
-      status: null,
-      changes: [],
-      baseCommit: null,
-      attachments: args.attachments ?? [],
-      mentions: args.mentions ?? [],
-      context: '',
-      durationMs: 0,
-    });
+    if (!args.resume) {
+      this.appendMessage(args.sessionId, {
+        id: `local-${now}`,
+        sessionId: args.sessionId,
+        seq: now,
+        role: 'user',
+        content: args.content,
+        reasoning: '',
+        model: null,
+        provider: null,
+        cost: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        createdAt: now,
+        toolCalls: [],
+        toolCallId: null,
+        toolName: null,
+        status: null,
+        changes: [],
+        baseCommit: null,
+        attachments: args.attachments ?? [],
+        mentions: args.mentions ?? [],
+        context: '',
+        durationMs: 0,
+      });
+    }
     this.setError(args.sessionId, null);
+    this.patchSession(args.sessionId, { limitReached: false });
     this.setStreaming(args.sessionId, true);
     this.setLiveTools(args.sessionId, []);
 
@@ -752,6 +857,12 @@ export class WorkspaceService {
           void this.reloadSessions(session.projectId);
           void this.refreshSpend();
           break;
+        case 'limitReached':
+          // Subagents report back to the parent instead of pausing for input.
+          if (sessionId === session.id && !event.autoContinued) {
+            this.patchSession(sessionId, { limitReached: true });
+          }
+          break;
         case 'error':
           this.setError(sessionId, event.message);
           this.sound.play('error');
@@ -767,21 +878,32 @@ export class WorkspaceService {
         this.sound.play('error');
       }
     } finally {
-      this.setStreaming(args.sessionId, false);
-      await this.loadMessages(args.sessionId, true);
       this.setLiveTools(args.sessionId, []);
-      await this.reloadSessions(session.projectId);
-      await this.reloadProjects();
-      await this.refreshSpend();
-      await this.loadChanges(args.sessionId);
-      await this.loadRules(session.projectId, args.sessionId);
-      await this.loadSubAgents(args.sessionId);
-      await this.loadWorkspaceEntries(session.projectId, true);
-      const active = this.activeOpenFileState()[session.projectId];
-      if (active) {
-        void this.loadEditorFile(session.projectId, active);
+      // Keep the session marked as streaming until the post-turn refresh has
+      // finished, otherwise a new send could start and be clobbered by this
+      // still-running `loadMessages`. Refresh failures must not skip the queue
+      // drain below (and must not reject `send`).
+      try {
+        await this.loadMessages(args.sessionId, true);
+        await this.reloadSessions(session.projectId);
+        await this.reloadProjects();
+        await this.refreshSpend();
+        await this.loadChanges(args.sessionId);
+        await this.loadRules(session.projectId, args.sessionId);
+        await this.loadSubAgents(args.sessionId);
+        await this.editorService.loadWorkspaceEntries(session.projectId, true);
+        const active = this.editorService.activeFileFor(session.projectId);
+        if (active) {
+          await this.loadEditorFile(session.projectId, active);
+        }
+      } catch (error) {
+        console.error('post-send refresh failed', error);
+      } finally {
+        this.setStreaming(args.sessionId, false);
       }
+      this.drainQueue(args.sessionId);
     }
+    return true;
   }
 
   async stop(sessionId: string): Promise<void> {
@@ -892,20 +1014,10 @@ export class WorkspaceService {
     this.diffState.set(null);
   }
 
-  workspaceEntriesFor(projectId: string): WorkspaceEntry[] {
-    return this.workspaceEntriesState()[projectId] ?? [];
-  }
-
-  async loadWorkspaceEntries(projectId: string, force = false): Promise<void> {
-    if (!force && this.workspaceEntriesState()[projectId]) {
-      return;
-    }
-    try {
-      const entries = await api.listWorkspaceEntries(projectId);
-      this.workspaceEntriesState.update((state) => ({ ...state, [projectId]: entries }));
-    } catch {
-      // best effort
-    }
+  async loadEditorFile(projectId: string, path: string, force = false): Promise<void> {
+    const session = this.activeSession();
+    const changed = session ? this.changesFor(session.id).some((c) => c.path === path) : false;
+    return this.editorService.loadFile(projectId, path, force, changed && session ? session.id : null);
   }
 
   setLeftTab(tab: LeftTab): void {
@@ -951,175 +1063,6 @@ export class WorkspaceService {
     this.persistLayout();
   }
 
-  openFilesFor(projectId: string): string[] {
-    return this.openFilesState()[projectId] ?? [];
-  }
-
-  activeFileFor(projectId: string): string | null {
-    return this.activeOpenFileState()[projectId] ?? null;
-  }
-
-  editorKey(projectId: string, path: string): string {
-    return `${projectId}\n${path}`;
-  }
-
-  openWorkspaceFile(path: string): void {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    const files = this.openFilesState()[project.id] ?? [];
-    if (!files.includes(path)) {
-      this.openFilesState.update((state) => ({ ...state, [project.id]: [...files, path] }));
-    }
-    this.setActiveWorkspaceFile(project.id, path);
-  }
-
-  setActiveWorkspaceFile(projectId: string, path: string): void {
-    this.activeOpenFileState.update((state) => ({ ...state, [projectId]: path }));
-    this.persistOpenFiles();
-  }
-
-  closeWorkspaceFile(path: string): void {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    const files = (this.openFilesState()[project.id] ?? []).filter((entry) => entry !== path);
-    this.openFilesState.update((state) => ({ ...state, [project.id]: files }));
-    const key = this.editorKey(project.id, path);
-    const pending = this.editorContentState()[key];
-    if (pending && this.editorDirtyState()[key]) {
-      void api.writeWorkspaceFile(project.id, path, pending.content).catch(() => undefined);
-    }
-    this.clearAutoSave(project.id, path);
-    this.editorContentState.update((state) => {
-      const next = { ...state };
-      delete next[key];
-      return next;
-    });
-    this.clearEditorDiff(key);
-    this.editorDirtyState.update((state) => {
-      const next = { ...state };
-      delete next[key];
-      return next;
-    });
-    if (this.activeOpenFileState()[project.id] === path) {
-      const next = files[files.length - 1] ?? null;
-      this.activeOpenFileState.update((state) => ({ ...state, [project.id]: next }));
-    }
-    this.persistOpenFiles();
-  }
-
-  async loadEditorFile(projectId: string, path: string, force = false): Promise<void> {
-    const key = this.editorKey(projectId, path);
-    if (!force && this.editorDirtyState()[key]) {
-      return;
-    }
-    const session = this.activeSession();
-    const changed = session
-      ? this.changesFor(session.id).some((change) => change.path === path)
-      : false;
-    const [file, diff] = await Promise.all([
-      api.readWorkspaceFile(projectId, path).catch(() => null),
-      changed && session
-        ? api.getFileDiff(session.id, path).catch(() => null)
-        : Promise.resolve(null),
-    ]);
-    if (file) {
-      this.editorContentState.update((state) => ({ ...state, [key]: file }));
-      this.editorDirtyState.update((state) => {
-        const next = { ...state };
-        delete next[key];
-        return next;
-      });
-    }
-    if (diff) {
-      this.editorDiffState.update((state) => ({ ...state, [key]: diff }));
-    } else {
-      this.clearEditorDiff(key);
-    }
-  }
-
-  updateEditorContent(projectId: string, path: string, content: string): void {
-    const key = this.editorKey(projectId, path);
-    const file = this.editorContentState()[key];
-    if (!file || file.content === content) {
-      return;
-    }
-    this.editorContentState.update((state) => ({ ...state, [key]: { ...file, content } }));
-    this.editorDirtyState.update((state) => ({ ...state, [key]: true }));
-    this.scheduleAutoSave(projectId, path);
-  }
-
-  isEditorDirty(projectId: string, path: string): boolean {
-    return this.editorDirtyState()[this.editorKey(projectId, path)] ?? false;
-  }
-
-  async saveEditorFile(projectId: string, path: string): Promise<void> {
-    const key = this.editorKey(projectId, path);
-    const file = this.editorContentState()[key];
-    if (!file) {
-      return;
-    }
-    const saved = file.content;
-    try {
-      await api.writeWorkspaceFile(projectId, path, saved);
-    } catch {
-      return;
-    }
-    const current = this.editorContentState()[key];
-    if (current && current.content !== saved) {
-      this.scheduleAutoSave(projectId, path);
-      return;
-    }
-    this.editorDirtyState.update((state) => {
-      const next = { ...state };
-      delete next[key];
-      return next;
-    });
-  }
-
-  async discardEditorFile(projectId: string, path: string): Promise<void> {
-    this.clearAutoSave(projectId, path);
-    await this.loadEditorFile(projectId, path, true);
-  }
-
-  private scheduleAutoSave(projectId: string, path: string): void {
-    const key = this.editorKey(projectId, path);
-    this.clearAutoSave(projectId, path);
-    const timer = setTimeout(() => {
-      this.autoSaveTimers.delete(key);
-      void this.saveEditorFile(projectId, path);
-    }, 500);
-    this.autoSaveTimers.set(key, timer);
-  }
-
-  private clearAutoSave(projectId: string, path: string): void {
-    const key = this.editorKey(projectId, path);
-    const timer = this.autoSaveTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      this.autoSaveTimers.delete(key);
-    }
-  }
-
-  private clearEditorDiff(key: string): void {
-    this.editorDiffState.update((state) => {
-      const next = { ...state };
-      delete next[key];
-      return next;
-    });
-  }
-
-  private persistOpenFiles(): void {
-    const data: Record<string, PersistedOpenFiles> = {};
-    for (const [projectId, files] of Object.entries(this.openFilesState())) {
-      data[projectId] = { files, active: this.activeOpenFileState()[projectId] ?? null };
-    }
-    localStorage.setItem(OPEN_FILES_KEY, JSON.stringify(data));
-  }
-
   private persistLayout(): void {
     const data: PersistedLayout = {
       leftPanelOpen: this.leftPanelOpenState(),
@@ -1138,468 +1081,8 @@ export class WorkspaceService {
     }
   }
 
-  async loadGitInfo(projectId: string): Promise<void> {
-    try {
-      const info = await api.getGitInfo(projectId);
-      this.gitState.update((state) => ({ ...state, [projectId]: info }));
-    } catch {
-      // best effort
-    }
-  }
-
-  gitStatusFor(projectId: string): GitStatus | null {
-    return this.gitStatusState()[projectId] ?? null;
-  }
-
-  async loadGitStatus(projectId: string): Promise<void> {
-    try {
-      const status = await api.getGitStatus(projectId);
-      this.gitStatusState.update((state) => ({ ...state, [projectId]: status }));
-    } catch {
-      // best effort
-    }
-  }
-
-  async refreshGit(): Promise<void> {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    await Promise.all([
-      this.loadGitStatus(project.id),
-      this.loadGitInfo(project.id),
-      this.loadGitBranches(project.id),
-      this.loadGitRemotes(project.id),
-    ]);
-  }
-
-  async loadGitBranches(projectId: string): Promise<void> {
-    try {
-      const branches = await api.getGitBranches(projectId);
-      this.gitBranchesState.update((state) => ({ ...state, [projectId]: branches }));
-    } catch {
-      // best effort
-    }
-  }
-
-  async loadGitRemotes(projectId: string): Promise<void> {
-    try {
-      const remotes = await api.getGitRemotes(projectId);
-      this.gitRemotesState.update((state) => ({ ...state, [projectId]: remotes }));
-    } catch {
-      // best effort
-    }
-  }
-
-  async loadGitCommits(reset = true): Promise<void> {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    const request = ++this.gitCommitsRequest;
-    this.gitCommitsLoadingState.set(true);
-    try {
-      const query = this.gitCommitSearchState().trim() || null;
-      const skip = reset ? 0 : this.gitCommitsState().length;
-      const commits = await api.getGitCommits(project.id, query, skip, GIT_COMMIT_PAGE_SIZE);
-      if (request !== this.gitCommitsRequest) {
-        return;
-      }
-      this.gitCommitsState.update((list) => (reset ? commits : [...list, ...commits]));
-      this.gitCommitsHasMoreState.set(commits.length === GIT_COMMIT_PAGE_SIZE);
-    } catch {
-      if (request === this.gitCommitsRequest) {
-        if (reset) {
-          this.gitCommitsState.set([]);
-        }
-        this.gitCommitsHasMoreState.set(false);
-      }
-    } finally {
-      if (request === this.gitCommitsRequest) {
-        this.gitCommitsLoadingState.set(false);
-      }
-    }
-  }
-
-  async loadMoreGitCommits(): Promise<void> {
-    if (this.gitCommitsLoadingState() || !this.gitCommitsHasMoreState()) {
-      return;
-    }
-    await this.loadGitCommits(false);
-  }
-
-  async searchGitCommits(query: string): Promise<void> {
-    this.gitCommitSearchState.set(query);
-    this.selectedGitCommitState.set(null);
-    this.gitCommitDetailState.set(null);
-    this.gitCommitFileDiffState.set(null);
-    await this.loadGitCommits(true);
-    const first = this.gitCommitsState()[0];
-    if (first) {
-      await this.selectGitCommit(first.hash);
-    }
-  }
-
-  async openGitHistory(branch: string | null): Promise<void> {
-    this.gitViewState.set('commits');
-    this.selectedGitBranchState.set(branch);
-    this.selectedGitCommitState.set(null);
-    this.gitCommitDetailState.set(null);
-    this.gitCommitFileDiffState.set(null);
-    this.gitCommitsState.set([]);
-    this.gitCommitsHasMoreState.set(false);
-    this.gitCommitSearchState.set('');
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    await this.loadGitBranches(project.id);
-    await this.loadGitCommits(true);
-    const tip = branch
-      ? (this.gitBranchesState()[project.id] ?? []).find((entry) => entry.name === branch)
-      : null;
-    const target =
-      (tip ? this.gitCommitsState().find((commit) => commit.hash === tip.hash) : null) ??
-      this.gitCommitsState()[0];
-    if (target) {
-      await this.selectGitCommit(target.hash);
-    }
-  }
-
-  async openGitTag(tag: GitTag): Promise<void> {
-    await this.openGitHistory(null);
-    let attempts = 0;
-    while (
-      attempts < 40 &&
-      this.gitCommitsHasMoreState() &&
-      !this.gitCommitsState().some((commit) => commit.hash.startsWith(tag.hash))
-    ) {
-      await this.loadMoreGitCommits();
-      attempts += 1;
-    }
-    const match = this.gitCommitsState().find((commit) => commit.hash.startsWith(tag.hash));
-    if (match) {
-      await this.selectGitCommit(match.hash);
-    }
-  }
-
-  async selectGitCommit(hash: string): Promise<void> {
-    this.selectedGitCommitState.set(hash);
-    this.gitCommitFileDiffState.set(null);
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    try {
-      this.gitCommitDetailState.set(await api.getGitCommit(project.id, hash));
-    } catch {
-      this.gitCommitDetailState.set(null);
-    }
-  }
-
-  async selectGitCommitFile(path: string): Promise<void> {
-    const project = this.activeProject();
-    const hash = this.selectedGitCommitState();
-    if (!project || !hash) {
-      return;
-    }
-    try {
-      this.gitCommitFileDiffState.set(await api.getGitCommitFileDiff(project.id, hash, path));
-    } catch {
-      this.gitCommitFileDiffState.set(null);
-    }
-  }
-
-  showGitChanges(): void {
-    this.gitViewState.set('changes');
-    this.selectedGitBranchState.set(null);
-    this.selectedGitCommitState.set(null);
-    this.gitCommitDetailState.set(null);
-    this.gitCommitFileDiffState.set(null);
-    this.gitCommitsState.set([]);
-    this.gitCommitsHasMoreState.set(false);
-    this.gitCommitSearchState.set('');
-  }
-
-  async selectGitChange(path: string, staged: boolean): Promise<void> {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    try {
-      const diff = await api.getGitFileDiff(project.id, path, staged);
-      this.gitDiffState.set({ path, staged, diff });
-    } catch {
-      this.gitDiffState.set(null);
-    }
-  }
-
-  async stageGitPath(path: string | null): Promise<void> {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    try {
-      await api.gitStage(project.id, path);
-      await this.afterGitMutation(project.id, path, true);
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-    }
-  }
-
-  async unstageGitPath(path: string | null): Promise<void> {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    try {
-      await api.gitUnstage(project.id, path);
-      await this.afterGitMutation(project.id, path, false);
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-    }
-  }
-
-  async discardGitPath(path: string): Promise<void> {
-    const project = this.activeProject();
-    if (!project) {
-      return;
-    }
-    try {
-      await api.gitDiscard(project.id, path);
-      if (this.gitDiffState()?.path === path) {
-        this.gitDiffState.set(null);
-      }
-      await this.loadGitStatus(project.id);
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-    }
-  }
-
-  async commitGit(message: string, amend: boolean): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    try {
-      const output = await api.gitCommit(project.id, message, amend);
-      this.gitMessageState.set(output || null);
-      this.gitDiffState.set(null);
-      await this.loadGitStatus(project.id);
-      return output;
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-      throw error;
-    }
-  }
-
-  async checkoutGitBranch(branch: string, track = false, localBranch?: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    try {
-      const output = await api.gitCheckout(project.id, branch, track, localBranch);
-      this.gitDiffState.set(null);
-      await Promise.all([
-        this.loadGitStatus(project.id),
-        this.loadGitInfo(project.id),
-        this.loadGitBranches(project.id),
-      ]);
-      if (this.gitViewState() === 'commits') {
-        await this.loadGitCommits(true);
-      }
-      return output;
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-      throw error;
-    }
-  }
-
-  async runGitOperation(operation: 'fetch' | 'pull' | 'push'): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    this.gitBusyState.set(true);
-    this.gitMessageState.set(null);
-    try {
-      const output =
-        operation === 'fetch'
-          ? await api.gitFetch(project.id)
-          : operation === 'pull'
-            ? await api.gitPull(project.id)
-            : await api.gitPush(project.id);
-      this.gitMessageState.set(output || null);
-      return output;
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-      throw error;
-    } finally {
-      this.gitBusyState.set(false);
-      await this.loadGitStatus(project.id);
-      await this.loadGitInfo(project.id);
-    }
-  }
-
-  clearGitMessage(): void {
-    this.gitMessageState.set(null);
-  }
-
-  async gitFastForward(branch: string, upstream: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitFastForward(project.id, branch, upstream));
-  }
-
-  async gitMerge(branch: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitMerge(project.id, branch));
-  }
-
-  async gitRebase(onto: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitRebase(project.id, onto));
-  }
-
-  async gitRebaseInteractive(onto: string, todo: GitRebaseEntry[]): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitRebaseInteractive(project.id, onto, todo));
-  }
-
-  async getGitRebaseCommits(onto: string): Promise<GitCommit[]> {
-    const project = this.activeProject();
-    if (!project) {
-      return [];
-    }
-    try {
-      return await api.getGitRebaseCommits(project.id, onto);
-    } catch {
-      return [];
-    }
-  }
-
-  async gitBranchCreate(
-    name: string,
-    startPoint: string | null,
-    checkout: boolean,
-  ): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () =>
-      api.gitBranchCreate(project.id, name, startPoint, checkout),
-    );
-  }
-
-  async gitTagCreate(name: string, target: string | null, message: string | null): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitTagCreate(project.id, name, target, message));
-  }
-
-  async gitBranchRename(from: string, to: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitBranchRename(project.id, from, to));
-  }
-
-  async gitBranchDelete(branch: string, remote: boolean): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitBranchDelete(project.id, branch, remote));
-  }
-
-  async gitSetUpstream(branch: string, upstream: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () => api.gitSetUpstream(project.id, branch, upstream));
-  }
-
-  async gitPushBranch(branch: string, remote: string, setUpstream: boolean): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return this.runGitAction(project.id, () =>
-      api.gitPushBranch(project.id, branch, remote, setUpstream),
-    );
-  }
-
-  async gitPullRequestUrl(remote: string, branch: string): Promise<string> {
-    const project = this.activeProject();
-    if (!project) {
-      return '';
-    }
-    return api.gitPullRequestUrl(project.id, remote, branch);
-  }
-
-  async openExternalUrl(url: string): Promise<void> {
-    try {
-      await api.openExternalUrl(url);
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-    }
-  }
-
-  private async runGitAction(projectId: string, operation: () => Promise<string>): Promise<string> {
-    this.gitBusyState.set(true);
-    this.gitMessageState.set(null);
-    try {
-      const output = await operation();
-      this.gitMessageState.set(output || null);
-      await this.reloadGitState(projectId);
-      return output;
-    } catch (error) {
-      this.gitMessageState.set(String(error));
-      throw error;
-    } finally {
-      this.gitBusyState.set(false);
-    }
-  }
-
-  private async reloadGitState(projectId: string): Promise<void> {
-    await Promise.all([
-      this.loadGitStatus(projectId),
-      this.loadGitInfo(projectId),
-      this.loadGitBranches(projectId),
-      this.loadGitRemotes(projectId),
-    ]);
-    if (this.gitViewState() === 'commits') {
-      await this.loadGitCommits(true);
-    }
-  }
-
-  private async afterGitMutation(
-    projectId: string,
-    path: string | null,
-    staged: boolean,
-  ): Promise<void> {
-    await this.loadGitStatus(projectId);
-    const selected = this.gitDiffState();
-    if (path && selected?.path === path) {
-      await this.selectGitChange(path, staged);
-    }
+async loadGitInfo(projectId: string): Promise<void> {
+    return this.gitService.loadInfo(projectId);
   }
 
   async revertToMessage(messageId: string, restoreFiles: boolean): Promise<RevertResult> {
@@ -1623,19 +1106,6 @@ export class WorkspaceService {
     this.scrollTargetState.set({ id: messageId, nonce: this.scrollNonce });
   }
 
-  async refreshProcesses(): Promise<void> {
-    try {
-      this.processesState.set(await api.listProcesses());
-    } catch {
-      // best effort
-    }
-  }
-
-  async stopProcess(processId: string): Promise<void> {
-    await api.stopProcess(processId);
-    await this.refreshProcesses();
-  }
-
   async refreshSpend(): Promise<void> {
     try {
       this.spendState.set(await api.getSpend(this.activeState()));
@@ -1647,36 +1117,23 @@ export class WorkspaceService {
   private async activateSession(sessionId: string): Promise<void> {
     const session = this.sessionsState()[sessionId];
     this.diffState.set(null);
-    this.gitDiffState.set(null);
-    this.gitViewState.set('changes');
-    this.selectedGitBranchState.set(null);
-    this.selectedGitCommitState.set(null);
-    this.gitCommitDetailState.set(null);
-    this.gitCommitFileDiffState.set(null);
-    this.gitCommitsState.set([]);
+    this.gitService.resetView(session.projectId);
     this.scrollTargetState.set(null);
     await this.loadMessages(sessionId);
     if (session) {
       await Promise.all([
         this.loadChanges(sessionId),
         this.loadRules(session.projectId, sessionId),
-        this.loadGitInfo(session.projectId),
+        this.gitService.loadInfo(session.projectId),
         this.loadSubAgents(sessionId),
-        this.loadWorkspaceEntries(session.projectId),
+        this.editorService.loadWorkspaceEntries(session.projectId),
       ]);
-      const active = this.activeOpenFileState()[session.projectId];
+      const active = this.editorService.activeFileFor(session.projectId);
       if (active) {
         void this.loadEditorFile(session.projectId, active);
       }
     }
     void this.refreshSpend();
-  }
-
-  private startProcessPolling(): void {
-    if (this.processTimer) {
-      return;
-    }
-    this.processTimer = setInterval(() => void this.refreshProcesses(), 3000);
   }
 
   private appendMessage(sessionId: string, message: Message): void {
@@ -1787,9 +1244,10 @@ export class WorkspaceService {
     }
   }
 
-  private readJson<T>(key: string, fallback: T): T {
+  private readJson<T>(key: string, fallback: T, validate: (value: unknown) => boolean): T {
     try {
-      return JSON.parse(localStorage.getItem(key) ?? '') as T;
+      const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? '');
+      return validate(parsed) ? (parsed as T) : fallback;
     } catch {
       return fallback;
     }

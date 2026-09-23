@@ -1,5 +1,5 @@
 use crate::mcp::McpServerConfig;
-use crate::models::{McpCandidate, SkillCandidate};
+use crate::models::{McpCandidate, McpServerRef, McpServerState, SkillCandidate, SkillRef, SkillState};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -78,13 +78,24 @@ fn standard_skill_dirs() -> Vec<(PathBuf, &'static str)> {
     ]
 }
 
-pub fn discover_mcp(folders: &[String], disabled: &[String], auto: bool) -> Vec<McpCandidate> {
+pub fn discover_mcp(
+    folders: &[String],
+    disabled: &[String],
+    disabled_servers: &[McpServerRef],
+    auto: bool,
+) -> Vec<McpCandidate> {
     let mut candidates: Vec<McpCandidate> = Vec::new();
 
     if auto {
         for (path, label) in standard_mcp_paths() {
             if path.is_file() {
-                candidates.push(mcp_candidate(path, label.to_string(), "auto", disabled));
+                candidates.push(mcp_candidate(
+                    path,
+                    label.to_string(),
+                    "auto",
+                    disabled,
+                    disabled_servers,
+                ));
             }
         }
     }
@@ -100,6 +111,7 @@ pub fn discover_mcp(folders: &[String], disabled: &[String], auto: bool) -> Vec<
                     "Custom folder".to_string(),
                     "custom",
                     disabled,
+                    disabled_servers,
                 ));
             }
         }
@@ -132,21 +144,43 @@ fn scan_for_mcp_files(folder: &Path) -> Vec<PathBuf> {
     results
 }
 
-fn mcp_candidate(path: PathBuf, label: String, source: &str, disabled: &[String]) -> McpCandidate {
+fn mcp_candidate(
+    path: PathBuf,
+    label: String,
+    source: &str,
+    disabled: &[String],
+    disabled_servers: &[McpServerRef],
+) -> McpCandidate {
     let path_string = path.to_string_lossy().to_string();
-    let (format, servers) = if path_string.ends_with(".toml") {
+    let (format, names) = if path_string.ends_with(".toml") {
         ("toml", toml_server_names(&path))
     } else {
         ("json", json_server_names(&path))
     };
+    let enabled = !disabled.iter().any(|entry| entry == &path_string);
+    let servers = names
+        .into_iter()
+        .map(|name| McpServerState {
+            enabled: enabled && !is_server_disabled(disabled_servers, &path_string, &name),
+            name,
+        })
+        .collect();
     McpCandidate {
-        enabled: !disabled.iter().any(|entry| entry == &path_string),
+        enabled,
         path: path_string,
         label,
         source: source.to_string(),
         format: format.to_string(),
         servers,
     }
+}
+
+/// True when the user switched this exact server off. Both the config file path
+/// and the in-file name must match, because names repeat across files.
+fn is_server_disabled(disabled: &[McpServerRef], path: &str, name: &str) -> bool {
+    disabled
+        .iter()
+        .any(|entry| entry.path == path && entry.name == name)
 }
 
 fn json_server_names(path: &Path) -> Vec<String> {
@@ -185,14 +219,44 @@ fn toml_server_names(path: &Path) -> Vec<String> {
     names
 }
 
-pub fn discover_skills(folders: &[String], disabled: &[String], auto: bool) -> Vec<SkillCandidate> {
+pub fn discover_skills(
+    folders: &[String],
+    disabled: &[String],
+    disabled_skills: &[SkillRef],
+    auto: bool,
+    installed: &[PathBuf],
+) -> Vec<SkillCandidate> {
     let mut candidates: Vec<SkillCandidate> = Vec::new();
 
     if auto {
         for (path, label) in standard_skill_dirs() {
             if path.is_dir() {
-                candidates.push(skill_candidate(path, label.to_string(), "auto", disabled));
+                candidates.push(skill_candidate(
+                    path,
+                    label.to_string(),
+                    "auto",
+                    disabled,
+                    disabled_skills,
+                ));
             }
+        }
+    }
+
+    // Skills installed from a marketplace are always available, regardless of
+    // auto-discovery, because the user opted in explicitly.
+    for path in installed {
+        if path.is_dir()
+            && !candidates
+                .iter()
+                .any(|candidate| candidate.path == path.to_string_lossy())
+        {
+            candidates.push(skill_candidate(
+                path.clone(),
+                "Marketplace".to_string(),
+                "marketplace",
+                disabled,
+                disabled_skills,
+            ));
         }
     }
 
@@ -208,6 +272,7 @@ pub fn discover_skills(folders: &[String], disabled: &[String], auto: bool) -> V
                     "Custom folder".to_string(),
                     "custom",
                     disabled,
+                    disabled_skills,
                 ));
             }
         }
@@ -221,15 +286,32 @@ fn skill_candidate(
     label: String,
     source: &str,
     disabled: &[String],
+    disabled_skills: &[SkillRef],
 ) -> SkillCandidate {
     let path_string = path.to_string_lossy().to_string();
+    let enabled = !disabled.iter().any(|entry| entry == &path_string);
+    let skills = skill_names(&path)
+        .into_iter()
+        .map(|name| SkillState {
+            enabled: enabled && !is_skill_disabled(disabled_skills, &path_string, &name),
+            name,
+        })
+        .collect();
     SkillCandidate {
-        enabled: !disabled.iter().any(|entry| entry == &path_string),
-        skills: skill_names(&path),
+        enabled,
+        skills,
         path: path_string,
         label,
         source: source.to_string(),
     }
+}
+
+/// True when the user switched this exact skill off. Both the root directory path
+/// and the skill name must match, because names repeat across roots.
+fn is_skill_disabled(disabled: &[SkillRef], path: &str, name: &str) -> bool {
+    disabled
+        .iter()
+        .any(|entry| entry.path == path && entry.name == name)
 }
 
 fn skill_names(directory: &Path) -> Vec<String> {
@@ -262,6 +344,7 @@ fn skill_names(directory: &Path) -> Vec<String> {
 pub fn discover_mcp_servers(
     folders: &[String],
     disabled: &[String],
+    disabled_servers: &[McpServerRef],
     auto: bool,
 ) -> Vec<McpServerConfig> {
     let mut paths: Vec<PathBuf> = Vec::new();
@@ -287,6 +370,7 @@ pub fn discover_mcp_servers(
         }
         configs.extend(parse_server_configs(&path));
     }
+    configs.retain(|config| !is_server_disabled(disabled_servers, &config.source, &config.name));
     configs
 }
 
@@ -442,7 +526,9 @@ pub fn find_skill_dir(
     name: &str,
     folders: &[String],
     disabled: &[String],
+    disabled_skills: &[SkillRef],
     auto: bool,
+    installed: &[PathBuf],
 ) -> Option<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if auto {
@@ -452,6 +538,11 @@ pub fn find_skill_dir(
             }
         }
     }
+    for path in installed {
+        if path.is_dir() {
+            roots.push(path.clone());
+        }
+    }
     for folder in folders {
         let path = PathBuf::from(folder);
         if path.is_dir() {
@@ -459,10 +550,13 @@ pub fn find_skill_dir(
         }
     }
     for root in roots {
-        if disabled
-            .iter()
-            .any(|entry| entry == &root.to_string_lossy())
-        {
+        let root_string = root.to_string_lossy();
+        if disabled.iter().any(|entry| entry == &*root_string) {
+            continue;
+        }
+        // A skill switched off on its own is skipped here, so a same-named skill
+        // in another enabled root can still resolve.
+        if is_skill_disabled(disabled_skills, &root_string, name) {
             continue;
         }
         // The root itself may be the skill directory.
@@ -521,8 +615,128 @@ mod tests {
         let candidates = discover_mcp(
             &[temp.path().to_string_lossy().to_string()],
             &disabled,
+            &[],
             false,
         );
         assert!(candidates.iter().any(|candidate| !candidate.enabled));
+    }
+
+    #[test]
+    fn individual_servers_can_be_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("mcp.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers":{"filesystem":{"command":"npx"},"github":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+        let path = file.to_string_lossy().to_string();
+        let disabled_servers = vec![McpServerRef {
+            path: path.clone(),
+            name: "github".to_string(),
+        }];
+
+        let candidates = discover_mcp(
+            &[temp.path().to_string_lossy().to_string()],
+            &[],
+            &disabled_servers,
+            false,
+        );
+        let candidate = candidates.iter().find(|c| c.path == path).unwrap();
+        assert!(candidate.enabled);
+        let states: Vec<(String, bool)> = candidate
+            .servers
+            .iter()
+            .map(|s| (s.name.clone(), s.enabled))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("filesystem".to_string(), true),
+                ("github".to_string(), false)
+            ]
+        );
+
+        let configs = discover_mcp_servers(
+            &[temp.path().to_string_lossy().to_string()],
+            &[],
+            &disabled_servers,
+            false,
+        );
+        let names: Vec<String> = configs.iter().map(|c| c.name.clone()).collect();
+        assert_eq!(names, vec!["filesystem"]);
+    }
+
+    #[test]
+    fn disabling_a_file_overrides_its_servers() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("mcp.json");
+        std::fs::write(&file, r#"{"mcpServers":{"filesystem":{"command":"npx"}}}"#).unwrap();
+        let path = file.to_string_lossy().to_string();
+        let disabled = vec![path.clone()];
+        let candidates = discover_mcp(
+            &[temp.path().to_string_lossy().to_string()],
+            &disabled,
+            &[],
+            false,
+        );
+        let candidate = candidates.iter().find(|c| c.path == path).unwrap();
+        assert!(!candidate.enabled);
+        assert!(candidate.servers.iter().all(|server| !server.enabled));
+    }
+
+    #[test]
+    fn individual_skills_can_be_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("skills");
+        std::fs::create_dir_all(root.join("code-review")).unwrap();
+        std::fs::write(root.join("code-review/SKILL.md"), "# Review").unwrap();
+        std::fs::create_dir_all(root.join("commit-message")).unwrap();
+        std::fs::write(root.join("commit-message/SKILL.md"), "# Commit").unwrap();
+        let root_string = root.to_string_lossy().to_string();
+        let folders = vec![root_string.clone()];
+        let disabled = vec![SkillRef {
+            path: root_string.clone(),
+            name: "code-review".to_string(),
+        }];
+
+        let candidates = discover_skills(&folders, &[], &disabled, false, &[]);
+        let candidate = candidates.iter().find(|c| c.path == root_string).unwrap();
+        assert!(candidate.enabled);
+        let states: Vec<(String, bool)> = candidate
+            .skills
+            .iter()
+            .map(|skill| (skill.name.clone(), skill.enabled))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("code-review".to_string(), false),
+                ("commit-message".to_string(), true)
+            ]
+        );
+
+        // Runtime resolution refuses the disabled skill but keeps its sibling.
+        assert!(find_skill_dir("code-review", &folders, &[], &disabled, false, &[]).is_none());
+        assert_eq!(
+            find_skill_dir("commit-message", &folders, &[], &disabled, false, &[]),
+            Some(root.join("commit-message"))
+        );
+    }
+
+    #[test]
+    fn disabling_a_skill_root_overrides_its_skills() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("skills");
+        std::fs::create_dir_all(root.join("code-review")).unwrap();
+        std::fs::write(root.join("code-review/SKILL.md"), "# Review").unwrap();
+        let root_string = root.to_string_lossy().to_string();
+        let folders = vec![root_string.clone()];
+        let disabled = vec![root_string.clone()];
+
+        let candidates = discover_skills(&folders, &disabled, &[], false, &[]);
+        let candidate = candidates.iter().find(|c| c.path == root_string).unwrap();
+        assert!(!candidate.enabled);
+        assert!(candidate.skills.iter().all(|skill| !skill.enabled));
     }
 }

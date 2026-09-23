@@ -15,10 +15,12 @@ import { SettingsDraftService } from './settings-draft.service';
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
 const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-providers-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   template: `
     <section
       #apiKeySection
@@ -51,7 +53,7 @@ const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
           class="field min-w-0 flex-1 rounded-xl px-4 py-2 text-sm"
           placeholder="sk-or-v1-..."
           [value]="apiKeyDraft()"
-          (input)="apiKeyDraft.set($any($event.target).value)"
+          (typedValue)="apiKeyDraft.set($event)"
           (keydown.enter)="saveApiKey()"
         />
         <button
@@ -77,7 +79,7 @@ const PLANNED_PROVIDERS = ['Anthropic', 'OpenAI', 'Google', 'xAI'];
       <input
         class="field w-full rounded-xl px-4 py-2 font-mono text-sm"
         [value]="draft.draft().openrouterBaseUrl"
-        (input)="draft.patch('openrouterBaseUrl', $any($event.target).value)"
+        (typedValue)="draft.patch('openrouterBaseUrl', $event)"
       />
       <p class="mt-2 text-xs text-mist/30">{{ 'settings.baseUrlHint' | transloco }}</p>
     </section>

@@ -1,7 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { confirm, open } from '@tauri-apps/plugin-dialog';
 import { WorkspaceService } from '../core/workspace.service';
 import { Session } from '../core/models';
 import { AgentStatus } from './agent-status';
@@ -317,6 +317,25 @@ function startOfDay(timestamp: number): number {
               >
                 ＋
               </button>
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                [title]="'git.cloneRepo' | transloco"
+                (click)="openCloneDialog()"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  class="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 2.5v11M4 8.5c0-2 1.5-3.5 3.5-3.5H12" />
+                  <path d="M9.5 3 12 5l-2.5 2" />
+                </svg>
+              </button>
             }
           </div>
         </div>
@@ -441,6 +460,74 @@ function startOfDay(timestamp: number): number {
         <app-workspace-tree class="min-h-0 flex-1" />
       }
     </div>
+
+    @if (cloneOpen()) {
+      <div
+        class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+        (click)="closeCloneDialog()"
+      >
+        <div
+          class="w-[30rem] max-w-full glass-pop rounded-2xl shadow-2xl"
+          (click)="$event.stopPropagation()"
+        >
+          <div class="p-6">
+            <h2 class="text-base font-semibold text-white">{{ 'git.cloneRepo' | transloco }}</h2>
+            <label class="mt-4 block text-xs font-medium text-mist/70" for="git-clone-url">
+              {{ 'git.cloneUrl' | transloco }}
+            </label>
+            <input
+              id="git-clone-url"
+              type="text"
+              autofocus
+              class="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 font-mono text-[13px] text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
+              placeholder="https://github.com/user/repo.git"
+              [value]="cloneUrl()"
+              (input)="cloneUrl.set($any($event.target).value)"
+            />
+            <label class="mt-3 block text-xs font-medium text-mist/70" for="git-clone-path">
+              {{ 'git.cloneFolder' | transloco }}
+            </label>
+            <div class="mt-1 flex items-center gap-2">
+              <input
+                id="git-clone-path"
+                type="text"
+                class="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 font-mono text-[13px] text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
+                [value]="clonePath()"
+                (input)="clonePath.set($any($event.target).value)"
+              />
+              <button
+                type="button"
+                class="shrink-0 rounded-lg bg-white/5 px-3 py-1.5 text-xs text-mist/70 transition-colors hover:bg-white/10 hover:text-accent"
+                (click)="pickCloneFolder()"
+              >
+                {{ 'git.cloneChoose' | transloco }}
+              </button>
+            </div>
+            @if (cloneError(); as message) {
+              <p class="mt-3 text-xs text-rose-400">{{ message }}</p>
+            }
+          </div>
+          <footer class="flex items-center justify-end gap-2 border-t border-white/5 px-6 py-4">
+            <button
+              type="button"
+              class="rounded-full px-4 py-2 text-sm text-mist/70 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
+              [disabled]="cloneBusy()"
+              (click)="closeCloneDialog()"
+            >
+              {{ 'common.cancel' | transloco }}
+            </button>
+            <button
+              type="button"
+              class="rounded-full bg-accent px-5 py-2 text-sm font-medium text-ink transition-opacity hover:opacity-90 disabled:opacity-50"
+              [disabled]="cloneBusy() || cloneUrl().trim().length === 0 || clonePath().trim().length === 0"
+              (click)="confirmClone()"
+            >
+              {{ 'git.cloneRepo' | transloco }}
+            </button>
+          </footer>
+        </div>
+      </div>
+    }
   `,
 })
 export class Sidebar {
@@ -449,6 +536,11 @@ export class Sidebar {
   private readonly expanded = signal<Set<string> | null>(null);
   private readonly expandedSubAgents = signal<Set<string>>(new Set());
   private readonly now = signal(Date.now());
+  protected readonly cloneOpen = signal(false);
+  protected readonly cloneUrl = signal('');
+  protected readonly clonePath = signal('');
+  protected readonly cloneBusy = signal(false);
+  protected readonly cloneError = signal<string | null>(null);
 
   protected readonly historyGroups = computed<HistoryGroup[]>(() => {
     const groups: HistoryGroup[] = [];
@@ -514,6 +606,51 @@ export class Sidebar {
       await this.workspace.addProject();
     } catch (error) {
       console.error(error);
+    }
+  }
+
+  protected openCloneDialog(): void {
+    this.cloneUrl.set('');
+    this.clonePath.set('');
+    this.cloneError.set(null);
+    this.cloneBusy.set(false);
+    this.cloneOpen.set(true);
+  }
+
+  protected closeCloneDialog(): void {
+    if (!this.cloneBusy()) {
+      this.cloneOpen.set(false);
+    }
+  }
+
+  protected async pickCloneFolder(): Promise<void> {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: this.transloco.translate('git.cloneFolder'),
+    });
+    if (selected && !Array.isArray(selected)) {
+      this.clonePath.set(selected);
+    }
+  }
+
+  protected async confirmClone(): Promise<void> {
+    const url = this.cloneUrl().trim();
+    const path = this.clonePath().trim();
+    if (url.length === 0 || path.length === 0 || this.cloneBusy()) {
+      return;
+    }
+    this.cloneBusy.set(true);
+    this.cloneError.set(null);
+    try {
+      await this.workspace.cloneProject(url, path);
+      this.cloneOpen.set(false);
+      this.cloneUrl.set('');
+      this.clonePath.set('');
+    } catch (error) {
+      this.cloneError.set(String(error));
+    } finally {
+      this.cloneBusy.set(false);
     }
   }
 
@@ -587,10 +724,13 @@ export class Sidebar {
 
   protected async removeSession(event: Event, session: Session): Promise<void> {
     event.stopPropagation();
-    const confirmed = await confirm(`Delete session "${session.title}"? This cannot be undone.`, {
-      title: 'pumr',
-      kind: 'warning',
-    });
+    const confirmed = await confirm(
+      this.transloco.translate('sidebar.deleteSessionConfirm', { title: session.title }),
+      {
+        title: 'pumr',
+        kind: 'warning',
+      },
+    );
     if (!confirmed) {
       return;
     }
@@ -616,7 +756,7 @@ export class Sidebar {
       return;
     }
     const confirmed = await confirm(
-      `Remove project "${project.name}"? Sessions are kept in the database but hidden.`,
+      this.transloco.translate('sidebar.removeProjectConfirm', { name: project.name }),
       {
         title: 'pumr',
         kind: 'warning',

@@ -5,10 +5,12 @@ import { isTauri } from '../../core/api';
 import { UpdaterService } from '../../core/updater.service';
 import { SettingsDraftService } from './settings-draft.service';
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-general-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   template: `
     <section>
       <label class="mb-2 block text-sm font-semibold text-white">
@@ -17,7 +19,7 @@ import { SettingsDraftService } from './settings-draft.service';
       <select
         class="field field-select w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
         [value]="draft.draft().language"
-        (change)="draft.patch('language', $any($event.target).value)"
+        (typedValue)="draft.patch('language', $event)"
       >
         <option value="en">English</option>
         <option value="bg">Български</option>

@@ -7,6 +7,7 @@ mod discovery;
 mod error;
 mod git;
 mod mcp;
+mod marketplace;
 mod mentions;
 mod models;
 mod permissions;
@@ -62,6 +63,7 @@ pub fn run() {
             commands::list_sub_sessions,
             commands::create_session,
             commands::update_session,
+            commands::set_session_auto_continue,
             commands::archive_session,
             commands::delete_session,
             commands::list_messages,
@@ -77,6 +79,14 @@ pub fn run() {
             commands::delete_website_rule,
             commands::discover_mcp_sources,
             commands::discover_skills,
+            commands::search_mcp_marketplace,
+            commands::browse_mcp_directory,
+            commands::list_skill_marketplaces,
+            commands::add_skill_marketplace,
+            commands::remove_skill_marketplace,
+            commands::install_marketplace_skills,
+            commands::list_installed_marketplace_skills,
+            commands::uninstall_marketplace_skills,
             commands::list_workspace_entries,
             commands::read_workspace_file,
             commands::write_workspace_file,
@@ -111,6 +121,17 @@ pub fn run() {
             commands::git_push_branch,
             commands::git_pull_request_url,
             commands::open_external_url,
+            commands::git_operation_abort,
+            commands::git_operation_continue,
+            commands::git_stash_push,
+            commands::git_stash_apply,
+            commands::git_stash_pop,
+            commands::git_stash_drop,
+            commands::git_init,
+            commands::git_clone,
+            commands::git_tag_delete,
+            commands::git_tag_push,
+            commands::git_submodule_update,
             commands::get_session_changes,
             commands::get_file_diff,
             commands::get_project_rules,

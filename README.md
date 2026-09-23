@@ -51,8 +51,7 @@ Tool calls and their output stream into the chat as collapsible cards; file-modi
   be managed in Settings.
 - **Dangerous commands** (`rm`, `mv`, `chmod`, `git reset --hard`, `git clean`, `sudo`,
   `curl | sh`, database drops, ...) always ask outside the project. Inside the project they are
-  allowed for git-tracked files and ignored/tmp folders (`node_modules`, `dist`, `build`, ...),
-  and ask for unversioned, `.env`, key or database files.
+  allowed, and only ask for sensitive files such as `.env`, keys or databases.
 - **Folder access**: tools may only touch the active project plus the extra folders in Settings.
   When the agent needs anything else, the permission dialog can add that folder permanently.
 - **Web access**: `webfetch` reads a URL and `websearch` searches the web (DuckDuckGo). The

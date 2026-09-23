@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { TranslocoPipe } from '@jsverse/transloco';
 import { ModelsService } from '../core/models.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { WorkspaceEditorService } from '../core/workspace-editor.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { ModesPanel } from './modes-panel';
@@ -241,6 +242,7 @@ import { SystemPromptsPanel } from './system-prompts-panel';
 })
 export class RightPanel {
   protected readonly workspace = inject(WorkspaceService);
+  private readonly editor = inject(WorkspaceEditorService);
   private readonly models = inject(ModelsService);
 
   protected readonly tab = this.workspace.rightTab;
@@ -279,7 +281,7 @@ export class RightPanel {
   protected isSelected(path: string): boolean {
     if (this.workspace.leftTab() === 'workspace') {
       const project = this.workspace.activeProject();
-      return project ? path === this.workspace.activeFileFor(project.id) : false;
+      return project ? path === this.editor.activeFileFor(project.id) : false;
     }
     const id = this.sessionId();
     return id ? path === this.workspace.selectedPathFor(id) : false;
@@ -287,7 +289,10 @@ export class RightPanel {
 
   protected select(path: string): void {
     if (this.workspace.leftTab() === 'workspace') {
-      this.workspace.openWorkspaceFile(path);
+      const project = this.workspace.activeProject();
+      if (project) {
+        this.editor.open(project.id, path);
+      }
       return;
     }
     const id = this.sessionId();

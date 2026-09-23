@@ -27,6 +27,8 @@
     "noProjects": "Noch keine Projekte. Füge einen Ordner hinzu.",
     "noSessions": "Keine Sitzungen",
     "removeProject": "Projekt entfernen",
+    "deleteSessionConfirm": "Sitzung „{{ title }}“ löschen? Dies kann nicht rückgängig gemacht werden.",
+    "removeProjectConfirm": "Projekt „{{ name }}“ entfernen? Sitzungen bleiben in der Datenbank, werden aber ausgeblendet.",
     "sessions": "Sitzungen",
     "archiveSession": "Sitzung archivieren",
     "unarchiveSession": "Sitzung wiederherstellen",
@@ -45,6 +47,7 @@
     "libraryRoot": "library root",
     "noOpenFiles": "Keine geöffneten Dateien. Wähle eine Datei im Baum.",
     "selectFile": "Wähle eine Datei im Baum, um sie zu öffnen.",
+    "selectProjectFolder": "Projektordner auswählen",
     "loading": "Lädt…",
     "diff": "Diff",
     "code": "Code",
@@ -57,6 +60,7 @@
     "branches": "Branches",
     "remotes": "Remotes",
     "noRepo": "Dieses Projekt ist kein Git-Repository.",
+    "initRepo": "Repository initialisieren",
     "noChanges": "Keine lokalen Änderungen.",
     "noStaged": "Keine vorgemerkten Änderungen.",
     "noBranches": "Keine Branches.",
@@ -68,9 +72,16 @@
     "stageAll": "Alle vormerken",
     "unstageAll": "Alle zurücknehmen",
     "discard": "Verwerfen",
+    "discardConfirm": "Änderungen an „{{ path }}“ verwerfen? Dies kann nicht rückgängig gemacht werden.",
     "selectFile": "Wähle eine Datei, um ihre Änderungen zu sehen.",
     "fetch": "Fetch",
     "pull": "Pull",
+    "pullStrategy": {
+      "label": "Pull-Strategie",
+      "ffOnly": "Nur Fast-Forward",
+      "merge": "Merge",
+      "rebase": "Rebase"
+    },
     "push": "Push",
     "refresh": "Aktualisieren",
     "detached": "Detached HEAD",
@@ -82,8 +93,16 @@
     "noCommits": "Keine Commits auf diesem Branch.",
     "allCommits": "Alle Commits",
     "tags": "Tags",
+    "tagPush": "Push",
+    "tagDeleteConfirm": "Tag {{ tag }} löschen?",
     "stashes": "Stashes",
+    "stashCreate": "Änderungen stashen",
+    "stashApply": "Anwenden",
+    "stashPop": "Hervorholen",
+    "stashDropConfirm": "{{ stash }} verwerfen?",
+    "noStashes": "Keine Stashes",
     "submodules": "Submodule",
+    "submoduleUpdate": "Aktualisieren",
     "history": "Verlauf",
     "allBranches": "Alle Branches",
     "commitTab": "Commit",
@@ -95,12 +114,26 @@
     "parents": "Eltern",
     "selectCommit": "Wähle einen Commit, um Details zu sehen.",
     "commitAndPush": "Commit & Push",
+    "conflict": {
+      "banner": "{{ operation }} läuft",
+      "files": "{{ count }} Dateien mit Konflikten",
+      "continue": "Fortsetzen",
+      "abort": "Abbrechen"
+    },
+    "errors": {
+      "auth": "Authentifizierung fehlgeschlagen. Prüfe deine Git-Zugangsdaten.",
+      "network": "Netzwerkfehler. Prüfe Verbindung und Remote."
+    },
     "searchCommits": "Commits durchsuchen…",
     "trackRemoteTitle": "Remote-Branch nachverfolgen",
     "trackRemoteHint": "Erstellt einen neuen lokalen Branch, der den Remote-Branch nachverfolgt.",
     "remoteBranch": "Remote-Branch:",
     "localBranch": "Lokaler Branch:",
     "track": "Nachverfolgen",
+    "cloneRepo": "Repository klonen",
+    "cloneUrl": "Repository-URL",
+    "cloneFolder": "Zielordner",
+    "cloneChoose": "Auswählen…",
     "createBranch": "Branch erstellen",
     "branchName": "Branch-Name",
     "createBranchAt": "Branch erstellen bei: {{branch}}",
@@ -162,6 +195,8 @@
     "placeholder": "Beschreibe deine Aufgabe... nutze @ für Dateien, Ordner, Websites, Skills oder MCP-Server",
     "send": "Senden",
     "stop": "Stoppen",
+    "queue": "Warteschlange",
+    "queued": "In Warteschlange ({{ count }})",
     "thinking": "Denkt nach",
     "thinkingProcess": "Denkprozess",
     "you": "Du",
@@ -186,7 +221,12 @@
     "hint": "Enter zum Senden · Shift+Enter für neue Zeile",
     "handover": "Übergabe",
     "handovering": "Zusammenfassen…",
-    "handoverHint": "Diese Sitzung zusammenfassen und in einer neuen fortsetzen"
+    "handoverHint": "Diese Sitzung zusammenfassen und in einer neuen fortsetzen",
+    "handoverTitle": "Übergabe: {{ title }}",
+    "limitReached": "Nach {{ count }} Tool-Aufrufen ohne abschließende Antwort pausiert. Das Limit verhindert, dass ein festgefahrener Agent endlos weiterläuft. Fortsetzen gibt ihm ein neues Kontingent, oder aktiviere das automatische Fortsetzen.",
+    "continue": "Fortsetzen",
+    "autoContinueSession": "Diese Sitzung automatisch fortsetzen",
+    "autoContinueAlways": "Alle Sitzungen automatisch fortsetzen. Kann später in den Einstellungen geändert werden."
   },
   "debug": {
     "title": "Sitzungs-Debugger",
@@ -314,11 +354,26 @@
     "attachmentTooLarge": "Dateien größer als 10 MB können nicht angehängt werden.",
     "attachmentUnsupported": "Nur Bilder, PDFs und Textdateien können angehängt werden.",
     "mentionKinds": {
-      "file": { "label": "Datei", "hint": "Inhalt einer Datei als Kontext einfügen" },
-      "directory": { "label": "Ordner", "hint": "Ordnerauflistung als Kontext einfügen" },
-      "website": { "label": "Website", "hint": "Webseite als Kontext abrufen" },
-      "skill": { "label": "Skill", "hint": "Anweisungen eines Skills laden" },
-      "mcp": { "label": "MCP-Server", "hint": "Server verbinden und Tools bereitstellen" }
+      "file": {
+        "label": "Datei",
+        "hint": "Inhalt einer Datei als Kontext einfügen"
+      },
+      "directory": {
+        "label": "Ordner",
+        "hint": "Ordnerauflistung als Kontext einfügen"
+      },
+      "website": {
+        "label": "Website",
+        "hint": "Webseite als Kontext abrufen"
+      },
+      "skill": {
+        "label": "Skill",
+        "hint": "Anweisungen eines Skills laden"
+      },
+      "mcp": {
+        "label": "MCP-Server",
+        "hint": "Server verbinden und Tools bereitstellen"
+      }
     },
     "mentionNoResults": "Keine Treffer. Tippe weiter oder drücke Escape.",
     "mentionFetch": "{{ url }} abrufen",
@@ -463,13 +518,13 @@
       "agent": "Agent-Konfiguration",
       "agentRules": "Agent White- und Blacklist",
       "general": "Allgemein",
+      "chat": "Chat",
       "appearance": "Erscheinungsbild",
       "notifications": "Benachrichtigungen",
       "hotkeys": "Tastenkürzel",
       "skills": "Skills",
       "mcp": "MCP-Server",
-      "workspace": "Workspace",
-      "chat": "Chat"
+      "workspace": "Workspace"
     },
     "providers": {
       "openrouter": "OpenRouter",
@@ -494,6 +549,40 @@
       "foldersHint": "Der Assistent darf diese Ordner ohne Nachfrage lesen und schreiben. Das aktive Projekt ist immer erlaubt."
     },
     "mcp": {
+      "directory": {
+        "title": "MCP-Server",
+        "subtitle": "{{ count }} Model-Context-Protocol-Server",
+        "search": "MCP-Server suchen…",
+        "all": "Alle",
+        "source": "Quelle:",
+        "official": "Offiziell",
+        "officialTooltip": "Im offiziellen Model-Context-Protocol-Registry gelistet, mit verifiziertem Eigentümer-Namensraum.",
+        "docker": "Docker",
+        "dockerTooltip": "Im Docker-MCP-Katalog veröffentlicht und wird über Docker ausgeführt.",
+        "sortBy": "Sortieren",
+        "mostStars": "Meiste Sterne",
+        "mostDownloads": "Meiste Downloads",
+        "sortName": "Name",
+        "recentlyUpdated": "Zuletzt aktualisiert",
+        "github": "GitHub",
+        "loadMore": "Mehr laden",
+        "empty": "Keine MCP-Server gefunden.",
+        "install": "Installieren",
+        "installHint": "Kopiert eine mcpServers-Konfiguration zum Einfügen in deine MCP-Einstellungen.",
+        "categories": {
+          "webSearch": "Websuche",
+          "browserAutomation": "Browser-Automatisierung",
+          "blockchainCrypto": "Blockchain & Krypto",
+          "aiTaskManagement": "KI-Aufgabenverwaltung",
+          "developerTools": "Entwickler-Tools",
+          "database": "Datenbank",
+          "fileSystem": "Dateisystem",
+          "cloudInfrastructure": "Cloud-Infrastruktur",
+          "productivity": "Produktivität",
+          "mediaGeneration": "Mediengenerierung",
+          "utilities": "Dienstprogramme"
+        }
+      },
       "autoDiscovery": "MCP-Konfigurationen automatisch erkennen",
       "autoDiscoveryHint": "Durchsucht Standardorte von Claude, Cursor, VS Code, Codex, opencode, Devin und anderen.",
       "folders": "MCP-Ordner",
@@ -502,7 +591,54 @@
       "noSources": "Keine MCP-Konfigurationen gefunden.",
       "noServers": "keine Server erkannt",
       "phaseNote": "Verweise im Composer mit @mcp auf einen Server, um ihn zu verbinden und seine Tools bereitzustellen.",
-      "addFolder": "Ordner hinzufügen"
+      "addFolder": "Ordner hinzufügen",
+      "registry": "MCP-Registry",
+      "registryHint": "Durchsuche die offizielle Model-Context-Protocol-Registry und übernimm einen Server in deine MCP-Konfiguration.",
+      "registrySearch": "Server suchen…",
+      "registryEnv": "Umgebung: {{ names }}",
+      "registryNoResults": "Keine Server gefunden.",
+      "verified": "Verifiziert",
+      "verifiedTooltip": "Der Registry-Namensraum des Servers ist verifiziert – der Name gehört der Domain oder dem GitHub-Konto, das ihn veröffentlicht hat.",
+      "repository": "Repository",
+      "copied": "Kopiert",
+      "verifiedOnly": "Nur verifizierte Server",
+      "verifiedOnlyHint": "Nur Server anzeigen, deren Registry-Namespace verifiziert ist. Deaktivieren, um unverifizierte Drittanbieter-Einträge einzubeziehen.",
+      "recommended": "Empfohlene Server",
+      "recommendedHint": "Beliebte Server aus der offiziellen Registry. Wähle einen aus, um danach zu suchen, und kopiere dann seine Konfiguration.",
+      "items": {
+        "filesystem": {
+          "name": "Filesystem",
+          "description": "Lokale Dateien lesen und schreiben."
+        },
+        "github": {
+          "name": "GitHub",
+          "description": "Repositories, Issues und Pull Requests verwalten."
+        },
+        "postgres": {
+          "name": "PostgreSQL",
+          "description": "PostgreSQL-Datenbanken abfragen und untersuchen."
+        },
+        "puppeteer": {
+          "name": "Puppeteer",
+          "description": "Einen Headless-Browser automatisieren."
+        },
+        "memory": {
+          "name": "Memory",
+          "description": "Dauerhaftes Gedächtnis über Sitzungen hinweg."
+        },
+        "braveSearch": {
+          "name": "Brave Search",
+          "description": "Websuche über die Brave-Search-API."
+        },
+        "slack": {
+          "name": "Slack",
+          "description": "Kanäle lesen und Nachrichten senden."
+        },
+        "sentry": {
+          "name": "Sentry",
+          "description": "Fehler und Issues in Sentry untersuchen."
+        }
+      }
     },
     "skills": {
       "autoDiscovery": "Skill-Ordner automatisch erkennen",
@@ -513,7 +649,52 @@
       "noSources": "Keine Skill-Ordner gefunden.",
       "noSkills": "keine Skills gefunden",
       "phaseNote": "Verweise im Composer mit @skill auf einen Skill, um seine Anweisungen in den Chat zu laden.",
-      "addFolder": "Ordner hinzufügen"
+      "addFolder": "Ordner hinzufügen",
+      "marketplaces": "Skill-Marktplätze",
+      "marketplacesHint": "Füge einen Marktplatz im Claude-Stil hinzu (ein Git-Repo mit .claude-plugin/marketplace.json), prüfe seine Plugins und installiere ihre Skills lokal.",
+      "marketplaceUrl": "https://github.com/owner/marketplace",
+      "add": "Hinzufügen",
+      "reservedName": "Reservierter Name",
+      "reservedNameTooltip": "Dieser Name ist für offizielle Nutzung reserviert; der Marktplatz gibt sich möglicherweise als offizielle Quelle aus.",
+      "noPlugins": "Dieser Marktplatz hat keine installierbaren Plugins.",
+      "noMarketplaces": "Noch keine Marktplätze hinzugefügt.",
+      "installed": "Installierte Skills",
+      "installedHint": "Aus Marktplätzen installierte Skills stehen dem Agenten zur Verfügung und werden immer gefunden, auch wenn die Auto-Erkennung deaktiviert ist.",
+      "noInstalled": "Keine Marktplatz-Skills installiert.",
+      "verified": "Verifiziert",
+      "verifiedTooltip": "Verifiziert bedeutet: Der Marktplatz wird von pumr kuratiert und sein Stand entspricht einem festgeschriebenen Commit, kann sich also nicht unbemerkt ändern.",
+      "trusted": "Vertrauenswürdig",
+      "trustedTooltip": "Vertrauenswürdig bedeutet: Du hast diesen Marktplatz selbst hinzugefügt, daher ist die Installation daraus erlaubt.",
+      "unverified": "Unverifiziert",
+      "unverifiedTooltip": "Unverifiziert bedeutet: pumr hat diesen Marktplatz nicht geprüft. Die Installation daraus erfordert das Erlauben unverifizierter Quellen.",
+      "verifiedOnly": "Nur verifizierte oder vertrauenswürdige Marktplätze",
+      "verifiedOnlyHint": "Verifizierte Marktplätze entsprechen einem kuratierten festgeschriebenen Commit; vertrauenswürdige sind die URLs, die du selbst hinzugefügt hast. Deaktivieren, um die Installation aus jedem Marktplatz zu erlauben.",
+      "recommended": "Empfohlene Marktplätze",
+      "recommendedHint": "Für diese Liste geprüfte Community-Kataloge. Beim Hinzufügen wird der Marktplatz lokal geklont; prüfe seine Plugins vor der Installation.",
+      "added": "Hinzugefügt",
+      "searchPlaceholder": "Skills durchsuchen...",
+      "allCategories": "Alle",
+      "browseCount": "{{ count }} Skills verfügbar",
+      "noResults": "Keine Skills entsprechen deiner Suche.",
+      "copied": "Kopiert",
+      "items": {
+        "claudeCodeWorkflows": {
+          "name": "Claude Code Workflows",
+          "description": "Workflow-Orchestrierung mit spezialisierten Agenten und Befehlen."
+        },
+        "buildWithClaude": {
+          "name": "Build with Claude",
+          "description": "Community-Sammlung von Agenten, Slash-Befehlen und Skills."
+        },
+        "sentryMcp": {
+          "name": "Sentry MCP",
+          "description": "Skills für Fehlerverfolgung und Performance-Monitoring."
+        },
+        "superpowers": {
+          "name": "Superpowers",
+          "description": "Kern-Skill-Bibliothek für agentische Entwicklungs-Workflows."
+        }
+      }
     },
     "apiKey": "OpenRouter API-Schlüssel",
     "apiKeyHint": "Wird im Schlüsselbund des Betriebssystems gespeichert, nie im Klartext.",
@@ -602,6 +783,10 @@
     "keepAwakeHint": "Verhindert, dass der Bildschirm gesperrt wird oder der Computer in den Standby geht, während der Agent oder ein Subagent läuft.",
     "tabsMultiline": "Tabs auf mehrere Zeilen umbrechen",
     "tabsMultilineHint": "Wenn aktiviert, brechen offene Tabs auf zusätzliche Zeilen um. Wenn deaktiviert, bleiben die Tabs in einer Zeile und es erscheint eine Bildlaufleiste, sobald kein Platz mehr ist.",
+    "chat": {
+      "pasteWordLimit": "Eingefügten Text einklappen ab",
+      "pasteWordLimitHint": "Eingefügter Text mit mehr Wörtern als dieser Wert wird im Composer zu einer bearbeitbaren Pille eingeklappt. Auf 0 setzen, um Text immer direkt einzufügen."
+    },
     "sounds": {
       "title": "Benachrichtigungstöne",
       "hint": "Spielt einen kurzen Ton, wenn der Agent fertig ist, um Erlaubnis bittet oder mit einem Fehler abbricht.",
@@ -664,6 +849,10 @@
     "extraFoldersHint": "Ein absoluter Pfad pro Zeile. Wird in der Tools-Phase genutzt.",
     "contextLimit": "Kontextnachrichten an das Modell",
     "contextLimitHint": "0 bedeutet unbegrenzt. Ältere Nachrichten werden zuerst entfernt.",
+    "maxToolIterations": "Max. Tool-Aufrufe pro Durchlauf",
+    "maxToolIterationsHint": "Wie viele aufeinanderfolgende Tool-Aufrufe der Agent machen darf, bevor er pausiert und dich um Fortsetzen bittet. Das Limit ist ein Sicherheitsventil: Es stoppt ein Modell, das in einer Schleife feststeckt, damit es nicht endlos weiterläuft und Token verbraucht. 35 ist ein guter Standardwert; erhöhe ihn für lange, mehrstufige Aufgaben.",
+    "autoContinueAllSessions": "Alle Sitzungen automatisch fortsetzen",
+    "autoContinueAllSessionsHint": "Wenn eine Sitzung das Tool-Aufruf-Limit erreicht, automatisch weitermachen statt zu pausieren. Das entfernt das Schleifen-Sicherheitsnetz, ein festgefahrener Agent kann also bis zum manuellen Stopp weiterlaufen. Kann auch im Chat aktiviert werden, wenn ein Limit erreicht wird.",
     "fileAccessRules": "Dateizugriffsregeln",
     "fileAccessRulesHint": "Steuere, welche Dateien der Assistent finden und lesen darf. Eigene Ausnahmen gewinnen immer gegen alle Regeln darunter.",
     "ignoreGitignored": "Dateien aus .gitignore ignorieren",
@@ -700,11 +889,7 @@
     "allowWebsite": "Erlauben",
     "denyWebsite": "Verbieten",
     "close": "Schließen",
-    "resetPrompt": "Auf Standard zurücksetzen",
-    "chat": {
-      "pasteWordLimit": "Eingefügten Text einklappen ab",
-      "pasteWordLimitHint": "Eingefügter Text mit mehr Wörtern als dieser Wert wird im Composer zu einer bearbeitbaren Pille eingeklappt. Auf 0 setzen, um Text immer direkt einzufügen."
-    }
+    "resetPrompt": "Auf Standard zurücksetzen"
   },
   "permission": {
     "ruleLabel": "Immer-erlauben-Regel (Glob)",
@@ -712,6 +897,14 @@
     "deny": "Ablehnen",
     "denyAlways": "Immer verbieten",
     "allowOnce": "Einmal erlauben",
+    "allowSession": "Für diese Sitzung erlauben",
+    "kind": {
+      "command": "Befehl",
+      "file": "Datei",
+      "web": "Website",
+      "websearch": "Websuche",
+      "folder": "Ordner"
+    },
     "allowAlways": "Immer erlauben",
     "addFolder": "Ordner dauerhaft hinzufügen",
     "siteRuleLabel": "Website-Regel (Domain oder Glob)",
@@ -719,6 +912,9 @@
   },
   "question": {
     "title": "Frage",
+    "progress": "{{ current }} von {{ total }} Fragen",
+    "selectAnswer": "Eine Antwort auswählen",
+    "customLabel": "Eigene Antwort eingeben",
     "multiHint": "Mehrfachauswahl",
     "customPlaceholder": "Eigene Antwort eingeben…",
     "back": "Zurück",
@@ -749,6 +945,18 @@
     "no": "Nein",
     "refresh": "Aktualisieren",
     "close": "Schließen",
+    "pdf": "PDF",
+    "search": "Suchen",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "download": "Herunterladen",
+    "github": "GitHub",
+    "clipboardError": "Konnte nicht in die Zwischenablage schreiben.",
+    "remove": "Entfernen",
+    "clear": "Leeren",
+    "install": "Installieren",
+    "installing": "Wird installiert…",
+    "uninstall": "Deinstallieren",
     "addFolder": "Ordner hinzufügen",
     "noFolders": "Noch keine Ordner hinzugefügt."
   }

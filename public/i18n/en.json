@@ -27,6 +27,8 @@
     "noProjects": "No projects yet. Add a folder to get started.",
     "noSessions": "No sessions",
     "removeProject": "Remove project",
+    "deleteSessionConfirm": "Delete session \"{{ title }}\"? This cannot be undone.",
+    "removeProjectConfirm": "Remove project \"{{ name }}\"? Sessions are kept in the database but hidden.",
     "sessions": "Sessions",
     "archiveSession": "Archive session",
     "unarchiveSession": "Unarchive session",
@@ -45,6 +47,7 @@
     "libraryRoot": "library root",
     "noOpenFiles": "No open files. Select a file in the tree.",
     "selectFile": "Select a file in the tree to open it.",
+    "selectProjectFolder": "Select project folder",
     "loading": "Loading…",
     "diff": "Diff",
     "code": "Code",
@@ -57,6 +60,7 @@
     "branches": "Branches",
     "remotes": "Remotes",
     "noRepo": "This project is not a Git repository.",
+    "initRepo": "Initialize repository",
     "noChanges": "No local changes.",
     "noStaged": "No staged changes.",
     "noBranches": "No branches.",
@@ -68,9 +72,16 @@
     "stageAll": "Stage all",
     "unstageAll": "Unstage all",
     "discard": "Discard",
+    "discardConfirm": "Discard changes to \"{{ path }}\"? This cannot be undone.",
     "selectFile": "Select a file to view its changes.",
     "fetch": "Fetch",
     "pull": "Pull",
+    "pullStrategy": {
+      "label": "Pull strategy",
+      "ffOnly": "Fast-forward only",
+      "merge": "Merge",
+      "rebase": "Rebase"
+    },
     "push": "Push",
     "refresh": "Refresh",
     "detached": "Detached HEAD",
@@ -82,8 +93,16 @@
     "noCommits": "No commits on this branch.",
     "allCommits": "All Commits",
     "tags": "Tags",
+    "tagPush": "Push",
+    "tagDeleteConfirm": "Delete tag {{ tag }}?",
     "stashes": "Stashes",
+    "stashCreate": "Stash changes",
+    "stashApply": "Apply",
+    "stashPop": "Pop",
+    "stashDropConfirm": "Drop {{ stash }}?",
+    "noStashes": "No stashes",
     "submodules": "Submodules",
+    "submoduleUpdate": "Update",
     "history": "History",
     "allBranches": "All branches",
     "commitTab": "Commit",
@@ -95,12 +114,26 @@
     "parents": "Parents",
     "selectCommit": "Select a commit to see its details.",
     "commitAndPush": "Commit & Push",
+    "conflict": {
+      "banner": "{{ operation }} in progress",
+      "files": "{{ count }} conflicted files",
+      "continue": "Continue",
+      "abort": "Abort"
+    },
+    "errors": {
+      "auth": "Authentication failed. Check your Git credentials.",
+      "network": "Network error. Check your connection and the remote."
+    },
     "searchCommits": "Search commits…",
     "trackRemoteTitle": "Track Remote Branch",
     "trackRemoteHint": "Creates new local branch which tracks remote branch",
     "remoteBranch": "Remote branch:",
     "localBranch": "Local branch:",
     "track": "Track",
+    "cloneRepo": "Clone repository",
+    "cloneUrl": "Repository URL",
+    "cloneFolder": "Destination folder",
+    "cloneChoose": "Choose…",
     "createBranch": "Create Branch",
     "branchName": "Branch name",
     "createBranchAt": "Create branch at: {{branch}}",
@@ -162,6 +195,8 @@
     "placeholder": "Describe your task... use @ to add files, folders, websites, skills or MCP servers",
     "send": "Send",
     "stop": "Stop",
+    "queue": "Queue",
+    "queued": "Queued ({{ count }})",
     "thinking": "Thinking",
     "thinkingProcess": "Thinking process",
     "you": "You",
@@ -186,7 +221,12 @@
     "hint": "Enter to send · Shift+Enter for a new line",
     "handover": "Handover",
     "handovering": "Summarizing…",
-    "handoverHint": "Summarize this session and continue in a new one"
+    "handoverHint": "Summarize this session and continue in a new one",
+    "handoverTitle": "Handover: {{ title }}",
+    "limitReached": "Paused after {{ count }} tool calls without a final answer. The limit prevents a stuck agent from looping forever. Continue to give it a fresh budget, or turn on auto-continue.",
+    "continue": "Continue",
+    "autoContinueSession": "Auto-continue this session",
+    "autoContinueAlways": "Always auto-continue for all sessions. You can change this later in the settings."
   },
   "debug": {
     "title": "Session debugger",
@@ -314,11 +354,26 @@
     "attachmentTooLarge": "Files larger than 10 MB cannot be attached.",
     "attachmentUnsupported": "Only images, PDFs, and text files can be attached.",
     "mentionKinds": {
-      "file": { "label": "File", "hint": "Include a file's contents as context" },
-      "directory": { "label": "Directory", "hint": "Include a folder listing as context" },
-      "website": { "label": "Website", "hint": "Fetch a web page as context" },
-      "skill": { "label": "Skill", "hint": "Load a skill's instructions" },
-      "mcp": { "label": "MCP server", "hint": "Connect a server and expose its tools" }
+      "file": {
+        "label": "File",
+        "hint": "Include a file's contents as context"
+      },
+      "directory": {
+        "label": "Directory",
+        "hint": "Include a folder listing as context"
+      },
+      "website": {
+        "label": "Website",
+        "hint": "Fetch a web page as context"
+      },
+      "skill": {
+        "label": "Skill",
+        "hint": "Load a skill's instructions"
+      },
+      "mcp": {
+        "label": "MCP server",
+        "hint": "Connect a server and expose its tools"
+      }
     },
     "mentionNoResults": "No matches. Keep typing or press Escape.",
     "mentionFetch": "Fetch {{ url }}",
@@ -494,6 +549,40 @@
       "foldersHint": "The assistant can read and write these folders without asking. The active project is always allowed."
     },
     "mcp": {
+      "directory": {
+        "title": "MCP Servers",
+        "subtitle": "{{ count }} Model Context Protocol servers",
+        "search": "Search MCP servers…",
+        "all": "All",
+        "source": "Source:",
+        "official": "Official",
+        "officialTooltip": "Listed in the official Model Context Protocol registry, with a verified owner namespace.",
+        "docker": "Docker",
+        "dockerTooltip": "Published in the Docker MCP catalog and run through Docker.",
+        "sortBy": "Sort",
+        "mostStars": "Most Stars",
+        "mostDownloads": "Most Downloads",
+        "sortName": "Name",
+        "recentlyUpdated": "Recently Updated",
+        "github": "GitHub",
+        "loadMore": "Load more",
+        "empty": "No MCP servers found.",
+        "install": "Install",
+        "installHint": "Copies an mcpServers config you can paste into your MCP settings.",
+        "categories": {
+          "webSearch": "Web Search",
+          "browserAutomation": "Browser Automation",
+          "blockchainCrypto": "Blockchain & Crypto",
+          "aiTaskManagement": "AI Task Management",
+          "developerTools": "Developer Tools",
+          "database": "Database",
+          "fileSystem": "File System",
+          "cloudInfrastructure": "Cloud Infrastructure",
+          "productivity": "Productivity",
+          "mediaGeneration": "Media Generation",
+          "utilities": "Utilities"
+        }
+      },
       "autoDiscovery": "Auto-detect MCP configurations",
       "autoDiscoveryHint": "Scans standard locations used by Claude, Cursor, VS Code, Codex, opencode, Devin and others.",
       "folders": "MCP folders",
@@ -502,7 +591,54 @@
       "noSources": "No MCP configurations found.",
       "noServers": "no servers parsed",
       "phaseNote": "Reference an MCP server in the composer with @mcp to connect it and expose its tools.",
-      "addFolder": "Add folder"
+      "addFolder": "Add folder",
+      "registry": "MCP registry",
+      "registryHint": "Search the official Model Context Protocol registry and copy a server into your MCP config.",
+      "registrySearch": "Search servers…",
+      "registryEnv": "Environment: {{ names }}",
+      "registryNoResults": "No servers matched your search.",
+      "verified": "Verified",
+      "verifiedTooltip": "The server's registry namespace is verified — its name is owned by the domain or GitHub account that published it.",
+      "repository": "Repository",
+      "copied": "Copied",
+      "verifiedOnly": "Only verified servers",
+      "verifiedOnlyHint": "Show only servers whose registry namespace is verified. Turn off to include unverified third-party entries.",
+      "recommended": "Recommended servers",
+      "recommendedHint": "Popular servers from the official registry. Pick one to search for it, then copy its config.",
+      "items": {
+        "filesystem": {
+          "name": "Filesystem",
+          "description": "Read and write local files."
+        },
+        "github": {
+          "name": "GitHub",
+          "description": "Manage repositories, issues and pull requests."
+        },
+        "postgres": {
+          "name": "PostgreSQL",
+          "description": "Query and inspect PostgreSQL databases."
+        },
+        "puppeteer": {
+          "name": "Puppeteer",
+          "description": "Automate a headless browser."
+        },
+        "memory": {
+          "name": "Memory",
+          "description": "Persistent memory across sessions."
+        },
+        "braveSearch": {
+          "name": "Brave Search",
+          "description": "Web search via the Brave Search API."
+        },
+        "slack": {
+          "name": "Slack",
+          "description": "Read channels and send messages."
+        },
+        "sentry": {
+          "name": "Sentry",
+          "description": "Inspect errors and issues in Sentry."
+        }
+      }
     },
     "skills": {
       "autoDiscovery": "Auto-detect skill folders",
@@ -513,7 +649,52 @@
       "noSources": "No skill folders found.",
       "noSkills": "no skills found",
       "phaseNote": "Reference a skill in the composer with @skill to load its instructions into the chat.",
-      "addFolder": "Add folder"
+      "addFolder": "Add folder",
+      "marketplaces": "Skill marketplaces",
+      "marketplacesHint": "Add a Claude-style marketplace (a git repo with .claude-plugin/marketplace.json), review its plugins and install their skills locally.",
+      "marketplaceUrl": "https://github.com/owner/marketplace",
+      "add": "Add",
+      "reservedName": "Reserved name",
+      "reservedNameTooltip": "This name is reserved for official use, so the marketplace may be impersonating an official source.",
+      "noPlugins": "This marketplace has no installable plugins.",
+      "noMarketplaces": "No marketplaces added yet.",
+      "installed": "Installed skills",
+      "installedHint": "Skills installed from marketplaces are available to the agent and are always discovered, even with auto-discovery off.",
+      "noInstalled": "No marketplace skills installed.",
+      "verified": "Verified",
+      "verifiedTooltip": "Verified means pumr curates this marketplace and its checkout matches a pinned commit, so its contents cannot change silently.",
+      "trusted": "Trusted",
+      "trustedTooltip": "Trusted means you added this marketplace yourself, so installing from it is allowed.",
+      "unverified": "Unverified",
+      "unverifiedTooltip": "Unverified means pumr has not reviewed this marketplace. Installing from it requires allowing unverified sources.",
+      "verifiedOnly": "Only verified or trusted marketplaces",
+      "verifiedOnlyHint": "Verified marketplaces match a curated pinned commit; trusted ones are the URLs you added yourself. Turn off to allow installing from any marketplace.",
+      "recommended": "Recommended marketplaces",
+      "recommendedHint": "Community catalogs reviewed for this list. Adding one clones it locally; review its plugins before installing.",
+      "added": "Added",
+      "searchPlaceholder": "Search skills...",
+      "allCategories": "All",
+      "browseCount": "{{ count }} skills available",
+      "noResults": "No skills match your search.",
+      "copied": "Copied",
+      "items": {
+        "claudeCodeWorkflows": {
+          "name": "Claude Code Workflows",
+          "description": "Workflow orchestration with specialized agents and commands."
+        },
+        "buildWithClaude": {
+          "name": "Build with Claude",
+          "description": "Community collection of agents, slash commands and skills."
+        },
+        "sentryMcp": {
+          "name": "Sentry MCP",
+          "description": "Error tracking and performance monitoring skills."
+        },
+        "superpowers": {
+          "name": "Superpowers",
+          "description": "Core skills library for agentic development workflows."
+        }
+      }
     },
     "apiKey": "OpenRouter API key",
     "apiKeyHint": "Stored in your operating system keychain, never in plain text.",
@@ -668,6 +849,10 @@
     "extraFoldersHint": "One absolute path per line. Used in the tools phase.",
     "contextLimit": "Context messages sent to the model",
     "contextLimitHint": "0 means unlimited. Older messages are trimmed first.",
+    "maxToolIterations": "Max tool calls per turn",
+    "maxToolIterationsHint": "How many consecutive tool calls the agent may make before it pauses and asks you to continue. The limit is a safety valve: it stops a model that gets stuck in a loop from running forever and burning tokens. 35 is a good default; raise it for long, multi-step tasks.",
+    "autoContinueAllSessions": "Auto-continue all sessions",
+    "autoContinueAllSessionsHint": "When a session reaches the tool-call limit, keep going automatically instead of pausing. This removes the loop safety net, so a stuck agent may run until you stop it. You can also toggle this from the chat when a limit is reached.",
     "fileAccessRules": "File access rules",
     "fileAccessRulesHint": "Control which files the assistant may discover and read. User exemptions always win over every rule below.",
     "ignoreGitignored": "Ignore files listed in .gitignore",
@@ -712,6 +897,14 @@
     "deny": "Deny",
     "denyAlways": "Deny always",
     "allowOnce": "Allow once",
+    "allowSession": "Allow for this session",
+    "kind": {
+      "command": "Command",
+      "file": "File",
+      "web": "Website",
+      "websearch": "Web search",
+      "folder": "Folder"
+    },
     "allowAlways": "Allow always",
     "addFolder": "Add folder permanently",
     "siteRuleLabel": "Website rule (domain or glob)",
@@ -719,6 +912,9 @@
   },
   "question": {
     "title": "Question",
+    "progress": "{{ current }} of {{ total }} questions",
+    "selectAnswer": "Select an answer",
+    "customLabel": "Enter your own answer",
     "multiHint": "select all that apply",
     "customPlaceholder": "Type your own answer…",
     "back": "Back",
@@ -749,6 +945,18 @@
     "no": "No",
     "refresh": "Refresh",
     "close": "Close",
+    "pdf": "PDF",
+    "search": "Search",
+    "copy": "Copy",
+    "copied": "Copied",
+    "download": "Download",
+    "github": "GitHub",
+    "clipboardError": "Could not write to the clipboard.",
+    "remove": "Remove",
+    "clear": "Clear",
+    "install": "Install",
+    "installing": "Installing…",
+    "uninstall": "Uninstall",
     "addFolder": "Add folder",
     "noFolders": "No folders added yet."
   }

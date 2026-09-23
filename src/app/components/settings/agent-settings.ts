@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { TranslocoPipe } from '@jsverse/transloco';
 import { SettingsService } from '../../core/settings.service';
 import { SettingsDraftService } from './settings-draft.service';
+import { Toggle } from '../toggle';
 
 type OptionalPromptKey =
   'securitySystemPrompt' | 'testingSystemPrompt' | 'architectureSystemPrompt';
@@ -16,10 +17,12 @@ interface OptionalPrompt {
   descriptionKey: string;
 }
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-agent-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe, Toggle],
   template: `
     <section>
       <label class="mb-2 block text-sm font-semibold text-white">
@@ -27,7 +30,7 @@ interface OptionalPrompt {
       </label>
       <select
         class="field field-select w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
-        (change)="draft.patch('replyLanguage', $any($event.target).value || null)"
+        (typedValue)="draft.patch('replyLanguage', $event || null)"
       >
         <option value="" [selected]="!draft.draft().replyLanguage">
           {{ 'settings.replyLanguageDefault' | transloco }}
@@ -68,7 +71,7 @@ interface OptionalPrompt {
       <textarea
         class="field h-56 w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed"
         [value]="draft.draft().defaultSystemPrompt"
-        (input)="draft.patch('defaultSystemPrompt', $any($event.target).value)"
+        (typedValue)="draft.patch('defaultSystemPrompt', $event)"
       ></textarea>
       @if (promptChanged() && draftCustomized()) {
         <p
@@ -88,19 +91,7 @@ interface OptionalPrompt {
       <section class="mt-8">
         <div class="mb-2 flex items-center justify-between gap-3">
           <div class="flex items-center gap-3">
-            <button
-              type="button"
-              role="switch"
-              [attr.aria-checked]="isEnabled(prompt)"
-              class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
-              [class]="isEnabled(prompt) ? 'bg-accent' : 'bg-white/15'"
-              (click)="togglePrompt(prompt)"
-            >
-              <span
-                class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-                [class]="isEnabled(prompt) ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
-              ></span>
-            </button>
+            <app-toggle [checked]="isEnabled(prompt)" (toggled)="togglePrompt(prompt)" />
             <div class="flex items-center gap-2">
               <label class="block text-sm font-semibold text-white">
                 {{ prompt.labelKey | transloco }}
@@ -128,7 +119,7 @@ interface OptionalPrompt {
           class="field h-40 w-full resize-y rounded-xl px-4 py-3 font-mono text-sm leading-relaxed transition-opacity"
           [class.opacity-50]="!isEnabled(prompt)"
           [value]="promptValue(prompt)"
-          (input)="setPrompt(prompt, $any($event.target).value)"
+          (typedValue)="setPrompt(prompt, $event)"
         ></textarea>
         @if (isChanged(prompt) && isCustomized(prompt)) {
           <p
@@ -150,7 +141,7 @@ interface OptionalPrompt {
           step="0.5"
           class="field w-full rounded-xl px-4 py-2 text-sm"
           [value]="draft.draft().budgetUsd"
-          (input)="draft.patch('budgetUsd', +$any($event.target).value)"
+          (typedValue)="draft.patch('budgetUsd', +$event)"
         />
         <p class="mt-2 text-xs text-mist/30">{{ 'settings.budgetHint' | transloco }}</p>
       </div>
@@ -165,13 +156,44 @@ interface OptionalPrompt {
           step="5"
           class="field w-full rounded-xl px-4 py-2 text-sm"
           [value]="draft.draft().contextMessageLimit"
-          (input)="draft.patch('contextMessageLimit', +$any($event.target).value)"
+          (typedValue)="draft.patch('contextMessageLimit', +$event)"
         />
         <p class="mt-2 text-xs text-mist/30">{{ 'settings.contextLimitHint' | transloco }}</p>
       </div>
     </section>
 
-    `,
+    <section class="mt-8">
+      <label class="mb-2 block text-sm font-semibold text-white">
+        {{ 'settings.maxToolIterations' | transloco }}
+      </label>
+      <input
+        type="number"
+        min="1"
+        step="1"
+        class="field w-40 rounded-xl px-4 py-2 text-sm"
+        [value]="draft.draft().maxToolIterations"
+        (typedValue)="draft.patch('maxToolIterations', +$event)"
+      />
+      <p class="mt-2 text-xs leading-relaxed text-mist/30">
+        {{ 'settings.maxToolIterationsHint' | transloco }}
+      </p>
+    </section>
+
+    <section class="mt-8">
+      <div class="flex items-center gap-3">
+        <app-toggle
+          [checked]="draft.draft().autoContinueAllSessions"
+          (toggled)="draft.patch('autoContinueAllSessions', !draft.draft().autoContinueAllSessions)"
+        />
+        <label class="text-sm font-semibold text-white">
+          {{ 'settings.autoContinueAllSessions' | transloco }}
+        </label>
+      </div>
+      <p class="mt-2 text-xs leading-relaxed text-mist/30">
+        {{ 'settings.autoContinueAllSessionsHint' | transloco }}
+      </p>
+    </section>
+  `,
 })
 export class AgentSettings {
   protected readonly draft = inject(SettingsDraftService);

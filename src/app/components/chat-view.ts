@@ -11,7 +11,7 @@ import {
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
-import { SettingsService } from '../core/settings.service';
+import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
@@ -22,6 +22,13 @@ import { QuestionOverlay } from './question-overlay';
 import { StreamText } from './stream-text';
 import { ToolCard } from './tool-card';
 import { ToolGroup, ToolGroupItem } from './tool-group';
+
+/** How close to the bottom (px) still counts as "at the bottom". */
+const AT_BOTTOM_THRESHOLD_PX = 48;
+/** How long a jumped-to message stays highlighted (ms). */
+const MESSAGE_HIGHLIGHT_MS = 1200;
+/** Max characters of a tool summary shown in the header. */
+const TOOL_SUMMARY_MAX_CHARS = 120;
 
 interface MessageEntry {
   kind: 'message';
@@ -52,10 +59,12 @@ type ChatEntry = MessageEntry | ToolEntry | ToolGroupEntry;
 const HIDDEN_TOOLS = new Set(['ls']);
 const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-chat-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [
+  imports: [TypedInput, 
     TranslocoPipe,
     Composer,
     PermissionOverlay,
@@ -229,7 +238,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                                       @if (attachment.kind === 'pdf') {
                                         <span
                                           class="shrink-0 rounded bg-rose-500/15 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-rose-300"
-                                          >PDF</span
+                                          >{{ 'common.pdf' | transloco }}</span
                                         >
                                       }
                                       <span class="max-w-48 truncate text-xs text-white">{{
@@ -238,7 +247,11 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                                       <span class="shrink-0 text-[11px] text-mist/50">
                                         {{ formatSize(attachment.size) }}
                                         @if (attachment.lines !== null) {
-                                          · {{ attachment.lines }} ln
+                                          ·
+                                          {{
+                                            'composer.attachmentLines'
+                                              | transloco: { count: attachment.lines }
+                                          }}
                                         }
                                       </span>
                                     </span>
@@ -276,7 +289,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                       }
                       @default {
                         <div>
-                          @if (entry.message.reasoning || isThinking(entry.message)) {
+                          @if (entry.message.reasoning) {
                             <details class="glass-inset mb-3 rounded-xl">
                               <summary
                                 class="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-mist/50 select-none hover:text-mist"
@@ -288,14 +301,22 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                                   {{ 'chat.thinkingProcess' | transloco }}
                                 }
                               </summary>
-                              @if (entry.message.reasoning) {
-                                <div
-                                  class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-mist/60"
-                                >
-                                  <app-stream-text [content]="entry.message.reasoning" />
-                                </div>
-                              }
+                              <div
+                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-mist/60"
+                              >
+                                <app-stream-text
+                                  [content]="entry.message.reasoning"
+                                  [follow]="true"
+                                />
+                              </div>
                             </details>
+                          } @else if (isThinking(entry.message)) {
+                            <div
+                              class="glass-inset mb-3 flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm text-mist/50"
+                            >
+                              <app-puma-loader [compact]="true" />
+                              {{ 'chat.thinking' | transloco }}…
+                            </div>
                           }
 
                           @if (entry.message.content) {
@@ -375,6 +396,46 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                   {{ 'chat.error' | transloco }}: {{ err }}
                 </div>
               }
+
+              @if (limitReached()) {
+                <div
+                  class="mb-6 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200"
+                >
+                  <p class="leading-relaxed">
+                    {{
+                      'chat.limitReached'
+                        | transloco: { count: limitIterations(), limit: maxToolIterations() }
+                    }}
+                  </p>
+                  <div class="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      class="rounded-full bg-amber-400/90 px-4 py-1.5 text-sm font-semibold text-ink transition-colors hover:bg-amber-300"
+                      (click)="continueGeneration()"
+                    >
+                      {{ 'chat.continue' | transloco }}
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-full border border-amber-400/40 px-4 py-1.5 text-sm font-medium text-amber-200 transition-colors hover:bg-amber-400/15"
+                      (click)="autoContinueGeneration()"
+                    >
+                      {{ 'chat.autoContinueSession' | transloco }}
+                    </button>
+                  </div>
+                  <label
+                    class="mt-3 flex items-start gap-2 text-xs leading-relaxed text-amber-200/80"
+                  >
+                    <input
+                      type="checkbox"
+                      class="mt-0.5 accent-accent"
+                      [checked]="autoContinueAll()"
+                      (typedChecked)="toggleAutoContinueAll($event)"
+                    />
+                    <span>{{ 'chat.autoContinueAlways' | transloco }}</span>
+                  </label>
+                </div>
+              }
             </div>
           </div>
 
@@ -388,6 +449,13 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
             >
               ↓
             </button>
+          }
+
+          @if (workspace.permission(); as request) {
+            <app-permission-overlay [request]="request" />
+          }
+          @if (workspace.question(); as request) {
+            <app-question-overlay [request]="request" />
           }
         </div>
 
@@ -425,12 +493,6 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
         }
 
         <div class="relative">
-          @if (workspace.permission(); as request) {
-            <app-permission-overlay [request]="request" />
-          }
-          @if (workspace.question(); as request) {
-            <app-question-overlay [request]="request" />
-          }
           <app-composer (composing)="composing.set($event)" />
         </div>
       } @else {
@@ -462,7 +524,7 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
                 type="checkbox"
                 class="accent-accent"
                 [checked]="revertFiles()"
-                (change)="revertFiles.set($any($event.target).checked)"
+                (typedChecked)="revertFiles.set($event)"
               />
               {{ 'chat.revertFiles' | transloco }}
             </label>
@@ -584,6 +646,35 @@ export class ChatView {
     const session = this.session();
     return session ? this.workspace.errorFor(session.id) : null;
   });
+  protected readonly limitReached = computed(() => {
+    const session = this.session();
+    return session ? this.workspace.limitReachedFor(session.id) && !this.streaming() : false;
+  });
+  protected readonly limitIterations = computed(() => this.maxToolIterations());
+  protected readonly maxToolIterations = computed(
+    () => this.settings.settings()?.maxToolIterations ?? FALLBACK_SETTINGS.maxToolIterations,
+  );
+  protected readonly autoContinueAll = computed(
+    () => this.settings.settings()?.autoContinueAllSessions ?? false,
+  );
+
+  protected async continueGeneration(): Promise<void> {
+    const session = this.session();
+    if (session) {
+      await this.workspace.continueSession(session.id);
+    }
+  }
+
+  protected async autoContinueGeneration(): Promise<void> {
+    const session = this.session();
+    if (session) {
+      await this.workspace.continueSession(session.id, { autoContinue: true });
+    }
+  }
+
+  protected async toggleAutoContinueAll(value: boolean): Promise<void> {
+    await this.settings.patch({ autoContinueAllSessions: value });
+  }
 
   constructor() {
     effect(() => {
@@ -802,7 +893,9 @@ export class ChatView {
   private toolSummary(name: string, command: string, fallback: string): string {
     const text = name === 'bash' && command ? command : fallback;
     const firstLine = text.split('\n').find((line) => line.trim().length > 0) ?? '';
-    return firstLine.length > 120 ? `${firstLine.slice(0, 120)}…` : firstLine;
+    return firstLine.length > TOOL_SUMMARY_MAX_CHARS
+      ? `${firstLine.slice(0, TOOL_SUMMARY_MAX_CHARS)}…`
+      : firstLine;
   }
 
   protected shortModel(model: string): string {
@@ -850,7 +943,7 @@ export class ChatView {
       return;
     }
     const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-    this.atBottom.set(distance < 48);
+    this.atBottom.set(distance < AT_BOTTOM_THRESHOLD_PX);
   }
 
   private goToMessage(messageId: string): void {
@@ -864,7 +957,7 @@ export class ChatView {
       if (this.highlightId() === messageId) {
         this.highlightId.set(null);
       }
-    }, 1200);
+    }, MESSAGE_HIGHLIGHT_MS);
   }
 
   protected scrollToBottom(smooth = false): void {

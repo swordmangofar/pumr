@@ -6,18 +6,22 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { TranslocoPipe } from '@jsverse/transloco';
+import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { buildBranchTree, flattenBranchTree } from '../core/git-branches';
 import { GitBranch, GitTag } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
+import { GitService } from '../core/git.service';
 import { GitBranchMenu } from './git-branch-menu';
 
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-git-sidebar',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, GitBranchMenu],
+  imports: [TypedInput, TranslocoPipe, GitBranchMenu],
   host: {
     '(document:keydown.escape)': 'onEscape()',
   },
@@ -93,7 +97,7 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
             class="w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
             [placeholder]="'git.filter' | transloco"
             [value]="filter()"
-            (input)="filter.set($any($event.target).value)"
+            (typedValue)="filter.set($event)"
           />
         </div>
 
@@ -349,39 +353,57 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
               @if (tagsOpen()) {
                 <div class="mt-0.5 space-y-0.5">
                   @for (tag of tags(); track tag.name) {
-                    <button
-                      type="button"
-                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[13px] text-mist/50 transition-colors hover:bg-white/5 hover:text-mist"
-                      (click)="openTag(tag)"
-                    >
-                      <svg
-                        viewBox="0 0 16 16"
-                        class="h-3.5 w-3.5 shrink-0 text-mist/30"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.4"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
+                    <div class="group flex w-full items-center gap-1 rounded-lg pr-1 hover:bg-white/5">
+                      <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[13px] text-mist/50 transition-colors hover:text-mist"
+                        (click)="openTag(tag)"
                       >
-                        <path d="M2.5 7.5v-5h5l6 6-5 5z" />
-                        <circle cx="5" cy="5" r="1" />
-                      </svg>
-                      <span class="min-w-0 flex-1 truncate">{{ tag.name }}</span>
-                      <span class="shrink-0 font-mono text-[10px] text-mist/25">{{
-                        tag.hash
-                      }}</span>
-                    </button>
+                        <svg
+                          viewBox="0 0 16 16"
+                          class="h-3.5 w-3.5 shrink-0 text-mist/30"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M2.5 7.5v-5h5l6 6-5 5z" />
+                          <circle cx="5" cy="5" r="1" />
+                        </svg>
+                        <span class="min-w-0 flex-1 truncate">{{ tag.name }}</span>
+                        <span class="shrink-0 font-mono text-[10px] text-mist/25">{{
+                          tag.hash
+                        }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-mist/40 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-accent"
+                        [title]="'git.tagPush' | transloco"
+                        (click)="pushTag(tag)"
+                      >
+                        {{ 'git.tagPush' | transloco }}
+                      </button>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-mist/40 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-rose-400"
+                        [title]="'git.menu.delete' | transloco"
+                        (click)="deleteTag(tag)"
+                      >
+                        {{ 'git.menu.delete' | transloco }}
+                      </button>
+                    </div>
                   }
                 </div>
               }
             </section>
           }
 
-          @if (stashes().length > 0) {
-            <section class="border-t border-white/5 pt-1">
+          <section class="border-t border-white/5 pt-1">
+            <div class="flex items-center gap-1 px-2 py-1">
               <button
                 type="button"
-                class="flex w-full items-center gap-1.5 px-2 py-1 text-xs font-semibold uppercase tracking-widest text-mist/40 transition-colors hover:text-mist/70"
+                class="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-mist/40 transition-colors hover:text-mist/70"
                 (click)="stashesOpen.set(!stashesOpen())"
               >
                 <svg
@@ -399,31 +421,79 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
                 {{ 'git.stashes' | transloco }}
                 <span class="ml-auto text-mist/25">{{ stashes().length }}</span>
               </button>
-              @if (stashesOpen()) {
-                <div class="mt-0.5 space-y-0.5">
-                  @for (stash of stashes(); track stash) {
-                    <div
-                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-mist/50"
+              <button
+                type="button"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-mist/40 transition-colors hover:bg-white/10 hover:text-accent"
+                [title]="'git.stashCreate' | transloco"
+                (click)="createStash()"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  class="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M8 3.5v9M3.5 8h9" />
+                </svg>
+              </button>
+            </div>
+            @if (stashesOpen()) {
+              <div class="mt-0.5 space-y-0.5">
+                @for (stash of stashes(); track stash) {
+                  <div
+                    class="group flex w-full items-center gap-1 rounded-lg px-2 py-1 text-[13px] text-mist/50"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3.5 w-3.5 shrink-0 text-mist/30"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
                     >
-                      <svg
-                        viewBox="0 0 16 16"
-                        class="h-3.5 w-3.5 shrink-0 text-mist/30"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.4"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
+                      <rect x="3" y="3" width="10" height="10" rx="1.5" />
+                      <path d="M3 6.5h10M3 9.5h10" />
+                    </svg>
+                    <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ stash }}</span>
+                    <div
+                      class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                    >
+                      <button
+                        type="button"
+                        class="rounded-md px-1.5 py-0.5 text-[10px] text-mist/40 hover:bg-white/10 hover:text-accent"
+                        [title]="'git.stashApply' | transloco"
+                        (click)="applyStash(stash)"
                       >
-                        <rect x="3" y="3" width="10" height="10" rx="1.5" />
-                        <path d="M3 6.5h10M3 9.5h10" />
-                      </svg>
-                      <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ stash }}</span>
+                        {{ 'git.stashApply' | transloco }}
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md px-1.5 py-0.5 text-[10px] text-mist/40 hover:bg-white/10 hover:text-accent"
+                        [title]="'git.stashPop' | transloco"
+                        (click)="popStash(stash)"
+                      >
+                        {{ 'git.stashPop' | transloco }}
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md px-1.5 py-0.5 text-[10px] text-mist/40 hover:bg-white/10 hover:text-rose-400"
+                        [title]="'git.menu.delete' | transloco"
+                        (click)="dropStash(stash)"
+                      >
+                        {{ 'git.menu.delete' | transloco }}
+                      </button>
                     </div>
-                  }
-                </div>
-              }
-            </section>
-          }
+                  </div>
+                } @empty {
+                  <p class="px-2 pb-1 text-xs text-mist/30">{{ 'git.noStashes' | transloco }}</p>
+                }
+              </div>
+            }
+          </section>
 
           @if (submodules().length > 0) {
             <section class="border-t border-white/5 pt-1">
@@ -451,7 +521,7 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
                 <div class="mt-0.5 space-y-0.5">
                   @for (module of submodules(); track module) {
                     <div
-                      class="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-mist/50"
+                      class="group flex w-full items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-mist/50"
                     >
                       <svg
                         viewBox="0 0 16 16"
@@ -466,6 +536,14 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
                         <path d="M3 8h10" />
                       </svg>
                       <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ module }}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-mist/40 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-accent"
+                        [title]="'git.submoduleUpdate' | transloco"
+                        (click)="updateSubmodule(module)"
+                      >
+                        {{ 'git.submoduleUpdate' | transloco }}
+                      </button>
                     </div>
                   }
                 </div>
@@ -560,7 +638,7 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
                       autofocus
                       class="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-mist focus:outline-none"
                       [value]="trackName()"
-                      (input)="trackName.set($any($event.target).value)"
+                      (typedValue)="trackName.set($event)"
                       (keydown.enter)="confirmTrack()"
                     />
                   </span>
@@ -616,7 +694,7 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
               class="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 font-mono text-[13px] text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
               placeholder="feature/my-branch"
               [value]="createName()"
-              (input)="createName.set($any($event.target).value)"
+              (typedValue)="createName.set($event)"
               (keydown.enter)="confirmCreate()"
             />
             <p class="mt-3 text-xs text-mist/50">
@@ -627,7 +705,7 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
                 type="checkbox"
                 class="accent-[var(--color-accent)]"
                 [checked]="createCheckout()"
-                (change)="createCheckout.set($any($event.target).checked)"
+                (typedChecked)="createCheckout.set($event)"
               />
               {{ 'git.checkoutAfterCreate' | transloco }}
             </label>
@@ -672,6 +750,8 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
 })
 export class GitSidebar {
   private readonly workspace = inject(WorkspaceService);
+  private readonly git = inject(GitService);
+  private readonly transloco = inject(TranslocoService);
 
   protected readonly project = this.workspace.activeProject;
   protected readonly status = this.workspace.activeGitStatus;
@@ -701,11 +781,21 @@ export class GitSidebar {
 
   protected readonly currentBranch = computed(() => this.status()?.branch ?? 'HEAD');
 
-  protected readonly changesActive = computed(() => this.workspace.gitView() === 'changes');
+  protected readonly changesActive = computed(() => this.view() === 'changes');
 
   protected readonly commitsActive = computed(
-    () => this.workspace.gitView() === 'commits' && this.workspace.selectedGitBranch() === null,
+    () => this.view() === 'commits' && this.selectedBranch() === null,
   );
+
+  private readonly view = computed(() => {
+    const project = this.project();
+    return project ? this.git.viewFor(project.id) : 'changes';
+  });
+
+  private readonly selectedBranch = computed(() => {
+    const project = this.project();
+    return project ? this.git.selectedBranchFor(project.id) : null;
+  });
 
   protected readonly localBranches = computed(() => {
     const query = this.filter().trim().toLowerCase();
@@ -754,15 +844,13 @@ export class GitSidebar {
     effect(() => {
       const project = this.project();
       if (project) {
-        void this.workspace.loadGitStatus(project.id);
+        void this.git.loadStatus(project.id);
       }
     });
   }
 
   protected isBranchSelected(branch: GitBranch): boolean {
-    return (
-      this.workspace.gitView() === 'commits' && this.workspace.selectedGitBranch() === branch.name
-    );
+    return this.view() === 'commits' && this.selectedBranch() === branch.name;
   }
 
   protected isFolderCollapsed(path: string): boolean {
@@ -782,7 +870,10 @@ export class GitSidebar {
   }
 
   protected openBranch(name: string): void {
-    void this.workspace.openGitHistory(name);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.openHistory(projectId, name);
+    }
   }
 
   protected openBranchMenu(event: MouseEvent, branch: GitBranch): void {
@@ -795,15 +886,24 @@ export class GitSidebar {
   }
 
   protected openTag(tag: GitTag): void {
-    void this.workspace.openGitTag(tag);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.openTag(projectId, tag);
+    }
   }
 
   protected showChanges(): void {
-    this.workspace.showGitChanges();
+    const projectId = this.project()?.id;
+    if (projectId) {
+      this.git.showChanges(projectId);
+    }
   }
 
   protected showAllCommits(): void {
-    void this.workspace.openGitHistory(null);
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.git.openHistory(projectId, null);
+    }
   }
 
   protected async checkout(branch: GitBranch): Promise<void> {
@@ -815,7 +915,11 @@ export class GitSidebar {
       return;
     }
     try {
-      await this.workspace.checkoutGitBranch(branch.name);
+      const projectId = this.project()?.id;
+      if (!projectId) {
+        return;
+      }
+      await this.git.checkoutBranch(projectId, branch.name);
     } catch (error) {
       console.error(error);
     }
@@ -844,7 +948,11 @@ export class GitSidebar {
     this.trackBusy.set(true);
     this.trackError.set(null);
     try {
-      await this.workspace.checkoutGitBranch(branch.name, true, name);
+      const projectId = this.project()?.id;
+      if (!projectId) {
+        return;
+      }
+      await this.git.checkoutBranch(projectId, branch.name, true, name);
       this.tracking.set(null);
     } catch (error) {
       this.trackError.set(String(error));
@@ -881,12 +989,122 @@ export class GitSidebar {
     this.createBusy.set(true);
     this.createError.set(null);
     try {
-      await this.workspace.gitBranchCreate(name, this.currentBranch(), this.createCheckout());
+      const projectId = this.project()?.id;
+      if (!projectId) {
+        return;
+      }
+      await this.git.branchCreate(projectId, name, this.currentBranch(), this.createCheckout());
       this.createOpen.set(false);
     } catch (error) {
       this.createError.set(String(error));
     } finally {
       this.createBusy.set(false);
+    }
+  }
+
+  protected async createStash(): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.stashPush(projectId, null, true);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async applyStash(stash: string): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.stashApply(projectId, stash);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async popStash(stash: string): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.stashPop(projectId, stash);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async dropStash(stash: string): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    const confirmed = await this.ask(
+      this.transloco.translate('git.stashDropConfirm', { stash }),
+    );
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await this.git.stashDrop(projectId, stash);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async deleteTag(tag: GitTag): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    const confirmed = await this.ask(
+      this.transloco.translate('git.tagDeleteConfirm', { tag: tag.name }),
+    );
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await this.git.tagDelete(projectId, tag.name);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async pushTag(tag: GitTag): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    const remotes = this.remotes();
+    const remote = remotes.includes('origin') ? 'origin' : (remotes[0] ?? 'origin');
+    try {
+      await this.git.tagPush(projectId, remote, tag.name);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  protected async updateSubmodule(module: string): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    try {
+      await this.git.submoduleUpdate(projectId, module);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  private async ask(message: string): Promise<boolean> {
+    try {
+      return await confirm(message, { title: 'pumr', kind: 'warning' });
+    } catch {
+      return false;
     }
   }
 }

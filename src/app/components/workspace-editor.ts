@@ -10,6 +10,7 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import { FileChange } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
+import { WorkspaceEditorService } from '../core/workspace-editor.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
@@ -184,30 +185,31 @@ import { FileView } from './file-view';
 })
 export class WorkspaceEditor {
   private readonly workspace = inject(WorkspaceService);
+  private readonly editor = inject(WorkspaceEditorService);
 
   protected readonly project = this.workspace.activeProject;
   protected readonly mode = signal<'diff' | 'file'>('diff');
   protected readonly diffLayout = signal<'single' | 'split'>('single');
   protected readonly tabs = computed(() => {
     const project = this.project();
-    return project ? this.workspace.openFilesFor(project.id) : [];
+    return project ? this.editor.openFilesFor(project.id) : [];
   });
   protected readonly activePath = computed(() => {
     const project = this.project();
-    return project ? this.workspace.activeFileFor(project.id) : null;
+    return project ? this.editor.activeFileFor(project.id) : null;
   });
   protected readonly activeKey = computed(() => {
     const project = this.project();
     const path = this.activePath();
-    return project && path ? this.workspace.editorKey(project.id, path) : null;
+    return project && path ? this.editor.editorKey(project.id, path) : null;
   });
   protected readonly activeContent = computed(() => {
     const key = this.activeKey();
-    return key ? (this.workspace.editorContent()[key] ?? null) : null;
+    return key ? (this.editor.editorContent()[key] ?? null) : null;
   });
   protected readonly activeDiff = computed(() => {
     const key = this.activeKey();
-    return key ? (this.workspace.editorDiff()[key] ?? null) : null;
+    return key ? (this.editor.editorDiff()[key] ?? null) : null;
   });
   protected readonly liveDiff = computed(() => {
     const diff = this.activeDiff();
@@ -252,13 +254,13 @@ export class WorkspaceEditor {
 
   protected isDirty(path: string): boolean {
     const project = this.project();
-    return project ? this.workspace.isEditorDirty(project.id, path) : false;
+    return project ? this.editor.isDirty(project.id, path) : false;
   }
 
   protected activate(path: string): void {
     const project = this.project();
     if (project) {
-      this.workspace.setActiveWorkspaceFile(project.id, path);
+      this.editor.setActive(project.id, path);
     }
   }
 
@@ -266,7 +268,7 @@ export class WorkspaceEditor {
     const project = this.project();
     const path = this.activePath();
     if (project && path) {
-      this.workspace.updateEditorContent(project.id, path, content);
+      this.editor.updateContent(project.id, path, content);
     }
   }
 
@@ -274,13 +276,16 @@ export class WorkspaceEditor {
     const project = this.project();
     const path = this.activePath();
     if (project && path && this.isDirty(path)) {
-      await this.workspace.saveEditorFile(project.id, path);
+      await this.editor.save(project.id, path);
     }
   }
 
   protected close(event: Event, path: string): void {
     event.stopPropagation();
-    this.workspace.closeWorkspaceFile(path);
+    const project = this.project();
+    if (project) {
+      this.editor.close(project.id, path);
+    }
   }
 
   protected onKeydown(event: KeyboardEvent): void {

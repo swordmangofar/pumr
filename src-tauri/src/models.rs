@@ -48,6 +48,14 @@ pub struct Session {
     pub archived: bool,
     #[serde(default)]
     pub mode_id: Option<String>,
+    /// True when the last turn stopped at the tool-iteration limit and is
+    /// waiting for the user to continue.
+    #[serde(default)]
+    pub limit_reached: bool,
+    /// Whether this session automatically continues past the tool-iteration
+    /// limit without asking.
+    #[serde(default)]
+    pub auto_continue: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -364,6 +372,10 @@ pub struct GitStatus {
     pub stashes: Vec<String>,
     #[serde(default)]
     pub submodules: Vec<String>,
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub conflicted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -445,8 +457,25 @@ pub struct McpCandidate {
     pub label: String,
     pub source: String,
     pub format: String,
-    pub servers: Vec<String>,
+    pub servers: Vec<McpServerState>,
     pub enabled: bool,
+}
+
+/// One server inside a discovered config file, with its effective on/off state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerState {
+    pub name: String,
+    pub enabled: bool,
+}
+
+/// Identifies a single MCP server: the config file it lives in plus the key it
+/// is registered under. Names are only unique within a file, so both are needed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerRef {
+    pub path: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,8 +484,25 @@ pub struct SkillCandidate {
     pub path: String,
     pub label: String,
     pub source: String,
-    pub skills: Vec<String>,
+    pub skills: Vec<SkillState>,
     pub enabled: bool,
+}
+
+/// One skill inside a discovered root directory, with its effective on/off state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillState {
+    pub name: String,
+    pub enabled: bool,
+}
+
+/// Identifies a single skill: the root directory it was found under plus its
+/// directory name. Names are only unique within a root, so both are needed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRef {
+    pub path: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -539,6 +585,10 @@ pub enum StreamEvent {
     },
     SubAgentStatus {
         status: String,
+    },
+    LimitReached {
+        iterations: i64,
+        auto_continued: bool,
     },
     Error {
         message: String,

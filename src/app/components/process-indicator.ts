@@ -1,13 +1,13 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { WorkspaceService } from '../core/workspace.service';
+import { ProcessService } from '../core/process.service';
 
 @Component({
   selector: 'app-process-indicator',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [TranslocoPipe],
   template: `
-    @if (workspace.processes().length > 0) {
+    @if (processes.processes().length > 0) {
       <div class="relative">
         <button
           type="button"
@@ -23,7 +23,7 @@ import { WorkspaceService } from '../core/workspace.service';
           <div
             class="absolute right-0 top-full z-40 mt-2 max-h-80 w-[28rem] overflow-y-auto glass-pop rounded-2xl shadow-2xl"
           >
-            @for (process of workspace.processes(); track process.id) {
+            @for (process of processes.processes(); track process.id) {
               <div class="border-b border-white/5 px-4 py-3">
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0">
@@ -54,14 +54,14 @@ import { WorkspaceService } from '../core/workspace.service';
   `,
 })
 export class ProcessIndicator {
-  protected readonly workspace = inject(WorkspaceService);
+  protected readonly processes = inject(ProcessService);
   protected readonly open = signal(false);
 
   protected runningCount(): number {
-    return this.workspace.processes().filter((process) => process.running).length;
+    return this.processes.processes().filter((process) => process.running).length;
   }
 
   protected async stop(processId: string): Promise<void> {
-    await this.workspace.stopProcess(processId);
+    await this.processes.stop(processId);
   }
 }

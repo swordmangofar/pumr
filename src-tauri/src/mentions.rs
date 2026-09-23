@@ -27,6 +27,7 @@ pub async fn resolve(
     runtime: &mut ToolRuntime,
     settings: &Settings,
     mentions: &[Mention],
+    installed_skills: &[PathBuf],
 ) -> ResolvedMentions {
     let mut sections: Vec<String> = Vec::new();
     let mut mcp_servers: Vec<String> = Vec::new();
@@ -39,7 +40,7 @@ pub async fn resolve(
             "file" => sections.push(resolve_file(runtime, value)),
             "directory" => sections.push(resolve_directory(runtime, value)),
             "website" => sections.push(resolve_website(runtime, value).await),
-            "skill" => sections.push(resolve_skill(settings, value)),
+            "skill" => sections.push(resolve_skill(settings, value, installed_skills)),
             "mcp" if !mcp_servers.iter().any(|entry| entry == value) => {
                 mcp_servers.push(value.to_string());
             }
@@ -167,12 +168,14 @@ async fn resolve_website(runtime: &mut ToolRuntime, value: &str) -> String {
     }
 }
 
-pub fn resolve_skill(settings: &Settings, value: &str) -> String {
+pub fn resolve_skill(settings: &Settings, value: &str, installed_skills: &[PathBuf]) -> String {
     let Some(directory) = discovery::find_skill_dir(
         value,
-        &settings.skill_folders,
-        &settings.skills_disabled,
-        settings.skills_auto_discovery,
+        &settings.integrations.skill_folders,
+        &settings.integrations.skills_disabled,
+        &settings.integrations.skills_disabled_items,
+        settings.integrations.skills_auto_discovery,
+        installed_skills,
     ) else {
         return format!("## Skill: {value}\n\nNo skill named '{value}' was found.");
     };

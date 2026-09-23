@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { Settings, UserSystemPrompt } from '../core/models';
 import { SettingsService } from '../core/settings.service';
+import { Toggle } from './toggle';
 
 type BuiltinKey = 'securitySystemPrompt' | 'testingSystemPrompt' | 'architectureSystemPrompt';
 
@@ -15,10 +16,12 @@ interface BuiltinPrompt {
   descriptionKey: string;
 }
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-system-prompts-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe, Toggle],
   host: { class: 'flex min-h-0 flex-1 flex-col' },
   template: `
     <div class="min-h-0 flex-1 overflow-y-auto">
@@ -44,19 +47,11 @@ interface BuiltinPrompt {
         @for (prompt of builtinPrompts; track prompt.key) {
           <div class="mb-1.5 glass-inset rounded-xl">
             <div class="flex items-center gap-2.5 px-3 py-2">
-              <button
-                type="button"
-                role="switch"
-                [attr.aria-checked]="builtinEnabled(prompt)"
-                class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-                [class]="builtinEnabled(prompt) ? 'bg-accent' : 'bg-white/15'"
-                (click)="toggleBuiltin(prompt)"
-              >
-                <span
-                  class="absolute top-0.5 h-4 w-4 rounded-full transition-all"
-                  [class]="builtinEnabled(prompt) ? 'left-4.5 bg-ink' : 'left-0.5 bg-white'"
-                ></span>
-              </button>
+              <app-toggle
+                size="sm"
+                [checked]="builtinEnabled(prompt)"
+                (toggled)="toggleBuiltin(prompt)"
+              />
               <button
                 type="button"
                 class="min-w-0 flex-1 truncate text-left text-sm"
@@ -105,19 +100,11 @@ interface BuiltinPrompt {
           @for (prompt of userPrompts(); track prompt.id) {
             <div class="glass-inset rounded-xl">
               <div class="flex items-center gap-2.5 px-3 py-2">
-                <button
-                  type="button"
-                  role="switch"
-                  [attr.aria-checked]="prompt.enabled"
-                  class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-                  [class]="prompt.enabled ? 'bg-accent' : 'bg-white/15'"
-                  (click)="toggleUser(prompt)"
-                >
-                  <span
-                    class="absolute top-0.5 h-4 w-4 rounded-full transition-all"
-                    [class]="prompt.enabled ? 'left-4.5 bg-ink' : 'left-0.5 bg-white'"
-                  ></span>
-                </button>
+                <app-toggle
+                  size="sm"
+                  [checked]="prompt.enabled"
+                  (toggled)="toggleUser(prompt)"
+                />
                 <button
                   type="button"
                   class="min-w-0 flex-1 truncate text-left text-sm"
@@ -142,12 +129,12 @@ interface BuiltinPrompt {
                     class="field w-full rounded-lg px-3 py-1.5 text-sm"
                     [placeholder]="'right.promptName' | transloco"
                     [value]="prompt.name"
-                    (change)="renamePrompt(prompt, $any($event.target).value)"
+                    (typedValue)="renamePrompt(prompt, $event)"
                   />
                   <textarea
                     class="field h-44 w-full resize-y rounded-lg px-3 py-2 font-mono text-xs leading-relaxed"
                     [value]="prompt.prompt"
-                    (change)="updatePromptText(prompt, $any($event.target).value)"
+                    (typedValue)="updatePromptText(prompt, $event)"
                   ></textarea>
                   <div class="flex items-center justify-between">
                     @if (isBuiltin(prompt)) {

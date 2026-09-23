@@ -32,6 +32,8 @@ export interface Session {
   agentStatus: string | null;
   archived: boolean;
   modeId: string | null;
+  limitReached: boolean;
+  autoContinue: boolean;
 }
 
 export interface ToolCallRecord {
@@ -260,6 +262,8 @@ export interface Settings {
   defaultReasoningEffort: string | null;
   favoriteModels: string[];
   contextMessageLimit: number;
+  maxToolIterations: number;
+  autoContinueAllSessions: boolean;
   commandRules: string[];
   allowedWebsites: string[];
   deniedWebsites: string[];
@@ -274,9 +278,12 @@ export interface Settings {
   mcpAutoDiscovery: boolean;
   mcpFolders: string[];
   mcpDisabled: string[];
+  mcpDisabledServers: McpServerRef[];
   skillsAutoDiscovery: boolean;
   skillFolders: string[];
   skillsDisabled: string[];
+  skillsDisabledItems: SkillRef[];
+  marketplaceVerifiedOnly: boolean;
   keepAwake: boolean;
   tabsMultiline: boolean;
   pasteWordLimit: number;
@@ -310,16 +317,129 @@ export interface McpCandidate {
   label: string;
   source: string;
   format: string;
-  servers: string[];
+  servers: McpServerState[];
   enabled: boolean;
+}
+
+export interface McpServerState {
+  name: string;
+  enabled: boolean;
+}
+
+export interface McpServerRef {
+  path: string;
+  name: string;
 }
 
 export interface SkillCandidate {
   path: string;
   label: string;
   source: string;
-  skills: string[];
+  skills: SkillState[];
   enabled: boolean;
+}
+
+export interface SkillState {
+  name: string;
+  enabled: boolean;
+}
+
+export interface SkillRef {
+  path: string;
+  name: string;
+}
+
+export interface MarketplaceEnv {
+  name: string;
+  required: boolean;
+  secret: boolean;
+}
+
+export interface MarketplaceServer {
+  name: string;
+  title: string | null;
+  description: string | null;
+  version: string | null;
+  kind: string;
+  transport: string | null;
+  url: string | null;
+  command: string | null;
+  args: string[];
+  env: MarketplaceEnv[];
+  repository: string | null;
+  verified: boolean;
+  publishedAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface MarketplacePlugin {
+  name: string;
+  description: string | null;
+  version: string | null;
+  repository: string | null;
+  homepage: string | null;
+  category: string | null;
+  keywords: string[];
+  skills: string[];
+}
+
+export interface DirectoryInstall {
+  command: string | null;
+  args: string[];
+  url: string | null;
+  transport: string | null;
+  cli: string | null;
+  requirements: string[];
+}
+
+export interface DirectoryServer {
+  name: string;
+  displayName: string;
+  description: string | null;
+  version: string | null;
+  category: string;
+  serverType: string | null;
+  logoUrl: string | null;
+  sourceRegistry: string;
+  githubUrl: string | null;
+  dockerUrl: string | null;
+  npmUrl: string | null;
+  documentationUrl: string | null;
+  githubStars: number;
+  dockerPulls: number;
+  npmDownloads: number;
+  verificationStatus: string;
+  env: MarketplaceEnv[];
+  install: DirectoryInstall;
+}
+
+export interface DirectoryPage {
+  servers: DirectoryServer[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+export interface SkillMarketplace {
+  name: string;
+  description: string | null;
+  owner: string | null;
+  url: string | null;
+  path: string | null;
+  source: string;
+  verified: boolean;
+  trusted: boolean;
+  commit: string | null;
+  spoofedName: boolean;
+  plugins: MarketplacePlugin[];
+}
+
+export interface InstalledSkill {
+  name: string;
+  marketplace: string;
+  description: string | null;
+  path: string;
 }
 
 export interface IgnoreCatalogEntry {
@@ -390,7 +510,11 @@ export interface GitStatus {
   tags: GitTag[];
   stashes: string[];
   submodules: string[];
+  operation: string | null;
+  conflicted: string[];
 }
+
+export type GitPullStrategy = 'ff-only' | 'merge' | 'rebase';
 
 export interface ProjectRule {
   path: string;
@@ -499,6 +623,7 @@ export type StreamEvent =
   | { kind: 'stopped'; message: Message }
   | { kind: 'subAgentStarted'; session: Session }
   | { kind: 'subAgentStatus'; status: string }
+  | { kind: 'limitReached'; iterations: number; autoContinued: boolean }
   | { kind: 'error'; message: string };
 
 export interface RoutedEvent {
@@ -543,4 +668,5 @@ export interface SendMessageArgs {
   provider?: string | null;
   attachments?: MessageAttachment[];
   mentions?: Mention[];
+  resume?: boolean;
 }

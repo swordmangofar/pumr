@@ -19,7 +19,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-const MAX_TOOL_ITERATIONS: usize = 25;
 const MAX_SUBAGENT_DEPTH: usize = 1;
 
 #[derive(Clone)]
@@ -35,12 +34,18 @@ pub struct TurnRequest {
     pub project_root: PathBuf,
     pub extra_folders: Vec<PathBuf>,
     pub command_rules: Vec<String>,
-    pub allowed_websites: Vec<String>,
-    pub denied_websites: Vec<String>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub context_message_limit: usize,
+    /// Maximum number of consecutive tool-requesting model turns before the
+    /// loop pauses (or auto-continues).
+    pub max_tool_iterations: usize,
+    /// When true, keep going past the iteration limit instead of pausing.
+    pub auto_continue: bool,
     pub fallback_pricing: Option<(f64, f64)>,
     pub base_commit: String,
+    /// True when this turn continues a paused prompt. `base_commit` then points
+    /// at that prompt's original snapshot rather than the previous turn.
+    pub resume: bool,
     /// Planning modes disable the write/edit tools so the agent can only plan.
     pub plan_only: bool,
     pub cancel: CancellationToken,
@@ -63,6 +68,9 @@ pub struct TurnResult {
     pub message: Message,
     pub usage: ChatUsage,
     pub cancelled: bool,
+    /// True when the loop paused at the tool-iteration limit instead of
+    /// finishing with a final answer.
+    pub limit_reached: bool,
     pub error: Option<String>,
 }
 
@@ -82,37 +90,32 @@ pub async fn run_turn(
         }
     };
 
-    let mut tool_schemas = tools::tool_schemas();
-    tool_schemas.extend(deps.mcp.schemas());
-    if request.plan_only {
-        tool_schemas.retain(|schema| {
-            !matches!(
-                schema.pointer("/function/name").and_then(Value::as_str),
-                Some("write") | Some("edit")
-            )
-        });
-    }
-    if request.depth >= MAX_SUBAGENT_DEPTH {
-        tool_schemas.retain(|schema| {
-            !matches!(
-                schema.pointer("/function/name").and_then(Value::as_str),
-                Some("task") | Some("question")
-            )
-        });
-    }
+    let tool_schemas = build_tool_schemas(deps, &request);
     let mut total_usage = ChatUsage::default();
     let mut iterations = 0usize;
     let mut final_message: Option<Message> = None;
     let mut final_error: Option<String> = None;
     let mut final_cancelled = false;
+    let mut limit_reached = false;
+    let max_iterations = request.max_tool_iterations.max(1);
 
     loop {
         iterations += 1;
-        if iterations > MAX_TOOL_ITERATIONS {
-            final_error = Some(format!(
-                "Stopped after {MAX_TOOL_ITERATIONS} tool iterations without a final answer."
-            ));
-            break;
+        if iterations > max_iterations {
+            if request.auto_continue && request.depth == 0 {
+                emit(StreamEvent::LimitReached {
+                    iterations: max_iterations as i64,
+                    auto_continued: true,
+                });
+                iterations = 0;
+            } else {
+                emit(StreamEvent::LimitReached {
+                    iterations: max_iterations as i64,
+                    auto_continued: false,
+                });
+                limit_reached = true;
+                break;
+            }
         }
 
         let placeholder = deps.db.append_message(
@@ -189,7 +192,6 @@ pub async fn run_turn(
         accumulate_usage(&mut total_usage, &iteration_usage);
 
         if stream_error.is_some() || stream_cancelled || tool_calls.is_empty() {
-            let changes = compute_changes(deps, &request);
             let message = deps.db.update_assistant_message(
                 &placeholder.id,
                 &content,
@@ -199,14 +201,9 @@ pub async fn run_turn(
                 iteration_usage.completion_tokens,
                 iteration_usage.cached_tokens,
                 &[],
-                &changes,
+                &[],
                 model_duration_ms,
             )?;
-            if !changes.is_empty() {
-                emit(StreamEvent::Changes {
-                    changes: changes.clone(),
-                });
-            }
             final_error = stream_error;
             final_cancelled = stream_cancelled;
             final_message = Some(message);
@@ -227,91 +224,13 @@ pub async fn run_turn(
         )?;
         emit(StreamEvent::Assistant { message: assistant });
 
-        let mut pending_agents: Vec<(
-            ToolCallRecord,
-            tokio::task::JoinHandle<ToolOutcome>,
-            std::time::Instant,
-        )> = Vec::new();
-        for call in &tool_calls {
-            if request.cancel.is_cancelled() {
-                final_cancelled = true;
-                break;
-            }
-            emit(StreamEvent::ToolStart {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                summary: summarize(&request, &call.name, &call.arguments),
-                arguments: call.arguments.clone(),
-            });
-
-            if call.name == "task" {
-                let arguments: Value =
-                    serde_json::from_str(&call.arguments).unwrap_or_else(|_| json!({}));
-                let deps_owned = deps.clone();
-                let request_owned = request.clone();
-                let sink_owned = sink.clone();
-                let started = std::time::Instant::now();
-                let handle = tokio::spawn(async move {
-                    run_subagent(&deps_owned, &request_owned, arguments, sink_owned).await
-                });
-                pending_agents.push((call.clone(), handle, started));
-            } else {
-                let started = std::time::Instant::now();
-                let outcome = execute_call(deps, &request, call, &sink).await;
-                let duration_ms = started.elapsed().as_millis() as i64;
-                deps.db.append_message(
-                    &request.session_id,
-                    NewMessage::tool(
-                        &call.id,
-                        &call.name,
-                        &outcome.result,
-                        &outcome.status,
-                        &outcome.changes,
-                        duration_ms,
-                    ),
-                )?;
-                emit(StreamEvent::ToolEnd {
-                    call_id: call.id.clone(),
-                    name: call.name.clone(),
-                    status: outcome.status.clone(),
-                    result: outcome.result.clone(),
-                    changes: outcome.changes.clone(),
-                });
-            }
-        }
-
-        for (call, handle, started) in pending_agents {
-            let outcome = match handle.await {
-                Ok(outcome) => outcome,
-                Err(error) => ToolOutcome::error(format!("Subagent failed: {error}")),
-            };
-            let duration_ms = started.elapsed().as_millis() as i64;
-            deps.db.append_message(
-                &request.session_id,
-                NewMessage::tool(
-                    &call.id,
-                    &call.name,
-                    &outcome.result,
-                    &outcome.status,
-                    &outcome.changes,
-                    duration_ms,
-                ),
-            )?;
-            emit(StreamEvent::ToolEnd {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                status: outcome.status.clone(),
-                result: outcome.result.clone(),
-                changes: outcome.changes.clone(),
-            });
-        }
-
-        if final_cancelled {
+        if execute_tool_calls(deps, &request, &sink, &tool_calls, &emit).await? {
             let message = deps.db.append_message(
                 &request.session_id,
                 NewMessage::assistant(Some(&request.model), request.provider.as_deref()),
             )?;
             final_message = Some(message);
+            final_cancelled = true;
             break;
         }
     }
@@ -324,12 +243,134 @@ pub async fn run_turn(
         final_message = Some(message);
     }
 
+    // Freeze this session's own changes at the end of the turn so that later
+    // turns of *other* sessions in the same project cannot leak into it.
+    let changes = finalize_changes(deps, &request);
+    if !changes.is_empty() {
+        emit(StreamEvent::Changes { changes });
+    }
+
     Ok(TurnResult {
         message: final_message.unwrap(),
         usage: total_usage,
         cancelled: final_cancelled,
+        limit_reached,
         error: final_error,
     })
+}
+
+/// Builds the tool schema set for a turn: built-in tools plus this session's
+/// MCP servers, then strips mutating tools in plan-only modes and delegation
+/// tools at the maximum subagent depth.
+fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
+    let mut tool_schemas = tools::tool_schemas();
+    tool_schemas.extend(deps.mcp.schemas());
+    if request.plan_only {
+        tool_schemas.retain(|schema| {
+            !matches!(
+                schema.pointer("/function/name").and_then(Value::as_str),
+                Some("write") | Some("edit")
+            )
+        });
+    }
+    if request.depth >= MAX_SUBAGENT_DEPTH {
+        tool_schemas.retain(|schema| {
+            !matches!(
+                schema.pointer("/function/name").and_then(Value::as_str),
+                Some("task") | Some("question")
+            )
+        });
+    }
+    tool_schemas
+}
+
+/// Runs the tool calls the model requested, executing `task` calls as parallel
+/// subagents and the rest inline. Returns `true` when the turn was cancelled
+/// part-way through.
+async fn execute_tool_calls(
+    deps: &TurnDeps,
+    request: &TurnRequest,
+    sink: &EventSink,
+    tool_calls: &[ToolCallRecord],
+    emit: &impl Fn(StreamEvent),
+) -> Result<bool> {
+    let mut pending_agents: Vec<(
+        ToolCallRecord,
+        tokio::task::JoinHandle<ToolOutcome>,
+        std::time::Instant,
+    )> = Vec::new();
+    let mut cancelled = false;
+    for call in tool_calls {
+        if request.cancel.is_cancelled() {
+            cancelled = true;
+            break;
+        }
+        emit(StreamEvent::ToolStart {
+            call_id: call.id.clone(),
+            name: call.name.clone(),
+            summary: summarize(request, &call.name, &call.arguments),
+            arguments: call.arguments.clone(),
+        });
+
+        if call.name == "task" {
+            let arguments: Value =
+                serde_json::from_str(&call.arguments).unwrap_or_else(|_| json!({}));
+            let deps_owned = deps.clone();
+            let request_owned = request.clone();
+            let sink_owned = sink.clone();
+            let started = std::time::Instant::now();
+            let handle = tokio::spawn(async move {
+                run_subagent(&deps_owned, &request_owned, arguments, sink_owned).await
+            });
+            pending_agents.push((call.clone(), handle, started));
+        } else {
+            let started = std::time::Instant::now();
+            let outcome = execute_call(deps, request, call, sink).await;
+            let duration_ms = started.elapsed().as_millis() as i64;
+            record_tool_outcome(deps, request, call, &outcome, duration_ms, emit)?;
+        }
+    }
+
+    for (call, handle, started) in pending_agents {
+        let outcome = match handle.await {
+            Ok(outcome) => outcome,
+            Err(error) => ToolOutcome::error(format!("Subagent failed: {error}")),
+        };
+        let duration_ms = started.elapsed().as_millis() as i64;
+        record_tool_outcome(deps, request, &call, &outcome, duration_ms, emit)?;
+    }
+    Ok(cancelled)
+}
+
+/// Persists a tool result and emits the matching stream event. Shared by the
+/// inline and subagent paths so both stay in sync.
+fn record_tool_outcome(
+    deps: &TurnDeps,
+    request: &TurnRequest,
+    call: &ToolCallRecord,
+    outcome: &ToolOutcome,
+    duration_ms: i64,
+    emit: &impl Fn(StreamEvent),
+) -> Result<()> {
+    deps.db.append_message(
+        &request.session_id,
+        NewMessage::tool(
+            &call.id,
+            &call.name,
+            &outcome.result,
+            &outcome.status,
+            &outcome.changes,
+            duration_ms,
+        ),
+    )?;
+    emit(StreamEvent::ToolEnd {
+        call_id: call.id.clone(),
+        name: call.name.clone(),
+        status: outcome.status.clone(),
+        result: outcome.result.clone(),
+        changes: outcome.changes.clone(),
+    });
+    Ok(())
 }
 
 fn run_subagent<'a>(
@@ -423,12 +464,13 @@ fn run_subagent<'a>(
             project_root: request.project_root.clone(),
             extra_folders: request.extra_folders.clone(),
             command_rules: request.command_rules.clone(),
-            allowed_websites: request.allowed_websites.clone(),
-            denied_websites: request.denied_websites.clone(),
             file_ignore: request.file_ignore.clone(),
             context_message_limit: request.context_message_limit,
+            max_tool_iterations: request.max_tool_iterations,
+            auto_continue: false,
             fallback_pricing: request.fallback_pricing,
             base_commit,
+            resume: false,
             plan_only: request.plan_only,
             cancel: request.cancel.clone(),
         };
@@ -675,8 +717,6 @@ async fn execute_call(
     let mut runtime = ToolRuntime {
         call_id: call.id.clone(),
         project_root: request.project_root.clone(),
-        allowed_websites: request.allowed_websites.clone(),
-        denied_websites: request.denied_websites.clone(),
         file_ignore: request.file_ignore.clone(),
         session_id: request.session_id.clone(),
         shadow: deps.shadow.clone(),
@@ -692,10 +732,92 @@ async fn execute_call(
     tools::execute(&mut runtime, &call.name, &arguments).await
 }
 
-fn compute_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
-    deps.shadow
-        .changes_since(&request.base_commit)
-        .unwrap_or_default()
+fn finalize_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
+    let (existing, last_commit) = match deps.db.session_changes_record(&request.session_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => (Vec::new(), None),
+        Err(error) => {
+            log::warn!(
+                "could not read change record for session {}: {error}; leaving it untouched",
+                request.session_id
+            );
+            return Vec::new();
+        }
+    };
+
+    let after = match deps.shadow.snapshot("change set") {
+        Ok(commit) => commit,
+        Err(error) => {
+            log::warn!(
+                "could not snapshot change set for session {}: {error}",
+                request.session_id
+            );
+            return existing;
+        }
+    };
+    // A new prompt snapshots the working tree first, so its `base_commit`
+    // already isolates the turn. A resume reuses the original prompt snapshot,
+    // so continue from the previous finalize boundary instead.
+    let from = if request.resume {
+        last_commit.unwrap_or_else(|| request.base_commit.clone())
+    } else {
+        request.base_commit.clone()
+    };
+    let increment = match deps.shadow.changes_between(&from, &after) {
+        Ok(increment) => increment,
+        Err(error) if from != request.base_commit => {
+            match deps.shadow.changes_between(&request.base_commit, &after) {
+                Ok(increment) => increment,
+                Err(fallback) => {
+                    log::warn!(
+                        "could not diff {from}..{after} ({error}) or {}..{after} ({fallback}); not advancing change record",
+                        request.base_commit
+                    );
+                    return existing;
+                }
+            }
+        }
+        Err(error) => {
+            log::warn!("could not diff {from}..{after}: {error}; not advancing change record");
+            return existing;
+        }
+    };
+
+    let merged = merge_file_changes(existing, increment);
+    if let Err(error) =
+        deps.db
+            .set_session_changes_record(&request.session_id, &merged, Some(&after))
+    {
+        log::warn!(
+            "could not persist change record for session {}: {error}",
+            request.session_id
+        );
+    }
+    merged
+}
+
+/// Merges a turn's file changes into a session's cumulative set. Additions and
+/// deletions accumulate across turns; a file that was added and later deleted
+/// within the session drops out again.
+fn merge_file_changes(existing: Vec<FileChange>, increment: Vec<FileChange>) -> Vec<FileChange> {
+    let mut merged = existing;
+    for change in increment {
+        if let Some(index) = merged.iter().position(|entry| entry.path == change.path) {
+            // Added earlier in this session and deleted again: net no change.
+            if change.status == "D" && merged[index].status == "A" {
+                merged.remove(index);
+                continue;
+            }
+            merged[index].additions += change.additions;
+            merged[index].deletions += change.deletions;
+            if merged[index].status != "A" {
+                merged[index].status = change.status.clone();
+            }
+        } else {
+            merged.push(change);
+        }
+    }
+    merged
 }
 
 fn summarize(request: &TurnRequest, name: &str, arguments: &str) -> String {
@@ -776,6 +898,36 @@ fn accumulate_usage(total: &mut ChatUsage, usage: &ChatUsage) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn change(path: &str, additions: i64, deletions: i64, status: &str) -> FileChange {
+        FileChange {
+            path: path.to_string(),
+            additions,
+            deletions,
+            status: status.to_string(),
+        }
+    }
+
+    #[test]
+    fn merge_accumulates_additions_and_keeps_added_status() {
+        let merged = merge_file_changes(
+            vec![change("src/new.ts", 3, 0, "A")],
+            vec![change("src/new.ts", 2, 1, "M"), change("src/other.ts", 5, 0, "M")],
+        );
+        let new_file = merged.iter().find(|c| c.path == "src/new.ts").unwrap();
+        assert_eq!(new_file.status, "A");
+        assert_eq!((new_file.additions, new_file.deletions), (5, 1));
+        assert!(merged.iter().any(|c| c.path == "src/other.ts"));
+    }
+
+    #[test]
+    fn merge_drops_files_added_and_deleted_within_session() {
+        let merged = merge_file_changes(
+            vec![change("src/temp.ts", 4, 0, "A")],
+            vec![change("src/temp.ts", 0, 4, "D")],
+        );
+        assert!(merged.is_empty());
+    }
 
     #[test]
     fn provider_presets_map_to_routing() {

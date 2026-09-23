@@ -18,6 +18,7 @@ import {
   MentionKind,
   MessageAttachment,
   Mode,
+  SendMessageArgs,
   TextBlock,
   WorkspaceEntry,
 } from '../core/models';
@@ -25,6 +26,8 @@ import { api } from '../core/api';
 import { ModelsService } from '../core/models.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { MessageQueueService } from '../core/message-queue.service';
+import { ComposerEditorService, MentionQuery } from './composer-editor.service';
 
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
 
@@ -32,20 +35,17 @@ const MENTION_KINDS: MentionKind[] = ['file', 'directory', 'website', 'skill', '
 
 const MENTION_TOKEN_RE = /@(file|directory|website|skill|mcp):([^\s]+)/g;
 
+/** Semantic indicator colours for endpoint/usage meters. */
+const METER_GOOD = '#34d399';
+const METER_WARN = '#fbbf24';
+const METER_BAD = '#fb7185';
+const METER_MUTED = 'rgba(255,255,255,0.25)';
+
 interface MentionItem {
   kind: MentionKind;
   value: string;
   label: string;
   sublabel: string | null;
-}
-
-interface MentionQuery {
-  node: Text;
-  start: number;
-  end: number;
-  kindPrefix: string;
-  hasColon: boolean;
-  term: string;
 }
 
 const MAX_ATTACHMENTS = 10;
@@ -128,6 +128,7 @@ const PROVIDER_PRESETS = [
 @Component({
   selector: 'app-composer',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [ComposerEditorService],
   encapsulation: ViewEncapsulation.None,
   imports: [TranslocoPipe],
   styles: [
@@ -253,7 +254,7 @@ const PROVIDER_PRESETS = [
                   <span
                     class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-[10px] font-semibold tracking-wide text-rose-300"
                   >
-                    PDF
+                    {{ 'common.pdf' | transloco }}
                   </span>
                 } @else {
                   <span
@@ -304,6 +305,59 @@ const PROVIDER_PRESETS = [
 
         @if (attachmentError(); as error) {
           <p class="px-4 pt-2 text-xs text-rose-300">{{ error | transloco }}</p>
+        }
+
+        @if (queued().length > 0) {
+          <div class="flex flex-col gap-1.5 border-b border-white/5 px-4 py-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-medium tracking-wide text-mist/40 uppercase">
+                {{ 'chat.queued' | transloco: { count: queued().length } }}
+              </span>
+              <button
+                type="button"
+                class="text-[11px] text-mist/40 transition-colors hover:text-white"
+                (click)="clearQueue()"
+              >
+                {{ 'common.clear' | transloco }}
+              </button>
+            </div>
+            @for (item of queued(); track $index) {
+              <div
+                class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 py-1.5 pr-1.5 pl-3"
+              >
+                <span class="min-w-0 flex-1 truncate text-xs text-mist/70">{{ item.content }}</span>
+                @if (item.attachments?.length) {
+                  <span class="flex shrink-0 items-center gap-1 text-[11px] text-mist/40">
+                    <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                    {{ item.attachments?.length }}
+                  </span>
+                }
+                <button
+                  type="button"
+                  class="grid h-5 w-5 shrink-0 place-items-center rounded-full text-mist/40 transition-colors hover:bg-white/10 hover:text-white"
+                  [attr.aria-label]="'common.remove' | transloco"
+                  (click)="removeQueued($index)"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path
+                      d="M6 6l8 8M14 6l-8 8"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            }
+          </div>
         }
 
         @if (mentionOpen()) {
@@ -477,19 +531,19 @@ const PROVIDER_PRESETS = [
                             @if (model.supportsReasoning) {
                               <span
                                 class="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-accent"
-                                >reasoning</span
+                                >{{ 'composer.reasoning' | transloco }}</span
                               >
                             }
                             @if (model.supportsVision) {
                               <span
                                 class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-mist/60"
-                                >vision</span
+                                >{{ 'composer.vision' | transloco }}</span
                               >
                             }
                             @if (model.supportsTools) {
                               <span
                                 class="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300"
-                                >tools</span
+                                >{{ 'composer.tools' | transloco }}</span
                               >
                             }
                           </div>
@@ -899,6 +953,22 @@ const PROVIDER_PRESETS = [
             @if (streaming()) {
               <button
                 type="button"
+                class="flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-full bg-accent/15 px-4 text-sm font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+                [disabled]="!canQueue()"
+                (click)="enqueue()"
+              >
+                <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path
+                    d="M4 6h12M4 10h12M4 14h7"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                {{ 'chat.queue' | transloco }}
+              </button>
+              <button
+                type="button"
                 class="flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-full bg-rose-500/15 px-4 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
                 (click)="stop()"
               >
@@ -1116,8 +1186,10 @@ const PROVIDER_PRESETS = [
 })
 export class Composer {
   protected readonly workspace = inject(WorkspaceService);
+  private readonly queue = inject(MessageQueueService);
   protected readonly settings = inject(SettingsService);
   protected readonly modelsService = inject(ModelsService);
+  private readonly editorDom = inject(ComposerEditorService);
 
   protected readonly reasoningOptions = REASONING_OPTIONS;
   protected readonly providerPresets = PROVIDER_PRESETS;
@@ -1211,6 +1283,18 @@ export class Composer {
       !!this.model() &&
       !this.streaming(),
   );
+  protected readonly canQueue = computed(
+    () =>
+      (this.draft().trim().length > 0 ||
+        this.attachments().length > 0 ||
+        this.mentions().length > 0) &&
+      !!this.model() &&
+      this.streaming(),
+  );
+  protected readonly queued = computed(() => {
+    const session = this.workspace.activeAgent();
+    return session ? this.queue.forSession(session.id) : [];
+  });
   protected readonly sessionCost = computed(() => this.workspace.activeAgent()?.cost ?? 0);
   protected readonly handover = computed(() => {
     const session = this.workspace.activeSession();
@@ -1352,129 +1436,20 @@ export class Composer {
     if (!editor) {
       return { content: '', mentions: [] };
     }
-    const mentions: Mention[] = [];
-    let text = '';
-    const walk = (node: Node): void => {
-      node.childNodes.forEach((child) => {
-        if (child.nodeType === Node.TEXT_NODE) {
-          text += child.textContent ?? '';
-          return;
-        }
-        if (!(child instanceof HTMLElement)) {
-          return;
-        }
-        if (child.dataset['mention']) {
-          const kind = child.dataset['kind'] as MentionKind;
-          const value = child.dataset['value'] ?? '';
-          const label = child.dataset['label'] ?? value;
-          if (kind && !mentions.some((entry) => entry.kind === kind && entry.value === value)) {
-            mentions.push({ kind, value, label });
-          }
-          text += ' ';
-          return;
-        }
-        if (child.dataset['textBlock']) {
-          const id = child.dataset['textBlockId'] ?? '';
-          const block = this.textBlocks().find((entry) => entry.id === id);
-          if (block) {
-            text += ` ${block.text} `;
-          }
-          return;
-        }
-        if (child.tagName === 'BR') {
-          text += '\n';
-          return;
-        }
-        walk(child);
-        if (child.tagName === 'DIV' || child.tagName === 'P') {
-          text += '\n';
-        }
-      });
-    };
-    walk(editor);
-    const content = text
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]{2,}/g, ' ')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    return { content, mentions };
+    return this.editorDom.serialize(editor, this.textBlocks());
   }
 
   private detectQuery(): MentionQuery | null {
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
-      return null;
-    }
-    const node = selection.anchorNode;
-    if (!node || node.nodeType !== Node.TEXT_NODE) {
-      return null;
-    }
-    const text = node.textContent ?? '';
-    const offset = selection.anchorOffset;
-    const before = text.slice(0, offset);
-    const match = /(?:^|\s)@([A-Za-z]*)(?::([^\s]*))?$/.exec(before);
-    if (!match) {
-      return null;
-    }
-    const token = match[0].replace(/^\s/, '');
-    return {
-      node: node as Text,
-      start: offset - token.length,
-      end: offset,
-      kindPrefix: (match[1] ?? '').toLowerCase(),
-      hasColon: match[2] !== undefined,
-      term: match[2] ?? '',
-    };
+    return this.editorDom.detectQuery();
   }
 
   private createPill(mention: Mention): HTMLSpanElement {
-    const pill = document.createElement('span');
-    pill.className = 'mention-pill';
-    pill.contentEditable = 'false';
-    pill.dataset['mention'] = 'true';
-    pill.dataset['kind'] = mention.kind;
-    pill.dataset['value'] = mention.value;
-    pill.dataset['label'] = mention.label;
-
-    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.setAttribute('viewBox', '0 0 20 20');
-    icon.setAttribute('width', '12');
-    icon.setAttribute('height', '12');
-    icon.setAttribute('fill', 'none');
-    icon.setAttribute('aria-hidden', 'true');
-    icon.setAttribute('class', 'mention-pill-icon');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', this.mentionIcon(mention.kind));
-    path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', '1.5');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('stroke-linejoin', 'round');
-    icon.appendChild(path);
-
-    const kind = document.createElement('span');
-    kind.className = 'mention-pill-kind';
-    kind.textContent = mention.kind;
-
-    const label = document.createElement('span');
-    label.className = 'mention-pill-label';
-    label.textContent = mention.label;
-
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'mention-pill-remove';
-    remove.tabIndex = -1;
-    remove.setAttribute('aria-label', this.transloco.translate('composer.removeMention'));
-    remove.textContent = '\u00d7';
-    remove.addEventListener('mousedown', (event) => event.preventDefault());
-    remove.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.removePill(pill);
-    });
-
-    pill.append(icon, kind, label, remove);
-    return pill;
+    return this.editorDom.createPill(
+      mention,
+      this.mentionIcon(mention.kind),
+      this.transloco.translate('composer.removeMention'),
+      (pill) => this.removePill(pill),
+    );
   }
 
   private insertPill(mention: Mention, query: MentionQuery | null): void {
@@ -1482,74 +1457,21 @@ export class Composer {
     if (!editor) {
       return;
     }
-    const selection = window.getSelection();
-
-    if (query) {
-      const text = query.node.textContent ?? '';
-      const before = text.slice(0, query.start);
-      const after = text.slice(query.end);
-      const beforeNode = document.createTextNode(before);
-      const afterNode = document.createTextNode(after);
-      const parent = query.node.parentNode;
-      if (!parent) {
-        return;
-      }
-      parent.replaceChild(afterNode, query.node);
-      parent.insertBefore(beforeNode, afterNode);
-      const position = document.createRange();
-      position.setStart(beforeNode, before.length);
-      position.collapse(true);
-      if (selection) {
-        selection.removeAllRanges();
-        selection.addRange(position);
-      }
-    }
-
-    const position =
-      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : document.createRange();
-    const fragment = document.createDocumentFragment();
-    const space = document.createTextNode(' ');
-    fragment.append(this.createPill(mention), space);
-    position.insertNode(fragment);
-
-    const caret = document.createRange();
-    caret.setStart(space, space.length);
-    caret.collapse(true);
-    if (selection) {
-      selection.removeAllRanges();
-      selection.addRange(caret);
-    }
-
-    editor.focus();
-    this.onEditorInput();
+    this.editorDom.insertPill(editor, query, this.createPill(mention), () => this.onEditorInput());
   }
 
   private replaceQuery(text: string, query: MentionQuery): void {
-    const value = query.node.textContent ?? '';
-    const before = value.slice(0, query.start);
-    const after = value.slice(query.end);
-    query.node.textContent = before + text + after;
-    const selection = window.getSelection();
-    if (selection) {
-      const range = document.createRange();
-      const caret = before.length + text.length;
-      range.setStart(query.node, caret);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-    this.focusInput();
-    this.onEditorInput();
+    this.editorDom.replaceQuery(text, query, () => {
+      this.focusInput();
+      this.onEditorInput();
+    });
   }
 
   private removePill(pill: HTMLElement): void {
-    const next = pill.nextSibling;
-    pill.remove();
-    if (next && next.nodeType === Node.TEXT_NODE && next.textContent === ' ') {
-      next.remove();
-    }
-    this.onEditorInput();
-    this.focusInput();
+    this.editorDom.removePill(pill, () => {
+      this.onEditorInput();
+      this.focusInput();
+    });
   }
 
   private wordCount(text: string): number {
@@ -1570,56 +1492,13 @@ export class Composer {
   }
 
   private createTextBlockPill(block: TextBlock): HTMLSpanElement {
-    const pill = document.createElement('span');
-    pill.className = 'text-block-pill';
-    pill.contentEditable = 'false';
-    pill.dataset['textBlock'] = 'true';
-    pill.dataset['textBlockId'] = block.id;
-    pill.title = block.text.slice(0, 200);
-    pill.addEventListener('mousedown', (event) => event.preventDefault());
-    pill.addEventListener('click', (event) => {
-      if ((event.target as HTMLElement).closest('.text-block-pill-remove')) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      this.openTextBlockEditor(block.id);
-    });
-
-    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.setAttribute('viewBox', '0 0 20 20');
-    icon.setAttribute('width', '14');
-    icon.setAttribute('height', '14');
-    icon.setAttribute('fill', 'none');
-    icon.setAttribute('aria-hidden', 'true');
-    icon.setAttribute('class', 'text-block-pill-icon');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M6 3.5h5.5L15 7v9.5H6zM11.5 3.5V7H15M8 10h5M8 12.5h5M8 15h3');
-    path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', '1.4');
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('stroke-linejoin', 'round');
-    icon.appendChild(path);
-
-    const label = document.createElement('span');
-    label.className = 'text-block-pill-label';
-    label.textContent = this.blockLabel(block.text);
-
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'text-block-pill-remove';
-    remove.tabIndex = -1;
-    remove.setAttribute('aria-label', this.transloco.translate('composer.textBlockRemove'));
-    remove.textContent = '\u00d7';
-    remove.addEventListener('mousedown', (event) => event.preventDefault());
-    remove.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.removeTextBlock(block.id, pill);
-    });
-
-    pill.append(icon, label, remove);
-    return pill;
+    return this.editorDom.createTextBlockPill(
+      block,
+      this.blockLabel(block.text),
+      this.transloco.translate('composer.textBlockRemove'),
+      (id) => this.openTextBlockEditor(id),
+      (id, pill) => this.removeTextBlock(id, pill),
+    );
   }
 
   private insertTextBlockPill(block: TextBlock): void {
@@ -1627,28 +1506,9 @@ export class Composer {
     if (!editor) {
       return;
     }
-    const selection = window.getSelection();
-    let range: Range | null =
-      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-    if (!range || !editor.contains(range.startContainer)) {
-      range = document.createRange();
-      range.selectNodeContents(editor);
-      range.collapse(false);
-    }
-    const fragment = document.createDocumentFragment();
-    const space = document.createTextNode(' ');
-    fragment.append(this.createTextBlockPill(block), space);
-    range.insertNode(fragment);
-
-    const caret = document.createRange();
-    caret.setStart(space, space.length);
-    caret.collapse(true);
-    if (selection) {
-      selection.removeAllRanges();
-      selection.addRange(caret);
-    }
-    editor.focus();
-    this.onEditorInput();
+    this.editorDom.insertTextBlockPill(editor, this.createTextBlockPill(block), () =>
+      this.onEditorInput(),
+    );
   }
 
   private blockLabel(text: string): string {
@@ -1716,10 +1576,14 @@ export class Composer {
     if (!editor) {
       return;
     }
-    if (!document.execCommand('insertLineBreak')) {
-      document.execCommand('insertHTML', false, '<br>');
-    }
+    this.insertAtCaret(editor, document.createElement('br'));
     this.onEditorInput();
+  }
+
+  // Inserts a node at the current caret when it is inside `editor`, otherwise
+  // appends it. Replaces the deprecated `document.execCommand` path.
+  private insertAtCaret(editor: HTMLElement, node: Node): void {
+    this.editorDom.insertAtCaret(editor, node);
   }
 
   protected openFilePicker(): void {
@@ -1749,7 +1613,10 @@ export class Composer {
         this.addTextBlock(text);
         return;
       }
-      document.execCommand('insertText', false, text);
+      const editor = this.editorRef()?.nativeElement;
+      if (editor) {
+        this.insertAtCaret(editor, document.createTextNode(text));
+      }
       this.onEditorInput();
     }
   }
@@ -1985,12 +1852,15 @@ export class Composer {
           const candidates = await api.discoverSkills(
             settings.skillFolders,
             settings.skillsDisabled,
+            settings.skillsDisabledItems,
             settings.skillsAutoDiscovery,
           );
           const names = new Set<string>();
           for (const candidate of candidates) {
-            for (const name of candidate.skills) {
-              names.add(name);
+            for (const skill of candidate.skills) {
+              if (skill.enabled) {
+                names.add(skill.name);
+              }
             }
           }
           this.skillNames.set([...names].sort());
@@ -2004,12 +1874,15 @@ export class Composer {
           const candidates = await api.discoverMcpSources(
             settings.mcpFolders,
             settings.mcpDisabled,
+            settings.mcpDisabledServers,
             settings.mcpAutoDiscovery,
           );
           const names = new Set<string>();
           for (const candidate of candidates) {
-            for (const name of candidate.servers) {
-              names.add(name);
+            for (const server of candidate.servers) {
+              if (server.enabled) {
+                names.add(server.name);
+              }
             }
           }
           this.mcpServers.set([...names].sort());
@@ -2212,6 +2085,44 @@ export class Composer {
   }
 
   protected async send(): Promise<void> {
+    if (this.streaming()) {
+      this.enqueue();
+      return;
+    }
+    const args = this.buildArgs();
+    if (!args) {
+      return;
+    }
+    this.clearComposer();
+    await this.workspace.send(args);
+    this.focusInput();
+  }
+
+  protected enqueue(): void {
+    const args = this.buildArgs();
+    if (!args) {
+      return;
+    }
+    this.clearComposer();
+    this.queue.enqueue(args);
+    this.focusInput();
+  }
+
+  protected removeQueued(index: number): void {
+    const session = this.workspace.activeAgent();
+    if (session) {
+      this.queue.remove(session.id, index);
+    }
+  }
+
+  protected clearQueue(): void {
+    const session = this.workspace.activeAgent();
+    if (session) {
+      this.queue.clear(session.id);
+    }
+  }
+
+  private buildArgs(): SendMessageArgs | null {
     const session = this.workspace.activeAgent();
     const raw = this.draft().trim();
     const content = this.stripMentions(raw);
@@ -2223,21 +2134,10 @@ export class Composer {
     }
     const model = this.model();
     const attachments = this.attachments();
-    if (
-      !session ||
-      (!content && attachments.length === 0 && mentions.length === 0) ||
-      !model ||
-      this.streaming()
-    ) {
-      return;
+    if (!session || (!content && attachments.length === 0 && mentions.length === 0) || !model) {
+      return null;
     }
-    this.setEditorText('');
-    this.attachments.set([]);
-    this.mentions.set([]);
-    this.textBlocks.set([]);
-    this.attachmentError.set(null);
-    this.closeMention();
-    await this.workspace.send({
+    return {
       sessionId: session.id,
       content,
       model,
@@ -2245,8 +2145,16 @@ export class Composer {
       provider: this.provider() === 'auto' ? null : this.provider(),
       attachments,
       mentions,
-    });
-    this.focusInput();
+    };
+  }
+
+  private clearComposer(): void {
+    this.setEditorText('');
+    this.attachments.set([]);
+    this.mentions.set([]);
+    this.textBlocks.set([]);
+    this.attachmentError.set(null);
+    this.closeMention();
   }
 
   protected async stop(): Promise<void> {
@@ -2407,15 +2315,15 @@ export class Composer {
   protected uptimeColor(endpoint: EndpointInfo): string {
     const value = this.uptime(endpoint);
     if (value === null) {
-      return 'rgba(255,255,255,0.25)';
+      return METER_MUTED;
     }
     if (value >= 99) {
-      return '#34d399';
+      return METER_GOOD;
     }
     if (value >= 95) {
-      return '#fbbf24';
+      return METER_WARN;
     }
-    return '#fb7185';
+    return METER_BAD;
   }
 
   private priceTier(endpoint: EndpointInfo): number {
@@ -2465,10 +2373,10 @@ export class Composer {
 
   private usageColor(ratio: number): string {
     if (ratio >= 0.9) {
-      return '#fb7185';
+      return METER_BAD;
     }
     if (ratio >= 0.75) {
-      return '#fbbf24';
+      return METER_WARN;
     }
     return 'var(--color-accent)';
   }

@@ -1,6 +1,6 @@
 use crate::broker::{PermissionBroker, PermissionPrompt, QuestionBroker};
 use crate::error::{AppError, Result};
-use crate::git::{count_line_changes, ignored_paths, GitProbe, RepoProbe, ShadowRepo};
+use crate::git::{count_line_changes, ignored_paths, GitProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
     EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
@@ -32,8 +32,6 @@ pub struct ToolRuntime {
     pub call_id: String,
     pub project_root: PathBuf,
     pub permissions: Arc<LivePermissions>,
-    pub allowed_websites: Vec<String>,
-    pub denied_websites: Vec<String>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub session_id: String,
     pub shadow: Arc<ShadowRepo>,
@@ -490,21 +488,10 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
         return false;
     }
     let relative = relative_display(runtime, absolute);
-    let probe = GitProbe {
-        project_root: &runtime.project_root,
-        shadow: Some(&runtime.shadow),
-    };
-    let sensitive = runtime.file_ignore.sensitive_reason(absolute).is_some();
-    let ignored = permissions::is_ignored_path(absolute, &probe, &relative);
-    let tracked = probe.is_tracked(&relative);
-    if !sensitive && (ignored || tracked) {
+    if runtime.file_ignore.sensitive_reason(absolute).is_none() {
         return true;
     }
-    let reason = if sensitive {
-        "this is a sensitive file (env, key, database, credentials)".to_string()
-    } else {
-        "this file is not versioned in git".to_string()
-    };
+    let reason = "this is a sensitive file (env, key, database, credentials)".to_string();
     runtime
         .broker
         .ask(
@@ -954,8 +941,11 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
     else {
         return WebsiteAccess::DeniedByRule("The URL does not contain a valid host.".to_string());
     };
-    match permissions::evaluate_website(&host, &runtime.allowed_websites, &runtime.denied_websites)
-    {
+    match permissions::evaluate_website(
+        &host,
+        &runtime.permissions.allowed_websites(),
+        &runtime.permissions.denied_websites(),
+    ) {
         WebsiteDecision::Allow => WebsiteAccess::Allowed,
         WebsiteDecision::Deny { reason } => WebsiteAccess::DeniedByRule(reason),
         WebsiteDecision::Ask {
@@ -1379,19 +1369,12 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         return ToolOutcome::denied();
     }
 
-    let decision = {
-        let probe = GitProbe {
-            project_root: &runtime.project_root,
-            shadow: Some(&runtime.shadow),
-        };
-        permissions::evaluate_command(
-            &command,
-            &runtime.project_root,
-            &runtime.permissions.extra_folders(),
-            &runtime.permissions.command_rules(),
-            &probe,
-        )
-    };
+    let decision = permissions::evaluate_command(
+        &command,
+        &runtime.project_root,
+        &runtime.permissions.extra_folders(),
+        &runtime.permissions.command_rules(),
+    );
     if let CommandDecision::Ask {
         reason,
         suggested_rule,

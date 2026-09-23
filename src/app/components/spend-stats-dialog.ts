@@ -25,10 +25,12 @@ interface SessionNode {
   depth: number;
 }
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-spend-stats-dialog',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   host: {
     '(document:keydown.escape)': 'close()',
   },
@@ -91,7 +93,7 @@ interface SessionNode {
                 type="date"
                 class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-mist outline-none focus:border-accent/50"
                 [value]="customFrom()"
-                (change)="customFrom.set($any($event.target).value)"
+                (typedValue)="customFrom.set($event)"
               />
               <label class="text-mist/40" for="stats-to">{{ 'stats.to' | transloco }}</label>
               <input
@@ -99,7 +101,7 @@ interface SessionNode {
                 type="date"
                 class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-mist outline-none focus:border-accent/50"
                 [value]="customTo()"
-                (change)="customTo.set($any($event.target).value)"
+                (typedValue)="customTo.set($event)"
               />
             </div>
           }

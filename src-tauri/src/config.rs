@@ -224,7 +224,7 @@ pub fn resolve_mode(settings: &Settings, mode_id: Option<&str>) -> Mode {
     let requested = mode_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| settings.default_mode_id.trim());
+        .unwrap_or_else(|| settings.modes.default_mode_id.trim());
     let id = if requested.is_empty() {
         DEFAULT_MODE_ID
     } else {
@@ -232,10 +232,12 @@ pub fn resolve_mode(settings: &Settings, mode_id: Option<&str>) -> Mode {
     };
     settings
         .modes
+        .modes
         .iter()
         .find(|mode| mode.id == id)
         .or_else(|| {
             settings
+                .modes
                 .modes
                 .iter()
                 .find(|mode| mode.id == DEFAULT_MODE_ID)
@@ -307,9 +309,30 @@ impl Default for CustomTheme {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// User settings, grouped by concern. Groups are `#[serde(flatten)]`ed so the
+/// on-disk/JSON shape stays flat (and the frontend contract is unchanged).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    #[serde(flatten)]
+    pub prompts: PromptSettings,
+    #[serde(flatten)]
+    pub modes: ModeSettings,
+    #[serde(flatten)]
+    pub model: ModelSettings,
+    #[serde(flatten)]
+    pub permissions: PermissionSettings,
+    #[serde(flatten)]
+    pub integrations: IntegrationSettings,
+    #[serde(flatten)]
+    pub appearance: AppearanceSettings,
+    #[serde(flatten)]
+    pub interface: InterfaceSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PromptSettings {
     pub default_system_prompt: String,
     pub security_system_prompt_enabled: bool,
     pub security_system_prompt: String,
@@ -318,21 +341,77 @@ pub struct Settings {
     pub architecture_system_prompt_enabled: bool,
     pub architecture_system_prompt: String,
     pub user_system_prompts: Vec<UserSystemPrompt>,
+}
+
+impl Default for PromptSettings {
+    fn default() -> Self {
+        Self {
+            default_system_prompt: default_system_prompt(),
+            security_system_prompt_enabled: false,
+            security_system_prompt: default_security_prompt(),
+            testing_system_prompt_enabled: false,
+            testing_system_prompt: default_testing_prompt(),
+            architecture_system_prompt_enabled: false,
+            architecture_system_prompt: default_architecture_prompt(),
+            user_system_prompts: default_user_system_prompts(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModeSettings {
     pub modes: Vec<Mode>,
     pub default_mode_id: String,
+}
+
+impl Default for ModeSettings {
+    fn default() -> Self {
+        Self {
+            modes: default_modes(),
+            default_mode_id: DEFAULT_MODE_ID.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModelSettings {
     pub budget_usd: f64,
-    pub language: String,
-    pub reply_language: Option<String>,
-    pub theme: String,
-    pub custom_theme: CustomTheme,
-    pub high_contrast: bool,
-    pub extra_folders: Vec<String>,
     pub openrouter_base_url: String,
     pub default_model: Option<String>,
     pub handover_model: Option<String>,
     pub default_reasoning_effort: Option<String>,
     pub favorite_models: Vec<String>,
     pub context_message_limit: usize,
+    /// Maximum number of consecutive model turns that may request tool calls
+    /// before the agent pauses. Acts as a safety valve against runaway loops.
+    pub max_tool_iterations: usize,
+    /// When enabled, the agent automatically continues past the tool-iteration
+    /// limit for all sessions instead of pausing and asking the user.
+    pub auto_continue_all_sessions: bool,
+}
+
+impl Default for ModelSettings {
+    fn default() -> Self {
+        Self {
+            budget_usd: 0.0,
+            openrouter_base_url: crate::providers::openrouter::DEFAULT_BASE_URL.to_string(),
+            default_model: None,
+            handover_model: None,
+            default_reasoning_effort: Some("medium".to_string()),
+            favorite_models: Vec::new(),
+            context_message_limit: 40,
+            max_tool_iterations: 35,
+            auto_continue_all_sessions: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PermissionSettings {
+    pub extra_folders: Vec<String>,
     pub command_rules: Vec<String>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
@@ -344,30 +423,93 @@ pub struct Settings {
     pub file_ignore_disabled: Vec<String>,
     pub file_ignore_enabled: Vec<String>,
     pub file_ignore_advanced: bool,
+}
+
+impl Default for PermissionSettings {
+    fn default() -> Self {
+        Self {
+            extra_folders: Vec::new(),
+            command_rules: Vec::new(),
+            allowed_websites: Vec::new(),
+            denied_websites: Vec::new(),
+            ignore_gitignored: true,
+            scan_generated_files: false,
+            ignore_local_databases: false,
+            ignore_env_files: true,
+            file_ignore_exemptions: Vec::new(),
+            file_ignore_disabled: Vec::new(),
+            file_ignore_enabled: Vec::new(),
+            file_ignore_advanced: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct IntegrationSettings {
     pub mcp_auto_discovery: bool,
     pub mcp_folders: Vec<String>,
     pub mcp_disabled: Vec<String>,
+    /// Individual servers the user switched off, as `(config path, server name)`
+    /// pairs. Lets a single server be hidden without disabling its whole file.
+    pub mcp_disabled_servers: Vec<crate::models::McpServerRef>,
     pub skills_auto_discovery: bool,
     pub skill_folders: Vec<String>,
     pub skills_disabled: Vec<String>,
-    pub keep_awake: bool,
-    pub tabs_multiline: bool,
-    pub paste_word_limit: usize,
-    pub open_tab_hotkey: String,
-    pub close_tab_hotkey: String,
-    pub sounds_enabled: bool,
-    pub sound_volume: f64,
-    pub done_sound: String,
-    pub permission_sound: String,
-    pub error_sound: String,
-    pub done_sound_path: String,
-    pub permission_sound_path: String,
-    pub error_sound_path: String,
+    /// Individual skills the user switched off, as `(root path, skill name)`
+    /// pairs. Lets a single skill be hidden without disabling its whole root.
+    pub skills_disabled_items: Vec<crate::models::SkillRef>,
+    /// Secure default: only show curated/verified marketplace entries and block
+    /// installing from unverified sources unless the user opts out.
+    pub marketplace_verified_only: bool,
+}
+
+impl Default for IntegrationSettings {
+    fn default() -> Self {
+        Self {
+            mcp_auto_discovery: true,
+            mcp_folders: Vec::new(),
+            mcp_disabled: Vec::new(),
+            mcp_disabled_servers: Vec::new(),
+            skills_auto_discovery: true,
+            skill_folders: Vec::new(),
+            skills_disabled: Vec::new(),
+            skills_disabled_items: Vec::new(),
+            marketplace_verified_only: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppearanceSettings {
+    pub language: String,
+    pub reply_language: Option<String>,
+    pub theme: String,
+    pub custom_theme: CustomTheme,
+    pub high_contrast: bool,
     pub background: String,
     pub background_image: String,
     pub background_opacity: f64,
     pub background_blur: f64,
     pub glass_opacity: f64,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            language: "en".to_string(),
+            reply_language: None,
+            theme: "midnight".to_string(),
+            custom_theme: CustomTheme::default(),
+            high_contrast: false,
+            background: String::new(),
+            background_image: String::new(),
+            background_opacity: 1.0,
+            background_blur: 0.0,
+            glass_opacity: 1.0,
+        }
+    }
 }
 
 /// The primary shortcut modifier for the current platform: `Cmd` on macOS and
@@ -388,49 +530,27 @@ pub fn default_close_tab_hotkey() -> String {
     format!("{}+W", default_hotkey_modifier())
 }
 
-impl Default for Settings {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct InterfaceSettings {
+    pub keep_awake: bool,
+    pub tabs_multiline: bool,
+    pub paste_word_limit: usize,
+    pub open_tab_hotkey: String,
+    pub close_tab_hotkey: String,
+    pub sounds_enabled: bool,
+    pub sound_volume: f64,
+    pub done_sound: String,
+    pub permission_sound: String,
+    pub error_sound: String,
+    pub done_sound_path: String,
+    pub permission_sound_path: String,
+    pub error_sound_path: String,
+}
+
+impl Default for InterfaceSettings {
     fn default() -> Self {
         Self {
-            default_system_prompt: default_system_prompt(),
-            security_system_prompt_enabled: false,
-            security_system_prompt: default_security_prompt(),
-            testing_system_prompt_enabled: false,
-            testing_system_prompt: default_testing_prompt(),
-            architecture_system_prompt_enabled: false,
-            architecture_system_prompt: default_architecture_prompt(),
-            user_system_prompts: default_user_system_prompts(),
-            modes: default_modes(),
-            default_mode_id: DEFAULT_MODE_ID.to_string(),
-            budget_usd: 0.0,
-            language: "en".to_string(),
-            reply_language: None,
-            theme: "midnight".to_string(),
-            custom_theme: CustomTheme::default(),
-            high_contrast: false,
-            extra_folders: Vec::new(),
-            openrouter_base_url: crate::providers::openrouter::DEFAULT_BASE_URL.to_string(),
-            default_model: None,
-            handover_model: None,
-            default_reasoning_effort: Some("medium".to_string()),
-            favorite_models: Vec::new(),
-            context_message_limit: 40,
-            command_rules: Vec::new(),
-            allowed_websites: Vec::new(),
-            denied_websites: Vec::new(),
-            ignore_gitignored: true,
-            scan_generated_files: false,
-            ignore_local_databases: false,
-            ignore_env_files: true,
-            file_ignore_exemptions: Vec::new(),
-            file_ignore_disabled: Vec::new(),
-            file_ignore_enabled: Vec::new(),
-            file_ignore_advanced: false,
-            mcp_auto_discovery: true,
-            mcp_folders: Vec::new(),
-            mcp_disabled: Vec::new(),
-            skills_auto_discovery: true,
-            skill_folders: Vec::new(),
-            skills_disabled: Vec::new(),
             keep_awake: true,
             tabs_multiline: true,
             paste_word_limit: 500,
@@ -444,11 +564,6 @@ impl Default for Settings {
             done_sound_path: String::new(),
             permission_sound_path: String::new(),
             error_sound_path: String::new(),
-            background: String::new(),
-            background_image: String::new(),
-            background_opacity: 1.0,
-            background_blur: 0.0,
-            glass_opacity: 1.0,
         }
     }
 }
@@ -489,11 +604,12 @@ pub fn load_settings(path: &Path) -> Settings {
 fn merge_default_user_system_prompts(settings: &mut Settings) {
     for builtin in default_user_system_prompts() {
         if !settings
+            .prompts
             .user_system_prompts
             .iter()
             .any(|prompt| prompt.id == builtin.id)
         {
-            settings.user_system_prompts.push(builtin);
+            settings.prompts.user_system_prompts.push(builtin);
         }
     }
 }
@@ -502,23 +618,29 @@ fn merge_default_user_system_prompts(settings: &mut Settings) {
 /// keeping user edits and custom modes intact.
 fn merge_default_modes(settings: &mut Settings) {
     for builtin in default_modes() {
-        match settings.modes.iter_mut().find(|mode| mode.id == builtin.id) {
+        match settings
+            .modes
+            .modes
+            .iter_mut()
+            .find(|mode| mode.id == builtin.id)
+        {
             // Backfill the description of built-in modes added before
             // descriptions existed, without touching user edits.
             Some(existing) if existing.description.trim().is_empty() => {
                 existing.description = builtin.description;
             }
             Some(_) => {}
-            None => settings.modes.push(builtin),
+            None => settings.modes.modes.push(builtin),
         }
     }
-    if settings.default_mode_id.trim().is_empty()
+    if settings.modes.default_mode_id.trim().is_empty()
         || !settings
             .modes
+            .modes
             .iter()
-            .any(|mode| mode.id == settings.default_mode_id)
+            .any(|mode| mode.id == settings.modes.default_mode_id)
     {
-        settings.default_mode_id = DEFAULT_MODE_ID.to_string();
+        settings.modes.default_mode_id = DEFAULT_MODE_ID.to_string();
     }
 }
 

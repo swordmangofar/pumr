@@ -2,7 +2,8 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const separator = process.platform === 'win32' ? ';' : ':';
 const cargoBin = join(homedir(), '.cargo', 'bin');
@@ -15,7 +16,19 @@ if (existsSync(cargoBin)) {
   }
 }
 
-const child = spawn('tauri', process.argv.slice(2), {
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const args = process.argv.slice(2);
+
+// `pnpm dev` gets the DEV-badged icon set so the Dock entry is distinct from
+// the installed release. Production builds never see this config.
+if (args[0] === 'dev') {
+  const devConfig = resolve(root, 'src-tauri', 'tauri.dev.conf.json');
+  if (existsSync(devConfig)) {
+    args.splice(1, 0, '--config', devConfig);
+  }
+}
+
+const child = spawn('tauri', args, {
   stdio: 'inherit',
   env,
   shell: process.platform === 'win32',

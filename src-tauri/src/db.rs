@@ -193,6 +193,12 @@ impl Db {
 
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
             CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS session_changes (
+                session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+                changes TEXT NOT NULL DEFAULT '[]',
+                last_commit TEXT
+            );
             "#,
         )?;
         for (column, definition) in [
@@ -214,6 +220,8 @@ impl Db {
             ("agent_status", "TEXT"),
             ("archived", "INTEGER NOT NULL DEFAULT 0"),
             ("mode_id", "TEXT"),
+            ("limit_reached", "INTEGER NOT NULL DEFAULT 0"),
+            ("auto_continue", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             add_column_if_missing(&conn, "sessions", column, definition)?;
         }
@@ -379,19 +387,12 @@ impl Db {
 
     pub fn list_sessions(&self, project_id: &str, include_archived: bool) -> Result<Vec<Session>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT s.id, s.project_id, s.title, s.model, s.reasoning_effort, s.provider,
-                       s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens,
-                       s.completion_tokens, s.cached_tokens,
-                       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-                       s.parent_session_id, s.agent_status, s.archived, s.mode_id
-                FROM sessions s
-                WHERE s.project_id = ?1 AND s.parent_session_id IS NULL
-                      AND (?2 = 1 OR s.archived = 0)
-                ORDER BY s.updated_at DESC
-                "#,
-            )?;
+            let sql = session_select(
+                "WHERE s.project_id = ?1 AND s.parent_session_id IS NULL \
+                 AND (?2 = 1 OR s.archived = 0) \
+                 ORDER BY s.updated_at DESC",
+            );
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params![project_id, include_archived], map_session)?;
             let mut sessions = Vec::new();
             for row in rows {
@@ -403,18 +404,8 @@ impl Db {
 
     pub fn list_sub_sessions(&self, parent_session_id: &str) -> Result<Vec<Session>> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare(
-                r#"
-                SELECT s.id, s.project_id, s.title, s.model, s.reasoning_effort, s.provider,
-                       s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens,
-                       s.completion_tokens, s.cached_tokens,
-                       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-                       s.parent_session_id, s.agent_status, s.archived, s.mode_id
-                FROM sessions s
-                WHERE s.parent_session_id = ?1
-                ORDER BY s.created_at ASC
-                "#,
-            )?;
+            let sql = session_select("WHERE s.parent_session_id = ?1 ORDER BY s.created_at ASC");
+            let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params![parent_session_id], map_session)?;
             let mut sessions = Vec::new();
             for row in rows {
@@ -429,19 +420,9 @@ impl Db {
     }
 
     fn session_by_id(&self, conn: &Connection, id: &str) -> Result<Session> {
-        conn.query_row(
-            r#"
-            SELECT s.id, s.project_id, s.title, s.model, s.reasoning_effort, s.provider,
-                   s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens,
-                   s.completion_tokens, s.cached_tokens,
-                   (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
-                   s.parent_session_id, s.agent_status, s.archived, s.mode_id
-            FROM sessions s WHERE s.id = ?1
-            "#,
-            params![id],
-            map_session,
-        )
-        .map_err(AppError::from)
+        let sql = session_select("WHERE s.id = ?1");
+        conn.query_row(&sql, params![id], map_session)
+            .map_err(AppError::from)
     }
 
     pub fn create_sub_session(
@@ -483,6 +464,26 @@ impl Db {
             conn.execute(
                 "UPDATE sessions SET agent_status = ?1, updated_at = ?2 WHERE id = ?3",
                 params![status, now_ms(), session_id],
+            )?;
+            self.session_by_id(conn, session_id)
+        })
+    }
+
+    pub fn set_session_limit_reached(&self, session_id: &str, value: bool) -> Result<Session> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET limit_reached = ?1, updated_at = ?2 WHERE id = ?3",
+                params![value as i64, now_ms(), session_id],
+            )?;
+            self.session_by_id(conn, session_id)
+        })
+    }
+
+    pub fn set_session_auto_continue(&self, session_id: &str, value: bool) -> Result<Session> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET auto_continue = ?1, updated_at = ?2 WHERE id = ?3",
+                params![value as i64, now_ms(), session_id],
             )?;
             self.session_by_id(conn, session_id)
         })
@@ -546,6 +547,58 @@ impl Db {
     pub fn delete_session(&self, id: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+            Ok(())
+        })
+    }
+
+    /// Cumulative list of files this session changed, plus the shadow commit
+    /// that bounds its last finalized turn. Stored explicitly so that switching
+    /// between sessions never re-derives one session's changes from the shared
+    /// working tree (which may contain edits from other sessions).
+    pub fn session_changes_record(&self, session_id: &str) -> Result<Option<(Vec<FileChange>, Option<String>)>> {
+        self.with_conn(|conn| {
+            let row = conn
+                .query_row(
+                    "SELECT changes, last_commit FROM session_changes WHERE session_id = ?1",
+                    params![session_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()?;
+            match row {
+                None => Ok(None),
+                Some((changes, last_commit)) => {
+                    let parsed = serde_json::from_str::<Vec<FileChange>>(&changes)?;
+                    Ok(Some((parsed, last_commit)))
+                }
+            }
+        })
+    }
+
+    pub fn set_session_changes_record(
+        &self,
+        session_id: &str,
+        changes: &[FileChange],
+        last_commit: Option<&str>,
+    ) -> Result<()> {
+        let changes = serde_json::to_string(changes)?;
+        self.with_conn(|conn| {
+            conn.execute(
+                r#"INSERT INTO session_changes (session_id, changes, last_commit)
+                   VALUES (?1, ?2, ?3)
+                   ON CONFLICT(session_id) DO UPDATE SET changes = excluded.changes,
+                                                         last_commit = excluded.last_commit"#,
+                params![session_id, changes, last_commit],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_session_changes(&self, session_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM session_changes WHERE session_id = ?1",
+                params![session_id],
+            )?;
             Ok(())
         })
     }
@@ -978,6 +1031,20 @@ fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {
     })
 }
 
+/// Canonical session projection shared by every query, in the exact order
+/// `map_session` reads. Keep the two in sync or positional reads shift.
+const SESSION_COLUMNS: &str = "\
+    s.id, s.project_id, s.title, s.model, s.reasoning_effort, s.provider, \
+    s.system_prompt, s.created_at, s.updated_at, s.cost, s.prompt_tokens, \
+    s.completion_tokens, s.cached_tokens, \
+    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id), \
+    s.parent_session_id, s.agent_status, s.archived, s.mode_id, \
+    s.limit_reached, s.auto_continue";
+
+fn session_select(clause: &str) -> String {
+    format!("SELECT {SESSION_COLUMNS} FROM sessions s {clause}")
+}
+
 fn map_session(row: &Row<'_>) -> rusqlite::Result<Session> {
     Ok(Session {
         id: row.get(0)?,
@@ -998,6 +1065,8 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<Session> {
         agent_status: row.get(15)?,
         archived: row.get::<_, i64>(16)? != 0,
         mode_id: row.get(17)?,
+        limit_reached: row.get::<_, i64>(18)? != 0,
+        auto_continue: row.get::<_, i64>(19)? != 0,
     })
 }
 

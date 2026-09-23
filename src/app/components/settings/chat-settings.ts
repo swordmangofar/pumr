@@ -2,10 +2,12 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { SettingsDraftService } from './settings-draft.service';
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-chat-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   template: `
     <section>
       <label class="mb-2 block text-sm font-semibold text-white">
@@ -17,7 +19,7 @@ import { SettingsDraftService } from './settings-draft.service';
         step="50"
         class="field w-40 rounded-xl px-4 py-2 text-sm"
         [value]="draft.draft().pasteWordLimit"
-        (input)="draft.patch('pasteWordLimit', +$any($event.target).value)"
+        (typedValue)="draft.patch('pasteWordLimit', +$event)"
       />
       <p class="mt-2 text-xs leading-relaxed text-mist/30">
         {{ 'settings.chat.pasteWordLimitHint' | transloco }}

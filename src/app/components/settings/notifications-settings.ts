@@ -14,10 +14,12 @@ import {
 } from '../../core/sound.service';
 import { SettingsDraftService } from './settings-draft.service';
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-notifications-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, NgTemplateOutlet],
+  imports: [TypedInput, TranslocoPipe, NgTemplateOutlet],
   host: {
     '(document:click)': 'closeSoundDropdown()',
   },
@@ -85,7 +87,7 @@ import { SettingsDraftService } from './settings-draft.service';
             step="0.05"
             class="flex-1 cursor-pointer accent-accent"
             [value]="draft.draft().soundVolume"
-            (input)="draft.patch('soundVolume', +$any($event.target).value)"
+            (typedValue)="draft.patch('soundVolume', +$event)"
           />
           <span class="w-10 text-right text-xs tabular-nums text-mist/50">
             {{ (draft.draft().soundVolume * 100).toFixed(0) }}%

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { PermissionRequestEvent } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
@@ -8,9 +8,9 @@ import { WorkspaceService } from '../core/workspace.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [TranslocoPipe],
   template: `
-    <div class="pointer-events-none absolute inset-x-0 bottom-full z-40 px-5 pb-3">
+    <div class="pointer-events-none absolute inset-0 z-40 flex flex-col justify-end px-5 pb-3">
       <div
-        class="pointer-events-auto mx-auto max-h-[70vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-accent/30 bg-navy/95 shadow-2xl shadow-black/50 backdrop-blur"
+        class="pointer-events-auto mx-auto max-h-full w-full max-w-4xl overflow-y-auto rounded-2xl border border-accent/30 bg-navy/95 shadow-2xl shadow-black/50 backdrop-blur"
       >
         <header class="flex items-center gap-3 px-5 pt-4">
           <span
@@ -25,7 +25,7 @@ import { WorkspaceService } from '../core/workspace.service';
                     : 'bg-rose-500/15 text-rose-300'
             "
           >
-            {{ request().promptKind }}
+            {{ ('permission.kind.' + request().promptKind) | transloco }}
           </span>
           <h2 class="min-w-0 flex-1 text-sm font-semibold text-white">{{ request().title }}</h2>
         </header>
@@ -63,7 +63,7 @@ import { WorkspaceService } from '../core/workspace.service';
               <input
                 class="field w-full rounded-xl px-4 py-2 font-mono text-sm"
                 [value]="rule()"
-                (input)="rule.set($any($event.target).value)"
+                (input)="onRuleInput($event)"
               />
               <p class="mt-1.5 text-xs text-mist/30">
                 {{ (isWeb() ? 'permission.siteRuleHint' : 'permission.ruleHint') | transloco }}
@@ -94,7 +94,7 @@ import { WorkspaceService } from '../core/workspace.service';
             class="rounded-full border border-white/15 px-4 py-2 text-sm text-mist transition-colors hover:bg-white/5"
             (click)="workspace.resolvePermission('allow_once')"
           >
-            {{ 'permission.allowOnce' | transloco }}
+            {{ (request().promptKind === 'folder' ? 'permission.allowSession' : 'permission.allowOnce') | transloco }}
           </button>
           @if (request().promptKind !== 'file') {
             <button
@@ -118,11 +118,19 @@ export class PermissionOverlay {
   readonly request = input.required<PermissionRequestEvent>();
   protected readonly workspace = inject(WorkspaceService);
   protected readonly rule = signal('');
+  protected readonly isWeb = computed(() => {
+    const kind = this.request().promptKind;
+    return kind === 'web' || kind === 'websearch';
+  });
 
   constructor() {
     effect(() => {
       this.rule.set(this.request().suggestedRule ?? '');
     });
+  }
+
+  protected onRuleInput(event: Event): void {
+    this.rule.set((event.target as HTMLInputElement).value);
   }
 
   protected allowAlways(): void {
@@ -131,10 +139,5 @@ export class PermissionOverlay {
 
   protected denyAlways(): void {
     void this.workspace.resolvePermission('deny_always', this.rule());
-  }
-
-  protected isWeb(): boolean {
-    const kind = this.request().promptKind;
-    return kind === 'web' || kind === 'websearch';
   }
 }

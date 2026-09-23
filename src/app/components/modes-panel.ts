@@ -12,10 +12,12 @@ import { api } from '../core/api';
 import { Mode, Settings } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-modes-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   host: { class: 'flex min-h-0 flex-1 flex-col' },
   template: `
     <div class="min-h-0 flex-1 overflow-y-auto">
@@ -32,7 +34,7 @@ import { SettingsService } from '../core/settings.service';
           <select
             class="field field-select max-w-44 truncate rounded-lg py-1.5 pr-8 pl-3 text-sm"
             [value]="defaultModeId()"
-            (change)="setDefaultMode($any($event.target).value)"
+            (typedValue)="setDefaultMode($event)"
           >
             @for (mode of modes(); track mode.id) {
               <option [value]="mode.id">{{ mode.name }}</option>
@@ -90,7 +92,7 @@ import { SettingsService } from '../core/settings.service';
                   class="field w-full rounded-lg px-3 py-1.5 text-sm"
                   [placeholder]="'right.modeName' | transloco"
                   [value]="mode.name"
-                  (change)="renameMode(mode, $any($event.target).value)"
+                  (typedValue)="renameMode(mode, $event)"
                 />
 
                 <div>
@@ -100,7 +102,7 @@ import { SettingsService } from '../core/settings.service';
                   <input
                     class="field w-full rounded-lg px-3 py-1.5 text-sm"
                     [value]="mode.description"
-                    (change)="updateMode(mode.id, { description: $any($event.target).value })"
+                    (typedValue)="updateMode(mode.id, { description: $event })"
                   />
                 </div>
 
@@ -111,7 +113,7 @@ import { SettingsService } from '../core/settings.service';
                   <textarea
                     class="field h-28 w-full resize-y rounded-lg px-3 py-2 font-mono text-xs leading-relaxed"
                     [value]="mode.systemPrompt"
-                    (change)="updateMode(mode.id, { systemPrompt: $any($event.target).value })"
+                    (typedValue)="updateMode(mode.id, { systemPrompt: $event })"
                   ></textarea>
                 </div>
 
@@ -286,9 +288,11 @@ export class ModesPanel {
     return JSON.stringify({
       mcpFolders: settings.mcpFolders,
       mcpDisabled: settings.mcpDisabled,
+      mcpDisabledServers: settings.mcpDisabledServers,
       mcpAutoDiscovery: settings.mcpAutoDiscovery,
       skillFolders: settings.skillFolders,
       skillsDisabled: settings.skillsDisabled,
+      skillsDisabledItems: settings.skillsDisabledItems,
       skillsAutoDiscovery: settings.skillsAutoDiscovery,
     });
   });
@@ -392,17 +396,33 @@ export class ModesPanel {
         api.discoverMcpSources(
           settings.mcpFolders,
           settings.mcpDisabled,
+          settings.mcpDisabledServers,
           settings.mcpAutoDiscovery,
         ),
         api.discoverSkills(
           settings.skillFolders,
           settings.skillsDisabled,
+          settings.skillsDisabledItems,
           settings.skillsAutoDiscovery,
         ),
       ]);
-      this.mcpServers.set([...new Set(mcp.flatMap((candidate) => candidate.servers))].sort());
+      this.mcpServers.set(
+        [
+          ...new Set(
+            mcp.flatMap((candidate) =>
+              candidate.servers.filter((server) => server.enabled).map((server) => server.name),
+            ),
+          ),
+        ].sort(),
+      );
       this.skills.set(
-        [...new Set(skillCandidates.flatMap((candidate) => candidate.skills))].sort(),
+        [
+          ...new Set(
+            skillCandidates.flatMap((candidate) =>
+              candidate.skills.filter((skill) => skill.enabled).map((skill) => skill.name),
+            ),
+          ),
+        ].sort(),
       );
     } catch {
       // Discovery is best effort; the panel still works without options.

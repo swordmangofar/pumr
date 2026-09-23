@@ -18,7 +18,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
-import { fitTransform, headGrid, markBounds, palette } from './icon.mjs';
+import { fitTransform, headGrid, markBounds, palette, macOsDevSvg } from './icon.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -315,10 +315,36 @@ function touchContext() {
   console.log('touched src-tauri/src/lib.rs to force an icon rebuild');
 }
 
+/**
+ * Renders the "DEV" badged icon set that `tauri dev` points at through
+ * `src-tauri/tauri.dev.conf.json`. On macOS this is what the Dock shows in
+ * development, so the running dev build is never mistaken for the installed
+ * release. The SVG is rasterised by the Tauri CLI (resvg) because the badge
+ * has smooth edges that our point-sampled desktop renderer would alias.
+ */
+function buildDevIcons() {
+  const out = resolve(root, 'src-tauri/icons/dev');
+  const dir = mkdtempSync(join(tmpdir(), 'pumr-dev-icon-'));
+  const source = join(dir, 'dev.svg');
+  writeFileSync(source, macOsDevSvg(1024));
+
+  const tauri = resolve(root, 'node_modules/.bin/tauri');
+  execFileSync(tauri, ['icon', source, '-o', out], { cwd: root, stdio: 'inherit' });
+
+  // Mobile icon sets are irrelevant to a dev build; keep the folder desktop-only.
+  for (const platform of ['android', 'ios']) {
+    rmSync(resolve(out, platform), { recursive: true, force: true });
+  }
+
+  rmSync(dir, { recursive: true, force: true });
+  console.log('wrote src-tauri/icons/dev (DEV badge)');
+}
+
 mkdirSync(resolve(root, 'src-tauri/icons'), { recursive: true });
 buildFavicon();
 buildPlatformIcons();
 buildDesktopIcons();
+buildDevIcons();
 touchContext();
 
 console.log(`mark bounds ${markBounds.width}x${markBounds.height} (grid units)`);

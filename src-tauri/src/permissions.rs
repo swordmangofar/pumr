@@ -1,43 +1,10 @@
-use crate::git::RepoProbe;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
-pub const IGNORED_DIRS: &[&str] = &[
-    "node_modules",
-    "dist",
-    "build",
-    "target",
-    ".next",
-    ".nuxt",
-    "out",
-    "coverage",
-    ".cache",
-    "tmp",
-    ".turbo",
-    ".parcel-cache",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "vendor",
-    ".svelte-kit",
-    ".angular",
-    ".gradle",
-    "Pods",
-    "DerivedData",
-    ".dart_tool",
-    ".tox",
-    ".eggs",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".git",
-];
-
-/// Directories that hold generated or third-party content. Unlike `IGNORED_DIRS`
-/// this list excludes `.git`, which stays hidden unconditionally.
+/// Directories that hold generated or third-party content.
 pub const GENERATED_DIRS: &[&str] = &[
     "node_modules",
     "dist",
@@ -233,6 +200,17 @@ const DANGEROUS_PROGRAMS: &[&str] = &[
     "csrutil",
 ];
 
+/// Dangerous programs whose risk is limited to the file paths they receive.
+/// When every path is inside the project and none is sensitive, they are
+/// allowed without asking. Everything else dangerous always asks.
+///
+/// Note `find` and `xargs` are deliberately absent: their danger comes from
+/// flags (`-delete`, `-exec`, `rm`), not from the paths they touch, so they
+/// must go through the flag-aware `danger_reason` check instead.
+const PATH_DANGEROUS_PROGRAMS: &[&str] = &[
+    "rm", "rmdir", "unlink", "shred", "chmod", "chown", "chgrp", "mv", "truncate",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandDecision {
     Allow,
@@ -250,38 +228,92 @@ impl CommandDecision {
 }
 
 /// Shared, live permission configuration. Running turns read from this so a
-/// rule or folder granted with "allow always" applies immediately, including to
-/// subagents that are already in flight.
+/// rule, folder or website granted with "allow always" applies immediately,
+/// including to subagents that are already in flight.
 #[derive(Debug, Default)]
 pub struct LivePermissions {
     command_rules: RwLock<Vec<String>>,
     extra_folders: RwLock<Vec<String>>,
+    /// Folders granted with "allow once" on a folder prompt. These live for the
+    /// current app session only and are never written to settings, so they
+    /// disappear on restart.
+    session_folders: RwLock<Vec<String>>,
+    allowed_websites: RwLock<Vec<String>>,
+    denied_websites: RwLock<Vec<String>>,
 }
 
 impl LivePermissions {
-    pub fn new(command_rules: Vec<String>, extra_folders: Vec<String>) -> Self {
+    pub fn new(
+        command_rules: Vec<String>,
+        extra_folders: Vec<String>,
+        allowed_websites: Vec<String>,
+        denied_websites: Vec<String>,
+    ) -> Self {
         Self {
             command_rules: RwLock::new(command_rules),
             extra_folders: RwLock::new(extra_folders),
+            session_folders: RwLock::new(Vec::new()),
+            allowed_websites: RwLock::new(allowed_websites),
+            denied_websites: RwLock::new(denied_websites),
         }
     }
 
-    pub fn replace(&self, command_rules: Vec<String>, extra_folders: Vec<String>) {
+    pub fn replace(
+        &self,
+        command_rules: Vec<String>,
+        extra_folders: Vec<String>,
+        allowed_websites: Vec<String>,
+        denied_websites: Vec<String>,
+    ) {
         *self.command_rules.write().unwrap() = command_rules;
         *self.extra_folders.write().unwrap() = extra_folders;
+        // Session-only folders deliberately survive a settings save: they were
+        // granted for the whole app session, not persisted to disk.
+        *self.allowed_websites.write().unwrap() = allowed_websites;
+        *self.denied_websites.write().unwrap() = denied_websites;
     }
 
     pub fn command_rules(&self) -> Vec<String> {
         self.command_rules.read().unwrap().clone()
     }
 
+    /// Grants a folder for the current app session only. Used when the user
+    /// picks "allow once" on a folder prompt: the folder and everything under
+    /// it stay available until the app restarts.
+    pub fn add_session_folder(&self, folder: &str) {
+        let folder = folder.trim();
+        if folder.is_empty() {
+            return;
+        }
+        let mut session = self.session_folders.write().unwrap();
+        if !session.iter().any(|entry| entry == folder) {
+            session.push(folder.to_string());
+        }
+    }
+
     pub fn extra_folders(&self) -> Vec<PathBuf> {
-        self.extra_folders
+        let mut folders: Vec<PathBuf> = self
+            .extra_folders
             .read()
             .unwrap()
             .iter()
             .map(PathBuf::from)
-            .collect()
+            .collect();
+        for folder in self.session_folders.read().unwrap().iter() {
+            let path = PathBuf::from(folder);
+            if !folders.contains(&path) {
+                folders.push(path);
+            }
+        }
+        folders
+    }
+
+    pub fn allowed_websites(&self) -> Vec<String> {
+        self.allowed_websites.read().unwrap().clone()
+    }
+
+    pub fn denied_websites(&self) -> Vec<String> {
+        self.denied_websites.read().unwrap().clone()
     }
 }
 
@@ -358,7 +390,6 @@ pub fn evaluate_command(
     project_root: &Path,
     extra_folders: &[PathBuf],
     rules: &[String],
-    probe: &dyn RepoProbe,
 ) -> CommandDecision {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -380,7 +411,6 @@ pub fn evaluate_command(
     let path_tokens = candidate_paths(&tokens, dangerous);
     let mut outside: Vec<String> = Vec::new();
     let mut sensitive: Vec<String> = Vec::new();
-    let mut untracked: Vec<String> = Vec::new();
 
     for token in &path_tokens {
         let absolute = resolve_path(project_root, token);
@@ -391,13 +421,6 @@ pub fn evaluate_command(
         let relative = relative_path(&absolute, project_root, extra_folders);
         if is_sensitive(&absolute) {
             sensitive.push(relative);
-            continue;
-        }
-        if is_ignored_path(&absolute, probe, &relative) {
-            continue;
-        }
-        if !probe.is_tracked(&relative) {
-            untracked.push(relative);
         }
     }
 
@@ -416,24 +439,15 @@ pub fn evaluate_command(
             suggested_rule,
         );
     }
-    if !untracked.is_empty() {
-        return ask(
-            format!(
-                "Command touches files that are not versioned in git: {}",
-                preview(&untracked)
-            ),
-            suggested_rule,
-        );
-    }
 
     if dangerous {
-        if path_tokens.is_empty() {
-            return ask(
-                danger.unwrap_or_else(|| "Command needs approval".to_string()),
-                suggested_rule,
-            );
+        if PATH_DANGEROUS_PROGRAMS.contains(&program.as_str()) && !path_tokens.is_empty() {
+            return CommandDecision::Allow;
         }
-        return CommandDecision::Allow;
+        return ask(
+            danger.unwrap_or_else(|| "Command needs approval".to_string()),
+            suggested_rule,
+        );
     }
     if is_read_only(&program, &tokens) {
         return CommandDecision::Allow;
@@ -815,15 +829,15 @@ impl FileIgnoreConfig {
 
     pub fn from_settings(settings: &crate::config::Settings) -> Self {
         Self::new(
-            settings.ignore_gitignored,
-            settings.scan_generated_files,
-            settings.ignore_local_databases,
-            settings.ignore_env_files,
-            &settings.file_ignore_exemptions,
+            settings.permissions.ignore_gitignored,
+            settings.permissions.scan_generated_files,
+            settings.permissions.ignore_local_databases,
+            settings.permissions.ignore_env_files,
+            &settings.permissions.file_ignore_exemptions,
         )
         .with_overrides(
-            &settings.file_ignore_disabled,
-            &settings.file_ignore_enabled,
+            &settings.permissions.file_ignore_disabled,
+            &settings.permissions.file_ignore_enabled,
         )
     }
 
@@ -940,39 +954,8 @@ impl FileIgnoreConfig {
 
     /// Reason a sensitive file (keys, credentials, tokens) should be guarded.
     pub fn sensitive_reason(&self, path: &Path) -> Option<&'static str> {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        for suffix in SENSITIVE_SUFFIXES {
-            if name.ends_with(suffix) && self.rule_on(true, &format!("creds:ext:{suffix}")) {
-                return Some("it looks like a key, certificate or credential file");
-            }
-        }
-        for prefix in SENSITIVE_PREFIXES {
-            if name.starts_with(prefix) && self.rule_on(true, &format!("creds:prefix:{prefix}")) {
-                return Some("it looks like a private key");
-            }
-        }
-        for part in SENSITIVE_NAME_PARTS {
-            if name.contains(part) && self.rule_on(true, &format!("creds:part:{part}")) {
-                return Some("it looks like it contains credentials or secrets");
-            }
-        }
-        if SENSITIVE_NAMES.contains(&name.as_str())
-            && self.rule_on(true, &format!("creds:name:{name}"))
-        {
-            return Some("it is a well-known credential file");
-        }
-        for component in path.components() {
-            let value = component.as_os_str().to_string_lossy();
-            if SENSITIVE_DIRS.contains(&value.as_ref())
-                && self.rule_on(true, &format!("creds:dir:{value}"))
-            {
-                return Some("it is stored in a credentials directory");
-            }
-        }
-        None
+        let matched = sensitive_match(path)?;
+        self.rule_on(true, &matched.rule_id).then_some(matched.reason)
     }
 
     /// Full reason a path should be hidden, combining `.gitignore` status.
@@ -1044,14 +1027,59 @@ pub fn is_env_example(name: &str) -> bool {
         .any(|marker| name.contains(marker))
 }
 
-pub fn is_ignored_path(path: &Path, probe: &dyn RepoProbe, relative: &str) -> bool {
-    if path
-        .components()
-        .any(|component| IGNORED_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref()))
-    {
-        return true;
+/// First credential/secret pattern a path matches, with the per-rule toggle id
+/// that governs it. Shared by the command gate (`is_sensitive`) and the file
+/// gate (`FileIgnoreConfig::sensitive_reason`) so the two can never drift.
+struct SensitiveMatch {
+    reason: &'static str,
+    rule_id: String,
+}
+
+fn sensitive_match(path: &Path) -> Option<SensitiveMatch> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    for suffix in SENSITIVE_SUFFIXES {
+        if name.ends_with(suffix) {
+            return Some(SensitiveMatch {
+                reason: "it looks like a key, certificate or credential file",
+                rule_id: format!("creds:ext:{suffix}"),
+            });
+        }
     }
-    !relative.is_empty() && probe.is_ignored(relative)
+    for prefix in SENSITIVE_PREFIXES {
+        if name.starts_with(prefix) {
+            return Some(SensitiveMatch {
+                reason: "it looks like a private key",
+                rule_id: format!("creds:prefix:{prefix}"),
+            });
+        }
+    }
+    for part in SENSITIVE_NAME_PARTS {
+        if name.contains(part) {
+            return Some(SensitiveMatch {
+                reason: "it looks like it contains credentials or secrets",
+                rule_id: format!("creds:part:{part}"),
+            });
+        }
+    }
+    if SENSITIVE_NAMES.contains(&name.as_str()) {
+        return Some(SensitiveMatch {
+            reason: "it is a well-known credential file",
+            rule_id: format!("creds:name:{name}"),
+        });
+    }
+    for component in path.components() {
+        let value = component.as_os_str().to_string_lossy();
+        if SENSITIVE_DIRS.contains(&value.as_ref()) {
+            return Some(SensitiveMatch {
+                reason: "it is stored in a credentials directory",
+                rule_id: format!("creds:dir:{value}"),
+            });
+        }
+    }
+    None
 }
 
 pub fn is_sensitive(path: &Path) -> bool {
@@ -1059,26 +1087,7 @@ pub fn is_sensitive(path: &Path) -> bool {
         .file_name()
         .map(|name| name.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    if name == ".env"
-        || name.starts_with(".env.")
-        || name.ends_with(".env")
-        || SENSITIVE_NAMES.contains(&name.as_str())
-        || SENSITIVE_SUFFIXES
-            .iter()
-            .any(|suffix| name.ends_with(suffix))
-        || SENSITIVE_PREFIXES
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
-        || SENSITIVE_NAME_PARTS
-            .iter()
-            .any(|part| name.contains(part))
-    {
-        return true;
-    }
-    path.components().any(|component| {
-        let value = component.as_os_str().to_string_lossy();
-        SENSITIVE_DIRS.contains(&value.as_ref())
-    })
+    is_env_file(&name) || sensitive_match(path).is_some()
 }
 
 fn preview(paths: &[String]) -> String {
@@ -1093,30 +1102,8 @@ fn preview(paths: &[String]) -> String {
 mod tests {
     use super::*;
 
-    struct FakeProbe {
-        tracked: Vec<String>,
-        ignored: Vec<String>,
-    }
-
-    impl RepoProbe for FakeProbe {
-        fn is_tracked(&self, relative_path: &str) -> bool {
-            self.tracked.iter().any(|entry| entry == relative_path)
-        }
-
-        fn is_ignored(&self, relative_path: &str) -> bool {
-            self.ignored.iter().any(|entry| entry == relative_path)
-        }
-    }
-
-    fn probe() -> FakeProbe {
-        FakeProbe {
-            tracked: vec!["src/main.ts".to_string(), "package.json".to_string()],
-            ignored: vec!["dist".to_string()],
-        }
-    }
-
     fn evaluate(command: &str, rules: &[String]) -> CommandDecision {
-        evaluate_command(command, Path::new("/project"), &[], rules, &probe())
+        evaluate_command(command, Path::new("/project"), &[], rules)
     }
 
     #[test]
@@ -1154,8 +1141,8 @@ mod tests {
     }
 
     #[test]
-    fn dangerous_untracked_file_asks() {
-        assert!(evaluate("rm src/new-file.ts", &[]).is_ask());
+    fn dangerous_untracked_file_is_allowed() {
+        assert_eq!(evaluate("rm src/new-file.ts", &[]), CommandDecision::Allow);
     }
 
     #[test]
@@ -1357,5 +1344,42 @@ mod tests {
             .with_overrides(&["creds:ext:.pem".to_string()], &[]);
         assert!(config.sensitive_reason(Path::new("/p/cert.pem")).is_none());
         assert!(config.sensitive_reason(Path::new("/p/id_rsa")).is_some());
+    }
+
+    #[test]
+    fn session_folder_covers_every_file_and_subfolder_below_it() {
+        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        permissions.add_session_folder("/test/test2");
+        let folders = permissions.extra_folders();
+        assert!(path_is_inside(
+            Path::new("/test/test2/a.txt"),
+            Path::new("/project"),
+            &folders
+        ));
+        assert!(path_is_inside(
+            Path::new("/test/test2/deep/nested/b.txt"),
+            Path::new("/project"),
+            &folders
+        ));
+        assert!(!path_is_inside(
+            Path::new("/test/test3/c.txt"),
+            Path::new("/project"),
+            &folders
+        ));
+    }
+
+    #[test]
+    fn session_folders_survive_a_settings_save() {
+        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        permissions.add_session_folder("/test/test2");
+        permissions.replace(
+            Vec::new(),
+            vec!["/persisted".to_string()],
+            Vec::new(),
+            Vec::new(),
+        );
+        let folders = permissions.extra_folders();
+        assert!(folders.contains(&PathBuf::from("/persisted")));
+        assert!(folders.contains(&PathBuf::from("/test/test2")));
     }
 }

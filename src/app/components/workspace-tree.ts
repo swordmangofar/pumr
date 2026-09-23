@@ -9,6 +9,7 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import { FileChange, WorkspaceEntry } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
+import { WorkspaceEditorService } from '../core/workspace-editor.service';
 import { FileIcon } from './file-icon';
 import { ProjectIcon } from './project-icon';
 
@@ -21,7 +22,6 @@ interface TreeNode {
 
 interface TreeRow {
   node: TreeNode;
-  depth: number;
   guides: number[];
 }
 
@@ -225,6 +225,7 @@ function sortTree(nodes: TreeNode[]): void {
 })
 export class WorkspaceTree {
   private readonly workspace = inject(WorkspaceService);
+  private readonly editor = inject(WorkspaceEditorService);
   private readonly expanded = signal<Set<string>>(new Set());
 
   protected readonly project = this.workspace.activeProject;
@@ -256,7 +257,7 @@ export class WorkspaceTree {
     const rows: TreeRow[] = [];
     const walk = (nodes: TreeNode[], depth: number): void => {
       for (const node of nodes) {
-        rows.push({ node, depth, guides: Array.from({ length: depth }, (_, i) => i) });
+        rows.push({ node, guides: Array.from({ length: depth }, (_, i) => i) });
         if (node.kind === 'directory' && expanded.has(node.path)) {
           walk(node.children, depth + 1);
         }
@@ -268,14 +269,14 @@ export class WorkspaceTree {
 
   private readonly entries = computed(() => {
     const project = this.project();
-    return project ? this.workspace.workspaceEntriesFor(project.id) : [];
+    return project ? this.editor.workspaceEntriesFor(project.id) : [];
   });
 
   constructor() {
     effect(() => {
       const project = this.project();
       if (project) {
-        void this.workspace.loadWorkspaceEntries(project.id);
+        void this.editor.loadWorkspaceEntries(project.id);
       }
     });
     effect(() => {
@@ -297,7 +298,7 @@ export class WorkspaceTree {
   protected isActive(node: TreeNode): boolean {
     const project = this.project();
     return (
-      node.kind === 'file' && !!project && this.workspace.activeFileFor(project.id) === node.path
+      node.kind === 'file' && !!project && this.editor.activeFileFor(project.id) === node.path
     );
   }
 
@@ -351,13 +352,16 @@ export class WorkspaceTree {
       });
       return;
     }
-    void this.workspace.openWorkspaceFile(node.path);
+    const project = this.project();
+    if (project) {
+      this.editor.open(project.id, node.path);
+    }
   }
 
   protected refresh(): void {
     const project = this.project();
     if (project) {
-      void this.workspace.loadWorkspaceEntries(project.id, true);
+      void this.editor.loadWorkspaceEntries(project.id, true);
     }
   }
 }

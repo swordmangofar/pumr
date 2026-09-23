@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import {
   CreateSessionArgs,
   DefaultSystemPrompts,
+  DirectoryPage,
   EndpointInfo,
   FileChange,
   FileDiff,
@@ -9,10 +10,14 @@ import {
   GitCommit,
   GitCommitDetail,
   GitInfo,
+  GitPullStrategy,
   GitRebaseEntry,
   GitStatus,
   IgnoreCatalogEntry,
+  InstalledSkill,
+  MarketplaceServer,
   McpCandidate,
+  McpServerRef,
   Message,
   Mode,
   ModelInfo,
@@ -27,6 +32,8 @@ import {
   Session,
   Settings,
   SkillCandidate,
+  SkillMarketplace,
+  SkillRef,
   SpendStats,
   SpendSummary,
   UpdateSessionArgs,
@@ -66,6 +73,8 @@ export const api = {
   listSubSessions: (sessionId: string) => invoke<Session[]>('list_sub_sessions', { sessionId }),
   createSession: (args: CreateSessionArgs) => invoke<Session>('create_session', { ...args }),
   updateSession: (args: UpdateSessionArgs) => invoke<Session>('update_session', { ...args }),
+  setSessionAutoContinue: (sessionId: string, autoContinue: boolean) =>
+    invoke<Session>('set_session_auto_continue', { sessionId, autoContinue }),
   archiveSession: (sessionId: string, archived: boolean) =>
     invoke<Session>('archive_session', { sessionId, archived }),
   deleteSession: (sessionId: string) => invoke<void>('delete_session', { sessionId }),
@@ -95,7 +104,7 @@ export const api = {
   getGitInfo: (projectId: string) => invoke<GitInfo>('get_git_info', { projectId }),
   getGitStatus: (projectId: string) => invoke<GitStatus>('get_git_status', { projectId }),
   getGitBranches: (projectId: string) => invoke<GitBranch[]>('get_git_branches', { projectId }),
-  getGitCommits: (projectId: string, query: string | null = null, skip = 0, limit = 50) =>
+  getGitCommits: (projectId: string, query: string | null, skip: number, limit: number) =>
     invoke<GitCommit[]>('get_git_commits', { projectId, query, skip, limit }),
   getGitCommit: (projectId: string, hash: string) =>
     invoke<GitCommitDetail>('get_git_commit', { projectId, hash }),
@@ -113,7 +122,8 @@ export const api = {
   gitCheckout: (projectId: string, branch: string, track = false, localBranch?: string) =>
     invoke<string>('git_checkout', { projectId, branch, track, localBranch }),
   gitFetch: (projectId: string) => invoke<string>('git_fetch', { projectId }),
-  gitPull: (projectId: string) => invoke<string>('git_pull', { projectId }),
+  gitPull: (projectId: string, strategy: GitPullStrategy) =>
+    invoke<string>('git_pull', { projectId, strategy }),
   gitPush: (projectId: string) => invoke<string>('git_push', { projectId }),
   getGitRemotes: (projectId: string) => invoke<string[]>('get_git_remotes', { projectId }),
   gitFastForward: (projectId: string, branch: string, upstream: string) =>
@@ -144,16 +154,78 @@ export const api = {
   gitPullRequestUrl: (projectId: string, remote: string, branch: string) =>
     invoke<string>('git_pull_request_url', { projectId, remote, branch }),
   openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
+  gitOperationAbort: (projectId: string, operation: string) =>
+    invoke<string>('git_operation_abort', { projectId, operation }),
+  gitOperationContinue: (projectId: string) =>
+    invoke<string>('git_operation_continue', { projectId }),
+  gitStashPush: (projectId: string, message: string | null, includeUntracked: boolean) =>
+    invoke<string>('git_stash_push', { projectId, message, includeUntracked }),
+  gitStashApply: (projectId: string, stash: string) =>
+    invoke<string>('git_stash_apply', { projectId, stash }),
+  gitStashPop: (projectId: string, stash: string) =>
+    invoke<string>('git_stash_pop', { projectId, stash }),
+  gitStashDrop: (projectId: string, stash: string) =>
+    invoke<string>('git_stash_drop', { projectId, stash }),
+  gitInit: (projectId: string) => invoke<string>('git_init', { projectId }),
+  gitClone: (url: string, path: string) => invoke<Project>('git_clone', { url, path }),
+  gitTagDelete: (projectId: string, name: string) =>
+    invoke<string>('git_tag_delete', { projectId, name }),
+  gitTagPush: (projectId: string, remote: string, name: string) =>
+    invoke<string>('git_tag_push', { projectId, remote, name }),
+  gitSubmoduleUpdate: (projectId: string, path: string | null) =>
+    invoke<string>('git_submodule_update', { projectId, path }),
   getSessionChanges: (sessionId: string) =>
     invoke<FileChange[]>('get_session_changes', { sessionId }),
   getFileDiff: (sessionId: string, path: string) =>
     invoke<FileDiff>('get_file_diff', { sessionId, path }),
   getProjectRules: (projectId: string, sessionId: string | null = null) =>
     invoke<ProjectRule[]>('get_project_rules', { projectId, sessionId }),
-  discoverMcpSources: (folders: string[], disabled: string[], autoDiscovery: boolean) =>
-    invoke<McpCandidate[]>('discover_mcp_sources', { folders, disabled, autoDiscovery }),
-  discoverSkills: (folders: string[], disabled: string[], autoDiscovery: boolean) =>
-    invoke<SkillCandidate[]>('discover_skills', { folders, disabled, autoDiscovery }),
+  discoverMcpSources: (
+    folders: string[],
+    disabled: string[],
+    disabledServers: McpServerRef[],
+    autoDiscovery: boolean,
+  ) =>
+    invoke<McpCandidate[]>('discover_mcp_sources', {
+      folders,
+      disabled,
+      disabledServers,
+      autoDiscovery,
+    }),
+  discoverSkills: (
+    folders: string[],
+    disabled: string[],
+    disabledItems: SkillRef[],
+    autoDiscovery: boolean,
+  ) =>
+    invoke<SkillCandidate[]>('discover_skills', {
+      folders,
+      disabled,
+      disabledItems,
+      autoDiscovery,
+    }),
+  searchMcpMarketplace: (query: string | null = null, limit: number | null = null, includeUnverified = false) =>
+    invoke<MarketplaceServer[]>('search_mcp_marketplace', { query, limit, includeUnverified }),
+  browseMcpDirectory: (
+    query: string | null,
+    category: string | null,
+    source: string,
+    sort: string,
+    limit: number,
+    offset: number,
+  ) =>
+    invoke<DirectoryPage>('browse_mcp_directory', { query, category, source, sort, limit, offset }),
+  listSkillMarketplaces: () => invoke<SkillMarketplace[]>('list_skill_marketplaces'),
+  addSkillMarketplace: (url: string) =>
+    invoke<SkillMarketplace>('add_skill_marketplace', { url }),
+  removeSkillMarketplace: (url: string) =>
+    invoke<void>('remove_skill_marketplace', { url }),
+  installMarketplaceSkills: (url: string, plugin: string, includeUnverified = false) =>
+    invoke<InstalledSkill[]>('install_marketplace_skills', { url, plugin, includeUnverified }),
+  listInstalledMarketplaceSkills: () =>
+    invoke<InstalledSkill[]>('list_installed_marketplace_skills'),
+  uninstallMarketplaceSkills: (marketplace: string, skill: string) =>
+    invoke<void>('uninstall_marketplace_skills', { marketplace, skill }),
   listWorkspaceEntries: (projectId: string) =>
     invoke<WorkspaceEntry[]>('list_workspace_entries', { projectId }),
   readWorkspaceFile: (projectId: string, path: string) =>

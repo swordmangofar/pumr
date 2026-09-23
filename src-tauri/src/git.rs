@@ -28,9 +28,51 @@ tmp/
 *.log
 ";
 
-pub trait RepoProbe {
-    fn is_tracked(&self, relative_path: &str) -> bool;
-    fn is_ignored(&self, relative_path: &str) -> bool;
+/// Parses `git diff --numstat` output (tab-separated additions/deletions/path).
+fn parse_numstat(output: &str) -> Vec<FileChange> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let additions = parts.next()?;
+            let deletions = parts.next()?;
+            let path = parts.next()?;
+            Some(FileChange {
+                path: path.to_string(),
+                additions: additions.parse().unwrap_or(0),
+                deletions: deletions.parse().unwrap_or(0),
+                status: String::new(),
+            })
+        })
+        .collect()
+}
+
+/// Parses `git diff --name-status` output into status-only changes.
+fn parse_name_status(output: &str) -> Vec<FileChange> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let status = parts.next()?.chars().next()?.to_string();
+            let path = parts.next()?;
+            Some(FileChange {
+                path: path.to_string(),
+                additions: 0,
+                deletions: 0,
+                status,
+            })
+        })
+        .collect()
+}
+
+/// Copies line counts from a numstat parse into a status parse by path.
+fn apply_numstat(statuses: &mut [FileChange], numstat: &[FileChange]) {
+    for change in statuses.iter_mut() {
+        if let Some(stats) = numstat.iter().find(|entry| entry.path == change.path) {
+            change.additions = stats.additions;
+            change.deletions = stats.deletions;
+        }
+    }
 }
 
 pub struct ShadowRepo {
@@ -157,54 +199,45 @@ impl ShadowRepo {
 
     fn diff_numstat_unlocked(&self, base: &str) -> Result<Vec<FileChange>> {
         self.stage_all_unlocked()?;
-        let output = self.run(["diff", "--numstat", base, "--"])?;
-        Ok(output
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.split('\t');
-                let additions = parts.next()?;
-                let deletions = parts.next()?;
-                let path = parts.next()?;
-                Some(FileChange {
-                    path: path.to_string(),
-                    additions: additions.parse().unwrap_or(0),
-                    deletions: deletions.parse().unwrap_or(0),
-                    status: String::new(),
-                })
-            })
-            .collect())
+        Ok(parse_numstat(&self.run(["diff", "--numstat", base, "--"])?))
     }
 
     fn changed_since_unlocked(&self, base: &str) -> Result<Vec<FileChange>> {
         self.stage_all_unlocked()?;
-        let output = self.run(["diff", "--name-status", base, "--"])?;
-        Ok(output
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.split('\t');
-                let status = parts.next()?.chars().next()?.to_string();
-                let path = parts.next()?;
-                Some(FileChange {
-                    path: path.to_string(),
-                    additions: 0,
-                    deletions: 0,
-                    status,
-                })
-            })
-            .collect())
+        Ok(parse_name_status(
+            &self.run(["diff", "--name-status", base, "--"])?,
+        ))
     }
 
     pub fn changes_since(&self, base: &str) -> Result<Vec<FileChange>> {
         let _guard = self.lock.lock().unwrap();
         let mut statuses = self.changed_since_unlocked(base)?;
         let numstat = self.diff_numstat_unlocked(base)?;
-        for change in statuses.iter_mut() {
-            if let Some(stats) = numstat.iter().find(|entry| entry.path == change.path) {
-                change.additions = stats.additions;
-                change.deletions = stats.deletions;
-            }
-        }
+        apply_numstat(&mut statuses, &numstat);
         Ok(statuses)
+    }
+
+    /// Changes between two shadow commits. Unlike `changes_since`, this never
+    /// looks at the live working tree, so it isolates exactly what happened in
+    /// the range and cannot pick up edits made by other sessions.
+    pub fn changes_between(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
+        let _guard = self.lock.lock().unwrap();
+        let mut statuses = self.changed_between_unlocked(base, after)?;
+        let numstat = self.numstat_between_unlocked(base, after)?;
+        apply_numstat(&mut statuses, &numstat);
+        Ok(statuses)
+    }
+
+    fn changed_between_unlocked(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
+        Ok(parse_name_status(
+            &self.run(["diff", "--name-status", base, after, "--"])?,
+        ))
+    }
+
+    fn numstat_between_unlocked(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
+        Ok(parse_numstat(
+            &self.run(["diff", "--numstat", base, after, "--"])?,
+        ))
     }
 
     pub fn file_at(&self, commit: &str, relative_path: &str) -> Result<String> {
@@ -230,14 +263,6 @@ impl ShadowRepo {
         Ok(restored)
     }
 
-    pub fn is_tracked(&self, relative_path: &str) -> bool {
-        self.command()
-            .args(["ls-files", "--error-unmatch", "--", relative_path])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-
     pub fn is_ignored(&self, relative_path: &str) -> bool {
         self.command()
             .args(["check-ignore", "-q", "--", relative_path])
@@ -252,27 +277,13 @@ pub struct GitProbe<'a> {
     pub shadow: Option<&'a ShadowRepo>,
 }
 
-impl RepoProbe for GitProbe<'_> {
-    fn is_tracked(&self, relative_path: &str) -> bool {
+impl GitProbe<'_> {
+    pub fn is_ignored(&self, relative_path: &str) -> bool {
         if self.project_root.join(".git").exists() {
             return Command::new("git")
                 .arg("-C")
                 .arg(self.project_root)
-                .args(["ls-files", "--error-unmatch", "--", relative_path])
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false);
-        }
-        self.shadow
-            .map(|shadow| shadow.is_tracked(relative_path))
-            .unwrap_or(false)
-    }
-
-    fn is_ignored(&self, relative_path: &str) -> bool {
-        if self.project_root.join(".git").exists() {
-            return Command::new("git")
-                .arg("-C")
-                .arg(self.project_root)
+                .args(["-c", "core.quotepath=false"])
                 .args(["check-ignore", "-q", "--", relative_path])
                 .output()
                 .map(|output| output.status.success())
@@ -288,6 +299,7 @@ pub fn project_git_info(project_root: &Path) -> crate::models::GitInfo {
     let branch = Command::new("git")
         .arg("-C")
         .arg(project_root)
+        .args(["-c", "core.quotepath=false"])
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .ok()
@@ -296,6 +308,7 @@ pub fn project_git_info(project_root: &Path) -> crate::models::GitInfo {
     let head = Command::new("git")
         .arg("-C")
         .arg(project_root)
+        .args(["-c", "core.quotepath=false"])
         .args(["rev-parse", "--short", "HEAD"])
         .output()
         .ok()
@@ -353,6 +366,7 @@ fn git(project_root: &Path) -> Command {
     command
         .arg("-C")
         .arg(project_root)
+        .args(["-c", "core.quotepath=false"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_MERGE_AUTOEDIT", "no")
         .env("GIT_EDITOR", "true");
@@ -421,13 +435,6 @@ fn git_combined(project_root: &Path, args: &[&str]) -> Result<String> {
     combined_output(output, &args.join(" "))
 }
 
-fn normalize_rename(path: &str) -> String {
-    match path.find(" => ") {
-        Some(index) => path[index + 4..].trim().to_string(),
-        None => path.to_string(),
-    }
-}
-
 fn numstat(project_root: &Path, cached: bool) -> HashMap<String, (i64, i64)> {
     let mut args = vec!["diff", "--numstat", "--no-renames"];
     if cached {
@@ -445,7 +452,7 @@ fn numstat(project_root: &Path, cached: bool) -> HashMap<String, (i64, i64)> {
                 continue;
             }
             map.insert(
-                normalize_rename(path),
+                path.to_string(),
                 (
                     additions.parse().unwrap_or(0),
                     deletions.parse().unwrap_or(0),
@@ -509,6 +516,7 @@ pub fn project_branches(project_root: &Path) -> Vec<GitBranch> {
 }
 
 const COMMIT_SCAN_LIMIT: usize = 20_000;
+const COMMIT_FORMAT: &str = "%H\x1f%h\x1f%an\x1f%at\x1f%D\x1f%P\x1f%s\x1e";
 
 pub fn project_commits(
     project_root: &Path,
@@ -517,50 +525,98 @@ pub fn project_commits(
     limit: usize,
 ) -> Result<Vec<GitCommit>> {
     let query = query
-        .map(|value| value.trim().to_lowercase())
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let searching = query.is_some();
-    let format = if searching {
-        "%H\x1f%h\x1f%an\x1f%at\x1f%D\x1f%P\x1f%s\x1f%b\x1e"
-    } else {
-        "%H\x1f%h\x1f%an\x1f%at\x1f%D\x1f%P\x1f%s\x1e"
-    };
-    let format_arg = format!("--format={format}");
-    let skip_arg = format!("--skip={skip}");
-    let limit_arg = format!("--max-count={limit}");
-    let scan_arg = format!("--max-count={COMMIT_SCAN_LIMIT}");
-
-    let mut args: Vec<&str> = vec!["log", "--all", "--decorate=short", &format_arg];
-    if searching {
-        args.push(&scan_arg);
-    } else {
-        args.push(&skip_arg);
-        args.push(&limit_arg);
+    match query {
+        None => {
+            let format_arg = format!("--format={COMMIT_FORMAT}");
+            let skip_arg = format!("--skip={skip}");
+            let limit_arg = format!("--max-count={limit}");
+            let args = vec![
+                "log",
+                "--all",
+                "--decorate=short",
+                &format_arg,
+                &skip_arg,
+                &limit_arg,
+                "--",
+            ];
+            let output = git_stdout_opt(project_root, &args).unwrap_or_default();
+            Ok(parse_commits(&output))
+        }
+        Some(query) => {
+            // Filter with git itself so the entire history never has to be
+            // pulled into memory and scanned in Rust.
+            let mut commits = search_commits(project_root, &query);
+            commits.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            commits.dedup_by(|a, b| a.hash == b.hash);
+            Ok(commits.into_iter().skip(skip).take(limit).collect())
+        }
     }
-    args.push("--");
-
-    let output = git_stdout_opt(project_root, &args).unwrap_or_default();
-    let records = parse_commit_records(&output, searching);
-    let commits = match &query {
-        None => records.into_iter().map(|(commit, _)| commit).collect(),
-        Some(query) => records
-            .into_iter()
-            .filter(|(commit, body)| commit_matches(commit, body, query))
-            .skip(skip)
-            .take(limit)
-            .map(|(commit, _)| commit)
-            .collect(),
-    };
-    Ok(commits)
 }
 
-fn parse_commit_records(output: &str, with_body: bool) -> Vec<(GitCommit, String)> {
+/// Searches for commits whose message, author or hash matches `query`.
+fn search_commits(project_root: &Path, query: &str) -> Vec<GitCommit> {
+    let format_arg = format!("--format={COMMIT_FORMAT}");
+    let scan_arg = format!("--max-count={COMMIT_SCAN_LIMIT}");
+    let mut commits: Vec<GitCommit> = Vec::new();
+
+    let message_args = vec![
+        "log",
+        "--all",
+        "--decorate=short",
+        &format_arg,
+        &scan_arg,
+        "--regexp-ignore-case",
+        "--fixed-strings",
+        "--grep",
+        query,
+        "--",
+    ];
+    if let Some(output) = git_stdout_opt(project_root, &message_args) {
+        commits.extend(parse_commits(&output));
+    }
+
+    let author_pattern = format!("--author={query}");
+    let author_args = vec![
+        "log",
+        "--all",
+        "--decorate=short",
+        &format_arg,
+        &scan_arg,
+        "--regexp-ignore-case",
+        "--fixed-strings",
+        &author_pattern,
+        "--",
+    ];
+    if let Some(output) = git_stdout_opt(project_root, &author_args) {
+        commits.extend(parse_commits(&output));
+    }
+
+    if query.len() >= 4 && query.chars().all(|character| character.is_ascii_hexdigit()) {
+        let spec = format!("{query}^{{commit}}");
+        if let Some(hash) = git_stdout_opt(project_root, &["rev-parse", "--quiet", "--verify", &spec])
+        {
+            let hash = hash.trim().to_string();
+            if !hash.is_empty() {
+                let args = vec!["show", "-s", &format_arg, hash.as_str()];
+                if let Some(output) = git_stdout_opt(project_root, &args) {
+                    commits.extend(parse_commits(&output));
+                }
+            }
+        }
+    }
+
+    commits
+}
+
+fn parse_commits(output: &str) -> Vec<GitCommit> {
     output
         .split('\u{1e}')
         .map(|record| record.trim_start_matches(['\n', '\r']))
         .filter(|record| !record.trim().is_empty())
         .filter_map(|record| {
-            let mut parts = record.splitn(if with_body { 8 } else { 7 }, '\u{1f}');
+            let mut parts = record.splitn(7, '\u{1f}');
             let hash = parts.next()?.to_string();
             let short_hash = parts.next()?.to_string();
             let author = parts.next()?.to_string();
@@ -577,32 +633,17 @@ fn parse_commit_records(output: &str, with_body: bool) -> Vec<(GitCommit, String
                 .map(|parent| parent.to_string())
                 .collect();
             let subject = parts.next().unwrap_or("").to_string();
-            let body = if with_body {
-                parts.next().unwrap_or("").to_string()
-            } else {
-                String::new()
-            };
-            Some((
-                GitCommit {
-                    hash,
-                    short_hash,
-                    author,
-                    timestamp,
-                    subject,
-                    refs,
-                    parents,
-                },
-                body,
-            ))
+            Some(GitCommit {
+                hash,
+                short_hash,
+                author,
+                timestamp,
+                subject,
+                refs,
+                parents,
+            })
         })
         .collect()
-}
-
-fn commit_matches(commit: &GitCommit, body: &str, query: &str) -> bool {
-    commit.hash.to_lowercase().starts_with(query)
-        || commit.subject.to_lowercase().contains(query)
-        || body.to_lowercase().contains(query)
-        || commit.author.to_lowercase().contains(query)
 }
 
 fn parse_refs(value: &str) -> Vec<String> {
@@ -637,7 +678,7 @@ fn commit_changes(project_root: &Path, hash: &str) -> Vec<FileChange> {
         let path = parts.next().unwrap_or("");
         if !path.is_empty() {
             stats.insert(
-                normalize_rename(path),
+                path.to_string(),
                 (
                     additions.parse().unwrap_or(0),
                     deletions.parse().unwrap_or(0),
@@ -726,6 +767,56 @@ pub fn project_commit_file_diff(project_root: &Path, hash: &str, path: &str) -> 
     })
 }
 
+/// Detects an in-progress merge, rebase, cherry-pick or revert.
+fn git_operation(project_root: &Path) -> Option<String> {
+    let git_dir = project_root.join(".git");
+    let operation = if git_dir.join("MERGE_HEAD").exists() {
+        "merge"
+    } else if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        "rebase"
+    } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        "cherry-pick"
+    } else if git_dir.join("REVERT_HEAD").exists() {
+        "revert"
+    } else {
+        return None;
+    };
+    Some(operation.to_string())
+}
+
+/// Counts newline-separated lines without loading the whole file into memory and
+/// without counting binary files. Mirrors `str::lines().count()` for text files.
+fn count_file_lines(path: &Path) -> i64 {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return 0,
+    };
+    let mut buffer = [0u8; 8192];
+    let mut lines = 0i64;
+    let mut saw_any = false;
+    let mut last_byte = b'\n';
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                saw_any = true;
+                let chunk = &buffer[..read];
+                if chunk.contains(&0) {
+                    return 0;
+                }
+                lines += chunk.iter().filter(|&&byte| byte == b'\n').count() as i64;
+                last_byte = buffer[read - 1];
+            }
+            Err(_) => return 0,
+        }
+    }
+    if saw_any && last_byte != b'\n' {
+        lines += 1;
+    }
+    lines
+}
+
 pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
     if !project_root.join(".git").exists() {
         return Ok(GitStatus {
@@ -741,6 +832,8 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
             tags: Vec::new(),
             stashes: Vec::new(),
             submodules: Vec::new(),
+            operation: None,
+            conflicted: Vec::new(),
         });
     }
     let branch = git_stdout_opt(project_root, &["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -799,9 +892,7 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
         let worktree_status = bytes[1] as char;
         let path = line[3..].to_string();
         if index_status == '?' && worktree_status == '?' {
-            let additions = std::fs::read_to_string(project_root.join(&path))
-                .map(|content| content.lines().count() as i64)
-                .unwrap_or(0);
+            let additions = count_file_lines(&project_root.join(&path));
             unstaged.push(FileChange {
                 path,
                 additions,
@@ -845,19 +936,28 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
             &[
                 "tag",
                 "--sort=-creatordate",
-                "--format=%(refname:short)\t%(objectname:short)",
+                "--format=%(refname:short)\t%(objecttype)\t%(objectname:short)\t%(*objectname:short)",
             ],
         )
         .map(|output| {
             output
                 .lines()
                 .filter_map(|line| {
-                    let mut parts = line.splitn(2, '\t');
+                    let mut parts = line.splitn(4, '\t');
                     let name = parts.next()?.to_string();
-                    let hash = parts.next().unwrap_or("").to_string();
+                    let object_type = parts.next().unwrap_or("");
+                    let object_hash = parts.next().unwrap_or("");
+                    let peeled_hash = parts.next().unwrap_or("");
                     if name.is_empty() {
                         return None;
                     }
+                    // Annotated tags point at a tag object; use the peeled
+                    // commit hash so callers can resolve it directly.
+                    let hash = if object_type == "tag" && !peeled_hash.is_empty() {
+                        peeled_hash.to_string()
+                    } else {
+                        object_hash.to_string()
+                    };
                     Some(GitTag { name, hash })
                 })
                 .collect()
@@ -874,6 +974,19 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
                     .collect()
             })
             .unwrap_or_default(),
+        operation: git_operation(project_root),
+        conflicted: git_stdout_opt(
+            project_root,
+            &["diff", "--name-only", "--diff-filter=U"],
+        )
+        .map(|output| {
+            output
+                .lines()
+                .map(|line| line.to_string())
+                .filter(|line| !line.is_empty())
+                .collect()
+        })
+        .unwrap_or_default(),
     })
 }
 
@@ -916,52 +1029,60 @@ pub fn git_stage(project_root: &Path, path: Option<&str>) -> Result<()> {
 }
 
 pub fn git_unstage(project_root: &Path, path: Option<&str>) -> Result<()> {
-    let reset_ok = match path {
-        Some(path) => git(project_root)
-            .args(["reset", "-q", "HEAD", "--", path])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false),
-        None => git(project_root)
-            .args(["reset", "-q", "HEAD", "--", "."])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false),
-    };
-    if reset_ok {
+    let has_head = git(project_root)
+        .args(["rev-parse", "--quiet", "--verify", "HEAD"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if has_head {
+        let mut args = vec!["restore", "--staged", "--"];
+        args.push(path.unwrap_or("."));
+        git_stdout(project_root, &args)?;
         return Ok(());
     }
-    match path {
-        Some(path) => git_stdout(
-            project_root,
-            &["rm", "--cached", "-r", "--quiet", "--", path],
-        )?,
-        None => git_stdout(
-            project_root,
-            &["rm", "--cached", "-r", "--quiet", "--", "."],
-        )?,
-    };
+    // No commit yet: drop the path from the index without touching the work tree.
+    let mut args = vec!["rm", "--cached", "-r", "--quiet", "--"];
+    args.push(path.unwrap_or("."));
+    git_stdout(project_root, &args)?;
     Ok(())
 }
 
 pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
+    let in_head = git(project_root)
+        .args(["cat-file", "-e", &format!("HEAD:{path}")])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if in_head {
+        git_stdout(project_root, &["checkout", "--", path])?;
+        return Ok(());
+    }
+    // The path is new (untracked or staged-but-never-committed): remove it from
+    // the index if present, then delete it from the work tree.
     let tracked = git(project_root)
         .args(["ls-files", "--error-unmatch", "--", path])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);
     if tracked {
-        git_stdout(project_root, &["checkout", "--", path])?;
-    } else {
-        let absolute = project_root.join(path);
-        if absolute.is_file() {
-            std::fs::remove_file(&absolute)?;
-        }
+        let _ = git_stdout(project_root, &["rm", "--cached", "-r", "--quiet", "--", path]);
+    }
+    let absolute = project_root.join(path);
+    if absolute.is_file() {
+        std::fs::remove_file(&absolute)?;
+    } else if absolute.is_dir() {
+        std::fs::remove_dir_all(&absolute)?;
     }
     Ok(())
 }
 
 pub fn git_commit(project_root: &Path, message: &str, amend: bool) -> Result<String> {
+    if message.trim().is_empty() {
+        if amend {
+            return git_combined(project_root, &["commit", "--amend", "--no-edit"]);
+        }
+        return Err(AppError::msg("commit message is required"));
+    }
     let mut args = vec!["commit", "-m", message];
     if amend {
         args.push("--amend");
@@ -991,12 +1112,95 @@ pub fn git_fetch(project_root: &Path) -> Result<String> {
     git_combined(project_root, &["fetch", "--all", "--prune"])
 }
 
-pub fn git_pull(project_root: &Path) -> Result<String> {
-    git_combined(project_root, &["pull", "--ff-only"])
+pub fn git_pull(project_root: &Path, strategy: Option<&str>) -> Result<String> {
+    let args = match strategy {
+        Some("merge") => vec!["pull", "--no-rebase"],
+        Some("rebase") => vec!["pull", "--rebase"],
+        _ => vec!["pull", "--ff-only"],
+    };
+    git_combined(project_root, &args)
 }
 
 pub fn git_push(project_root: &Path) -> Result<String> {
     git_combined(project_root, &["push"])
+}
+
+/// Aborts an in-progress merge, rebase, cherry-pick or revert.
+pub fn git_operation_abort(project_root: &Path, operation: &str) -> Result<String> {
+    match operation {
+        "merge" => git_combined(project_root, &["merge", "--abort"]),
+        "rebase" => git_combined(project_root, &["rebase", "--abort"]),
+        "cherry-pick" => git_combined(project_root, &["cherry-pick", "--abort"]),
+        "revert" => git_combined(project_root, &["revert", "--abort"]),
+        other => Err(AppError::msg(format!("cannot abort '{other}'"))),
+    }
+}
+
+/// Continues an in-progress rebase after conflicts were resolved.
+pub fn git_operation_continue(project_root: &Path) -> Result<String> {
+    git_combined(project_root, &["rebase", "--continue"])
+}
+
+pub fn git_stash_push(
+    project_root: &Path,
+    message: Option<&str>,
+    include_untracked: bool,
+) -> Result<String> {
+    let mut args = vec!["stash", "push"];
+    if include_untracked {
+        args.push("--include-untracked");
+    }
+    if let Some(message) = message.filter(|value| !value.trim().is_empty()) {
+        args.push("-m");
+        args.push(message);
+    }
+    git_combined(project_root, &args)
+}
+
+pub fn git_stash_apply(project_root: &Path, stash: &str) -> Result<String> {
+    git_combined(project_root, &["stash", "apply", stash])
+}
+
+pub fn git_stash_pop(project_root: &Path, stash: &str) -> Result<String> {
+    git_combined(project_root, &["stash", "pop", stash])
+}
+
+pub fn git_stash_drop(project_root: &Path, stash: &str) -> Result<String> {
+    git_combined(project_root, &["stash", "drop", stash])
+}
+
+pub fn git_init(project_root: &Path) -> Result<String> {
+    git_combined(project_root, &["init"])
+}
+
+pub fn git_clone(url: &str, dest: &Path) -> Result<String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut command = Command::new("git");
+    command
+        .args(["-c", "core.quotepath=false"])
+        .env("GIT_TERMINAL_PROMPT", "0");
+    command.args(["clone", "--", url]).arg(dest);
+    let output = command.output()?;
+    combined_output(output, &format!("clone {url}"))
+}
+
+pub fn git_tag_delete(project_root: &Path, name: &str) -> Result<String> {
+    git_combined(project_root, &["tag", "-d", name])
+}
+
+pub fn git_tag_push(project_root: &Path, remote: &str, name: &str) -> Result<String> {
+    git_combined(project_root, &["push", remote, &format!("refs/tags/{name}")])
+}
+
+pub fn git_submodule_update(project_root: &Path, path: Option<&str>) -> Result<String> {
+    let mut args = vec!["submodule", "update", "--init", "--recursive"];
+    if let Some(path) = path.filter(|value| !value.is_empty()) {
+        args.push("--");
+        args.push(path);
+    }
+    git_combined(project_root, &args)
 }
 
 fn split_upstream(upstream: &str) -> (String, String) {
@@ -1078,13 +1282,27 @@ pub fn git_rebase_interactive(
         .join("\n");
     let path = std::env::temp_dir().join(format!("pumr-rebase-{}.todo", uuid::Uuid::new_v4()));
     std::fs::write(&path, format!("{text}\n"))?;
-    let editor = format!("cp -f '{}'", path.display());
+    let editor = sequence_editor_command(&path);
     let output = git(project_root)
         .args(["rebase", "-i", "--autostash", onto])
         .env("GIT_SEQUENCE_EDITOR", editor)
         .output();
     let _ = std::fs::remove_file(&path);
     combined_output(output?, &format!("rebase -i {onto}"))
+}
+
+/// Builds a `GIT_SEQUENCE_EDITOR` command that overwrites git's todo file with
+/// our own. Git appends the todo path to the editor command, so the command only
+/// has to copy our file onto it. Uses the platform's native copy tool.
+fn sequence_editor_command(source: &Path) -> String {
+    #[cfg(windows)]
+    {
+        format!("cmd /C copy /Y \"{}\"", source.display())
+    }
+    #[cfg(not(windows))]
+    {
+        format!("cp -f '{}'", source.display())
+    }
 }
 
 pub fn git_branch_create(
@@ -1342,6 +1560,39 @@ mod tests {
         );
         assert!(!project.join("src/new.ts").exists());
         assert!(shadow.changes_since(&base).unwrap().is_empty());
+    }
+
+    #[test]
+    fn changes_between_isolates_turns_across_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("a.txt"), "a\n").unwrap();
+        std::fs::write(project.join("b.txt"), "b\n").unwrap();
+
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        let base_a = shadow.snapshot("before session a").unwrap();
+
+        std::fs::write(project.join("a.txt"), "a changed\n").unwrap();
+        let after_a = shadow.snapshot("after session a").unwrap();
+
+        // Session B starts from A's end state, then edits an unrelated file.
+        let base_b = after_a.clone();
+        std::fs::write(project.join("b.txt"), "b changed\n").unwrap();
+        let after_b = shadow.snapshot("after session b").unwrap();
+
+        let a_changes = shadow.changes_between(&base_a, &after_a).unwrap();
+        assert_eq!(a_changes.len(), 1);
+        assert_eq!(a_changes[0].path, "a.txt");
+
+        let b_changes = shadow.changes_between(&base_b, &after_b).unwrap();
+        assert_eq!(b_changes.len(), 1);
+        assert_eq!(b_changes[0].path, "b.txt");
+
+        // A diff against the live work tree (the old behaviour) would leak B's
+        // edit into session A.
+        let leaked = shadow.changes_since(&base_a).unwrap();
+        assert!(leaked.iter().any(|change| change.path == "b.txt"));
     }
 
     fn init_repo(project: &Path) {
@@ -1697,5 +1948,147 @@ mod tests {
 
         let remotes = project_remotes(&project);
         assert_eq!(remotes, vec!["origin".to_string()]);
+    }
+
+    #[test]
+    fn discard_removes_staged_new_and_untracked_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        std::fs::write(project.join("staged.txt"), "staged\n").unwrap();
+        git_stage(&project, Some("staged.txt")).unwrap();
+        git_discard(&project, "staged.txt").unwrap();
+        assert!(!project.join("staged.txt").exists());
+        assert!(project_git_status(&project).unwrap().staged.is_empty());
+
+        std::fs::write(project.join("untracked.txt"), "untracked\n").unwrap();
+        git_discard(&project, "untracked.txt").unwrap();
+        assert!(!project.join("untracked.txt").exists());
+
+        std::fs::write(project.join("tracked.txt"), "one\ntwo\n").unwrap();
+        git_discard(&project, "tracked.txt").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join("tracked.txt")).unwrap(),
+            "one\n"
+        );
+    }
+
+    #[test]
+    fn unstage_works_before_the_first_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        git_stdout(&project, &["init", "-q"]).unwrap();
+
+        std::fs::write(project.join("first.txt"), "first\n").unwrap();
+        git_stage(&project, Some("first.txt")).unwrap();
+        git_unstage(&project, Some("first.txt")).unwrap();
+
+        let status = project_git_status(&project).unwrap();
+        assert!(status.staged.is_empty());
+        assert!(project.join("first.txt").exists());
+    }
+
+    #[test]
+    fn tag_listing_peels_annotated_tags_to_a_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let head = git_stdout(&project, &["rev-parse", "--short", "HEAD"]).unwrap();
+
+        git_tag_create(&project, "annotated", Some("HEAD"), Some("release")).unwrap();
+        git_tag_create(&project, "lightweight", Some("HEAD"), None).unwrap();
+
+        let tags = project_git_status(&project).unwrap().tags;
+        for tag in tags {
+            assert_eq!(tag.hash, head, "tag {} should peel to the commit", tag.name);
+        }
+    }
+
+    #[test]
+    fn stash_push_pop_and_drop_are_supported() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        std::fs::write(project.join("tracked.txt"), "one\ntwo\n").unwrap();
+        git_stash_push(&project, Some("wip"), true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join("tracked.txt")).unwrap(),
+            "one\n"
+        );
+
+        let stashes = project_git_status(&project).unwrap().stashes;
+        assert_eq!(stashes.len(), 1);
+
+        git_stash_pop(&project, &stashes[0]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join("tracked.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        assert!(project_git_status(&project).unwrap().stashes.is_empty());
+
+        std::fs::write(project.join("tracked.txt"), "one\nthree\n").unwrap();
+        git_stash_push(&project, None, false).unwrap();
+        let stashes = project_git_status(&project).unwrap().stashes;
+        git_stash_drop(&project, &stashes[0]).unwrap();
+        assert!(project_git_status(&project).unwrap().stashes.is_empty());
+    }
+
+    #[test]
+    fn merge_conflict_state_can_be_aborted() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let default = project_current_branch(&project).expect("default branch");
+
+        git_branch_create(&project, "feature", Some("HEAD"), true).unwrap();
+        std::fs::write(project.join("tracked.txt"), "feature\n").unwrap();
+        commit(&project, "feature change");
+
+        git_checkout(&project, &default, false, None).unwrap();
+        std::fs::write(project.join("tracked.txt"), "main\n").unwrap();
+        commit(&project, "main change");
+
+        let _ = git_merge(&project, "feature");
+        let status = project_git_status(&project).unwrap();
+        assert_eq!(status.operation.as_deref(), Some("merge"));
+        assert!(status.conflicted.iter().any(|path| path == "tracked.txt"));
+
+        git_operation_abort(&project, "merge").unwrap();
+        let status = project_git_status(&project).unwrap();
+        assert!(status.operation.is_none());
+        assert!(status.conflicted.is_empty());
+    }
+
+    #[test]
+    fn init_creates_a_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        assert!(!project_git_status(&project).unwrap().is_repo);
+
+        git_init(&project).unwrap();
+        assert!(project_git_status(&project).unwrap().is_repo);
+    }
+
+    #[test]
+    fn amend_without_a_message_keeps_the_previous_subject() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        std::fs::write(project.join("tracked.txt"), "one\ntwo\n").unwrap();
+        git_stage(&project, None).unwrap();
+        git_commit(&project, "second", false).unwrap();
+
+        std::fs::write(project.join("tracked.txt"), "one\ntwo\nthree\n").unwrap();
+        git_stage(&project, None).unwrap();
+        git_commit(&project, "", true).unwrap();
+
+        let commits = project_commits(&project, None, 0, 10).unwrap();
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].subject, "second");
     }
 }

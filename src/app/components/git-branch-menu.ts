@@ -11,6 +11,12 @@ import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { GitBranch, GitRebaseEntry } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
+import { GitService } from '../core/git.service';
+
+/** Rendered menu footprint, used to keep it inside the viewport. */
+const MENU_WIDTH_PX = 256;
+const MENU_HEIGHT_PX = 420;
+const VIEWPORT_MARGIN_PX = 8;
 
 type PromptKind = 'newBranch' | 'newTag' | 'rename';
 
@@ -32,10 +38,12 @@ interface RebaseState {
 
 const REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
 
+import { TypedInput } from './typed-input';
+
 @Component({
   selector: 'app-git-branch-menu',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   host: {
     '(document:keydown.escape)': 'close()',
     '(document:keydown)': 'onKeydown($event)',
@@ -192,7 +200,7 @@ const REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
               class="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 font-mono text-[13px] text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
               [placeholder]="state.kind === 'newTag' ? 'v1.0.0' : branch().name"
               [value]="state.value"
-              (input)="patchPrompt({ value: $any($event.target).value })"
+              (typedValue)="patchPrompt({ value: $event })"
               (keydown.enter)="confirmPrompt()"
             />
             @if (state.kind === 'newTag') {
@@ -207,7 +215,7 @@ const REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
                 rows="2"
                 class="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[13px] text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
                 [value]="state.message"
-                (input)="patchPrompt({ message: $any($event.target).value })"
+                (typedValue)="patchPrompt({ message: $event })"
               ></textarea>
             }
             @if (state.kind === 'newBranch') {
@@ -216,7 +224,7 @@ const REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
                   type="checkbox"
                   class="accent-[var(--color-accent)]"
                   [checked]="state.checkout"
-                  (change)="patchPrompt({ checkout: $any($event.target).checked })"
+                  (typedChecked)="patchPrompt({ checkout: $event })"
                 />
                 {{ 'git.menu.checkoutAfterCreate' | transloco }}
               </label>
@@ -302,7 +310,7 @@ const REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
                 <select
                   class="rounded-md border border-white/10 bg-white/5 px-1.5 py-1 text-xs text-mist focus:outline-none"
                   [value]="entry.action"
-                  (change)="setEntryAction(index, $any($event.target).value)"
+                  (typedValue)="setEntryAction(index, $event)"
                 >
                   @for (action of rebaseActions; track action) {
                     <option [value]="action">{{ action }}</option>
@@ -368,7 +376,17 @@ const REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
 })
 export class GitBranchMenu {
   private readonly workspace = inject(WorkspaceService);
+  private readonly git = inject(GitService);
   private readonly transloco = inject(TranslocoService);
+
+  private projectId(): string | null {
+    return this.workspace.activeProject()?.id ?? null;
+  }
+
+  private withProject<T>(action: (projectId: string) => Promise<T>): Promise<T | undefined> {
+    const projectId = this.projectId();
+    return projectId ? action(projectId) : Promise.resolve(undefined);
+  }
 
   readonly branch = input.required<GitBranch>();
   readonly x = input.required<number>();
@@ -418,14 +436,15 @@ export class GitBranchMenu {
     if (typeof window === 'undefined') {
       return { left: `${this.x()}px`, top: `${this.y()}px` };
     }
-    const width = 256;
-    const height = 420;
-    const left = Math.max(8, Math.min(this.x(), window.innerWidth - width - 8));
-    const flipY = this.y() > window.innerHeight - height;
+    const left = Math.max(
+      VIEWPORT_MARGIN_PX,
+      Math.min(this.x(), window.innerWidth - MENU_WIDTH_PX - VIEWPORT_MARGIN_PX),
+    );
+    const flipY = this.y() > window.innerHeight - MENU_HEIGHT_PX;
     return {
       left: `${left}px`,
       top: flipY ? 'auto' : `${this.y()}px`,
-      bottom: flipY ? `${Math.max(8, window.innerHeight - this.y())}px` : 'auto',
+      bottom: flipY ? `${Math.max(VIEWPORT_MARGIN_PX, window.innerHeight - this.y())}px` : 'auto',
     };
   });
 
@@ -463,15 +482,15 @@ export class GitBranchMenu {
         break;
       case 'fastForward':
         void this.runAndClose(() =>
-          this.workspace.gitFastForward(this.branch().name, this.branch().upstream ?? ''),
+          this.withProject((id) =>
+            this.git.fastForward(id, this.branch().name, this.branch().upstream ?? ''),
+          ),
         );
         break;
       case 'push':
         void this.runAndClose(() =>
-          this.workspace.gitPushBranch(
-            this.branch().name,
-            this.remoteName(),
-            !this.branch().upstream,
+          this.withProject((id) =>
+            this.git.pushBranch(id, this.branch().name, this.remoteName(), !this.branch().upstream),
           ),
         );
         break;
@@ -479,7 +498,9 @@ export class GitBranchMenu {
         void this.runAndClose(() => this.createPullRequest());
         break;
       case 'rebase':
-        void this.runAndClose(() => this.workspace.gitRebase(this.branch().name));
+        void this.runAndClose(() =>
+          this.withProject((id) => this.git.rebase(id, this.branch().name)),
+        );
         break;
       case 'merge':
         void this.merge();
@@ -516,19 +537,23 @@ export class GitBranchMenu {
       return;
     }
     try {
+      const projectId = this.projectId();
+      if (!projectId) {
+        return;
+      }
       if (branch.remote) {
         const localName = this.shortName();
         const hasLocal =
           localName.length > 0 &&
           this.branches().some((local) => !local.remote && local.name === localName);
         if (hasLocal) {
-          await this.workspace.checkoutGitBranch(localName);
+          await this.git.checkoutBranch(projectId, localName);
         } else {
-          await this.workspace.checkoutGitBranch(branch.name, true);
+          await this.git.checkoutBranch(projectId, branch.name, true);
         }
         return;
       }
-      await this.workspace.checkoutGitBranch(branch.name);
+      await this.git.checkoutBranch(projectId, branch.name);
     } catch (error) {
       console.error(error);
     }
@@ -536,9 +561,13 @@ export class GitBranchMenu {
 
   private async createPullRequest(): Promise<void> {
     try {
-      const url = await this.workspace.gitPullRequestUrl(this.remoteName(), this.shortName());
+      const projectId = this.projectId();
+      if (!projectId) {
+        return;
+      }
+      const url = await this.git.pullRequestUrl(projectId, this.remoteName(), this.shortName());
       if (url) {
-        await this.workspace.openExternalUrl(url);
+        await this.git.openExternalUrl(url);
       }
     } catch (error) {
       console.error(error);
@@ -558,7 +587,9 @@ export class GitBranchMenu {
       }),
     );
     if (confirmed) {
-      await this.guard(() => this.workspace.gitMerge(this.branch().name));
+      await this.guard(() =>
+        this.withProject((id) => this.git.merge(id, this.branch().name)),
+      );
     }
     this.close();
   }
@@ -571,14 +602,18 @@ export class GitBranchMenu {
     );
     const confirmed = await this.ask(message);
     if (confirmed) {
-      await this.guard(() => this.workspace.gitBranchDelete(branch.name, branch.remote));
+      await this.guard(() =>
+        this.withProject((id) => this.git.branchDelete(id, branch.name, branch.remote)),
+      );
     }
     this.close();
   }
 
   protected async setUpstream(upstream: string): Promise<void> {
     this.trackingOpen.set(false);
-    await this.guard(() => this.workspace.gitSetUpstream(this.branch().name, upstream));
+    await this.guard(() =>
+      this.withProject((id) => this.git.setUpstream(id, this.branch().name, upstream)),
+    );
     this.close();
   }
 
@@ -624,12 +659,16 @@ export class GitBranchMenu {
       return;
     }
     await this.guard(async () => {
+      const projectId = this.projectId();
+      if (!projectId) {
+        return;
+      }
       if (state.kind === 'newBranch') {
-        await this.workspace.gitBranchCreate(value, this.branch().name, state.checkout);
+        await this.git.branchCreate(projectId, value, this.branch().name, state.checkout);
       } else if (state.kind === 'newTag') {
-        await this.workspace.gitTagCreate(value, this.branch().name, state.message.trim() || null);
+        await this.git.tagCreate(projectId, value, this.branch().name, state.message.trim() || null);
       } else {
-        await this.workspace.gitBranchRename(this.branch().name, value);
+        await this.git.branchRename(projectId, this.branch().name, value);
       }
     });
     this.close();
@@ -638,7 +677,11 @@ export class GitBranchMenu {
   private async openRebaseInteractive(): Promise<void> {
     const onto = this.branch().name;
     this.menuVisible.set(false);
-    const commits = await this.workspace.getGitRebaseCommits(onto);
+    const projectId = this.projectId();
+    if (!projectId) {
+      return;
+    }
+    const commits = await this.git.getRebaseCommits(projectId, onto);
     this.rebase.set({
       onto,
       entries: commits.map((commit) => ({
@@ -683,9 +726,12 @@ export class GitBranchMenu {
       return;
     }
     await this.guard(() =>
-      this.workspace.gitRebaseInteractive(
-        state.onto,
-        state.entries.map((entry) => ({ action: entry.action, hash: entry.hash })),
+      this.withProject((id) =>
+        this.git.rebaseInteractive(
+          id,
+          state.onto,
+          state.entries.map((entry) => ({ action: entry.action, hash: entry.hash })),
+        ),
       ),
     );
     this.close();

@@ -213,6 +213,99 @@ export function macOsSvg(size = 1024) {
 `;
 }
 
+/* ------------------------------------------------------------ dev badge -- */
+
+/** Crimson ribbon + white block letters, so a dev build is obvious at a glance. */
+export const devPalette = {
+  ribbon: '#ef4444',
+  ink: '#ffffff',
+};
+
+/** 5x7 pixel glyphs in the same chunky spirit as the mark. */
+const DEV_FONT = {
+  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+};
+
+const DEV_TEXT = 'DEV';
+const GLYPH_WIDTH = 5;
+const GLYPH_HEIGHT = 7;
+const GLYPH_GAP = 1;
+
+/**
+ * "DEV" as a run of unit rectangles centred on the origin. Letters are vector
+ * rectangles rather than `<text>`, so the rasteriser never needs a font.
+ */
+function devText() {
+  const letters = [...DEV_TEXT];
+  const width = letters.length * GLYPH_WIDTH + (letters.length - 1) * GLYPH_GAP;
+  const commands = [];
+
+  letters.forEach((letter, index) => {
+    const originX = index * (GLYPH_WIDTH + GLYPH_GAP);
+
+    DEV_FONT[letter].forEach((row, y) => {
+      let x = 0;
+      while (x < row.length) {
+        if (row[x] !== '1') {
+          x += 1;
+          continue;
+        }
+        let end = x;
+        while (end + 1 < row.length && row[end + 1] === '1') end += 1;
+        const run = end - x + 1;
+        commands.push(`M${originX + x} ${y}h${run}v1h-${run}Z`);
+        x = end + 1;
+      }
+    });
+  });
+
+  return { d: commands.join(' '), width, height: GLYPH_HEIGHT };
+}
+
+/**
+ * macOS master with a "DEV" banderole across the base of the plate, clipped to
+ * the squircle so the rounded corners stay clean. Used only by `tauri dev`.
+ */
+export function macOsDevSvg(size = 1024) {
+  const plate = size * (824 / 1024);
+  const centre = size / 2;
+  const bannerTop = size * 0.775;
+  const bannerHeight = size * 0.125;
+  const bannerCentre = bannerTop + bannerHeight / 2;
+  const text = devText();
+  const scale = (bannerHeight * 0.52) / text.height;
+
+  const mark = `<g shape-rendering="crispEdges" transform="${fit(size, plate * 0.68)}">
+    <path fill="${palette.accent}" d="${silhouettePath()}" />
+    <path fill="${palette.navy}" d="${featurePath()}" />
+  </g>`;
+
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" ` +
+    `viewBox="0 0 ${size} ${size}" role="img" aria-labelledby="pumr-dev-title">
+  <title id="pumr-dev-title">pumr (dev)</title>
+  <defs>
+    <clipPath id="pumr-plate">
+      <path transform="translate(${n(centre)} ${n(centre)})" d="${squirclePath(plate)}" />
+    </clipPath>
+  </defs>
+  <g transform="translate(${n(centre)} ${n(centre)})">
+    <path fill="${palette.navy}" d="${squirclePath(plate)}" />
+  </g>
+  ${mark}
+  <g clip-path="url(#pumr-plate)">
+    <rect x="0" y="${n(bannerTop)}" width="${size}" height="${n(bannerHeight)}" fill="${devPalette.ribbon}" />
+    <g transform="translate(${n(centre)} ${n(bannerCentre)}) scale(${n(scale)}) translate(${n(-text.width / 2)} ${n(-text.height / 2)})">
+      <path fill="${devPalette.ink}" d="${text.d}" />
+    </g>
+  </g>
+</svg>
+`
+  );
+}
+
 /* ----------------------------------------------------------------- write -- */
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -224,6 +317,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   };
 
   out('design/icon-macos.svg', macOsSvg(1024));
+  out('design/icon-macos-dev.svg', macOsDevSvg(1024));
   out('design/icon-tile.svg', tileSvg(1024));
   out('design/icon-mark.svg', freeStandingSvg(1024));
   out('public/logo.svg', freeStandingSvg(512));

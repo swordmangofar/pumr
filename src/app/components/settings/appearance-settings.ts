@@ -7,10 +7,12 @@ import { BACKGROUND_CUSTOM, BACKGROUND_NONE, BACKGROUND_PRESETS } from '../../co
 import { CUSTOM_THEME_ID, THEME_PRESETS, ThemeColors } from '../../core/themes';
 import { SettingsDraftService } from './settings-draft.service';
 
+import { TypedInput } from '../typed-input';
+
 @Component({
   selector: 'app-appearance-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe],
   template: `
     <section>
       <label class="mb-2 block text-sm font-semibold text-white">
@@ -115,13 +117,13 @@ import { SettingsDraftService } from './settings-draft.service';
                     type="color"
                     class="h-7 w-9 cursor-pointer rounded-md border border-white/15 bg-transparent p-0"
                     [value]="draft.draft().customTheme[field.key]"
-                    (input)="setCustomColor(field.key, $any($event.target).value)"
+                    (typedValue)="setCustomColor(field.key, $event)"
                   />
                   <input
                     type="text"
                     class="field w-24 rounded-lg px-2 py-1 text-xs uppercase"
                     [value]="draft.draft().customTheme[field.key]"
-                    (change)="setCustomColor(field.key, $any($event.target).value)"
+                    (typedValue)="setCustomColor(field.key, $event)"
                   />
                 </span>
               </label>
@@ -258,7 +260,7 @@ import { SettingsDraftService } from './settings-draft.service';
               step="0.05"
               class="flex-1 cursor-pointer accent-accent"
               [value]="draft.draft().backgroundOpacity"
-              (input)="draft.setBackgroundOpacity(+$any($event.target).value)"
+              (typedValue)="draft.setBackgroundOpacity(+$event)"
             />
             <span class="w-10 text-right text-xs tabular-nums text-mist/50">
               {{ (draft.draft().backgroundOpacity * 100).toFixed(0) }}%
@@ -276,7 +278,7 @@ import { SettingsDraftService } from './settings-draft.service';
               step="1"
               class="flex-1 cursor-pointer accent-accent"
               [value]="draft.draft().backgroundBlur"
-              (input)="draft.setBackgroundBlur(+$any($event.target).value)"
+              (typedValue)="draft.setBackgroundBlur(+$event)"
             />
             <span class="w-10 text-right text-xs tabular-nums text-mist/50">
               {{ draft.draft().backgroundBlur }}px
@@ -307,7 +309,7 @@ import { SettingsDraftService } from './settings-draft.service';
         step="0.05"
         class="mt-3 w-full cursor-pointer accent-accent"
         [value]="draft.draft().glassOpacity"
-        (input)="draft.setGlassOpacity(+$any($event.target).value)"
+        (typedValue)="draft.setGlassOpacity(+$event)"
       />
     </section>
 
