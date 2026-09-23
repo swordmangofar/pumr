@@ -272,7 +272,7 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
         tool_schemas.retain(|schema| {
             !matches!(
                 schema.pointer("/function/name").and_then(Value::as_str),
-                Some("write") | Some("edit")
+                Some("write") | Some("edit") | Some("bash")
             )
         });
     }

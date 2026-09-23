@@ -309,6 +309,32 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
     let Some(manager) = runtime.mcp.clone() else {
         return ToolOutcome::error(format!("MCP tool '{name}' is not available."));
     };
+    // MCP tools run server-side and bypass the built-in command gate, so require
+    // an explicit user decision before every invocation.
+    let preview = serde_json::json!({ "tool": name, "arguments": arguments }).to_string();
+    let allowed = runtime
+        .broker
+        .ask(
+            PermissionPrompt {
+                kind: "command".to_string(),
+                title: format!("Run MCP tool {name}?"),
+                detail: "The assistant wants to call an MCP server tool. Review the arguments before allowing."
+                    .to_string(),
+                command: Some(preview),
+                path: None,
+                folder: None,
+                url: None,
+                suggested_rule: None,
+            },
+            &runtime.cancel,
+            &runtime.session_id,
+            &runtime.emit,
+        )
+        .await
+        .allowed;
+    if !allowed {
+        return ToolOutcome::denied();
+    }
     match manager.call(name, arguments.clone()).await {
         Ok((text, is_error)) => {
             if is_error {
@@ -444,11 +470,10 @@ fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str
 }
 
 async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &str) -> bool {
-    if permissions::path_is_inside(
-        absolute,
-        &runtime.project_root,
-        &runtime.permissions.extra_folders(),
-    ) {
+    let extra = runtime.permissions.extra_folders();
+    if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
+        && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
+    {
         return true;
     }
     let folder = if absolute.is_dir() {
@@ -1002,6 +1027,55 @@ async fn read_web_body(response: reqwest::Response) -> std::result::Result<Vec<u
     Ok(buffer)
 }
 
+/// True for addresses the agent must never reach: loopback, private, link-local,
+/// unique-local, unspecified, multicast and similar (SSRF protection).
+fn blocked_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.octets()[0] == 0
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// Resolves the URL host and rejects it when any resolved address is non-public.
+/// This runs on every hop so a redirect or DNS rebind cannot reach internal
+/// services after the initial allowlist check.
+async fn ensure_host_public(url: &reqwest::Url) -> std::result::Result<(), String> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| "The URL does not contain a valid host.".to_string())?;
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|error| format!("Could not resolve {host}: {error}"))?;
+    let mut resolved = false;
+    for address in addresses {
+        resolved = true;
+        if blocked_ip(address.ip()) {
+            return Err(format!(
+                "{host} resolves to a non-public address and was blocked."
+            ));
+        }
+    }
+    if !resolved {
+        return Err(format!("Could not resolve {host}."));
+    }
+    Ok(())
+}
+
 pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     let url = match arg_str(arguments, "url") {
         Ok(url) => url,
@@ -1022,25 +1096,72 @@ pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> T
         WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
     }
 
-    let response = match runtime
-        .http
-        .get(parsed.clone())
+    // Follow redirects manually so every hop is re-checked against the website
+    // rules and the private-address block, then fetch the final URL.
+    let client = match reqwest::Client::builder()
+        .user_agent("pumr/0.1")
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(WEB_TIMEOUT_SECONDS))
-        .header(
-            reqwest::header::ACCEPT,
-            "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
-        )
-        .send()
-        .await
+        .build()
     {
-        Ok(response) => response,
-        Err(error) => return ToolOutcome::error(format!("Request failed: {error}")),
+        Ok(client) => client,
+        Err(error) => return ToolOutcome::error(format!("HTTP client error: {error}")),
+    };
+    let mut current = parsed.clone();
+    let mut redirects = 0;
+    let response = loop {
+        if let Err(reason) = ensure_host_public(&current).await {
+            return ToolOutcome::error(reason);
+        }
+        let response = match client
+            .get(current.clone())
+            .header(
+                reqwest::header::ACCEPT,
+                "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+            )
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => return ToolOutcome::error(format!("Request failed: {error}")),
+        };
+        if !response.status().is_redirection() {
+            break response;
+        }
+        if redirects >= 5 {
+            return ToolOutcome::error("Too many redirects.");
+        }
+        let Some(location) = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+        else {
+            return ToolOutcome::error("Redirect without a Location header.");
+        };
+        let next = match current.join(location) {
+            Ok(next) => next,
+            Err(error) => return ToolOutcome::error(format!("Invalid redirect target: {error}")),
+        };
+        if !matches!(next.scheme(), "http" | "https") {
+            return ToolOutcome::error("Redirected to a non-http(s) URL.");
+        }
+        if next.host_str() != current.host_str() {
+            match ensure_website_access(runtime, next.as_str(), "web").await {
+                WebsiteAccess::Allowed => {}
+                WebsiteAccess::DeniedByRule(reason) => {
+                    return ToolOutcome::error(format!("Blocked: {reason}"))
+                }
+                WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+            }
+        }
+        current = next;
+        redirects += 1;
     };
     let status = response.status();
     if !status.is_success() {
         return ToolOutcome::error(format!(
             "{} returned HTTP {}.",
-            parsed.host_str().unwrap_or("The server"),
+            current.host_str().unwrap_or("The server"),
             status.as_u16()
         ));
     }
@@ -1061,9 +1182,9 @@ pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> T
         text.to_string()
     };
     if output.trim().is_empty() {
-        return ToolOutcome::ok(format!("{} returned no readable text.", parsed.as_str()));
+        return ToolOutcome::ok(format!("{} returned no readable text.", current.as_str()));
     }
-    ToolOutcome::ok(format!("# {}\n\n{}", parsed.as_str(), output))
+    ToolOutcome::ok(format!("# {}\n\n{}", current.as_str(), output))
 }
 
 struct SearchResult {

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="240" viewBox="0 0 1120 240" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#05070d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="82%" cy="12%" r="75%">
+      <stop offset="0" stop-color="#f59e0b" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="10%" cy="110%" r="70%">
+      <stop offset="0" stop-color="#1e293b" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#1e293b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.25" fill="#ffffff" fill-opacity="0.05"/>
+    </pattern>
+    
+  </defs>
+  <rect width="1120" height="240" rx="20" fill="url(#bg)"/>
+  <rect width="1120" height="240" rx="20" fill="url(#glow)"/>
+  <rect width="1120" height="240" rx="20" fill="url(#glow2)"/>
+  <rect width="1120" height="240" rx="20" fill="url(#dots)"/>
+  <path d="M 560 46
+    C 600 54, 618 58, 632 62
+    L 626 126
+    C 620 168, 590 188, 560 200
+    C 530 188, 500 168, 494 126
+    L 488 62
+    C 502 58, 520 54, 560 46 Z" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-opacity="0.7" stroke-width="2.5"/><path d="M 540 118 l 14 14 l 28 -30" fill="none" stroke="#f59e0b" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/><g font-family="ui-monospace, Menlo, monospace" font-size="13" fill="#e5e5e5" fill-opacity="0.5"><text x="120" y="96">&gt; pnpm test</text><text x="120" y="122" fill="#34d399" fill-opacity="0.7">&#10003; 6 tests passed</text><text x="790" y="96">&gt; read src/app.ts</text><text x="790" y="122" fill="#f59e0b" fill-opacity="0.7">allow once / allow always / deny</text></g><circle cx="442" cy="60" r="5" fill="#34d399" fill-opacity="0.8"/><circle cx="678" cy="60" r="5" fill="#fb7185" fill-opacity="0.8"/>
+  <rect x="0.5" y="0.5" width="1119" height="239" rx="20" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+</svg>

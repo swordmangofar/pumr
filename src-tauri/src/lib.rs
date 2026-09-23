@@ -52,6 +52,16 @@ pub fn run() {
             db.migrate()?;
             let settings_path = data_dir.join("settings.json");
             let settings = config::load_settings(&settings_path);
+            // Grant the asset protocol access to any user-selected background
+            // image or custom sound that was saved previously.
+            for path in [
+                settings.appearance.background_image.as_str(),
+                settings.interface.done_sound_path.as_str(),
+                settings.interface.permission_sound_path.as_str(),
+                settings.interface.error_sound_path.as_str(),
+            ] {
+                commands::allow_asset_path(app.handle(), path);
+            }
             window::apply(app.handle(), &settings.window);
             app.manage(state::AppState::new(db, data_dir, settings_path, settings));
             Ok(())
@@ -138,6 +148,7 @@ pub fn run() {
             commands::git_push_branch,
             commands::git_pull_request_url,
             commands::open_external_url,
+            commands::pick_asset_file,
             commands::git_operation_abort,
             commands::git_operation_continue,
             commands::git_stash_push,

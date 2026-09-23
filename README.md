@@ -1,146 +1,158 @@
-# pumr
+<p align="center">
+  <img src="public/logo.svg" alt="pumr logo" width="96" height="96" />
+</p>
 
-An agentic coding harness — Angular 22 + Tauri v2, powered by OpenRouter.
+<h1 align="center">pumr</h1>
 
-pumr is a local desktop app that connects LLMs to your codebase. It keeps provider keys in
-the OS keychain, stores sessions in SQLite, and is built so more providers (API key or OAuth)
-can be added later.
+<p align="center">
+  <strong>An agentic coding harness for your desktop.</strong><br />
+  Local-first, provider-agnostic, powered by OpenRouter.
+</p>
 
-## Requirements
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform" />
+  <img src="https://img.shields.io/badge/Angular%2022%20%2B%20Tauri%20v2-f59e0b" alt="Built with Angular 22 and Tauri v2" />
+</p>
+
+![pumr](docs/screenshot.png)
+
+pumr connects LLMs to your codebase from a native desktop window. It runs the agent
+loop, tool calls and secrets in Rust, keeps API keys in the OS keychain, and stores
+sessions in SQLite. No project files leave the machine except the requests you approve.
+
+## Features
+
+### Agent and chat
+
+![Agent and chat](docs/features/agent-chat.svg)
+
+- Multi-tab sessions grouped by project, with persistent history and archive/delete.
+- Streaming responses, collapsible reasoning ("thinking") and a live agent status.
+- Sub-agents: delegated tasks show up as their own sessions you can open and follow.
+- Per-message and per-session cost, budget with remaining balance, cache-hit rate.
+- Prompt queueing and reverting: drop later messages, restore files, resend a prompt.
+
+### Tools and permissions
+
+![Tools and permissions](docs/features/tools-permissions.svg)
+
+- A real tool loop in Rust: `read`, `write`, `edit`, `glob`, `grep`, `ls`, `bash`,
+  `webfetch`, `websearch`, plus MCP tools.
+- Every non read-only command asks first — allow once, allow always (glob rule), or deny.
+- Dangerous commands and sensitive files (`.env`, keys, databases) get extra checks,
+  especially outside the project.
+- Tools are sandboxed to the active project and the extra folders you allow.
+- Long-running commands move to the background and can be stopped from the header.
+
+### Diffs, history and context
+
+![Diffs, history and context](docs/features/diffs-history.svg)
+
+- A shadow git repository snapshots every prompt — your real `.git` is never touched.
+- Changed files show `+additions -deletions` and open a Monaco diff (inline or side-by-side).
+- `@` mentions in the composer add files, directories, websites, skills or MCP tools
+  as structured context for the next message.
+- `AGENTS.md` files (global, project, nested) are merged into the system prompt, and the
+  right panel shows which rules apply and where they came from.
+
+### Providers and models
+
+![Providers and models](docs/features/providers-models.svg)
+
+- OpenRouter catalog with per-model endpoints: provider, uptime, tokens/sec, latency,
+  and prices per 1M tokens.
+- Pick model, reasoning effort and provider routing per session; mark favorites.
+- Vision and PDF attachments, including an image annotator for screenshots.
+
+### Integrations
+
+![Integrations](docs/features/integrations.svg)
+
+- Skills auto-discovery from standard locations (`~/.claude/skills`, `~/.config/opencode/skill`,
+  `~/.agents/skills`, …) plus custom folders.
+- MCP server discovery and connection (local `stdio` and remote streamable HTTP), with
+  configs parsed from Claude, Cursor, Windsurf, VS Code, Codex, opencode, Gemini CLI and more.
+- Skill marketplaces and the official MCP registry, treated as untrusted input: pumr
+  shows metadata and copies files, but never runs code or edits agent config for you.
+
+### Look and feel
+
+![Look and feel](docs/features/look-and-feel.svg)
+
+- 14 built-in themes (dark and light) plus a custom palette, glass panels, background
+  images and notification sounds.
+- Fully localised UI, available in 24 languages.
+
+## How it works
+
+<p align="center">
+  <img src="docs/puma-sit.svg" alt="pumr mascot" width="120" />
+</p>
+
+- The agent loop, provider calls and secrets live in Rust and never in the webview.
+- API keys are stored with the `keyring` crate (macOS Keychain, Windows Credential
+  Manager, Secret Service on Linux).
+- Reverts and diffs use a per-project shadow git repo, so your own history stays intact.
+
+The frontend is Angular 22 (zoneless, signals, standalone components) with Tailwind v4;
+the backend is a Tauri v2 Rust core.
+
+## Roadmap
+
+- **Context and integrations:** smart project context, memories, opencode agent import.
+- **Polish:** more providers (Anthropic, OpenAI, OAuth), context-window management,
+  packaging and signing.
+
+---
+
+## Development
+
+### Requirements
 
 - Node.js 24+ and pnpm
 - Rust (stable) via [rustup](https://rustup.rs)
 - Platform toolchain for Tauri v2 (on macOS: Xcode Command Line Tools)
 
-## Getting started
+### Getting started
 
 ```bash
 pnpm install
-pnpm dev        # runs Angular dev server + Tauri window
+pnpm dev        # Angular dev server + Tauri window
 ```
 
-First launch: open **Settings**, paste your OpenRouter API key (stored in the OS keychain),
-set an optional budget and the default system prompt. Then add a project folder and start a
-session.
+First launch: open **Settings**, paste your OpenRouter API key (stored in the OS
+keychain), set an optional budget and the default system prompt. Then add a project
+folder and start a session.
 
-Production bundle:
+### Scripts
 
 ```bash
-pnpm bundle
+pnpm dev        # run the app in development
+pnpm bundle     # production bundle
+pnpm test       # frontend tests (Vitest)
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust backend
 ```
 
-## What works today (Phase 1 + 2)
-
-- OpenRouter provider: model catalog, per-model endpoint list (provider name, uptime,
-  tokens/sec, latency, prices per 1M tokens), SSE streaming chat
-- Multi-tab sessions grouped by project folder, persisted history in SQLite
-- Model / reasoning effort / provider routing pickers
-- Reasoning ("thinking") streamed and collapsed by default in chat
-- Cost per message and per session, budget + remaining, cache hit rate from provider usage
-- Default system prompt editable in settings, per-session override in the data model
-- English / German UI (Transloco), dark IDE-style layout (Tailwind v4)
-
-### Tools & permissions
-
-The agent runs a real tool loop in Rust: `read`, `write`, `edit`, `glob`, `grep`, `ls`, `bash`.
-Tool calls and their output stream into the chat as collapsible cards; file-modifying tools show
-`path +additions -deletions` chips that open a Monaco diff in the right panel.
-
-- **Command approval**: every command that is not provably read-only asks first (allow once /
-  allow always / deny). "Allow always" creates a glob rule (e.g. `pnpm test`, `grep *`) that can
-  be managed in Settings.
-- **Dangerous commands** (`rm`, `mv`, `chmod`, `git reset --hard`, `git clean`, `sudo`,
-  `curl | sh`, database drops, ...) always ask outside the project. Inside the project they are
-  allowed, and only ask for sensitive files such as `.env`, keys or databases.
-- **Folder access**: tools may only touch the active project plus the extra folders in Settings.
-  When the agent needs anything else, the permission dialog can add that folder permanently.
-- **Web access**: `webfetch` reads a URL and `websearch` searches the web (DuckDuckGo). The
-  user approves every new website (allow once / allow always) and can also deny a site once or
-  always. Allow and deny rules are per domain (globs like `*.github.com` are supported, deny
-  wins) and are managed in Settings → Agent Configuration.
-- **Background processes**: commands that run longer than 10s are moved to the background and
-  appear in the running-processes indicator in the header, where they can be stopped.
-
-### Diffs, revert and rules
-
-- Every prompt creates a snapshot in a hidden shadow git repository (in pumr's app data dir).
-  Your project's real `.git` is never touched.
-- The right panel lists all changed files of the session with `+/-` counts and a Monaco diff
-  (inline or full-screen side-by-side).
-- Clicking the revert arrow on an older prompt removes later messages, optionally restores the
-  files to that point, and puts the prompt back into the composer.
-- `AGENTS.md` files are merged into the system prompt: global
-  (`~/Library/Application Support/dev.pumr.app/AGENTS.md`, `~/.config/pumr/AGENTS.md` or
-  `~/.pumr/AGENTS.md`), project root, then nested files for directories touched in the session.
-  The right panel shows every rule that applies and where it came from.
-
-### Context mentions
-
-Type `@` in the composer to add context to your next message:
-
-- `@file` inlines a file's contents, `@directory` inlines a folder listing, and `@website` fetches
-  a page (the usual website allow/deny rules apply).
-- `@skill` loads a detected skill's `SKILL.md` instructions into the message.
-- `@mcp` connects a discovered MCP server for that message and exposes its tools to the agent.
-  Local `stdio` servers and remote streamable-HTTP servers are supported.
-
-Mentions are sent as structured data alongside the message; resolved context is stored on the
-message so later turns see the same content without refetching.
-
-## Settings
-
-Settings is split into six categories:
-
-- **Providers** — OpenRouter API key (OS keychain), base URL, default model and reasoning
-  effort; placeholders for future providers (Anthropic, OpenAI, Google, xAI).
-- **Agent Configuration** — default system prompt, budget, context message limit and the
-  allow-always command rules.
-- **General** — UI language, theme and custom palette, app background (built-in
-  abstract/puma backdrops or your own image with opacity/blur), glass opacity,
-  notification sounds, keep-awake while agents run, and app info.
-- **Skills** — auto-discovery of standard skill locations (`~/.claude/skills`,
-  `~/.config/opencode/skill`, `~/.agents/skills`, ...) plus custom folders picked with the file
-  explorer; every detected folder can be toggled on/off.
-- **MCP Server** — same model as Skills for MCP configs (Claude Desktop, Claude Code, Cursor,
-  Windsurf, VS Code, OpenAI Codex, opencode, Devin, Gemini CLI), parsing server names from JSON
-  and TOML configs.
-- **Workspace** — folders the assistant may access without asking (file explorer picker).
-
-Reference detected skills and MCP servers from the composer with `@skill` and `@mcp` to load
-their instructions or connect their tools.
-
-## Architecture
+### Project layout
 
 ```
 src/                     Angular 22 (zoneless, signals, standalone components)
   app/core/              typed IPC wrappers, workspace/session/settings/model stores
-  app/components/        sidebar, chat, composer, right panel, diff, permission dialog, settings
-  public/i18n/           en.json / de.json
+  app/components/        sidebar, chat, composer, right panel, diff, permissions, settings
+  public/i18n/           locale files (en.json is the reference)
 
 src-tauri/src/           Rust core
   providers/openrouter   model + endpoint APIs, SSE streaming, usage/cost accounting
   agent.rs               multi-iteration tool loop
   tools.rs               read/write/edit/glob/grep/ls/bash with permission gates
-  permissions.rs         command glob rules, danger list, path/sensitivity checks
+  permissions.rs         command glob rules, danger list, path and sensitivity checks
   git.rs                 shadow git repo: snapshots, diffs, restore, branch info
   processes.rs           background process registry
   broker.rs              permission request/response plumbing
-  db.rs                  SQLite schema + queries (projects, sessions, messages, costs)
+  db.rs                  SQLite schema and queries (projects, sessions, messages, costs)
   config.rs              settings.json + OS keychain
   commands.rs            Tauri IPC surface
 ```
 
-Design decisions:
-
-- The agent loop, provider calls and secrets live in Rust, never in the webview.
-- API keys are stored via the `keyring` crate (macOS Keychain, Windows Credential Manager,
-  Secret Service on Linux).
-- Reverts use a shadow git repository per project so the user's real history is never touched.
-
-## Roadmap
-
-- **Phase 3 — context & integrations:** smart project context + memories, opencode agent import,
-  file & image attachments. (`@file` / `@directory` / `@website` / `@skill` / `@mcp` mentions and
-  the MCP client are implemented.)
-- **Phase 4 — polish:** additional providers (Anthropic, OpenAI, OAuth), context-window
-  management, packaging/signing.
+Licensed under Apache-2.0.

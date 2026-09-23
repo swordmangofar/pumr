@@ -65,6 +65,36 @@ impl McpClient {
         } else if let Some(command) = config.command.clone() {
             let mut process = Command::new(&command);
             process.args(&config.args);
+            // Do not leak the parent's environment (API keys, tokens, CI
+            // secrets) to third-party servers. Pass only what is needed to run
+            // a program plus the server's own configured variables.
+            process.env_clear();
+            #[cfg(unix)]
+            {
+                for key in ["PATH", "HOME", "LANG", "LC_ALL", "TERM"] {
+                    if let Ok(value) = std::env::var(key) {
+                        process.env(key, value);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                for key in [
+                    "PATH",
+                    "SystemRoot",
+                    "USERPROFILE",
+                    "TEMP",
+                    "TMP",
+                    "APPDATA",
+                    "LOCALAPPDATA",
+                    "COMSPEC",
+                    "PATHEXT",
+                ] {
+                    if let Ok(value) = std::env::var(key) {
+                        process.env(key, value);
+                    }
+                }
+            }
             for (key, value) in &config.env {
                 process.env(key, value);
             }

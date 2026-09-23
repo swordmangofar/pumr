@@ -1,8 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { open } from '@tauri-apps/plugin-dialog';
-import { isTauri } from '../../core/api';
+import { api, isTauri } from '../../core/api';
 import {
   SOUND_CUSTOM,
   SOUND_NONE,
@@ -390,18 +389,8 @@ export class NotificationsSettings {
     if (!this.canPickFiles) {
       return;
     }
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      title: 'Select sound file',
-      filters: [
-        {
-          name: 'Audio',
-          extensions: ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'flac', 'aac', 'opus', 'webm'],
-        },
-      ],
-    });
-    if (!selected || Array.isArray(selected)) {
+    const selected = await api.pickAssetFile('sound');
+    if (!selected) {
       return;
     }
     this.draft.setSoundPath(kind, selected);

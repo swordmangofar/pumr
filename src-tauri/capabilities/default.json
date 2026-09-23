@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "core:webview:deny-internal-toggle-devtools",
     "core:webview:allow-set-webview-zoom",
     "dialog:default",
     "updater:default",

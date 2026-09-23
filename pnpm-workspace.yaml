@@ -3,3 +3,8 @@ allowBuilds:
   esbuild: true
   lmdb: true
   msgpackr-extract: true
+
+# Force a patched DOMPurify: monaco-editor pins a version with known XSS
+# advisories (GHSA-cmwh-pvxp-8882, GHSA-55q2-fjhq-7xh7 and others).
+overrides:
+  dompurify: ^3.4.13

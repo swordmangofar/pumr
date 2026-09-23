@@ -168,6 +168,8 @@ export const api = {
   gitPullRequestUrl: (projectId: string, remote: string, branch: string) =>
     invoke<string>('git_pull_request_url', { projectId, remote, branch }),
   openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
+  pickAssetFile: (kind: 'image' | 'sound') =>
+    invoke<string | null>('pick_asset_file', { kind }),
   gitOperationAbort: (projectId: string, operation: string) =>
     invoke<string>('git_operation_abort', { projectId, operation }),
   gitOperationContinue: (projectId: string) =>

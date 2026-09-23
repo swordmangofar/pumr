@@ -39,7 +39,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 const DEFAULT_SESSION_TITLE: &str = "New session";
 
@@ -71,11 +72,35 @@ pub fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings> {
+    validate_base_url(&settings.model.openrouter_base_url).map_err(AppError::msg)?;
     config::save_settings(&state.settings_path, &settings)?;
     state.power.set_enabled(settings.interface.keep_awake);
     crate::window::apply(&app, &settings.window);
     state.set_settings(settings.clone());
     Ok(settings)
+}
+
+/// The provider key is sent to whatever host this URL points at, so require
+/// https except for local gateways.
+fn validate_base_url(url: &str) -> std::result::Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let parsed =
+        reqwest::Url::parse(trimmed).map_err(|_| "The base URL is not a valid URL.".to_string())?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let host = parsed.host_str().unwrap_or("");
+            if matches!(host, "localhost" | "127.0.0.1" | "::1") {
+                Ok(())
+            } else {
+                Err("The base URL must use https (http is only allowed for localhost).".to_string())
+            }
+        }
+        _ => Err("The base URL must use https.".to_string()),
+    }
 }
 
 /// Temporarily releases (or re-applies) the global window-toggle shortcut while
@@ -514,11 +539,8 @@ pub fn read_workspace_file(
 ) -> Result<WorkspaceFile> {
     let project = state.db.get_project(&project_id)?;
     let root = PathBuf::from(&project.path);
-    let root = root.canonicalize().unwrap_or(root);
-    let absolute = crate::permissions::resolve_path(&root, &path);
-    if !crate::permissions::path_is_inside(&absolute, &root, &[]) {
-        return Err(AppError::msg("path is outside the project"));
-    }
+    let absolute = crate::permissions::resolve_inside_project(&root, &path)
+        .ok_or_else(|| AppError::msg("path is outside the project"))?;
     let content = std::fs::read_to_string(&absolute).unwrap_or_default();
     Ok(WorkspaceFile {
         path: path.replace('\\', "/"),
@@ -538,11 +560,8 @@ pub fn write_workspace_file(
 ) -> Result<()> {
     let project = state.db.get_project(&project_id)?;
     let root = PathBuf::from(&project.path);
-    let root = root.canonicalize().unwrap_or(root);
-    let absolute = crate::permissions::resolve_path(&root, &path);
-    if !crate::permissions::path_is_inside(&absolute, &root, &[]) {
-        return Err(AppError::msg("path is outside the project"));
-    }
+    let absolute = crate::permissions::resolve_inside_project(&root, &path)
+        .ok_or_else(|| AppError::msg("path is outside the project"))?;
     if let Some(parent) = absolute.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -559,16 +578,25 @@ pub fn resolve_permission(
     folder: Option<String>,
     prompt_kind: Option<String>,
 ) -> Result<()> {
+    // Never act on a decision that does not match a prompt the backend is
+    // actually waiting on. This stops a renderer from persisting an allow rule
+    // or extra folder without a real, user-visible prompt.
+    let Some(pending) = state.broker.pending_prompt(&request_id) else {
+        return Ok(());
+    };
+    let _ = (&rule, &folder, &prompt_kind);
     let allowed = decision != "deny" && decision != "deny_always";
-    let rule = rule
+    // Persist only what the backend proposed for this prompt, never values the
+    // renderer supplied.
+    let rule = pending
+        .suggested_rule
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let folder = folder
+    let folder = pending
+        .folder
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let is_web = prompt_kind
-        .as_deref()
-        .is_some_and(|kind| kind.starts_with("web"));
+    let is_web = pending.kind.starts_with("web");
     if is_web {
         let mut settings = state.settings();
         let mut changed = false;
@@ -1163,6 +1191,15 @@ pub fn git_pull_request_url(
 
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<()> {
+    // Only allow web links through the OS opener. This blocks `file:`,
+    // `javascript:`, and custom protocol handlers (and keeps `cmd.exe` on
+    // Windows from seeing shell metacharacters).
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|_| AppError::msg("invalid URL".to_string()))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(AppError::msg("only http(s) links can be opened".to_string()));
+    }
+    let url = parsed.to_string();
     let status = {
         #[cfg(target_os = "macos")]
         {
@@ -1184,6 +1221,50 @@ pub fn open_external_url(url: String) -> Result<()> {
         Ok(_) => Err(AppError::msg(format!("could not open {url}"))),
         Err(error) => Err(AppError::msg(error.to_string())),
     }
+}
+
+/// Adds a single file to the asset-protocol scope so the webview may load it.
+/// Only paths the user picked through the OS dialog (or that are already saved
+/// in settings) reach this, so the scope never widens to the whole filesystem.
+pub fn allow_asset_path(app: &AppHandle, path: &str) {
+    let path = path.trim();
+    if path.is_empty() {
+        return;
+    }
+    if let Err(error) = app.asset_protocol_scope().allow_file(Path::new(path)) {
+        log::warn!("could not allow asset path {path}: {error}");
+    }
+}
+
+/// Opens a native file picker for a background image or sound and grants the
+/// chosen file access to the asset protocol. The grant happens only after the
+/// user confirms a file, so a compromised webview cannot widen the scope.
+#[tauri::command]
+pub fn pick_asset_file(app: AppHandle, kind: String) -> Result<Option<String>> {
+    let (title, extensions): (&str, &[&str]) = match kind.as_str() {
+        "sound" => (
+            "Select sound file",
+            &["mp3", "wav", "ogg", "oga", "m4a", "flac", "aac", "opus", "webm"],
+        ),
+        _ => (
+            "Select background image",
+            &["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg"],
+        ),
+    };
+    let picked = app
+        .dialog()
+        .file()
+        .set_title(title)
+        .add_filter(title, extensions)
+        .blocking_pick_file();
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let path = file_path
+        .into_path()
+        .map_err(|error| AppError::msg(error.to_string()))?;
+    allow_asset_path(&app, &path.to_string_lossy());
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 fn open_shadow(state: &AppState, project_id: &str) -> Result<Arc<ShadowRepo>> {
@@ -1229,7 +1310,8 @@ pub fn get_file_diff(
         }
         None => (String::new(), 0, 0, "M".to_string()),
     };
-    let absolute = Path::new(&project.path).join(&path);
+    let absolute = crate::permissions::resolve_inside_project(Path::new(&project.path), &path)
+        .ok_or_else(|| AppError::msg("path is outside the project"))?;
     let new_content = std::fs::read_to_string(&absolute).unwrap_or_default();
     Ok(FileDiff {
         path: path.clone(),
@@ -1683,6 +1765,7 @@ async fn assemble_turn_context(
 ) -> (String, Arc<McpManager>) {
     let mut context = String::new();
     let mut mcp_servers: Vec<String> = Vec::new();
+    let approval_cancel = cancel.clone();
     if !mentions.is_empty() {
         let mut mention_runtime = ToolRuntime {
             call_id: "mention".to_string(),
@@ -1740,7 +1823,53 @@ async fn assemble_turn_context(
         let mut configs = Vec::new();
         for name in &mcp_servers {
             match available.iter().find(|config| &config.name == name) {
-                Some(config) => configs.push(config.clone()),
+                Some(config) => {
+                    // Starting a server spawns a process or opens a network
+                    // connection, so require explicit user approval and show the
+                    // exact command/URL and where it came from.
+                    let description = match (&config.command, &config.url) {
+                        (Some(command), _) => {
+                            let args = config.args.join(" ");
+                            if args.is_empty() {
+                                command.clone()
+                            } else {
+                                format!("{command} {args}")
+                            }
+                        }
+                        (None, Some(url)) => url.clone(),
+                        _ => continue,
+                    };
+                    let allowed = state
+                        .broker
+                        .ask(
+                            crate::broker::PermissionPrompt {
+                                kind: "command".to_string(),
+                                title: format!("Start MCP server '{}'?", config.name),
+                                detail: format!(
+                                    "The assistant wants to start MCP server '{}' configured in {}.",
+                                    config.name, config.source
+                                ),
+                                command: Some(description),
+                                path: None,
+                                folder: None,
+                                url: config.url.clone(),
+                                suggested_rule: None,
+                            },
+                            &approval_cancel,
+                            session_id,
+                            sink,
+                        )
+                        .await
+                        .allowed;
+                    if allowed {
+                        configs.push(config.clone());
+                    } else {
+                        mcp_errors.push(format!(
+                            "MCP server '{}' was not approved and was skipped.",
+                            config.name
+                        ));
+                    }
+                }
                 None => mcp_errors.push(format!(
                     "No MCP server named '{name}' was found in the configured sources."
                 )),

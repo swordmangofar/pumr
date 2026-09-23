@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="240" viewBox="0 0 1120 240" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#05070d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="82%" cy="12%" r="75%">
+      <stop offset="0" stop-color="#f59e0b" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="10%" cy="110%" r="70%">
+      <stop offset="0" stop-color="#1e293b" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#1e293b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.25" fill="#ffffff" fill-opacity="0.05"/>
+    </pattern>
+    
+  </defs>
+  <rect width="1120" height="240" rx="20" fill="url(#bg)"/>
+  <rect width="1120" height="240" rx="20" fill="url(#glow)"/>
+  <rect width="1120" height="240" rx="20" fill="url(#glow2)"/>
+  <rect width="1120" height="240" rx="20" fill="url(#dots)"/>
+  <rect x="340" y="88" width="300" height="104" rx="18" fill="#22d3ee" fill-opacity="0.16" stroke="#ffffff" stroke-opacity="0.14" transform="rotate(-6 490 140)"/><rect x="410" y="70" width="300" height="104" rx="18" fill="#bd93f9" fill-opacity="0.18" stroke="#ffffff" stroke-opacity="0.14" transform="rotate(-6 560 122)"/><rect x="480" y="52" width="300" height="104" rx="18" fill="#f59e0b" fill-opacity="0.22" stroke="#ffffff" stroke-opacity="0.14" transform="rotate(-6 630 104)"/><circle cx="450" cy="198" r="11" fill="#f59e0b" fill-opacity="0.9"/><circle cx="450" cy="198" r="16" fill="none" stroke="#f59e0b" stroke-opacity="0.25"/><circle cx="494" cy="198" r="11" fill="#22d3ee" fill-opacity="0.9"/><circle cx="494" cy="198" r="16" fill="none" stroke="#22d3ee" stroke-opacity="0.25"/><circle cx="538" cy="198" r="11" fill="#bd93f9" fill-opacity="0.9"/><circle cx="538" cy="198" r="16" fill="none" stroke="#bd93f9" stroke-opacity="0.25"/><circle cx="582" cy="198" r="11" fill="#fb7185" fill-opacity="0.9"/><circle cx="582" cy="198" r="16" fill="none" stroke="#fb7185" stroke-opacity="0.25"/><circle cx="626" cy="198" r="11" fill="#34d399" fill-opacity="0.9"/><circle cx="626" cy="198" r="16" fill="none" stroke="#34d399" stroke-opacity="0.25"/><circle cx="670" cy="198" r="11" fill="#e5e5e5" fill-opacity="0.9"/><circle cx="670" cy="198" r="16" fill="none" stroke="#e5e5e5" stroke-opacity="0.25"/>
+  <rect x="0.5" y="0.5" width="1119" height="239" rx="20" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+</svg>

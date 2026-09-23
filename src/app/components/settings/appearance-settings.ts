@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { open } from '@tauri-apps/plugin-dialog';
-import { isTauri } from '../../core/api';
+import { api, isTauri } from '../../core/api';
 import { BackgroundService } from '../../core/background.service';
 import { BACKGROUND_CUSTOM, BACKGROUND_NONE, BACKGROUND_PRESETS } from '../../core/backgrounds';
 import { CUSTOM_THEME_ID, THEME_PRESETS, ThemeColors } from '../../core/themes';
@@ -381,18 +380,8 @@ export class AppearanceSettings {
     if (!this.canPickFiles) {
       return;
     }
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      title: 'Select background image',
-      filters: [
-        {
-          name: 'Images',
-          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg'],
-        },
-      ],
-    });
-    if (!selected || Array.isArray(selected)) {
+    const selected = await api.pickAssetFile('image');
+    if (!selected) {
       return;
     }
     this.draft.setBackgroundImage(selected);

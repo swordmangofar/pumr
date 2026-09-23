@@ -754,9 +754,28 @@ fn read_manifest(root: &Path, url: Option<String>, source: &str) -> Result<Skill
     })
 }
 
+/// Rejects a single path component (directory/file name) that could escape the
+/// intended directory: empty, `.`/`..`, separators or absolute paths.
+fn safe_component(value: &str) -> Result<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || Path::new(trimmed).is_absolute()
+    {
+        return Err(AppError::msg(format!(
+            "invalid path component: \"{value}\""
+        )));
+    }
+    Ok(trimmed)
+}
+
 /// Resolves a plugin `source` to a local directory. Relative sources (`./x`, or a
 /// bare name under `metadata.pluginRoot`) resolve inside the marketplace; anything
-/// else (github/npm/archive) is not a local checkout.
+/// else (github/npm/archive) is not a local checkout. The result is canonicalised
+/// and confined to the marketplace checkout so `..` or symlinks cannot escape it.
 fn plugin_source_path(
     root: &Path,
     plugin_root: &str,
@@ -771,8 +790,10 @@ fn plugin_source_path(
     } else {
         return None;
     };
-    let path = root.join(relative);
-    path.is_dir().then_some(path)
+    let candidate = root.join(relative);
+    let canonical_root = root.canonicalize().ok()?;
+    let canonical = candidate.canonicalize().ok()?;
+    canonical.starts_with(&canonical_root).then_some(canonical)
 }
 
 /// Skill directories under a plugin: `<name>/SKILL.md`, plus the plugin root
@@ -1042,12 +1063,15 @@ impl MarketplaceService {
         let plugin_dir = plugin_source_path(&dir, &plugin_root, &source)
             .ok_or_else(|| AppError::msg("plugin source is not a local directory in this marketplace"))?;
 
-        let target_root = self.skills_dir().join(&manifest.name).join(&entry.name);
+        let target_root = self
+            .skills_dir()
+            .join(safe_component(&manifest.name)?)
+            .join(safe_component(&entry.name)?);
         let mut installed = Vec::new();
         for name in skill_dir_names(&plugin_dir) {
             let from = find_skill_dir(&plugin_dir, &name)
                 .ok_or_else(|| AppError::msg(format!("could not locate skill \"{name}\"")))?;
-            let to = target_root.join(&name);
+            let to = target_root.join(safe_component(&name)?);
             copy_dir(&from, &to)?;
             installed.push(InstalledSkill {
                 name,
@@ -1105,6 +1129,8 @@ impl MarketplaceService {
 
     pub fn uninstall_skills(&self, marketplace: &str, skill: &str) -> Result<()> {
         let root = self.skills_dir();
+        let marketplace = safe_component(marketplace)?;
+        let skill = safe_component(skill)?;
         let mut matches: Vec<PathBuf> = Vec::new();
         if let Ok(plugins) = std::fs::read_dir(root.join(marketplace)) {
             for plugin in plugins.flatten() {
@@ -1171,7 +1197,8 @@ impl MarketplaceService {
                 .await?
         } else {
             tokio::process::Command::new("git")
-                .args(["clone", "--depth", "1", url])
+                .args(["clone", "--depth", "1", "--"])
+                .arg(url)
                 .arg(dir)
                 .output()
                 .await?
@@ -1212,8 +1239,14 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)?.flatten() {
         let path = entry.path();
+        let file_type = entry.file_type()?;
+        // Never follow symlinks: a marketplace checkout could otherwise point at
+        // files outside it (e.g. `~/.ssh`) and copy their contents into a skill.
+        if file_type.is_symlink() {
+            continue;
+        }
         let target = to.join(entry.file_name());
-        if path.is_dir() {
+        if file_type.is_dir() {
             copy_dir(&path, &target)?;
         } else {
             std::fs::copy(&path, &target)?;

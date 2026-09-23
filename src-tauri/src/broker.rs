@@ -38,6 +38,21 @@ impl PermissionPrompt {
 struct PendingPermission {
     signature: String,
     sender: watch::Sender<Option<PermissionDecision>>,
+    /// Copy of what the backend actually asked, so `resolve_permission` can
+    /// persist only the values this prompt proposed rather than trusting the
+    /// renderer.
+    kind: String,
+    folder: Option<String>,
+    suggested_rule: Option<String>,
+}
+
+/// The backend-owned fields of a pending prompt, used to validate a renderer's
+/// decision before persisting an allow rule or folder.
+#[derive(Debug, Clone)]
+pub struct PendingPrompt {
+    pub kind: String,
+    pub folder: Option<String>,
+    pub suggested_rule: Option<String>,
 }
 
 fn deny() -> PermissionDecision {
@@ -73,6 +88,22 @@ impl PermissionBroker {
         }
     }
 
+    /// Returns the backend-owned details of a still-pending prompt. `None` when
+    /// the id is unknown or already resolved, which callers use to reject
+    /// decisions that do not correspond to a real prompt.
+    pub fn pending_prompt(&self, request_id: &str) -> Option<PendingPrompt> {
+        self.inner
+            .lock()
+            .unwrap()
+            .pending
+            .get(request_id)
+            .map(|entry| PendingPrompt {
+                kind: entry.kind.clone(),
+                folder: entry.folder.clone(),
+                suggested_rule: entry.suggested_rule.clone(),
+            })
+    }
+
     pub fn deny_all(&self) {
         let inner = self.inner.lock().unwrap();
         for entry in inner.pending.values() {
@@ -105,9 +136,16 @@ impl PermissionBroker {
                     inner
                         .by_signature
                         .insert(signature.clone(), request_id.clone());
-                    inner
-                        .pending
-                        .insert(request_id.clone(), PendingPermission { signature, sender });
+                    inner.pending.insert(
+                        request_id.clone(),
+                        PendingPermission {
+                            signature,
+                            sender,
+                            kind: prompt.kind.clone(),
+                            folder: prompt.folder.clone(),
+                            suggested_rule: prompt.suggested_rule.clone(),
+                        },
+                    );
                     (true, request_id, receiver)
                 }
             }

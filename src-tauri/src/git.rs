@@ -782,6 +782,12 @@ pub fn project_commit_detail(project_root: &Path, hash: &str) -> Result<GitCommi
 }
 
 pub fn project_commit_file_diff(project_root: &Path, hash: &str, path: &str) -> Result<FileDiff> {
+    if hash.is_empty() || hash.starts_with('-') || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(AppError::msg("invalid commit hash"));
+    }
+    if crate::permissions::resolve_inside_project(project_root, path).is_none() {
+        return Err(AppError::msg("path is outside the project"));
+    }
     let old_content =
         git_stdout_raw(project_root, &["show", &format!("{hash}^:{path}")]).unwrap_or_default();
     let new_content =
@@ -1067,6 +1073,9 @@ pub fn project_git_status(project_root: &Path) -> Result<GitStatus> {
 }
 
 pub fn project_file_diff(project_root: &Path, path: &str, staged: bool) -> Result<FileDiff> {
+    let Some(absolute) = crate::permissions::resolve_inside_project(project_root, path) else {
+        return Err(AppError::msg("path is outside the project"));
+    };
     let old_content = if staged {
         git_stdout_raw(project_root, &["show", &format!("HEAD:{path}")]).unwrap_or_default()
     } else {
@@ -1075,7 +1084,7 @@ pub fn project_file_diff(project_root: &Path, path: &str, staged: bool) -> Resul
     let new_content = if staged {
         git_stdout_raw(project_root, &["show", &format!(":{path}")]).unwrap_or_default()
     } else {
-        std::fs::read_to_string(project_root.join(path)).unwrap_or_default()
+        std::fs::read_to_string(&absolute).unwrap_or_default()
     };
     let (additions, deletions) = count_line_changes(&old_content, &new_content);
     let status = if old_content.is_empty() && !new_content.is_empty() {
@@ -1124,6 +1133,9 @@ pub fn git_unstage(project_root: &Path, path: Option<&str>) -> Result<()> {
 }
 
 pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
+    let Some(absolute) = crate::permissions::resolve_inside_project(project_root, path) else {
+        return Err(AppError::msg("path is outside the project"));
+    };
     let in_head = git(project_root)
         .args(["cat-file", "-e", &format!("HEAD:{path}")])
         .output()
@@ -1143,7 +1155,6 @@ pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
     if tracked {
         let _ = git_stdout(project_root, &["rm", "--cached", "-r", "--quiet", "--", path]);
     }
-    let absolute = project_root.join(path);
     if absolute.is_file() {
         std::fs::remove_file(&absolute)?;
     } else if absolute.is_dir() {
