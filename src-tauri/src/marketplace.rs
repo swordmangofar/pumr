@@ -251,7 +251,14 @@ fn map_server(entry: RegistryEntry) -> MarketplaceServer {
                 .collect(),
         )
     } else {
-        ("package".to_string(), None, None, None, Vec::new(), Vec::new())
+        (
+            "package".to_string(),
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
     };
 
     // Namespaced names encode ownership (`io.github.owner/server`), which is what
@@ -295,14 +302,21 @@ fn package_command(package: &RegistryPackage) -> (Option<String>, Vec<String>) {
         "uvx" => (Some("uvx".to_string()), vec![identifier]),
         "docker" => (
             Some("docker".to_string()),
-            vec!["run".to_string(), "-i".to_string(), "--rm".to_string(), identifier],
+            vec![
+                "run".to_string(),
+                "-i".to_string(),
+                "--rm".to_string(),
+                identifier,
+            ],
         ),
         // Unknown runtime: surface the command the author asked for, verbatim.
         _ => (
-            Some(package
-                .runtime_hint
-                .clone()
-                .unwrap_or_else(|| "npx".to_string())),
+            Some(
+                package
+                    .runtime_hint
+                    .clone()
+                    .unwrap_or_else(|| "npx".to_string()),
+            ),
             vec![identifier],
         ),
     }
@@ -528,7 +542,12 @@ fn map_directory(entry: DirectoryEntry) -> DirectoryServer {
         .iter()
         .find(|method| method.recommended)
         .or_else(|| entry.installation_methods.first());
-    let cli = recommended.and_then(|method| method.claude_code.clone().or_else(|| method.command.clone()));
+    let cli = recommended.and_then(|method| {
+        method
+            .claude_code
+            .clone()
+            .or_else(|| method.command.clone())
+    });
     let requirements = recommended
         .map(|method| method.requirements.clone())
         .unwrap_or_default();
@@ -564,7 +583,10 @@ fn map_directory(entry: DirectoryEntry) -> DirectoryServer {
     };
 
     let name = entry.name;
-    let display_name = entry.display_name.filter(|value| !value.is_empty()).unwrap_or_else(|| name.clone());
+    let display_name = entry
+        .display_name
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| name.clone());
 
     DirectoryServer {
         display_name,
@@ -574,7 +596,9 @@ fn map_directory(entry: DirectoryEntry) -> DirectoryServer {
         category: entry.category.unwrap_or_default(),
         server_type: entry.server_type,
         logo_url: entry.logo_url,
-        source_registry: entry.source_registry.unwrap_or_else(|| "community".to_string()),
+        source_registry: entry
+            .source_registry
+            .unwrap_or_else(|| "community".to_string()),
         github_url: entry.github_url,
         docker_url: entry.docker_url,
         npm_url: entry.npm_url,
@@ -903,10 +927,8 @@ impl MarketplaceService {
         offset: u32,
     ) -> Result<DirectoryPage> {
         let limit = limit.clamp(1, 100);
-        let mut params: Vec<(&str, String)> = vec![
-            ("limit", limit.to_string()),
-            ("offset", offset.to_string()),
-        ];
+        let mut params: Vec<(&str, String)> =
+            vec![("limit", limit.to_string()), ("offset", offset.to_string())];
         for (key, value) in [
             ("search", query),
             ("category", category),
@@ -931,7 +953,11 @@ impl MarketplaceService {
         Ok(DirectoryPage {
             servers: response.servers.into_iter().map(map_directory).collect(),
             total: response.total,
-            limit: if response.limit == 0 { limit } else { response.limit },
+            limit: if response.limit == 0 {
+                limit
+            } else {
+                response.limit
+            },
             offset: response.offset,
             has_more: response.has_more,
         })
@@ -1046,7 +1072,9 @@ impl MarketplaceService {
             .plugins
             .iter()
             .find(|candidate| candidate.name == plugin)
-            .ok_or_else(|| AppError::msg(format!("no plugin named \"{plugin}\" in this marketplace")))?;
+            .ok_or_else(|| {
+                AppError::msg(format!("no plugin named \"{plugin}\" in this marketplace"))
+            })?;
 
         let manifest_path = dir.join(".claude-plugin/marketplace.json");
         let raw = std::fs::read_to_string(&manifest_path)?;
@@ -1060,8 +1088,9 @@ impl MarketplaceService {
             .into_iter()
             .find(|candidate| candidate.name == plugin)
             .and_then(|candidate| candidate.source);
-        let plugin_dir = plugin_source_path(&dir, &plugin_root, &source)
-            .ok_or_else(|| AppError::msg("plugin source is not a local directory in this marketplace"))?;
+        let plugin_dir = plugin_source_path(&dir, &plugin_root, &source).ok_or_else(|| {
+            AppError::msg("plugin source is not a local directory in this marketplace")
+        })?;
 
         let target_root = self
             .skills_dir()
@@ -1270,7 +1299,10 @@ mod tests {
                 ("search", "github".to_string())
             ]
         );
-        assert_eq!(registry_params(50, Some("   ")), vec![("limit", "50".to_string())]);
+        assert_eq!(
+            registry_params(50, Some("   ")),
+            vec![("limit", "50".to_string())]
+        );
     }
 
     #[test]
@@ -1375,7 +1407,11 @@ mod tests {
             Some("abc123"),
             &pins
         ));
-        assert!(!verify_pin("https://github.com/acme/marketplace", None, &pins));
+        assert!(!verify_pin(
+            "https://github.com/acme/marketplace",
+            None,
+            &pins
+        ));
     }
 
     #[test]
@@ -1404,7 +1440,10 @@ mod tests {
         assert_eq!(server.display_name, "Browser Use");
         assert_eq!(server.category, "browser-automation");
         assert_eq!(server.github_stars, 111_682);
-        assert_eq!(server.install.url.as_deref(), Some("https://example.com/mcp"));
+        assert_eq!(
+            server.install.url.as_deref(),
+            Some("https://example.com/mcp")
+        );
         assert!(server.install.command.is_none());
         assert!(server.install.cli.unwrap().starts_with("claude mcp add"));
     }
@@ -1504,14 +1543,19 @@ mod tests {
     #[test]
     fn lists_installed_skill_dirs_for_discovery() {
         let dir = tempfile::tempdir().unwrap();
-        let service = MarketplaceService::new(reqwest::Client::new(), dir.path().join("marketplaces"));
+        let service =
+            MarketplaceService::new(reqwest::Client::new(), dir.path().join("marketplaces"));
         let skill = service
             .skills_dir()
             .join("acme-tools")
             .join("review")
             .join("quality-review");
         fs::create_dir_all(&skill).unwrap();
-        fs::write(skill.join("SKILL.md"), "---\ndescription: Review code\n---\n").unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\ndescription: Review code\n---\n",
+        )
+        .unwrap();
 
         let dirs = service.installed_skill_dirs();
         assert_eq!(dirs, vec![skill]);

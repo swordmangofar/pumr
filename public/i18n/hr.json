@@ -932,7 +932,7 @@
       "credentials": "Vjerodajnice, ključevi i tajne"
     },
     "commandRules": "Pravila dopuštenih naredbi",
-    "commandRulesHint": "Glob uzorci koji nikad ne pokreću zahtjev za dopuštenje. Opasne naredbe uvijek pitaju.",
+    "commandRulesHint": "Točna pravila doslovno uspoređuju tekst naredbe; glob pravila koriste zamjenske znakove. Oba mogu postojati s istim tekstom. Sigurnosne provjere i dalje vrijede.",
     "commandAllowlist": "Dopuštene",
     "commandDenylist": "Blokirane",
     "allowCommand": "Dopusti naredbu",

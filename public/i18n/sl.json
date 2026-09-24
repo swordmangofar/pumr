@@ -932,7 +932,7 @@
       "credentials": "Poverilnice, ključi in skrivnosti"
     },
     "commandRules": "Dovoljena pravila ukazov",
-    "commandRulesHint": "Vzorci glob, ki nikoli ne sprožijo poziva za dovoljenje. Nevarni ukazi vedno vprašajo.",
+    "commandRulesHint": "Natančna pravila primerjajo besedilo ukaza dobesedno; pravila glob uporabljajo nadomestne znake. Obe vrsti lahko obstajata z istim besedilom. Varnostna preverjanja še vedno veljajo.",
     "commandAllowlist": "Dovoljeni",
     "commandDenylist": "Blokirani",
     "allowCommand": "Dovoli ukaz",

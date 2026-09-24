@@ -932,7 +932,7 @@
       "credentials": "Mandaat, võtmed ja saladused"
     },
     "commandRules": "Lubatud käskude reeglid",
-    "commandRulesHint": "Glob-mustrid, mis ei käivita kunagi õiguste küsimist. Ohtlikud käsud küsivad alati.",
+    "commandRulesHint": "Täpsed reeglid võrdlevad käsu teksti sõna-sõnalt; glob-reeglid kasutavad metamärke. Mõlemad võivad sama tekstiga koos eksisteerida. Ohutuskontrollid kehtivad endiselt.",
     "commandAllowlist": "Lubatud",
     "commandDenylist": "Blokeeritud",
     "allowCommand": "Luba käsk",

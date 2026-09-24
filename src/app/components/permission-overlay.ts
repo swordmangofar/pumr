@@ -13,12 +13,14 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import {
   CommandRiskLevel,
+  CommandRule,
   CommandScopeOption,
   PermissionDefaultAction,
   PermissionRequestEvent,
 } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { CopyButton } from './copy-button';
 
 type PermissionDecision = 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always';
 
@@ -45,7 +47,7 @@ interface SegmentScope {
 @Component({
   selector: 'app-permission-overlay',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [TranslocoPipe, CopyButton],
   host: {
     '(document:keydown)': 'onKeydown($event)',
   },
@@ -93,9 +95,16 @@ interface SegmentScope {
 
           @if (request().command; as command) {
             @if (commandParts(); as parts) {
-              <pre
-                class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
-              >@for (part of parts; track $index) {<span [class]="partClass(part.status)">{{ part.text }}</span>}</pre>
+              <div class="relative">
+                <pre
+                  class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
+                >@for (part of parts; track $index) {<span [class]="partClass(part.status)">{{ part.text }}</span>}</pre>
+                <app-copy-button
+                  class="absolute top-2 right-2"
+                  [text]="command"
+                  buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+                />
+              </div>
               <div class="flex flex-wrap items-center gap-3 text-xs text-mist/40">
                 <span class="inline-flex items-center gap-1.5">
                   <span class="h-2 w-2 rounded-full bg-mist/40"></span>
@@ -107,9 +116,16 @@ interface SegmentScope {
                 </span>
               </div>
             } @else {
-              <pre
-                class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
-                >{{ command }}</pre>
+              <div class="relative">
+                <pre
+                  class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
+                  >{{ command }}</pre>
+                <app-copy-button
+                  class="absolute top-2 right-2"
+                  [text]="command"
+                  buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+                />
+              </div>
             }
           }
 
@@ -155,7 +171,7 @@ interface SegmentScope {
                       group.text
                     }}</code>
                     <div class="space-y-1.5">
-                      @for (option of group.options; track option.rule) {
+                      @for (option of group.options; track ruleKey(option.rule)) {
                         <button
                           type="button"
                           class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
@@ -165,7 +181,7 @@ interface SegmentScope {
                           <span
                             class="h-2.5 w-2.5 shrink-0 rounded-full"
                             [class]="
-                              selectedSegmentRule(group.index) === option.rule
+                              ruleKey(selectedSegmentRule(group.index)) === ruleKey(option.rule)
                                 ? 'bg-accent'
                                 : 'bg-white/20'
                             "
@@ -174,7 +190,7 @@ interface SegmentScope {
                             {{ ('settings.scope.' + option.kind) | transloco }}
                           </span>
                           <code class="ml-auto truncate font-mono text-xs text-mist">{{
-                            option.rule
+                            option.rule.value
                           }}</code>
                         </button>
                       }
@@ -192,7 +208,7 @@ interface SegmentScope {
                 {{ 'permission.scope.title' | transloco }}
               </label>
               <div class="space-y-1.5">
-                @for (option of scopeOptions(); track option.rule) {
+                @for (option of scopeOptions(); track ruleKey(option.rule)) {
                   <button
                     type="button"
                     class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
@@ -201,13 +217,17 @@ interface SegmentScope {
                   >
                     <span
                       class="h-2.5 w-2.5 shrink-0 rounded-full"
-                      [class]="selectedScopeRule() === option.rule ? 'bg-accent' : 'bg-white/20'"
+                      [class]="
+                        ruleKey(selectedScopeRule()) === ruleKey(option.rule)
+                          ? 'bg-accent'
+                          : 'bg-white/20'
+                      "
                     ></span>
                     <span class="shrink-0 text-xs text-mist/50">
                       {{ ('settings.scope.' + option.kind) | transloco }}
                     </span>
                     <code class="ml-auto truncate font-mono text-xs text-mist">{{
-                      option.rule
+                      option.rule.value
                     }}</code>
                   </button>
                 }
@@ -241,7 +261,7 @@ export class PermissionOverlay {
   protected readonly workspace = inject(WorkspaceService);
   private readonly settings = inject(SettingsService);
   protected readonly rule = signal('');
-  protected readonly selectedScopeRule = signal('');
+  protected readonly selectedScopeRule = signal<CommandRule | null>(null);
   protected readonly activeIndex = signal(0);
 
   private readonly actionButtons = viewChildren<ElementRef<HTMLButtonElement>>('actionButton');
@@ -254,7 +274,7 @@ export class PermissionOverlay {
 
   protected readonly scopeOptions = computed(() => this.request().scopeOptions ?? []);
 
-  protected readonly selectedSegmentRules = signal<Record<number, string>>({});
+  protected readonly selectedSegmentRules = signal<Record<number, CommandRule>>({});
 
   /// One entry per part of a compound command that still needs approval, each
   /// carrying its own allow/deny scopes so the user can grant a rule per part.
@@ -386,10 +406,10 @@ export class PermissionOverlay {
   constructor() {
     effect(() => {
       this.rule.set(this.request().suggestedRule ?? '');
-      const selection: Record<number, string> = {};
+      const selection: Record<number, CommandRule> = {};
       for (const group of this.segmentScopes()) {
         const preferred =
-          group.options.find((option) => option.kind === 'exact') ??
+          group.options.find((option) => option.rule.kind === 'exact') ??
           group.options[group.options.length - 1];
         if (preferred) {
           selection[group.index] = preferred.rule;
@@ -398,8 +418,8 @@ export class PermissionOverlay {
       this.selectedSegmentRules.set(selection);
       const options = this.scopeOptions();
       const preferred =
-        options.find((option) => option.kind === 'exact') ?? options[options.length - 1];
-      this.selectedScopeRule.set(preferred?.rule ?? '');
+        options.find((option) => option.rule.kind === 'exact') ?? options[options.length - 1];
+      this.selectedScopeRule.set(preferred?.rule ?? null);
     });
 
     afterRenderEffect(() => {
@@ -442,34 +462,38 @@ export class PermissionOverlay {
     }
   }
 
-  protected scopeOptionClass(rule: string): string {
-    return this.selectedScopeRule() === rule
+  protected ruleKey(rule: CommandRule | null): string {
+    return JSON.stringify(rule ? [rule.kind, rule.value] : null);
+  }
+
+  protected scopeOptionClass(rule: CommandRule): string {
+    return this.ruleKey(this.selectedScopeRule()) === this.ruleKey(rule)
       ? 'border-accent/60 bg-accent/10'
       : 'border-white/10 hover:bg-white/5';
   }
 
-  protected selectedSegmentRule(index: number): string {
-    return this.selectedSegmentRules()[index] ?? '';
+  protected selectedSegmentRule(index: number): CommandRule | null {
+    return this.selectedSegmentRules()[index] ?? null;
   }
 
-  protected selectSegmentRule(index: number, rule: string): void {
+  protected selectSegmentRule(index: number, rule: CommandRule): void {
     this.selectedSegmentRules.update((selection) => ({ ...selection, [index]: rule }));
   }
 
-  protected segmentScopeClass(index: number, rule: string): string {
-    return this.selectedSegmentRule(index) === rule
+  protected segmentScopeClass(index: number, rule: CommandRule): string {
+    return this.ruleKey(this.selectedSegmentRule(index)) === this.ruleKey(rule)
       ? 'border-accent/60 bg-accent/10'
       : 'border-white/10 hover:bg-white/5';
   }
 
   /// The rules the allow/deny buttons should persist: one per asking part of a
   /// compound command, otherwise the single selected scope.
-  private chosenRules(): string[] {
+  private chosenRules(): CommandRule[] {
     const groups = this.segmentScopes();
     if (groups.length > 0) {
       return groups
         .map((group) => this.selectedSegmentRule(group.index))
-        .filter((rule) => rule.length > 0);
+        .filter((rule): rule is CommandRule => rule !== null);
     }
     const single = this.selectedScopeRule();
     return single ? [single] : [];

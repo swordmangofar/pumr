@@ -199,14 +199,22 @@ impl ShadowRepo {
 
     fn diff_numstat_unlocked(&self, base: &str) -> Result<Vec<FileChange>> {
         self.stage_all_unlocked()?;
-        Ok(parse_numstat(&self.run(["diff", "--numstat", base, "--"])?))
+        Ok(parse_numstat(&self.run([
+            "diff",
+            "--numstat",
+            base,
+            "--",
+        ])?))
     }
 
     fn changed_since_unlocked(&self, base: &str) -> Result<Vec<FileChange>> {
         self.stage_all_unlocked()?;
-        Ok(parse_name_status(
-            &self.run(["diff", "--name-status", base, "--"])?,
-        ))
+        Ok(parse_name_status(&self.run([
+            "diff",
+            "--name-status",
+            base,
+            "--",
+        ])?))
     }
 
     pub fn changes_since(&self, base: &str) -> Result<Vec<FileChange>> {
@@ -229,15 +237,23 @@ impl ShadowRepo {
     }
 
     fn changed_between_unlocked(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
-        Ok(parse_name_status(
-            &self.run(["diff", "--name-status", base, after, "--"])?,
-        ))
+        Ok(parse_name_status(&self.run([
+            "diff",
+            "--name-status",
+            base,
+            after,
+            "--",
+        ])?))
     }
 
     fn numstat_between_unlocked(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
-        Ok(parse_numstat(
-            &self.run(["diff", "--numstat", base, after, "--"])?,
-        ))
+        Ok(parse_numstat(&self.run([
+            "diff",
+            "--numstat",
+            base,
+            after,
+            "--",
+        ])?))
     }
 
     pub fn file_at(&self, commit: &str, relative_path: &str) -> Result<String> {
@@ -342,18 +358,27 @@ pub fn ignored_paths(project_root: &Path, paths: &[PathBuf]) -> HashSet<PathBuf>
         Ok(child) => child,
         Err(_) => return HashSet::new(),
     };
-    if let Some(mut stdin) = child.stdin.take() {
+    // Feed stdin from a separate thread. `git check-ignore` echoes every ignored
+    // path to stdout, so writing the payload inline before draining stdout can
+    // deadlock once the OS pipe buffer fills (git blocks on stdout and stops
+    // reading stdin, while we block writing it).
+    let writer = child.stdin.take().map(|mut stdin| {
         let mut payload: Vec<u8> = Vec::new();
         for path in paths {
             payload.extend_from_slice(path.to_string_lossy().as_bytes());
             payload.push(0);
         }
-        let _ = stdin.write_all(&payload);
-    }
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&payload);
+        })
+    });
     let output = match child.wait_with_output() {
         Ok(output) => output,
         Err(_) => return HashSet::new(),
     };
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
     String::from_utf8_lossy(&output.stdout)
         .split('\0')
         .filter(|entry| !entry.is_empty())
@@ -633,7 +658,8 @@ fn search_commits(project_root: &Path, query: &str) -> Vec<GitCommit> {
 
     if query.len() >= 4 && query.chars().all(|character| character.is_ascii_hexdigit()) {
         let spec = format!("{query}^{{commit}}");
-        if let Some(hash) = git_stdout_opt(project_root, &["rev-parse", "--quiet", "--verify", &spec])
+        if let Some(hash) =
+            git_stdout_opt(project_root, &["rev-parse", "--quiet", "--verify", &spec])
         {
             let hash = hash.trim().to_string();
             if !hash.is_empty() {
@@ -1153,7 +1179,10 @@ pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
         .map(|output| output.status.success())
         .unwrap_or(false);
     if tracked {
-        let _ = git_stdout(project_root, &["rm", "--cached", "-r", "--quiet", "--", path]);
+        let _ = git_stdout(
+            project_root,
+            &["rm", "--cached", "-r", "--quiet", "--", path],
+        );
     }
     if absolute.is_file() {
         std::fs::remove_file(&absolute)?;
@@ -1191,7 +1220,10 @@ pub fn project_blame(project_root: &Path, path: &str) -> Result<Vec<GitBlameLine
         if candidate.len() == 40 && candidate.chars().all(|value| value.is_ascii_hexdigit()) {
             hash = candidate.to_string();
             let _original_line = parts.next();
-            final_line = parts.next().and_then(|value| value.parse().ok()).unwrap_or(0);
+            final_line = parts
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
             author.clear();
             timestamp = 0;
         } else if let Some(value) = line.strip_prefix("author ") {
@@ -1256,7 +1288,11 @@ pub fn reveal_path(project_root: &Path, path: &str) -> Result<()> {
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            let target = if absolute.is_dir() { absolute.clone() } else { parent };
+            let target = if absolute.is_dir() {
+                absolute.clone()
+            } else {
+                parent
+            };
             Command::new("xdg-open").arg(target).status()
         }
     };
@@ -1382,7 +1418,10 @@ pub fn git_tag_delete(project_root: &Path, name: &str) -> Result<String> {
 }
 
 pub fn git_tag_push(project_root: &Path, remote: &str, name: &str) -> Result<String> {
-    git_combined(project_root, &["push", remote, &format!("refs/tags/{name}")])
+    git_combined(
+        project_root,
+        &["push", remote, &format!("refs/tags/{name}")],
+    )
 }
 
 pub fn git_submodule_update(project_root: &Path, path: Option<&str>) -> Result<String> {
@@ -1587,16 +1626,14 @@ fn parse_remote(url: &str) -> Option<(String, String)> {
     Some((host.to_string(), path.to_string()))
 }
 
-pub fn git_pull_request_url(
-    project_root: &Path,
-    remote: &str,
-    branch: &str,
-) -> Result<String> {
+pub fn git_pull_request_url(project_root: &Path, remote: &str, branch: &str) -> Result<String> {
     let raw = git_stdout(project_root, &["remote", "get-url", remote])?;
-    let (host, path) = parse_remote(&raw).ok_or_else(|| {
-        AppError::msg(format!("unsupported remote url for '{remote}': {raw}"))
-    })?;
-    let path = path.trim_end_matches(".git").trim_end_matches('/').to_string();
+    let (host, path) = parse_remote(&raw)
+        .ok_or_else(|| AppError::msg(format!("unsupported remote url for '{remote}': {raw}")))?;
+    let path = path
+        .trim_end_matches(".git")
+        .trim_end_matches('/')
+        .to_string();
     let base = default_branch(project_root, remote);
     let host_lower = host.to_lowercase();
     if host_lower.contains("github") {
@@ -1924,6 +1961,21 @@ mod tests {
     }
 
     #[test]
+    fn ignored_paths_handles_large_candidate_sets_without_deadlock() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        std::fs::write(project.join(".gitignore"), "ignored/\n").unwrap();
+
+        let paths: Vec<PathBuf> = (0..5000)
+            .map(|index| project.join(format!("ignored/file-{index}.txt")))
+            .collect();
+        let ignored = ignored_paths(&project, &paths);
+        assert_eq!(ignored.len(), paths.len());
+        assert!(paths.iter().all(|path| ignored.contains(path)));
+    }
+
+    #[test]
     fn file_history_filters_commits_by_path() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
@@ -1946,7 +1998,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(project_commits(&project, None, None, 0, 10).unwrap().len(), 2);
+        assert_eq!(
+            project_commits(&project, None, None, 0, 10).unwrap().len(),
+            2
+        );
         let tracked = project_commits(&project, None, Some("tracked.txt"), 0, 10).unwrap();
         assert_eq!(tracked.len(), 1);
         assert_eq!(tracked[0].subject, "init");
@@ -2148,7 +2203,12 @@ mod tests {
         let project = temp.path().join("project");
         git_stdout(
             temp.path(),
-            &["clone", "-q", origin.to_str().unwrap(), project.to_str().unwrap()],
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                project.to_str().unwrap(),
+            ],
         )
         .unwrap();
         git_stdout(
@@ -2181,12 +2241,7 @@ mod tests {
         init_repo(&project);
         git_stdout(
             &project,
-            &[
-                "remote",
-                "add",
-                "origin",
-                "git@github.com:acme/pumr.git",
-            ],
+            &["remote", "add", "origin", "git@github.com:acme/pumr.git"],
         )
         .unwrap();
 

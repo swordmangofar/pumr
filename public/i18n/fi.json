@@ -932,7 +932,7 @@
       "credentials": "Tunnistetiedot, avaimet ja salaisuudet"
     },
     "commandRules": "Sallitut komentosäännöt",
-    "commandRulesHint": "Glob-kuviot, jotka eivät koskaan laukaise lupakyselyä. Vaaralliset komennot kysyvät aina.",
+    "commandRulesHint": "Tarkat säännöt vertaavat komentotekstiä kirjaimellisesti; glob-säännöt käyttävät jokerimerkkejä. Molemmat voivat olla käytössä samalla tekstillä. Turvallisuustarkistukset ovat edelleen voimassa.",
     "commandAllowlist": "Sallitut",
     "commandDenylist": "Estetyt",
     "allowCommand": "Salli komento",

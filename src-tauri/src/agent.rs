@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::git::ShadowRepo;
 use crate::mcp::McpManager;
 use crate::models::{
-    Attachment, EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord,
+    Attachment, CommandRule, EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord,
 };
 use crate::permissions::{FileIgnoreConfig, LivePermissions};
 use crate::processes::ProcessRegistry;
@@ -33,7 +33,7 @@ pub struct TurnRequest {
     pub depth: usize,
     pub project_root: PathBuf,
     pub extra_folders: Vec<PathBuf>,
-    pub command_rules: Vec<String>,
+    pub command_rules: Vec<CommandRule>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub context_message_limit: usize,
     /// The selected model's context window in tokens (0 when unknown). Used to
@@ -685,7 +685,12 @@ fn context_token_budget(context_length: i64, overhead: usize) -> Option<usize> {
     }
     let context_length = context_length as usize;
     let reserve = (context_length / 4).clamp(2_048, 16_384);
-    Some(context_length.saturating_sub(reserve).saturating_sub(overhead).max(1_024))
+    Some(
+        context_length
+            .saturating_sub(reserve)
+            .saturating_sub(overhead)
+            .max(1_024),
+    )
 }
 
 fn truncate_text(text: &str, budget: usize) -> String {
@@ -1137,7 +1142,10 @@ mod tests {
     fn merge_accumulates_additions_and_keeps_added_status() {
         let merged = merge_file_changes(
             vec![change("src/new.ts", 3, 0, "A")],
-            vec![change("src/new.ts", 2, 1, "M"), change("src/other.ts", 5, 0, "M")],
+            vec![
+                change("src/new.ts", 2, 1, "M"),
+                change("src/other.ts", 5, 0, "M"),
+            ],
         );
         let new_file = merged.iter().find(|c| c.path == "src/new.ts").unwrap();
         assert_eq!(new_file.status, "A");
@@ -1256,7 +1264,10 @@ mod tests {
             1
         );
         assert_eq!(
-            sanitized.iter().filter(|message| message.role == "tool").count(),
+            sanitized
+                .iter()
+                .filter(|message| message.role == "tool")
+                .count(),
             1
         );
     }

@@ -571,7 +571,10 @@ impl Db {
     /// that bounds its last finalized turn. Stored explicitly so that switching
     /// between sessions never re-derives one session's changes from the shared
     /// working tree (which may contain edits from other sessions).
-    pub fn session_changes_record(&self, session_id: &str) -> Result<Option<(Vec<FileChange>, Option<String>)>> {
+    pub fn session_changes_record(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<(Vec<FileChange>, Option<String>)>> {
         self.with_conn(|conn| {
             let row = conn
                 .query_row(

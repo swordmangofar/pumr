@@ -1,11 +1,13 @@
-use crate::broker::{PermissionBroker, PermissionPrompt, QuestionBroker};
+use crate::broker::{PermissionBroker, PermissionOperation, PermissionPrompt, QuestionBroker};
 use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, ignored_paths, GitProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
     EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
 };
-use crate::permissions::{self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision};
+use crate::permissions::{
+    self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
+};
 use crate::processes::{ProcessRegistry, RunningProcess};
 use globset::Glob;
 use ignore::WalkBuilder;
@@ -325,6 +327,8 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
         .ask(
             PermissionPrompt {
                 kind: "command".to_string(),
+                operation: PermissionOperation::McpTool,
+                cwd: Some(permission_path(&runtime.project_root)),
                 title: format!("Run MCP tool {name}?"),
                 detail: "The assistant wants to call an MCP server tool. Review the arguments before allowing."
                     .to_string(),
@@ -480,7 +484,18 @@ fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str
         .ignore_reason(path, &relative, gitignored)
 }
 
-async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &str) -> bool {
+/// Canonicalize existing resources, but retain the full absolute path for new files.
+fn permission_path(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+async fn ensure_path_access(
+    runtime: &mut ToolRuntime,
+    absolute: &Path,
+    label: &str,
+    operation: PermissionOperation,
+) -> bool {
     let extra = runtime.permissions.extra_folders();
     if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
         && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
@@ -500,13 +515,15 @@ async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &
         .ask(
             PermissionPrompt {
                 kind: "folder".to_string(),
+                operation,
+                cwd: Some(permission_path(&runtime.project_root)),
                 title: format!("Access {label} outside the project?"),
                 detail: format!(
                     "The assistant wants to access {}. Allow once, or add the folder permanently so it never asks again.",
                     absolute.display()
                 ),
                 command: None,
-                path: Some(absolute.display().to_string()),
+                path: Some(permission_path(absolute).display().to_string()),
                 folder: Some(folder.display().to_string()),
                 url: None,
                 suggested_rule: None,
@@ -523,7 +540,7 @@ async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &
 }
 
 async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool {
-    if !ensure_path_access(runtime, absolute, "file").await {
+    if !ensure_path_access(runtime, absolute, "file", PermissionOperation::Write).await {
         return false;
     }
     let relative = relative_display(runtime, absolute);
@@ -536,10 +553,12 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
         .ask(
             PermissionPrompt {
                 kind: "file".to_string(),
+                operation: PermissionOperation::Write,
+                cwd: Some(permission_path(&runtime.project_root)),
                 title: format!("Modify {}?", relative),
                 detail: format!("The assistant wants to modify {relative}, but {reason}."),
                 command: None,
-                path: Some(relative),
+                path: Some(permission_path(absolute).display().to_string()),
                 folder: None,
                 url: None,
                 suggested_rule: None,
@@ -561,7 +580,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_path_access(runtime, &absolute, "file").await {
+    if !ensure_path_access(runtime, &absolute, "file", PermissionOperation::Read).await {
         return ToolOutcome::denied();
     }
     if let Some(reason) = file_ignore_reason(runtime, &absolute) {
@@ -577,10 +596,12 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             .ask(
                 PermissionPrompt {
                     kind: "file".to_string(),
+                    operation: PermissionOperation::Read,
+                    cwd: Some(permission_path(&runtime.project_root)),
                     title: format!("Read {relative}?"),
                     detail: format!("{relative} looks like a sensitive file: {sensitive}."),
                     command: None,
-                    path: Some(relative),
+                    path: Some(permission_path(&absolute).display().to_string()),
                     folder: None,
                     url: None,
                     suggested_rule: None,
@@ -763,10 +784,7 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         if config.is_exempt(&relative) {
             return true;
         }
-        let is_dir = entry
-            .file_type()
-            .map(|kind| kind.is_dir())
-            .unwrap_or(false);
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir
             && !config.scan_generated_files
             && !config.has_exemptions()
@@ -790,7 +808,7 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory").await {
+    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
         return ToolOutcome::denied();
     }
     let matcher = match Glob::new(&pattern) {
@@ -862,7 +880,7 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory").await {
+    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
         return ToolOutcome::denied();
     }
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -938,7 +956,7 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory").await {
+    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
         return ToolOutcome::denied();
     }
     let mut entries = match tokio::fs::read_dir(&base).await {
@@ -1014,6 +1032,8 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                 .ask(
                     PermissionPrompt {
                         kind: kind.to_string(),
+                        operation: PermissionOperation::Fetch,
+                        cwd: Some(permission_path(&runtime.project_root)),
                         title: format!("Visit {host}?"),
                         detail: format!(
                             "{reason} The assistant wants to access this website. Allow once, always allow it, or deny it."
@@ -1521,16 +1541,21 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &cwd, "directory").await {
+    if !ensure_path_access(runtime, &cwd, "directory", PermissionOperation::Access).await {
         return ToolOutcome::denied();
     }
 
     let mut allowed_rules = runtime.permissions.command_rules();
-    allowed_rules.extend(runtime.permissions.session_command_rules(&runtime.session_id));
+    allowed_rules.extend(
+        runtime
+            .permissions
+            .session_command_rules(&runtime.session_id),
+    );
     let denied_rules = runtime.permissions.denied_command_rules();
     let decision = permissions::evaluate_command(
         &command,
         &runtime.project_root,
+        &cwd,
         &runtime.permissions.extra_folders(),
         &allowed_rules,
         &denied_rules,
@@ -1551,6 +1576,8 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             .ask(
                 PermissionPrompt {
                     kind: "command".to_string(),
+                    operation: PermissionOperation::Execute,
+                    cwd: Some(permission_path(&cwd)),
                     title: "Run command?".to_string(),
                     detail: reason,
                     command: Some(command.clone()),
@@ -1578,7 +1605,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         process.arg("/C").arg(&command);
         process
     } else {
-        let mut process = Command::new("sh");
+        let mut process = Command::new("/bin/sh");
         process.arg("-c").arg(&command);
         process
     };
@@ -1759,6 +1786,38 @@ fn truncate(text: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_paths_are_absolute_and_canonical_when_existing() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join(".env");
+        std::fs::write(&file, "secret").unwrap();
+        assert_eq!(permission_path(&file), file.canonicalize().unwrap());
+        assert_eq!(
+            permission_path(directory.path()),
+            directory.path().canonicalize().unwrap()
+        );
+        assert_eq!(
+            permission_path(Path::new(".")),
+            std::env::current_dir().unwrap().canonicalize().unwrap()
+        );
+
+        let missing = directory.path().join("new-directory/.env");
+        assert!(!missing.exists());
+        assert_eq!(permission_path(&missing), missing);
+        assert!(permission_path(&missing).is_absolute());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permission_paths_resolve_existing_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join(".env");
+        let alias = directory.path().join("alias");
+        std::fs::write(&file, "secret").unwrap();
+        std::os::unix::fs::symlink(&file, &alias).unwrap();
+        assert_eq!(permission_path(&alias), permission_path(&file));
+    }
 
     #[test]
     fn html_to_text_strips_scripts_and_keeps_breaks() {

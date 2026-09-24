@@ -1,6 +1,28 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum CommandRule {
+    Exact(String),
+    Glob(String),
+}
+
+impl CommandRule {
+    pub fn value(&self) -> &str {
+        match self {
+            Self::Exact(value) | Self::Glob(value) => value,
+        }
+    }
+
+    pub fn trimmed(&self) -> Self {
+        match self {
+            Self::Exact(value) => Self::Exact(value.trim().to_string()),
+            Self::Glob(value) => Self::Glob(value.trim().to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {

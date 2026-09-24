@@ -1,5 +1,7 @@
 use crate::mcp::McpServerConfig;
-use crate::models::{McpCandidate, McpServerRef, McpServerState, SkillCandidate, SkillRef, SkillState};
+use crate::models::{
+    McpCandidate, McpServerRef, McpServerState, SkillCandidate, SkillRef, SkillState,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 

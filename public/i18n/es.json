@@ -932,7 +932,7 @@
       "credentials": "Credenciales, claves y secretos"
     },
     "commandRules": "Reglas de comandos permitidos",
-    "commandRulesHint": "Patrones glob que nunca activan una solicitud de permiso. Los comandos peligrosos siempre preguntan.",
+    "commandRulesHint": "Las reglas exactas comparan el texto del comando literalmente; las reglas glob usan comodines. Ambas pueden coexistir con el mismo texto. Las comprobaciones de seguridad siguen vigentes.",
     "commandAllowlist": "Permitidos",
     "commandDenylist": "Bloqueados",
     "allowCommand": "Permitir comando",

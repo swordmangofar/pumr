@@ -10,7 +10,7 @@ import {
   defaultOpenTabHotkey,
   defaultWindowToggleHotkey,
 } from './hotkeys';
-import { DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
+import { CommandRule, DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
 import { ThemeService } from './theme.service';
 import { DEFAULT_THEME_ID, DEFAULT_CUSTOM_THEME } from './themes';
 import { ZoomService } from './zoom.service';
@@ -215,12 +215,12 @@ export class SettingsService {
     this.hasApiKey.set(false);
   }
 
-  async addCommandRule(rule: string, allow: boolean): Promise<void> {
+  async addCommandRule(rule: CommandRule, allow: boolean): Promise<void> {
     const settings = await api.addCommandRule(rule, allow);
     this.state.set(settings);
   }
 
-  async deleteCommandRule(rule: string, allow: boolean): Promise<void> {
+  async deleteCommandRule(rule: CommandRule, allow: boolean): Promise<void> {
     const settings = await api.deleteCommandRule(rule, allow);
     this.state.set(settings);
   }

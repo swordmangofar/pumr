@@ -932,7 +932,7 @@
       "credentials": "Akreditācijas dati, atslēgas un noslēpumi"
     },
     "commandRules": "Atļautie komandu noteikumi",
-    "commandRulesHint": "Glob modeļi, kas nekad neizraisa atļaujas pieprasījumu. Bīstamas komandas vienmēr jautā.",
+    "commandRulesHint": "Precīzie noteikumi salīdzina komandas tekstu burtiski; glob noteikumi izmanto aizstājējzīmes. Abi var pastāvēt ar vienādu tekstu. Drošības pārbaudes joprojām ir spēkā.",
     "commandAllowlist": "Atļautas",
     "commandDenylist": "Bloķētas",
     "allowCommand": "Atļaut komandu",

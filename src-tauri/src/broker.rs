@@ -3,15 +3,30 @@ use crate::models::{
 };
 use crate::permissions::{CommandRisk, CommandScopeOption, CommandSegment};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PermissionOperation {
+    Read,
+    Write,
+    Access,
+    Execute,
+    Fetch,
+    McpTool,
+    McpStart,
+}
+
 #[derive(Debug, Clone)]
 pub struct PermissionPrompt {
     pub kind: String,
+    /// Backend-only identity; neither field changes the streamed prompt contract.
+    pub operation: PermissionOperation,
+    pub cwd: Option<PathBuf>,
     pub title: String,
     pub detail: String,
     pub command: Option<String>,
@@ -27,23 +42,36 @@ pub struct PermissionPrompt {
     pub scope_options: Vec<CommandScopeOption>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PermissionSignature {
+    session_id: String,
+    kind: String,
+    operation: PermissionOperation,
+    cwd: Option<PathBuf>,
+    command: Option<String>,
+    path: Option<String>,
+    folder: Option<String>,
+    url: Option<String>,
+}
+
 impl PermissionPrompt {
-    /// Identical pending prompts (same command/path/folder) share one decision so
-    /// parallel subagents never ask the user the same question twice.
-    fn signature(&self) -> String {
-        format!(
-            "{}|{}|{}|{}|{}",
-            self.kind,
-            self.command.as_deref().unwrap_or(""),
-            self.path.as_deref().unwrap_or(""),
-            self.folder.as_deref().unwrap_or(""),
-            self.url.as_deref().unwrap_or(""),
-        )
+    /// Only equivalent operations within the same session share a decision.
+    fn signature(&self, session_id: &str) -> PermissionSignature {
+        PermissionSignature {
+            session_id: session_id.to_string(),
+            kind: self.kind.clone(),
+            operation: self.operation,
+            cwd: self.cwd.clone(),
+            command: self.command.clone(),
+            path: self.path.clone(),
+            folder: self.folder.clone(),
+            url: self.url.clone(),
+        }
     }
 }
 
 struct PendingPermission {
-    signature: String,
+    signature: PermissionSignature,
     sender: watch::Sender<Option<PermissionDecision>>,
     /// Copy of what the backend actually asked, so `resolve_permission` can
     /// persist only the values this prompt proposed rather than trusting the
@@ -56,10 +84,11 @@ struct PendingPermission {
 }
 
 /// The backend-owned fields of a pending prompt, used to validate a renderer's
-/// decision before persisting an allow rule or folder.
+/// decision before persisting an allow/deny rule or folder.
 #[derive(Debug, Clone)]
 pub struct PendingPrompt {
     pub kind: String,
+    pub command: Option<String>,
     pub folder: Option<String>,
     pub suggested_rule: Option<String>,
     pub scope_options: Vec<CommandScopeOption>,
@@ -81,7 +110,7 @@ pub struct PermissionBroker {
 #[derive(Default)]
 struct BrokerInner {
     pending: HashMap<String, PendingPermission>,
-    by_signature: HashMap<String, String>,
+    by_signature: HashMap<PermissionSignature, String>,
 }
 
 impl PermissionBroker {
@@ -110,6 +139,7 @@ impl PermissionBroker {
             .get(request_id)
             .map(|entry| PendingPrompt {
                 kind: entry.kind.clone(),
+                command: entry.signature.command.clone(),
                 folder: entry.folder.clone(),
                 suggested_rule: entry.suggested_rule.clone(),
                 scope_options: entry.scope_options.clone(),
@@ -131,7 +161,7 @@ impl PermissionBroker {
         session_id: &str,
         emit: &EventSink,
     ) -> PermissionDecision {
-        let signature = prompt.signature();
+        let signature = prompt.signature(session_id);
         let (is_new, request_id, mut receiver) = {
             let mut inner = self.inner.lock().unwrap();
             match inner.by_signature.get(&signature).cloned() {
@@ -294,5 +324,193 @@ impl QuestionBroker {
 impl Default for QuestionBroker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn command_prompt() -> PermissionPrompt {
+        PermissionPrompt {
+            kind: "command".to_string(),
+            operation: PermissionOperation::Execute,
+            cwd: Some(std::env::current_dir().unwrap()),
+            title: "Run command?".to_string(),
+            detail: "Approval required".to_string(),
+            command: Some("npm install".to_string()),
+            path: None,
+            folder: None,
+            url: None,
+            suggested_rule: None,
+            segments: Vec::new(),
+            risk: None,
+            scope_options: Vec::new(),
+        }
+    }
+
+    async fn assert_prompt_sharing(
+        first: PermissionPrompt,
+        first_session: &str,
+        second: PermissionPrompt,
+        second_session: &str,
+        shared: bool,
+    ) {
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let emit: EventSink = {
+            let events = events.clone();
+            Arc::new(move |event| events.lock().unwrap().push(event))
+        };
+        let first_command = first.command.clone();
+        let second_command = second.command.clone();
+        let first = broker.ask(first, &cancel, first_session, &emit);
+        let second = broker.ask(second, &cancel, second_session, &emit);
+        tokio::pin!(first, second);
+        // Poll both requests into the broker before resolving either, without sleeps.
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+
+        let requests: Vec<_> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match &event.event {
+                StreamEvent::PermissionRequest { request_id, .. } => {
+                    Some((request_id.clone(), event.session_id.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), if shared { 1 } else { 2 });
+        assert_eq!(requests[0].1, first_session);
+        assert_eq!(
+            broker.pending_prompt(&requests[0].0).unwrap().command,
+            first_command,
+        );
+        if !shared {
+            assert_ne!(requests[0].0, requests[1].0);
+            assert_eq!(requests[1].1, second_session);
+            assert_eq!(
+                broker.pending_prompt(&requests[1].0).unwrap().session_id,
+                second_session
+            );
+            assert_eq!(
+                broker.pending_prompt(&requests[1].0).unwrap().command,
+                second_command,
+            );
+        }
+
+        broker.resolve(
+            &requests[0].0,
+            PermissionDecision {
+                allowed: true,
+                rule: None,
+                folder: None,
+            },
+        );
+        assert!(first.await.allowed);
+        if !shared {
+            assert!(futures_util::poll!(second.as_mut()).is_pending());
+            broker.resolve(&requests[1].0, deny());
+        }
+        assert_eq!(second.await.allowed, shared);
+        let resolved = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event.event, StreamEvent::PermissionResolved { .. }))
+            .count();
+        assert_eq!(resolved, requests.len());
+        assert!(broker.inner.lock().unwrap().pending.is_empty());
+        assert!(broker.inner.lock().unwrap().by_signature.is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_command_in_different_sessions_has_independent_requests() {
+        assert_prompt_sharing(
+            command_prompt(),
+            "chat",
+            command_prompt(),
+            "subagent",
+            false,
+        )
+        .await;
+        assert_prompt_sharing(
+            command_prompt(),
+            "subagent-a",
+            command_prompt(),
+            "subagent-b",
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn same_command_in_different_working_directories_has_independent_requests() {
+        let first = command_prompt();
+        let mut second = first.clone();
+        second.cwd = Some(first.cwd.as_ref().unwrap().join("other-project"));
+        assert_prompt_sharing(first, "chat", second, "chat", false).await;
+    }
+
+    #[tokio::test]
+    async fn sensitive_file_read_and_write_have_independent_requests() {
+        let mut read = command_prompt();
+        read.kind = "file".to_string();
+        read.operation = PermissionOperation::Read;
+        read.command = None;
+        read.path = Some(
+            read.cwd
+                .as_ref()
+                .unwrap()
+                .join(".env")
+                .display()
+                .to_string(),
+        );
+        let mut write = read.clone();
+        write.operation = PermissionOperation::Write;
+        assert_prompt_sharing(read, "chat", write, "chat", false).await;
+    }
+
+    #[tokio::test]
+    async fn equivalent_same_session_requests_share_one_decision() {
+        assert_prompt_sharing(command_prompt(), "chat", command_prompt(), "chat", true).await;
+    }
+
+    #[tokio::test]
+    async fn delimiters_in_resource_fields_cannot_collide() {
+        let mut first = command_prompt();
+        first.command = Some("a|b".to_string());
+        first.path = Some("c".to_string());
+        let mut second = first.clone();
+        second.command = Some("a".to_string());
+        second.path = Some("b|c".to_string());
+        assert_prompt_sharing(first, "chat", second, "chat", false).await;
+    }
+
+    #[tokio::test]
+    async fn missing_and_empty_resources_are_distinct() {
+        let first = command_prompt();
+        let mut second = first.clone();
+        second.path = Some(String::new());
+        assert_prompt_sharing(first, "chat", second, "chat", false).await;
+    }
+
+    #[tokio::test]
+    async fn shell_and_mcp_operations_have_independent_requests() {
+        for (first_operation, second_operation) in [
+            (PermissionOperation::Execute, PermissionOperation::McpTool),
+            (PermissionOperation::Execute, PermissionOperation::McpStart),
+            (PermissionOperation::McpTool, PermissionOperation::McpStart),
+        ] {
+            let mut first = command_prompt();
+            first.operation = first_operation;
+            let mut second = first.clone();
+            second.operation = second_operation;
+            assert_prompt_sharing(first, "chat", second, "chat", false).await;
+        }
     }
 }

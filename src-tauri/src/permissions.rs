@@ -1,3 +1,4 @@
+use crate::models::CommandRule;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -305,7 +306,7 @@ pub enum CommandScopeKind {
 #[serde(rename_all = "camelCase")]
 pub struct CommandScopeOption {
     pub kind: CommandScopeKind,
-    pub rule: String,
+    pub rule: CommandRule,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,8 +339,8 @@ impl CommandDecision {
 /// including to subagents that are already in flight.
 #[derive(Debug, Default)]
 pub struct LivePermissions {
-    command_rules: RwLock<Vec<String>>,
-    denied_command_rules: RwLock<Vec<String>>,
+    command_rules: RwLock<Vec<CommandRule>>,
+    denied_command_rules: RwLock<Vec<CommandRule>>,
     extra_folders: RwLock<Vec<String>>,
     /// Folders granted with "allow once" on a folder prompt. These live for the
     /// current app session only and are never written to settings, so they
@@ -348,15 +349,15 @@ pub struct LivePermissions {
     /// Command allow rules granted for one chat only, keyed by session id. They
     /// live in memory and disappear when the chat is deleted or the app
     /// restarts.
-    session_command_rules: RwLock<HashMap<String, Vec<String>>>,
+    session_command_rules: RwLock<HashMap<String, Vec<CommandRule>>>,
     allowed_websites: RwLock<Vec<String>>,
     denied_websites: RwLock<Vec<String>>,
 }
 
 impl LivePermissions {
     pub fn new(
-        command_rules: Vec<String>,
-        denied_command_rules: Vec<String>,
+        command_rules: Vec<CommandRule>,
+        denied_command_rules: Vec<CommandRule>,
         extra_folders: Vec<String>,
         allowed_websites: Vec<String>,
         denied_websites: Vec<String>,
@@ -374,8 +375,8 @@ impl LivePermissions {
 
     pub fn replace(
         &self,
-        command_rules: Vec<String>,
-        denied_command_rules: Vec<String>,
+        command_rules: Vec<CommandRule>,
+        denied_command_rules: Vec<CommandRule>,
         extra_folders: Vec<String>,
         allowed_websites: Vec<String>,
         denied_websites: Vec<String>,
@@ -389,29 +390,29 @@ impl LivePermissions {
         *self.denied_websites.write().unwrap() = denied_websites;
     }
 
-    pub fn command_rules(&self) -> Vec<String> {
+    pub fn command_rules(&self) -> Vec<CommandRule> {
         self.command_rules.read().unwrap().clone()
     }
 
-    pub fn denied_command_rules(&self) -> Vec<String> {
+    pub fn denied_command_rules(&self) -> Vec<CommandRule> {
         self.denied_command_rules.read().unwrap().clone()
     }
 
     /// Grants a command allow rule for one chat only. Returns once the rule is
     /// stored; duplicates are ignored.
-    pub fn add_session_command_rule(&self, session_id: &str, rule: &str) {
-        let rule = rule.trim();
-        if session_id.is_empty() || rule.is_empty() {
+    pub fn add_session_command_rule(&self, session_id: &str, rule: &CommandRule) {
+        let rule = rule.trimmed();
+        if session_id.is_empty() || rule.value().is_empty() {
             return;
         }
         let mut sessions = self.session_command_rules.write().unwrap();
         let rules = sessions.entry(session_id.to_string()).or_default();
-        if !rules.iter().any(|entry| entry == rule) {
-            rules.push(rule.to_string());
+        if !rules.contains(&rule) {
+            rules.push(rule);
         }
     }
 
-    pub fn session_command_rules(&self, session_id: &str) -> Vec<String> {
+    pub fn session_command_rules(&self, session_id: &str) -> Vec<CommandRule> {
         self.session_command_rules
             .read()
             .unwrap()
@@ -536,9 +537,10 @@ fn glob_matches(value: &str, pattern: &str) -> bool {
 pub fn evaluate_command(
     command: &str,
     project_root: &Path,
+    cwd: &Path,
     extra_folders: &[PathBuf],
-    rules: &[String],
-    denied: &[String],
+    rules: &[CommandRule],
+    denied: &[CommandRule],
 ) -> CommandDecision {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -562,7 +564,7 @@ pub fn evaluate_command(
         );
     };
     if segments.len() == 1 {
-        return evaluate_segment(&segments[0], project_root, extra_folders, rules, denied);
+        return evaluate_segment(&segments[0], project_root, cwd, extra_folders, rules, denied);
     }
     // Evaluate every segment so the prompt can show which parts are already
     // allowed, and keep the highest-risk asking segment's reason, rule, risk
@@ -575,7 +577,7 @@ pub fn evaluate_command(
     // backend actually proposed.
     let mut all_options: Vec<CommandScopeOption> = Vec::new();
     for segment in &segments {
-        let decision = evaluate_segment(segment, project_root, extra_folders, rules, denied);
+        let decision = evaluate_segment(segment, project_root, cwd, extra_folders, rules, denied);
         match decision {
             CommandDecision::Deny { reason } => return CommandDecision::Deny { reason },
             CommandDecision::Allow => {
@@ -640,9 +642,10 @@ fn whole_line_rule(command: &str) -> String {
 fn evaluate_segment(
     segment: &str,
     project_root: &Path,
+    cwd: &Path,
     extra_folders: &[PathBuf],
-    rules: &[String],
-    denied: &[String],
+    rules: &[CommandRule],
+    denied: &[CommandRule],
 ) -> CommandDecision {
     let trimmed = segment.trim();
     if trimmed.is_empty() {
@@ -748,8 +751,18 @@ fn evaluate_segment(
         );
     }
 
+    let known_executable = is_known_executable(
+        &tokens[0],
+        cwd,
+        project_root,
+        extra_folders,
+        std::env::var_os("PATH").as_deref(),
+    );
     if dangerous {
-        if PATH_DANGEROUS_PROGRAMS.contains(&program.as_str()) && !path_tokens.is_empty() {
+        if known_executable
+            && PATH_DANGEROUS_PROGRAMS.contains(&program.as_str())
+            && !path_tokens.is_empty()
+        {
             return CommandDecision::Allow;
         }
         let reason = danger.unwrap_or_else(|| "Command needs approval".to_string());
@@ -771,7 +784,7 @@ fn evaluate_segment(
     // never counts as read-only. The target was already path- and
     // sensitivity-checked above, so this only decides whether to ask.
     let reads_only = is_read_only(&program, &tokens) || is_safe_cd(&program, &tokens);
-    if reads_only && !has_redirect_operator(trimmed) {
+    if known_executable && reads_only && !has_redirect_operator(trimmed) {
         return CommandDecision::Allow;
     }
     let risk = if has_redirect_operator(trimmed) {
@@ -802,12 +815,15 @@ fn command_scope_options(
     trimmed: &str,
 ) -> Vec<CommandScopeOption> {
     let mut options: Vec<CommandScopeOption> = Vec::new();
-    let mut push = |kind: CommandScopeKind, rule: String| {
+    let mut push = |kind: CommandScopeKind, rule: CommandRule| {
         if !options.iter().any(|option| option.rule == rule) {
             options.push(CommandScopeOption { kind, rule });
         }
     };
-    push(CommandScopeKind::Program, format!("{program} *"));
+    push(
+        CommandScopeKind::Program,
+        CommandRule::Glob(format!("{program} *")),
+    );
     let flags: Vec<&str> = tokens
         .iter()
         .skip(1)
@@ -817,10 +833,13 @@ fn command_scope_options(
     if !flags.is_empty() {
         push(
             CommandScopeKind::ProgramFlags,
-            format!("{program} {} *", flags.join(" ")),
+            CommandRule::Glob(format!("{program} {} *", flags.join(" "))),
         );
     }
-    push(CommandScopeKind::Exact, trimmed.to_string());
+    push(
+        CommandScopeKind::Exact,
+        CommandRule::Exact(trimmed.to_string()),
+    );
     options
 }
 
@@ -852,7 +871,7 @@ fn is_safe_cd(program: &str, tokens: &[String]) -> bool {
 /// True when an unquoted `<` or `>` appears, i.e. the segment writes or reads
 /// through a redirection rather than only inspecting its input.
 fn has_redirect_operator(command: &str) -> bool {
-    let mut chars = command.chars();
+    let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
     while let Some(character) = chars.next() {
@@ -862,7 +881,18 @@ fn has_redirect_operator(command: &str) -> bool {
             }
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,
-            '<' | '>' if !in_single && !in_double => return true,
+            '<' | '>' if !in_single && !in_double => {
+                // A file descriptor duplication (`2>&1`, `0<&3`, `>&-`) does not
+                // write a file, so only `>&word` with a real target counts.
+                if chars.peek() == Some(&'&') {
+                    chars.next();
+                    match chars.peek() {
+                        Some(next) if next.is_ascii_digit() || *next == '-' => continue,
+                        _ => return true,
+                    }
+                }
+                return true;
+            }
             _ => {}
         }
     }
@@ -872,10 +902,11 @@ fn has_redirect_operator(command: &str) -> bool {
 /// Splits a command line into the shell segments a `sh -c` line would run.
 ///
 /// Operators `;`, `&&`, `||`, `|`, `&`, newlines and `(`, `)` end a segment
-/// unless they are quoted. Quotes are closed with their own syntax, so a quote
-/// left open means the line is not safely splittable and `None` is returned.
-/// Backticks and `$(` are *not* separators: they stay inside their segment so
-/// the operator check still catches them.
+/// unless they are quoted or part of a redirection (`>&`, `<&`, `&>`). Quotes
+/// are closed with their own syntax, so a quote left open means the line is not
+/// safely splittable and `None` is returned. Backticks and `$(` are *not*
+/// separators: they stay inside their segment so the operator check still
+/// catches them.
 fn split_segments(command: &str) -> Option<Vec<String>> {
     let mut segments = vec![String::new()];
     let mut chars = command.chars().peekable();
@@ -906,13 +937,32 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
                 segment.push('(');
                 continue;
             }
-            ';' | '|' | '&' | '\n' | '\r' | '(' | ')' if !in_single && !in_double => {
-                // Swallow `&&`, `||` and `>>` instead of emitting an empty
-                // segment for the second character of the operator.
+            ';' | '|' | '\n' | '\r' | '(' | ')' if !in_single && !in_double => {
+                // Swallow `||` instead of emitting an empty segment for the
+                // second character of the operator.
                 if let Some(peeked) = chars.peek() {
                     if matches!(peeked, '&' | '|' | '>') {
                         chars.next();
                     }
+                }
+                segments.push(String::new());
+                continue;
+            }
+            '&' if !in_single && !in_double => {
+                // `>&`, `<&` and `&>` are redirections, not command separators,
+                // so a file descriptor duplication like `2>&1` stays in one
+                // segment instead of splitting off a bogus `1` command.
+                let redirects = matches!(
+                    segments.last().and_then(|segment| segment.chars().last()),
+                    Some('>') | Some('<')
+                ) || chars.peek() == Some(&'>');
+                if redirects {
+                    segments.last_mut()?.push('&');
+                    continue;
+                }
+                // `&&` is a single operator; swallow its second `&`.
+                if chars.peek() == Some(&'&') {
+                    chars.next();
                 }
                 segments.push(String::new());
                 continue;
@@ -935,10 +985,14 @@ fn has_shell_control_operators(command: &str) -> bool {
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
+    let mut previous = '\0';
     while let Some(character) = chars.next() {
         match character {
             '\\' if !in_single => {
-                chars.next();
+                if let Some(escaped) = chars.next() {
+                    previous = escaped;
+                }
+                continue;
             }
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,
@@ -946,11 +1000,18 @@ fn has_shell_control_operators(command: &str) -> bool {
             // Backticks and `$(` expand even inside double quotes.
             '`' => return true,
             '$' if chars.peek() == Some(&'(') => return true,
-            ';' | '|' | '&' | '\n' | '\r' | '(' | ')' | '{' | '}' if !in_single && !in_double => {
+            // `>&`, `<&` and `&>` are redirections, not control operators.
+            '&' if !in_single && !in_double => {
+                if previous != '>' && previous != '<' && chars.peek() != Some(&'>') {
+                    return true;
+                }
+            }
+            ';' | '|' | '\n' | '\r' | '(' | ')' | '{' | '}' if !in_single && !in_double => {
                 return true
             }
             _ => {}
         }
+        previous = character;
     }
     false
 }
@@ -984,26 +1045,16 @@ fn ask_with_segments(
     }
 }
 
-pub fn matches_rules(command: &str, rules: &[String]) -> bool {
-    let mut builder = GlobSetBuilder::new();
-    let mut any = false;
-    for rule in rules {
-        let rule = rule.trim();
-        if rule.is_empty() {
-            continue;
-        }
-        if let Ok(glob) = Glob::new(rule) {
-            builder.add(glob);
-            any = true;
-        }
-    }
-    if !any {
-        return false;
-    }
-    builder
-        .build()
-        .map(|set| set.is_match(command))
-        .unwrap_or(false)
+pub fn matches_rules(command: &str, rules: &[CommandRule]) -> bool {
+    let command = command.trim();
+    rules.iter().any(|rule| {
+        let value = rule.value().trim();
+        !value.is_empty()
+            && match rule {
+                CommandRule::Exact(_) => command == value,
+                CommandRule::Glob(_) => glob_matches(command, value),
+            }
+    })
 }
 
 pub fn suggest_rule(command: &str, program: &str) -> String {
@@ -1019,6 +1070,72 @@ fn base_name(program: &str) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| program.to_string())
+}
+
+fn is_known_executable(
+    program: &str,
+    cwd: &Path,
+    project_root: &Path,
+    extra_folders: &[PathBuf],
+    search_path: Option<&std::ffi::OsStr>,
+) -> bool {
+    // A name like ./ls says nothing about the executable's behavior. Explicit
+    // paths need an explicit grant, even when their basename is familiar.
+    if program.contains(['/', '\\']) {
+        return false;
+    }
+    if matches!(program, "echo" | "cd")
+        || (cfg!(unix) && matches!(program, "pwd" | "printf"))
+    {
+        return true;
+    }
+    // cmd.exe also searches cwd and PATHEXT; until that resolution is modeled,
+    // only its known builtins qualify for automatic executable trust.
+    if cfg!(windows) {
+        return false;
+    }
+    let Some(search_path) = search_path else {
+        return false;
+    };
+    let root = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let extras: Vec<_> = extra_folders
+        .iter()
+        .map(|folder| folder.canonicalize().unwrap_or_else(|_| folder.clone()))
+        .collect();
+    for directory in std::env::split_paths(search_path) {
+        // Relative PATH entries can change meaning after a preceding `cd`.
+        // Do not guess which project executable the shell would then select.
+        if !directory.is_absolute() {
+            return false;
+        }
+        let candidate = directory.join(program);
+        let metadata = match candidate.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return false,
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                continue;
+            }
+        }
+        let Ok(resolved) = candidate.canonicalize() else {
+            return false;
+        };
+        let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        return !path_is_inside(&candidate, project_root, extra_folders)
+            && !path_is_inside(&resolved, &root, &extras)
+            && !candidate.starts_with(&cwd)
+            && !resolved.starts_with(&cwd);
+    }
+    false
 }
 
 fn danger_reason(command: &str, tokens: &[String]) -> Option<String> {
@@ -1681,11 +1798,13 @@ mod tests {
     use super::*;
 
     fn evaluate(command: &str, rules: &[String]) -> CommandDecision {
-        evaluate_command(command, Path::new("/project"), &[], rules, &[])
+        let rules: Vec<_> = rules.iter().cloned().map(CommandRule::Glob).collect();
+        evaluate_command(command, Path::new("/project"), Path::new("/project"), &[], &rules, &[])
     }
 
     fn evaluate_denied(command: &str, denied: &[String]) -> CommandDecision {
-        evaluate_command(command, Path::new("/project"), &[], &[], denied)
+        let denied: Vec<_> = denied.iter().cloned().map(CommandRule::Glob).collect();
+        evaluate_command(command, Path::new("/project"), Path::new("/project"), &[], &[], &denied)
     }
 
     #[test]
@@ -1699,6 +1818,56 @@ mod tests {
     fn commands_need_approval_by_default() {
         assert!(evaluate("pnpm build", &[]).is_ask());
         assert!(evaluate("node scripts/seed.js", &[]).is_ask());
+    }
+
+    #[test]
+    fn path_qualified_executables_never_inherit_basename_exemptions() {
+        for command in ["./ls", "/bin/ls", "./git status", "./echo hi", "./cd src", "./rm file"] {
+            assert!(evaluate(command, &[]).is_ask(), "{command}");
+        }
+        assert_eq!(
+            evaluate_command(
+                "./ls",
+                Path::new("/project"),
+                Path::new("/project"),
+                &[],
+                &[CommandRule::Exact("./ls".into())],
+                &[],
+            ),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_lookup_rejects_project_paths_and_symlink_aliases() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let fixture = tempfile::tempdir().unwrap();
+        let project = fixture.path().join("project");
+        let bin = project.join("bin");
+        let external = fixture.path().join("external");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let executable = bin.join("ls");
+        std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::join_paths([bin.clone(), PathBuf::from("/usr/bin")]).unwrap();
+        assert!(!is_known_executable("ls", &project, &project, &[], Some(&path)));
+
+        symlink(&executable, external.join("ls")).unwrap();
+        let path = std::env::join_paths([external.clone(), PathBuf::from("/usr/bin")]).unwrap();
+        assert!(!is_known_executable("ls", &project, &project, &[], Some(&path)));
+
+        let path = std::env::join_paths([PathBuf::from("."), PathBuf::from("/usr/bin")]).unwrap();
+        assert!(!is_known_executable("ls", &project, &project, &[], Some(&path)));
+        let path = std::env::join_paths([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+        assert!(is_known_executable("ls", &project, &project, &[], Some(&path)));
+        assert!(!is_known_executable("ls", &project, &project, &[], None));
+        assert!(is_known_executable("echo", &project, &project, &[], None));
+        assert!(!is_known_executable(".\\ls", &project, &project, &[], Some(&path)));
+
+        // An approved external working folder is writable by the agent too.
+        assert!(!is_known_executable("ls", &external, &project, &[external.clone()], Some(external.as_os_str())));
     }
 
     #[test]
@@ -1869,13 +2038,17 @@ mod tests {
         assert!(segments[0]
             .scope_options
             .iter()
-            .any(|option| option.rule == "pnpm *"));
+            .any(|option| option.rule == CommandRule::Glob("pnpm *".into())));
         assert!(segments[1]
             .scope_options
             .iter()
-            .any(|option| option.rule == "tr *"));
-        assert!(scope_options.iter().any(|option| option.rule == "pnpm *"));
-        assert!(scope_options.iter().any(|option| option.rule == "tr *"));
+            .any(|option| option.rule == CommandRule::Glob("tr *".into())));
+        assert!(scope_options
+            .iter()
+            .any(|option| option.rule == CommandRule::Glob("pnpm *".into())));
+        assert!(scope_options
+            .iter()
+            .any(|option| option.rule == CommandRule::Glob("tr *".into())));
     }
 
     #[test]
@@ -1930,9 +2103,10 @@ mod tests {
             evaluate_command(
                 "rm -rf build",
                 Path::new("/project"),
+                Path::new("/project"),
                 &[],
-                &["rm *".to_string()],
-                &["rm *".to_string()],
+                &[CommandRule::Glob("rm *".into())],
+                &[CommandRule::Glob("rm *".into())],
             ),
             CommandDecision::Deny { .. }
         ));
@@ -1951,11 +2125,18 @@ mod tests {
         let CommandDecision::Ask { scope_options, .. } = evaluate("ls -la /test", &[]) else {
             panic!("expected an ask decision");
         };
-        let rules: Vec<String> = scope_options
+        let rules: Vec<CommandRule> = scope_options
             .iter()
             .map(|option| option.rule.clone())
             .collect();
-        assert_eq!(rules, vec!["ls *", "ls -la *", "ls -la /test"]);
+        assert_eq!(
+            rules,
+            vec![
+                CommandRule::Glob("ls *".into()),
+                CommandRule::Glob("ls -la *".into()),
+                CommandRule::Exact("ls -la /test".into()),
+            ],
+        );
         assert_eq!(scope_options[0].kind, CommandScopeKind::Program);
         assert_eq!(scope_options[1].kind, CommandScopeKind::ProgramFlags);
         assert_eq!(scope_options[2].kind, CommandScopeKind::Exact);
@@ -1966,25 +2147,128 @@ mod tests {
         let CommandDecision::Ask { scope_options, .. } = evaluate("tr a b", &[]) else {
             panic!("expected an ask decision");
         };
-        let rules: Vec<String> = scope_options
+        let rules: Vec<CommandRule> = scope_options
             .iter()
             .map(|option| option.rule.clone())
             .collect();
-        assert_eq!(rules, vec!["tr *", "tr a b"]);
+        assert_eq!(
+            rules,
+            vec![CommandRule::Glob("tr *".into()), CommandRule::Exact("tr a b".into())],
+        );
     }
 
     #[test]
     fn session_command_rules_are_scoped_to_one_chat() {
         let permissions =
             LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        permissions.add_session_command_rule("chat-a", "ls *");
+        permissions.add_session_command_rule("chat-a", &CommandRule::Exact("pnpm *".into()));
+        permissions.add_session_command_rule("chat-a", &CommandRule::Exact("pnpm *".into()));
         assert_eq!(
             permissions.session_command_rules("chat-a"),
-            vec!["ls *".to_string()]
+            vec![CommandRule::Exact("pnpm *".into())]
         );
+        assert!(!matches_rules(
+            "pnpm build",
+            &permissions.session_command_rules("chat-a"),
+        ));
+        permissions.add_session_command_rule("chat-a", &CommandRule::Glob("pnpm *".into()));
+        assert_eq!(permissions.session_command_rules("chat-a").len(), 2);
+        assert!(matches_rules(
+            "pnpm build",
+            &permissions.session_command_rules("chat-a"),
+        ));
         assert!(permissions.session_command_rules("chat-b").is_empty());
         permissions.clear_session("chat-a");
         assert!(permissions.session_command_rules("chat-a").is_empty());
+    }
+
+    #[test]
+    fn exact_rules_match_glob_characters_literally() {
+        for (literal, different) in [
+            ("tool '*'", "tool 'anything'"),
+            ("tool '?'", "tool 'x'"),
+            ("tool '[ab]'", "tool 'a'"),
+            ("tool '{a,b}'", "tool 'b'"),
+            (r"tool '\*'", "tool '*'"),
+            ("python -c \"print('*')\"", "python -c \"print('different code')\""),
+        ] {
+            let rules = [CommandRule::Exact(format!("  {literal}  "))];
+            assert!(matches_rules(&format!("  {literal}  "), &rules), "{literal}");
+            assert!(!matches_rules(different, &rules), "{different}");
+            assert!(
+                matches_rules(different, &[CommandRule::Glob(literal.into())]),
+                "{literal}",
+            );
+        }
+        assert!(!matches_rules("", &[CommandRule::Exact(" ".into())]));
+    }
+
+    #[test]
+    fn exact_rules_grant_only_the_approved_command_and_keep_safety_checks() {
+        let command = "pnpm test '*'";
+        let rules = [CommandRule::Exact(command.into())];
+        assert_eq!(
+            evaluate_command(command, Path::new("/project"), Path::new("/project"), &[], &rules, &[]),
+            CommandDecision::Allow,
+        );
+        assert!(evaluate_command("pnpm test other", Path::new("/project"), Path::new("/project"), &[], &rules, &[]).is_ask());
+        for command in ["cat .env", "cat /etc/hosts", "sudo reboot", "echo $(whoami)"] {
+            assert!(evaluate_command(
+                command,
+                Path::new("/project"),
+                Path::new("/project"),
+                &[],
+                &[CommandRule::Exact(command.into())],
+                &[],
+            ).is_ask());
+        }
+    }
+
+    #[test]
+    fn exact_and_glob_scopes_with_identical_values_coexist() {
+        for command in ["pnpm *", "pnpm * && pnpm build"] {
+            let CommandDecision::Ask { scope_options, .. } = evaluate(command, &[]) else {
+                panic!("expected an ask decision");
+            };
+            assert!(scope_options
+                .iter()
+                .any(|option| option.rule == CommandRule::Glob("pnpm *".into())));
+            assert!(scope_options
+                .iter()
+                .any(|option| option.rule == CommandRule::Exact("pnpm *".into())));
+        }
+    }
+
+    #[test]
+    fn typed_denies_win_over_persistent_and_session_allows() {
+        for denied in [
+            CommandRule::Exact("pnpm test '*'".into()),
+            CommandRule::Glob("pnpm *".into()),
+        ] {
+            let permissions = LivePermissions::new(
+                vec![CommandRule::Glob("pnpm *".into())],
+                vec![denied],
+                vec![],
+                vec![],
+                vec![],
+            );
+            permissions.add_session_command_rule("chat-a", &CommandRule::Exact("pnpm test '*'".into()));
+            let mut rules = permissions.command_rules();
+            rules.extend(permissions.session_command_rules("chat-a"));
+            assert!(matches!(
+                evaluate_command(
+                    "pnpm test '*'",
+                    Path::new("/project"),
+                    Path::new("/project"),
+                    &[],
+                    &rules,
+                    &permissions.denied_command_rules(),
+                ),
+                CommandDecision::Deny { .. },
+            ));
+        }
+        let denied = [CommandRule::Exact("pnpm test '*'".into())];
+        assert!(evaluate_command("pnpm test other", Path::new("/project"), Path::new("/project"), &[], &[], &denied).is_ask());
     }
 
     #[test]
@@ -2215,6 +2499,23 @@ mod tests {
     }
 
     #[test]
+    fn file_descriptor_duplication_is_not_a_separator() {
+        // `2>&1` is a redirection, not a command separator: it must not split
+        // off a bogus `1` command that prompts despite every real segment being
+        // read-only or covered by a rule.
+        assert_eq!(
+            evaluate("grep -rn todo src 2>&1 | head -20", &["grep *".to_string()]),
+            CommandDecision::Allow
+        );
+        assert_eq!(evaluate("grep -rn todo src 2>&1", &[]), CommandDecision::Allow);
+        assert_eq!(evaluate("ls -la 2>&1", &[]), CommandDecision::Allow);
+        // A redirection to a real file still counts as a write and asks.
+        assert!(evaluate("ls -la > out", &[]).is_ask());
+        assert!(evaluate("ls -la &> out", &[]).is_ask());
+        assert!(evaluate("ls -la 2>&1 > out", &[]).is_ask());
+    }
+
+    #[test]
     fn session_folders_survive_a_settings_save() {
         let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         permissions.add_session_folder("/test/test2");
@@ -2230,4 +2531,3 @@ mod tests {
         assert!(folders.contains(&PathBuf::from("/test/test2")));
     }
 }
-

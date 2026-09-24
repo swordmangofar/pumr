@@ -16,6 +16,7 @@ import { WorkspaceService } from '../core/workspace.service';
 import { AttachmentPreview } from './attachment-preview';
 import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
+import { CopyButton } from './copy-button';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
 import { ProjectIcon } from './project-icon';
@@ -78,6 +79,7 @@ import { TypedInput } from './typed-input';
     PumaLoader,
     StreamText,
     ProjectIcon,
+    CopyButton,
   ],
   template: `
     <div class="flex h-full min-h-0 flex-col">
@@ -223,6 +225,10 @@ import { TypedInput } from './typed-input';
                             [pose]="entry.message.id === delegatedPromptId() ? 'prompt' : 'sit'"
                             class="mt-1 shrink-0"
                           />
+                          <app-copy-button
+                            [text]="entry.message.content"
+                            buttonClass="mt-2 h-7 w-7 border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+                          />
                           <button
                             type="button"
                             class="mt-2 flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
@@ -330,7 +336,7 @@ import { TypedInput } from './typed-input';
                         </div>
                       }
                       @default {
-                        <div>
+                        <div class="group">
                           @if (entry.message.reasoning) {
                             <details class="glass-inset mb-3 rounded-xl">
                               <summary
@@ -398,6 +404,13 @@ import { TypedInput } from './typed-input';
                                   >{{ 'chat.cache' | transloco }}
                                   {{ cacheRate(entry.message) }}%</span
                                 >
+                              }
+                              @if (entry.message.content) {
+                                <app-copy-button
+                                  class="ml-auto"
+                                  [text]="entry.message.content"
+                                  buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+                                />
                               }
                             </div>
                           }
@@ -739,10 +752,15 @@ export class ChatView {
       this.messages();
       this.liveTools();
       this.streaming();
-      if (!this.atBottom()) {
+      // Follow content updates, not scroll events crossing the bottom threshold.
+      if (!untracked(this.atBottom)) {
         return;
       }
-      queueMicrotask(() => this.scrollToBottom());
+      queueMicrotask(() => {
+        if (this.atBottom()) {
+          this.scrollToBottom();
+        }
+      });
     });
 
     effect(() => {

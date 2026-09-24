@@ -1,7 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api } from '../../core/api';
-import { IgnoreCatalogEntry, PermissionDefaultAction, PermissionDefaults } from '../../core/models';
+import {
+  CommandRule,
+  IgnoreCatalogEntry,
+  PermissionDefaultAction,
+  PermissionDefaults,
+} from '../../core/models';
 import { SettingsService } from '../../core/settings.service';
 import { SettingsDraftService } from './settings-draft.service';
 import { Toggle } from '../toggle';
@@ -240,12 +245,12 @@ import { TypedInput } from '../typed-input';
         {{ 'settings.commandAllowlist' | transloco }} · {{ commandRules().length }}
       </h4>
       <div class="space-y-1.5">
-        @for (rule of commandRules(); track rule) {
+        @for (rule of commandRules(); track ruleKey(rule)) {
           <div
             class="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-ink/40 px-4 py-2"
           >
             <div class="flex min-w-0 items-center gap-2">
-              <code class="truncate font-mono text-sm text-emerald-300">{{ rule }}</code>
+              <code class="truncate font-mono text-sm text-emerald-300">{{ rule.value }}</code>
               <span
                 class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
               >
@@ -269,12 +274,12 @@ import { TypedInput } from '../typed-input';
         {{ 'settings.commandDenylist' | transloco }} · {{ deniedCommandRules().length }}
       </h4>
       <div class="space-y-1.5">
-        @for (rule of deniedCommandRules(); track rule) {
+        @for (rule of deniedCommandRules(); track ruleKey(rule)) {
           <div
             class="flex items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-ink/40 px-4 py-2"
           >
             <div class="flex min-w-0 items-center gap-2">
-              <code class="truncate font-mono text-sm text-rose-300">{{ rule }}</code>
+              <code class="truncate font-mono text-sm text-rose-300">{{ rule.value }}</code>
               <span
                 class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
               >
@@ -294,7 +299,16 @@ import { TypedInput } from '../typed-input';
         }
       </div>
 
-      <div class="mt-3 flex gap-2">
+      <div class="mt-3 flex flex-wrap gap-2">
+        <select
+          class="field rounded-xl px-3 py-2 text-sm"
+          [attr.aria-label]="'permission.scope.title' | transloco"
+          [value]="newRuleKind()"
+          (typedValue)="newRuleKind.set($event === 'glob' ? 'glob' : 'exact')"
+        >
+          <option value="exact">{{ 'settings.scope.exact' | transloco }}</option>
+          <option value="glob">{{ 'settings.websiteScope.glob' | transloco }}</option>
+        </select>
         <input
           class="field min-w-0 flex-1 rounded-xl px-4 py-2 font-mono text-sm"
           [placeholder]="'settings.rulePlaceholder' | transloco"
@@ -563,6 +577,7 @@ export class AgentRulesSettings {
   }
 
   protected readonly newRule = signal('');
+  protected readonly newRuleKind = signal<CommandRule['kind']>('exact');
   protected readonly commandRules = computed(
     () => this.settingsService.settings()?.commandRules ?? [],
   );
@@ -596,12 +611,12 @@ export class AgentRulesSettings {
     });
   }
 
-  protected scopeLabel(rule: string): string {
-    if (rule.endsWith(' *')) {
-      const body = rule.slice(0, -2).trim();
-      return body.includes(' ') ? 'settings.scope.programFlags' : 'settings.scope.program';
-    }
-    return 'settings.scope.exact';
+  protected ruleKey(rule: CommandRule): string {
+    return JSON.stringify([rule.kind, rule.value]);
+  }
+
+  protected scopeLabel(rule: CommandRule): string {
+    return rule.kind === 'exact' ? 'settings.scope.exact' : 'settings.websiteScope.glob';
   }
 
   protected websiteLabel(rule: string): string {
@@ -613,11 +628,11 @@ export class AgentRulesSettings {
     if (!rule) {
       return;
     }
-    await this.settingsService.addCommandRule(rule, allow);
+    await this.settingsService.addCommandRule({ kind: this.newRuleKind(), value: rule }, allow);
     this.newRule.set('');
   }
 
-  protected async deleteRule(rule: string, allow: boolean): Promise<void> {
+  protected async deleteRule(rule: CommandRule, allow: boolean): Promise<void> {
     await this.settingsService.deleteCommandRule(rule, allow);
   }
 

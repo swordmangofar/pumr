@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::models::CommandRule;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -414,8 +415,10 @@ impl Default for ModelSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct PermissionSettings {
     pub extra_folders: Vec<String>,
-    pub command_rules: Vec<String>,
-    pub denied_command_rules: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_command_allows")]
+    pub command_rules: Vec<CommandRule>,
+    #[serde(default, deserialize_with = "deserialize_command_denies")]
+    pub denied_command_rules: Vec<CommandRule>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
     /// Default action of the primary allow button per prompt category.
@@ -428,6 +431,40 @@ pub struct PermissionSettings {
     pub file_ignore_disabled: Vec<String>,
     pub file_ignore_enabled: Vec<String>,
     pub file_ignore_advanced: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredCommandRule {
+    Typed(CommandRule),
+    Legacy(String),
+}
+
+fn deserialize_command_allows<'de, D>(deserializer: D) -> std::result::Result<Vec<CommandRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Legacy allows did not preserve matching intent and must be reapproved.
+    Ok(Vec::<StoredCommandRule>::deserialize(deserializer)?
+        .into_iter()
+        .filter_map(|rule| match rule {
+            StoredCommandRule::Typed(rule) => Some(rule),
+            StoredCommandRule::Legacy(_) => None,
+        })
+        .collect())
+}
+
+fn deserialize_command_denies<'de, D>(deserializer: D) -> std::result::Result<Vec<CommandRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Vec::<StoredCommandRule>::deserialize(deserializer)?
+        .into_iter()
+        .map(|rule| match rule {
+            StoredCommandRule::Typed(rule) => rule,
+            StoredCommandRule::Legacy(value) => CommandRule::Glob(value),
+        })
+        .collect())
 }
 
 impl Default for PermissionSettings {
@@ -876,4 +913,75 @@ pub fn delete_api_key(provider: &str) -> Result<()> {
 
 pub fn has_api_key(provider: &str) -> Result<bool> {
     Ok(get_api_key(provider)?.is_some_and(|key| !key.trim().is_empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn command_rule_migration_through_flattened_settings_preserves_other_fields() {
+        let exact = json!({"kind": "exact", "value": "pnpm test '*'"});
+        let glob = json!({"kind": "glob", "value": "pnpm *"});
+        for (allows, denies, expected_allows, expected_denies) in [
+            (
+                json!(["pnpm *", "pnpm build"]),
+                json!(["rm *"]),
+                json!([]),
+                json!([{"kind": "glob", "value": "rm *"}]),
+            ),
+            (
+                json!(["old *", exact, glob]),
+                json!([exact, "rm *", glob]),
+                json!([exact, glob]),
+                json!([exact, {"kind": "glob", "value": "rm *"}, glob]),
+            ),
+            (
+                json!([exact, glob]),
+                json!([glob, exact]),
+                json!([exact, glob]),
+                json!([glob, exact]),
+            ),
+        ] {
+            let mut original = serde_json::to_value(Settings::default()).unwrap();
+            original["budgetUsd"] = json!(42.5);
+            original["defaultSystemPrompt"] = json!("Custom prompt");
+            original["language"] = json!("de");
+            original["theme"] = json!("custom");
+            original["mcpFolders"] = json!(["/custom/mcp"]);
+            original["extraFolders"] = json!(["/custom/files"]);
+            original["allowedWebsites"] = json!(["*.example.com"]);
+            original["deniedWebsites"] = json!(["ads.example.com"]);
+            original["commandRules"] = allows;
+            original["deniedCommandRules"] = denies;
+            let migrated: Settings = serde_json::from_value(original.clone()).unwrap();
+            original["commandRules"] = expected_allows;
+            original["deniedCommandRules"] = expected_denies;
+            let serialized = serde_json::to_value(&migrated).unwrap();
+            assert_eq!(serialized, original);
+            let roundtrip: Settings = serde_json::from_value(serialized.clone()).unwrap();
+            assert_eq!(serde_json::to_value(roundtrip).unwrap(), serialized);
+        }
+    }
+
+    #[test]
+    fn missing_command_rule_fields_keep_settings_defaults() {
+        for input in [
+            json!({"theme": "custom"}),
+            json!({"theme": "custom", "commandRules": ["pnpm *"]}),
+            json!({"theme": "custom", "deniedCommandRules": ["rm *"]}),
+        ] {
+            let settings: Settings = serde_json::from_value(input.clone()).unwrap();
+            assert!(settings.permissions.command_rules.is_empty());
+            assert_eq!(settings.appearance.theme, "custom");
+            let expected = if input.get("deniedCommandRules").is_some() {
+                vec![CommandRule::Glob("rm *".into())]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(settings.permissions.denied_command_rules, expected);
+            assert!(settings.permissions.ignore_gitignored);
+        }
+    }
 }

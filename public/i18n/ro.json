@@ -932,7 +932,7 @@
       "credentials": "Acreditări, chei și secrete"
     },
     "commandRules": "Reguli de comenzi permise",
-    "commandRulesHint": "Modele glob care nu declanșează niciodată o cerere de permisiune. Comenzile periculoase întreabă întotdeauna.",
+    "commandRulesHint": "Regulile exacte compară literal textul comenzii; regulile glob folosesc metacaractere. Ambele pot coexista cu același text. Verificările de siguranță se aplică în continuare.",
     "commandAllowlist": "Permise",
     "commandDenylist": "Blocate",
     "allowCommand": "Permite comanda",

@@ -1,5 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import {
+  CommandRule,
   CreateSessionArgs,
   DefaultSystemPrompts,
   DirectoryPage,
@@ -94,12 +95,14 @@ export const api = {
     rules: string[] | null = null,
     folder: string | null = null,
     promptKind: string | null = null,
-  ) => invoke<void>('resolve_permission', { requestId, decision, rules, folder, promptKind }),
+    commandRules: CommandRule[] | null = null,
+  ) =>
+    invoke<void>('resolve_permission', { requestId, decision, rules, folder, promptKind, commandRules }),
   resolveQuestion: (requestId: string, answers: QuestionAnswer[] | null) =>
     invoke<void>('resolve_question', { requestId, answers }),
-  addCommandRule: (rule: string, allow: boolean) =>
+  addCommandRule: (rule: CommandRule, allow: boolean) =>
     invoke<Settings>('add_command_rule', { rule, allow }),
-  deleteCommandRule: (rule: string, allow: boolean) =>
+  deleteCommandRule: (rule: CommandRule, allow: boolean) =>
     invoke<Settings>('delete_command_rule', { rule, allow }),
   addWebsiteRule: (rule: string, allow: boolean) =>
     invoke<Settings>('add_website_rule', { rule, allow }),

@@ -932,7 +932,7 @@
       "credentials": "Identifiants, clés et secrets"
     },
     "commandRules": "Règles de commandes autorisées",
-    "commandRulesHint": "Motifs glob qui ne déclenchent jamais de demande d'autorisation. Les commandes dangereuses demandent toujours.",
+    "commandRulesHint": "Les règles exactes comparent littéralement le texte de la commande ; les règles glob utilisent des caractères génériques. Les deux peuvent coexister avec le même texte. Les contrôles de sécurité restent applicables.",
     "commandAllowlist": "Autorisées",
     "commandDenylist": "Bloquées",
     "allowCommand": "Autoriser la commande",

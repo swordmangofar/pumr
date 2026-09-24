@@ -932,7 +932,7 @@
       "credentials": "Poverenia, kľúče a tajomstvá"
     },
     "commandRules": "Povolené pravidlá príkazov",
-    "commandRulesHint": "Vzory glob, ktoré nikdy nevyvolajú výzvu na povolenie. Nebezpečné príkazy sa vždy opýtajú.",
+    "commandRulesHint": "Presné pravidlá porovnávajú text príkazu doslovne; pravidlá glob používajú zástupné znaky. Oba typy môžu existovať s rovnakým textom. Bezpečnostné kontroly naďalej platia.",
     "commandAllowlist": "Povolené",
     "commandDenylist": "Blokované",
     "allowCommand": "Povoliť príkaz",

@@ -932,7 +932,7 @@
       "credentials": "Dintiúir, eochracha & rúin"
     },
     "commandRules": "Rialacha orduithe ceadaithe",
-    "commandRulesHint": "Patrúin glob nach spreagann leid ceada riamh. Fiafraíonn orduithe contúirteacha i gcónaí.",
+    "commandRulesHint": "Meaitseálann rialacha beachta téacs an ordaithe go litriúil; úsáideann rialacha glob saoróga. Is féidir leis an dá chineál a bheith ann leis an téacs céanna. Tá seiceálacha sábháilteachta fós i bhfeidhm.",
     "commandAllowlist": "Ceadaithe",
     "commandDenylist": "Blocáilte",
     "allowCommand": "Ceadaigh ordú",

@@ -13,12 +13,13 @@ import { ansiToHtml } from '../core/ansi';
 import { FileChange } from '../core/models';
 import { MonacoService } from '../core/monaco.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { CopyButton } from './copy-button';
 import { ToolStatus } from './tool-status';
 
 @Component({
   selector: 'app-tool-card',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, ToolStatus],
+  imports: [TranslocoPipe, ToolStatus, CopyButton],
   template: `
     <div class="my-3 overflow-hidden glass-inset rounded-xl">
       <button
@@ -62,8 +63,14 @@ import { ToolStatus } from './tool-status';
       @if (expanded()) {
         @if (highlighted()) {
           <div class="border-t border-white/5 bg-ink/60 px-4 py-3">
-            <div class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-mist/30">
-              {{ 'tools.command' | transloco }}
+            <div class="mb-1.5 flex items-center justify-between gap-2">
+              <div class="text-[10px] font-semibold uppercase tracking-wider text-mist/30">
+                {{ 'tools.command' | transloco }}
+              </div>
+              <app-copy-button
+                [text]="command()"
+                buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+              />
             </div>
             <pre
               class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"

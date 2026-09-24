@@ -932,7 +932,7 @@
       "credentials": "Inloggningsuppgifter, nycklar och hemligheter"
     },
     "commandRules": "Tillåtna kommandoregler",
-    "commandRulesHint": "Glob-mönster som aldrig utlöser en behörighetsfråga. Farliga kommandon frågar alltid.",
+    "commandRulesHint": "Exakta regler jämför kommandotexten bokstavligt; glob-regler använder jokertecken. Båda kan finnas med samma text. Säkerhetskontroller gäller fortfarande.",
     "commandAllowlist": "Tillåtna",
     "commandDenylist": "Blockerade",
     "allowCommand": "Tillåt kommando",

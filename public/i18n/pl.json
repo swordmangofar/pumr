@@ -932,7 +932,7 @@
       "credentials": "Poświadczenia, klucze i sekrety"
     },
     "commandRules": "Dozwolone reguły poleceń",
-    "commandRulesHint": "Wzorce glob, które nigdy nie wywołują prośby o uprawnienia. Niebezpieczne polecenia zawsze pytają.",
+    "commandRulesHint": "Reguły dokładne porównują tekst polecenia dosłownie; reguły glob używają symboli wieloznacznych. Oba typy mogą współistnieć z tym samym tekstem. Kontrole bezpieczeństwa nadal obowiązują.",
     "commandAllowlist": "Dozwolone",
     "commandDenylist": "Zablokowane",
     "allowCommand": "Zezwól na polecenie",

@@ -12,25 +12,27 @@ use crate::git::{
     git_operation_continue as continue_operation_worktree, git_pull as pull_worktree,
     git_pull_request_url as pull_request_url_worktree, git_push as push_worktree,
     git_push_branch as push_branch_worktree, git_rebase as rebase_worktree,
-    git_rebase_interactive as rebase_interactive_worktree, git_set_upstream as set_upstream_worktree,
-    git_stage as stage_worktree, git_stash_apply as stash_apply_worktree,
-    git_stash_drop as stash_drop_worktree, git_stash_pop as stash_pop_worktree,
-    git_stash_push as stash_push_worktree, git_submodule_update as submodule_update_worktree,
-    git_tag_create as tag_create_worktree, git_tag_delete as tag_delete_worktree,
-    git_tag_push as tag_push_worktree, git_unstage as unstage_worktree, project_blame,
-    project_branches, project_commit_detail, project_commit_file_diff, project_commits,
-    project_file_diff, project_git_info, project_git_status, project_rebase_commits,
-    project_remotes, reveal_path as reveal_path_worktree, ShadowRepo,
+    git_rebase_interactive as rebase_interactive_worktree,
+    git_set_upstream as set_upstream_worktree, git_stage as stage_worktree,
+    git_stash_apply as stash_apply_worktree, git_stash_drop as stash_drop_worktree,
+    git_stash_pop as stash_pop_worktree, git_stash_push as stash_push_worktree,
+    git_submodule_update as submodule_update_worktree, git_tag_create as tag_create_worktree,
+    git_tag_delete as tag_delete_worktree, git_tag_push as tag_push_worktree,
+    git_unstage as unstage_worktree, project_blame, project_branches, project_commit_detail,
+    project_commit_file_diff, project_commits, project_file_diff, project_git_info,
+    project_git_status, project_rebase_commits, project_remotes,
+    reveal_path as reveal_path_worktree, ShadowRepo,
 };
 use crate::mcp::McpManager;
 use crate::mentions;
-use crate::permissions::FileIgnoreConfig;
 use crate::models::{
-    Attachment, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine, GitBranch, GitCommit,
+    Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine, GitBranch,
+    GitCommit,
     GitCommitDetail, GitInfo, GitStatus, Mention, Message, ModelInfo, PermissionDecision,
     ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer, RoutedEvent, Session,
     SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
 };
+use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::openrouter::{ChatChunk, ChatMessage};
 use crate::state::AppState;
 use crate::tools::ToolRuntime;
@@ -334,7 +336,9 @@ pub fn list_messages(state: State<'_, AppState>, session_id: String) -> Result<V
 #[tauri::command]
 pub fn get_spend(state: State<'_, AppState>, session_id: Option<String>) -> Result<SpendSummary> {
     let settings = state.settings();
-    state.db.spend(session_id.as_deref(), settings.model.budget_usd)
+    state
+        .db
+        .spend(session_id.as_deref(), settings.model.budget_usd)
 }
 
 #[tauri::command]
@@ -570,12 +574,207 @@ pub fn write_workspace_file(
     Ok(())
 }
 
+fn select_command_rules(
+    options: &[CommandScopeOption],
+    submitted: Vec<CommandRule>,
+) -> Vec<CommandRule> {
+    let mut chosen = Vec::new();
+    for rule in submitted {
+        let rule = rule.trimmed();
+        if !rule.value().is_empty()
+            && options.iter().any(|option| option.rule == rule)
+            && !chosen.contains(&rule)
+        {
+            chosen.push(rule);
+        }
+    }
+    // Missing segment selections use only backend-owned exact options, never
+    // the display suggestion. Unscoped commands cannot create allow grants;
+    // command_rules_for_decision handles their deny-only fallback separately.
+    for option in options {
+        if option.kind == CommandScopeKind::Exact {
+            if let CommandRule::Exact(command) = &option.rule {
+                if !command.trim().is_empty()
+                    && !crate::permissions::matches_rules(command, &chosen)
+                {
+                    chosen.push(option.rule.clone());
+                }
+            }
+        }
+    }
+    chosen
+}
+
+fn command_rules_for_decision(
+    pending: &crate::broker::PendingPrompt,
+    decision: &str,
+    submitted: Vec<CommandRule>,
+) -> Vec<CommandRule> {
+    if pending.kind != "command" {
+        return Vec::new();
+    }
+    // Shell prompts carry a suggestion; MCP prompts do not. An unscoped shell
+    // denial may remember the original command, but never a suggested glob.
+    if decision == "deny_always"
+        && pending.scope_options.is_empty()
+        && pending.suggested_rule.is_some()
+    {
+        return pending
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(|command| CommandRule::Exact(command.to_string()))
+            .into_iter()
+            .collect();
+    }
+    select_command_rules(&pending.scope_options, submitted)
+}
+
+#[cfg(test)]
+mod permission_rule_tests {
+    use super::*;
+    use crate::permissions::{evaluate_command, CommandDecision};
+
+    fn options(command: &str) -> Vec<CommandScopeOption> {
+        let CommandDecision::Ask { scope_options, .. } =
+            evaluate_command(command, Path::new("/project"), Path::new("/project"), &[], &[], &[])
+        else {
+            panic!("expected command scopes");
+        };
+        scope_options
+    }
+
+    #[test]
+    fn missing_selections_default_to_each_backend_exact_option() {
+        let scopes = options("pnpm test '*' && node build.js");
+        assert_eq!(
+            select_command_rules(&scopes, vec![]),
+            vec![
+                CommandRule::Exact("pnpm test '*'".into()),
+                CommandRule::Exact("node build.js".into()),
+            ],
+        );
+        assert_eq!(
+            select_command_rules(&scopes, vec![CommandRule::Glob("pnpm *".into())]),
+            vec![
+                CommandRule::Glob("pnpm *".into()),
+                CommandRule::Exact("node build.js".into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn submitted_rule_must_match_backend_kind_and_value() {
+        let scopes = options("pnpm test '*'");
+        assert_eq!(
+            select_command_rules(
+                &scopes,
+                vec![
+                    CommandRule::Glob("pnpm test '*'".into()),
+                    CommandRule::Glob("*".into()),
+                    CommandRule::Exact("pnpm *".into()),
+                ],
+            ),
+            vec![CommandRule::Exact("pnpm test '*'".into())],
+        );
+    }
+
+    #[test]
+    fn selections_deduplicate_by_typed_identity() {
+        let scopes = options("pnpm *");
+        let exact = CommandRule::Exact("pnpm *".into());
+        let glob = CommandRule::Glob("pnpm *".into());
+        assert_eq!(
+            select_command_rules(&scopes, vec![exact.clone()]),
+            vec![exact.clone()],
+        );
+        assert_eq!(
+            select_command_rules(&scopes, vec![glob.clone()]),
+            vec![glob.clone()],
+        );
+        assert_eq!(
+            select_command_rules(&scopes, vec![exact.clone(), glob.clone(), exact.clone()]),
+            vec![exact, glob],
+        );
+    }
+
+    #[test]
+    fn commands_without_scopes_cannot_select_renderer_rules() {
+        let scopes = options("echo $(whoami)");
+        assert!(scopes.is_empty());
+        assert!(select_command_rules(&scopes, vec![]).is_empty());
+        assert!(select_command_rules(&scopes, vec![CommandRule::Glob("echo *".into())]).is_empty());
+    }
+
+    #[test]
+    fn unscoped_shell_deny_remembers_only_the_original_exact_command() {
+        let command = r#"echo "$(whoami)""#;
+        let pending = crate::broker::PendingPrompt {
+            kind: "command".into(),
+            command: Some(format!("  {command}  ")),
+            folder: None,
+            suggested_rule: Some("echo *".into()),
+            scope_options: options(command),
+            session_id: "chat".into(),
+        };
+        assert!(pending.scope_options.is_empty());
+        let denied = command_rules_for_decision(
+            &pending,
+            "deny_always",
+            vec![CommandRule::Glob("*".into())],
+        );
+        assert_eq!(denied, vec![CommandRule::Exact(command.into())]);
+        assert!(matches!(
+            evaluate_command(
+                command,
+                Path::new("/project"),
+                Path::new("/project"),
+                &[],
+                &[],
+                &denied,
+            ),
+            CommandDecision::Deny { .. },
+        ));
+        assert!(evaluate_command(
+            r#"echo "$(id)""#,
+            Path::new("/project"),
+            Path::new("/project"),
+            &[],
+            &[],
+            &denied,
+        ).is_ask());
+        for decision in ["allow_always", "allow_session", "allow_once", "deny"] {
+            assert!(command_rules_for_decision(
+                &pending,
+                decision,
+                vec![CommandRule::Glob("echo *".into())],
+            ).is_empty());
+        }
+
+        let mut mcp = pending.clone();
+        mcp.suggested_rule = None;
+        for decision in ["deny_always", "allow_always", "allow_session"] {
+            assert!(command_rules_for_decision(&mcp, decision, vec![]).is_empty());
+        }
+        let mut missing_command = pending.clone();
+        for command in [None, Some("  ".into())] {
+            missing_command.command = command;
+            assert!(command_rules_for_decision(&missing_command, "deny_always", vec![]).is_empty());
+        }
+        let mut other_kind = pending;
+        other_kind.kind = "web".into();
+        assert!(command_rules_for_decision(&other_kind, "deny_always", vec![]).is_empty());
+    }
+}
+
 #[tauri::command]
 pub fn resolve_permission(
     state: State<'_, AppState>,
     request_id: String,
     decision: String,
     rules: Option<Vec<String>>,
+    command_rules: Option<Vec<CommandRule>>,
     folder: Option<String>,
     prompt_kind: Option<String>,
 ) -> Result<()> {
@@ -591,36 +790,21 @@ pub fn resolve_permission(
     let allowed = decision != "deny" && decision != "deny_always";
     let is_web = pending.kind.starts_with("web");
     let is_command = pending.kind == "command";
-    // A command prompt offers concrete allow/deny scopes. A compound command
-    // proposes scopes for *every* asking segment, so the user can grant one rule
-    // per part. Accept only rules the backend actually proposed; otherwise fall
-    // back to the backend's suggestion, so the renderer can never widen access.
-    let permitted: Vec<&str> = pending
-        .scope_options
-        .iter()
-        .map(|option| option.rule.as_str())
-        .collect();
-    let mut chosen_rules: Vec<String> = Vec::new();
-    for rule in rules.unwrap_or_default() {
-        let rule = rule.trim().to_string();
-        if rule.is_empty() || !permitted.contains(&rule.as_str()) {
-            continue;
-        }
-        if !chosen_rules.iter().any(|existing| existing == &rule) {
-            chosen_rules.push(rule);
-        }
-    }
-    if chosen_rules.is_empty() {
-        if let Some(suggested) = pending
+    let chosen_rules =
+        command_rules_for_decision(&pending, &decision, command_rules.unwrap_or_default());
+    // Website rules remain strings, but only the backend's proposed host may
+    // be saved. Command decision metadata is display-only, not a grant.
+    let _ = rules;
+    let rule = if is_command {
+        chosen_rules.first().map(|rule| rule.value().to_string())
+    } else {
+        pending
             .suggested_rule
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-        {
-            chosen_rules.push(suggested.to_string());
-        }
-    }
-    let rule = chosen_rules.first().cloned();
+            .map(str::to_string)
+    };
     let folder = pending
         .folder
         .map(|value| value.trim().to_string())
@@ -630,7 +814,12 @@ pub fn resolve_permission(
         let mut changed = false;
         if allowed && decision == "allow_always" {
             if let Some(rule) = &rule {
-                if !settings.permissions.allowed_websites.iter().any(|entry| entry == rule) {
+                if !settings
+                    .permissions
+                    .allowed_websites
+                    .iter()
+                    .any(|entry| entry == rule)
+                {
                     settings.permissions.allowed_websites.push(rule.clone());
                     changed = true;
                 }
@@ -638,7 +827,12 @@ pub fn resolve_permission(
         }
         if !allowed && decision == "deny_always" {
             if let Some(rule) = &rule {
-                if !settings.permissions.denied_websites.iter().any(|entry| entry == rule) {
+                if !settings
+                    .permissions
+                    .denied_websites
+                    .iter()
+                    .any(|entry| entry == rule)
+                {
                     settings.permissions.denied_websites.push(rule.clone());
                     changed = true;
                 }
@@ -653,14 +847,24 @@ pub fn resolve_permission(
         let mut changed = false;
         if is_command {
             for rule in &chosen_rules {
-                if !settings.permissions.command_rules.iter().any(|entry| entry == rule) {
+                if !settings
+                    .permissions
+                    .command_rules
+                    .iter()
+                    .any(|entry| entry == rule)
+                {
                     settings.permissions.command_rules.push(rule.clone());
                     changed = true;
                 }
             }
         }
         if let Some(folder) = &folder {
-            if !settings.permissions.extra_folders.iter().any(|entry| entry == folder) {
+            if !settings
+                .permissions
+                .extra_folders
+                .iter()
+                .any(|entry| entry == folder)
+            {
                 settings.permissions.extra_folders.push(folder.clone());
                 changed = true;
             }
@@ -685,8 +889,8 @@ pub fn resolve_permission(
             state.permissions.add_session_folder(folder);
         }
     } else if !allowed && decision == "deny_always" && is_command {
-        // "Deny always" on a command prompt persists the chosen scopes to the
-        // command denylist.
+        // Persist chosen scopes or the backend-owned exact fallback for an
+        // unscoped shell command. MCP prompts have no remembered fallback.
         let mut settings = state.settings();
         let mut changed = false;
         for rule in &chosen_rules {
@@ -732,9 +936,17 @@ pub fn add_website_rule(state: State<'_, AppState>, rule: String, allow: bool) -
     let rule = rule.trim().to_string();
     if !rule.is_empty() {
         let exists = if allow {
-            settings.permissions.allowed_websites.iter().any(|entry| entry == &rule)
+            settings
+                .permissions
+                .allowed_websites
+                .iter()
+                .any(|entry| entry == &rule)
         } else {
-            settings.permissions.denied_websites.iter().any(|entry| entry == &rule)
+            settings
+                .permissions
+                .denied_websites
+                .iter()
+                .any(|entry| entry == &rule)
         };
         if !exists {
             if allow {
@@ -757,9 +969,15 @@ pub fn delete_website_rule(
 ) -> Result<Settings> {
     let mut settings = state.settings();
     if allow {
-        settings.permissions.allowed_websites.retain(|entry| entry != &rule);
+        settings
+            .permissions
+            .allowed_websites
+            .retain(|entry| entry != &rule);
     } else {
-        settings.permissions.denied_websites.retain(|entry| entry != &rule);
+        settings
+            .permissions
+            .denied_websites
+            .retain(|entry| entry != &rule);
     }
     config::save_settings(&state.settings_path, &settings)?;
     state.set_settings(settings.clone());
@@ -767,10 +985,14 @@ pub fn delete_website_rule(
 }
 
 #[tauri::command]
-pub fn add_command_rule(state: State<'_, AppState>, rule: String, allow: bool) -> Result<Settings> {
+pub fn add_command_rule(
+    state: State<'_, AppState>,
+    rule: CommandRule,
+    allow: bool,
+) -> Result<Settings> {
     let mut settings = state.settings();
-    let rule = rule.trim().to_string();
-    if !rule.is_empty() {
+    let rule = rule.trimmed();
+    if !rule.value().is_empty() {
         let list = if allow {
             &mut settings.permissions.command_rules
         } else {
@@ -788,12 +1010,15 @@ pub fn add_command_rule(state: State<'_, AppState>, rule: String, allow: bool) -
 #[tauri::command]
 pub fn delete_command_rule(
     state: State<'_, AppState>,
-    rule: String,
+    rule: CommandRule,
     allow: bool,
 ) -> Result<Settings> {
     let mut settings = state.settings();
     if allow {
-        settings.permissions.command_rules.retain(|entry| entry != &rule);
+        settings
+            .permissions
+            .command_rules
+            .retain(|entry| entry != &rule);
     } else {
         settings
             .permissions
@@ -980,7 +1205,12 @@ pub fn git_checkout(
     local_branch: Option<String>,
 ) -> Result<String> {
     let root = project_root(&state, &project_id)?;
-    checkout_worktree(&root, &branch, track.unwrap_or(false), local_branch.as_deref())
+    checkout_worktree(
+        &root,
+        &branch,
+        track.unwrap_or(false),
+        local_branch.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -1026,11 +1256,7 @@ pub async fn git_fast_forward(
 }
 
 #[tauri::command]
-pub fn git_merge(
-    state: State<'_, AppState>,
-    project_id: String,
-    branch: String,
-) -> Result<String> {
+pub fn git_merge(state: State<'_, AppState>, project_id: String, branch: String) -> Result<String> {
     let root = project_root(&state, &project_id)?;
     merge_worktree(&root, &branch)
 }
@@ -1153,10 +1379,7 @@ pub async fn git_operation_abort(
 }
 
 #[tauri::command]
-pub fn git_operation_continue(
-    state: State<'_, AppState>,
-    project_id: String,
-) -> Result<String> {
+pub fn git_operation_continue(state: State<'_, AppState>, project_id: String) -> Result<String> {
     let root = project_root(&state, &project_id)?;
     continue_operation_worktree(&root)
 }
@@ -1183,7 +1406,11 @@ pub fn git_stash_apply(
 }
 
 #[tauri::command]
-pub fn git_stash_pop(state: State<'_, AppState>, project_id: String, stash: String) -> Result<String> {
+pub fn git_stash_pop(
+    state: State<'_, AppState>,
+    project_id: String,
+    stash: String,
+) -> Result<String> {
     let root = project_root(&state, &project_id)?;
     stash_pop_worktree(&root, &stash)
 }
@@ -1205,11 +1432,7 @@ pub fn git_init(state: State<'_, AppState>, project_id: String) -> Result<String
 }
 
 #[tauri::command]
-pub async fn git_clone(
-    state: State<'_, AppState>,
-    url: String,
-    path: String,
-) -> Result<Project> {
+pub async fn git_clone(state: State<'_, AppState>, url: String, path: String) -> Result<Project> {
     let destination = PathBuf::from(&path);
     let result = blocking({
         let url = url.clone();
@@ -1269,10 +1492,12 @@ pub fn open_external_url(url: String) -> Result<()> {
     // Only allow web links through the OS opener. This blocks `file:`,
     // `javascript:`, and custom protocol handlers (and keeps `cmd.exe` on
     // Windows from seeing shell metacharacters).
-    let parsed = reqwest::Url::parse(url.trim())
-        .map_err(|_| AppError::msg("invalid URL".to_string()))?;
+    let parsed =
+        reqwest::Url::parse(url.trim()).map_err(|_| AppError::msg("invalid URL".to_string()))?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(AppError::msg("only http(s) links can be opened".to_string()));
+        return Err(AppError::msg(
+            "only http(s) links can be opened".to_string(),
+        ));
     }
     let url = parsed.to_string();
     let status = {
@@ -1319,7 +1544,9 @@ pub fn pick_asset_file(app: AppHandle, kind: String) -> Result<Option<String>> {
     let (title, extensions): (&str, &[&str]) = match kind.as_str() {
         "sound" => (
             "Select sound file",
-            &["mp3", "wav", "ogg", "oga", "m4a", "flac", "aac", "opus", "webm"],
+            &[
+                "mp3", "wav", "ogg", "oga", "m4a", "flac", "aac", "opus", "webm",
+            ],
         ),
         _ => (
             "Select background image",
@@ -1883,7 +2110,11 @@ async fn assemble_turn_context(
         if !context.is_empty() {
             context.push_str("\n\n");
         }
-        context.push_str(&mentions::resolve_skill(settings, skill, &installed_skill_dirs));
+        context.push_str(&mentions::resolve_skill(
+            settings,
+            skill,
+            &installed_skill_dirs,
+        ));
     }
 
     let mut mcp_manager = Arc::new(McpManager::empty());
@@ -1919,6 +2150,10 @@ async fn assemble_turn_context(
                         .ask(
                             crate::broker::PermissionPrompt {
                                 kind: "command".to_string(),
+                                operation: crate::broker::PermissionOperation::McpStart,
+                                cwd: std::env::current_dir()
+                                    .ok()
+                                    .map(|path| path.canonicalize().unwrap_or(path)),
                                 title: format!("Start MCP server '{}'?", config.name),
                                 detail: format!(
                                     "The assistant wants to start MCP server '{}' configured in {}.",

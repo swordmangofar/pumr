@@ -932,7 +932,7 @@
       "credentials": "Inloggegevens, sleutels en geheimen"
     },
     "commandRules": "Toegestane opdrachtregels",
-    "commandRulesHint": "Glob-patronen die nooit een toestemmingsvraag veroorzaken. Gevaarlijke opdrachten vragen altijd om toestemming.",
+    "commandRulesHint": "Exacte regels vergelijken de opdrachttekst letterlijk; glob-regels gebruiken jokertekens. Beide kunnen met dezelfde tekst naast elkaar bestaan. Veiligheidscontroles blijven van toepassing.",
     "commandAllowlist": "Toegestaan",
     "commandDenylist": "Geblokkeerd",
     "allowCommand": "Opdracht toestaan",

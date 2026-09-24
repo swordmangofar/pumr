@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
+  CommandRule,
   FileChange,
   FileDiff,
   GitInfo,
@@ -1003,24 +1004,21 @@ export class WorkspaceService {
 
   async resolvePermission(
     decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
-    rulesOverride?: string[],
+    rulesOverride?: CommandRule[],
   ): Promise<void> {
     const request = this.permission();
     if (!request) {
       return;
     }
-    const rules =
-      rulesOverride && rulesOverride.length > 0
-        ? rulesOverride
-        : request.suggestedRule
-          ? [request.suggestedRule]
-          : null;
+    const isCommand = request.promptKind === 'command';
+    const rules = !isCommand && request.suggestedRule ? [request.suggestedRule] : null;
     await api.resolvePermission(
       request.requestId,
       decision,
       rules,
       request.folder,
       request.promptKind,
+      isCommand ? rulesOverride ?? null : null,
     );
     // Allow-always/deny-always persist a rule in settings; refresh so the
     // settings lists reflect it immediately.

@@ -932,7 +932,7 @@
       "credentials": "Credenziali, chiavi e segreti"
     },
     "commandRules": "Regole dei comandi consentiti",
-    "commandRulesHint": "Pattern glob che non attivano mai una richiesta di autorizzazione. I comandi pericolosi chiedono sempre.",
+    "commandRulesHint": "Le regole esatte confrontano letteralmente il testo del comando; le regole glob usano caratteri jolly. Entrambe possono coesistere con lo stesso testo. I controlli di sicurezza restano in vigore.",
     "commandAllowlist": "Consentiti",
     "commandDenylist": "Bloccati",
     "allowCommand": "Consenti comando",

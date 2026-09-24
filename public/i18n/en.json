@@ -932,7 +932,7 @@
       "credentials": "Credentials, keys & secrets"
     },
     "commandRules": "Allowed command rules",
-    "commandRulesHint": "Glob patterns that never trigger a permission prompt. Dangerous commands always ask.",
+    "commandRulesHint": "Exact rules match command text literally; glob rules use wildcards. Both can coexist with the same text. Safety checks still apply.",
     "commandAllowlist": "Allowed",
     "commandDenylist": "Denied",
     "allowCommand": "Allow command",

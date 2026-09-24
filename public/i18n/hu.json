@@ -932,7 +932,7 @@
       "credentials": "Hitelesítési adatok, kulcsok és titkok"
     },
     "commandRules": "Engedélyezett parancsszabályok",
-    "commandRulesHint": "Glob-minták, amelyek soha nem váltanak ki engedélykérést. A veszélyes parancsok mindig kérdeznek.",
+    "commandRulesHint": "A pontos szabályok szó szerint egyeztetik a parancs szövegét; a glob-szabályok helyettesítő karaktereket használnak. Mindkettő létezhet ugyanazzal a szöveggel. A biztonsági ellenőrzések továbbra is érvényesek.",
     "commandAllowlist": "Engedélyezett",
     "commandDenylist": "Blokkolt",
     "allowCommand": "Parancs engedélyezése",

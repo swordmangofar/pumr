@@ -684,14 +684,6 @@ textarea {
   }
 }
 
-/* Long transcripts render every entry. `content-visibility` lets the browser
-   skip layout and paint for off-screen entries, which keeps scrolling and
-   streaming smooth in very long chats. Ignored on engines without support. */
-.chat-entry {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 120px;
-}
-
 /* Illustrative animation for the window summoning settings. Shows a shortcut
    key that, when pressed, moves the pumr window to the active (right) screen
    and hides it again on the second press. */

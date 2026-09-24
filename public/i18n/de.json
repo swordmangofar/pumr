@@ -932,7 +932,7 @@
       "credentials": "Zugangsdaten, Schlüssel & Secrets"
     },
     "commandRules": "Erlaubte Befehlsregeln",
-    "commandRulesHint": "Glob-Muster, die nie eine Freigabe anfordern. Gefährliche Befehle fragen immer.",
+    "commandRulesHint": "Exakte Regeln vergleichen den Befehlstext wörtlich; Glob-Regeln verwenden Platzhalter. Beide können mit demselben Text nebeneinander bestehen. Sicherheitsprüfungen gelten weiterhin.",
     "commandAllowlist": "Erlaubt",
     "commandDenylist": "Blockiert",
     "allowCommand": "Befehl erlauben",

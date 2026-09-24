@@ -266,8 +266,8 @@ export interface Settings {
   contextMessageLimit: number;
   maxToolIterations: number;
   autoContinueAllSessions: boolean;
-  commandRules: string[];
-  deniedCommandRules: string[];
+  commandRules: CommandRule[];
+  deniedCommandRules: CommandRule[];
   allowedWebsites: string[];
   deniedWebsites: string[];
   permissionDefaults: PermissionDefaults;
@@ -621,9 +621,11 @@ export interface CommandRisk {
 
 export type CommandScopeKind = 'program' | 'programFlags' | 'exact';
 
+export type CommandRule = { kind: 'exact'; value: string } | { kind: 'glob'; value: string };
+
 export interface CommandScopeOption {
   kind: CommandScopeKind;
-  rule: string;
+  rule: CommandRule;
 }
 
 export type PermissionRequestEvent = Extract<StreamEvent, { kind: 'permissionRequest' }>;

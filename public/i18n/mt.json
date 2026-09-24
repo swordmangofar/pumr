@@ -932,7 +932,7 @@
       "credentials": "Kredenzjali, ċwievet u sigrieti"
     },
     "commandRules": "Regoli tal-kmandi permessi",
-    "commandRulesHint": "Mudelli glob li qatt ma jqanqlu talba għall-permess. Kmandi perikolużi dejjem jistaqsu.",
+    "commandRulesHint": "Ir-regoli eżatti jqabblu t-test tal-kmand litteralment; ir-regoli glob jużaw karattri wildcard. It-tnejn jistgħu jeżistu bl-istess test. Il-kontrolli tas-sigurtà jibqgħu japplikaw.",
     "commandAllowlist": "Permessi",
     "commandDenylist": "Imblukkati",
     "allowCommand": "Ippermetti kmand",

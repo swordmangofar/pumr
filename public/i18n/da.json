@@ -932,7 +932,7 @@
       "credentials": "Legitimationsoplysninger, nøgler og hemmeligheder"
     },
     "commandRules": "Tilladte kommandoregler",
-    "commandRulesHint": "Glob-mønstre, der aldrig udløser en tilladelsesprompt. Farlige kommandoer spørger altid.",
+    "commandRulesHint": "Præcise regler matcher kommandoteksten bogstaveligt; glob-regler bruger jokertegn. Begge kan eksistere med samme tekst. Sikkerhedskontroller gælder stadig.",
     "commandAllowlist": "Tilladte",
     "commandDenylist": "Blokerede",
     "allowCommand": "Tillad kommando",

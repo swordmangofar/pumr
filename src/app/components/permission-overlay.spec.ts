@@ -1,9 +1,10 @@
-import { Pipe, PipeTransform, signal } from '@angular/core';
+import { Component, Pipe, PipeTransform, input, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { PermissionRequestEvent, Settings } from '../core/models';
 import { FALLBACK_SETTINGS, SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { CopyButton } from './copy-button';
 import { PermissionOverlay } from './permission-overlay';
 
 @Pipe({ name: 'transloco', standalone: true })
@@ -11,6 +12,12 @@ class StubTranslocoPipe implements PipeTransform {
   transform(value: string): string {
     return value;
   }
+}
+
+@Component({ selector: 'app-copy-button', standalone: true, template: '' })
+class StubCopyButton {
+  readonly text = input<string>('');
+  readonly buttonClass = input<string>('');
 }
 
 function request(patch: Partial<PermissionRequestEvent> = {}): PermissionRequestEvent {
@@ -53,8 +60,8 @@ describe('PermissionOverlay', () => {
       ],
     });
     TestBed.overrideComponent(PermissionOverlay, {
-      remove: { imports: [TranslocoPipe] },
-      add: { imports: [StubTranslocoPipe] },
+      remove: { imports: [TranslocoPipe, CopyButton] },
+      add: { imports: [StubTranslocoPipe, StubCopyButton] },
     });
     fixture = TestBed.createComponent(PermissionOverlay);
     fixture.componentRef.setInput('request', req);
@@ -128,9 +135,9 @@ describe('PermissionOverlay', () => {
       request({
         command: 'ls -la /test',
         scopeOptions: [
-          { kind: 'program', rule: 'ls *' },
-          { kind: 'programFlags', rule: 'ls -la *' },
-          { kind: 'exact', rule: 'ls -la /test' },
+          { kind: 'program', rule: { kind: 'glob', value: 'ls *' } },
+          { kind: 'programFlags', rule: { kind: 'glob', value: 'ls -la *' } },
+          { kind: 'exact', rule: { kind: 'exact', value: 'ls -la /test' } },
         ],
       }),
     );
@@ -140,7 +147,9 @@ describe('PermissionOverlay', () => {
     buttons.find((button) => button.textContent?.includes('ls -la /test'))?.click();
     fixture.detectChanges();
     buttons.find((button) => button.textContent?.includes('permission.allowAlways'))?.click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', ['ls -la /test']);
+    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
+      { kind: 'exact', value: 'ls -la /test' },
+    ]);
   });
 
   it('offers one scope picker per asking segment and grants them separately', async () => {
@@ -153,8 +162,8 @@ describe('PermissionOverlay', () => {
             allowed: false,
             suggestedRule: 'pnpm --version',
             scopeOptions: [
-              { kind: 'program', rule: 'pnpm *' },
-              { kind: 'exact', rule: 'pnpm --version' },
+              { kind: 'program', rule: { kind: 'glob', value: 'pnpm *' } },
+              { kind: 'exact', rule: { kind: 'exact', value: 'pnpm --version' } },
             ],
           },
           {
@@ -162,8 +171,8 @@ describe('PermissionOverlay', () => {
             allowed: false,
             suggestedRule: "tr -d '\\n'",
             scopeOptions: [
-              { kind: 'program', rule: 'tr *' },
-              { kind: 'exact', rule: "tr -d '\\n'" },
+              { kind: 'program', rule: { kind: 'glob', value: 'tr *' } },
+              { kind: 'exact', rule: { kind: 'exact', value: "tr -d '\\n'" } },
             ],
           },
         ],
@@ -176,15 +185,129 @@ describe('PermissionOverlay', () => {
     buttons.find((button) => button.textContent?.includes('tr *'))?.click();
     fixture.detectChanges();
     buttons.find((button) => button.textContent?.includes('permission.allowAlways'))?.click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', ['pnpm *', 'tr *']);
+    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
+      { kind: 'glob', value: 'pnpm *' },
+      { kind: 'glob', value: 'tr *' },
+    ]);
   });
 
   it('offers allow-in-this-chat for command prompts', () => {
-    create(request({ command: 'tr a b', scopeOptions: [{ kind: 'program', rule: 'tr *' }] }));
+    create(
+      request({
+        command: 'tr a b',
+        scopeOptions: [{ kind: 'program', rule: { kind: 'glob', value: 'tr *' } }],
+      }),
+    );
     const labels = [...fixture.nativeElement.querySelectorAll('button')].map(
       (button) => (button as HTMLButtonElement).textContent,
     );
     expect(labels.some((text) => text?.includes('permission.allowChat'))).toBe(true);
+  });
+
+  it.each([
+    ['permission.allowAlways', 'allow_always'],
+    ['permission.allowChat', 'allow_session'],
+    ['permission.denyAlways', 'deny_always'],
+  ])('preserves matching kind for identical scope values via %s', (label, decision) => {
+    create(
+      request({
+        command: 'tool *',
+        scopeOptions: [
+          { kind: 'program', rule: { kind: 'glob', value: 'tool *' } },
+          { kind: 'exact', rule: { kind: 'exact', value: 'tool *' } },
+        ],
+      }),
+    );
+    const scopes = buttons().filter((button) => button.querySelector('code'));
+    expect(scopes).toHaveLength(2);
+    expect(scopes.map((button) => button.querySelector('code')?.textContent?.trim())).toEqual([
+      'tool *',
+      'tool *',
+    ]);
+    expect(scopes[0].className).not.toContain('border-accent/60');
+    expect(scopes[1].className).toContain('border-accent/60');
+
+    const action = buttons().find((button) => button.textContent?.includes(label))!;
+    action.click();
+    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
+      { kind: 'exact', value: 'tool *' },
+    ]);
+
+    scopes[0].click();
+    fixture.detectChanges();
+    expect(scopes[0].className).toContain('border-accent/60');
+    expect(scopes[1].className).not.toContain('border-accent/60');
+    action.click();
+    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
+      { kind: 'glob', value: 'tool *' },
+    ]);
+
+    scopes[1].click();
+    fixture.detectChanges();
+    action.click();
+    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
+      { kind: 'exact', value: 'tool *' },
+    ]);
+  });
+
+  it('compares selected rules structurally rather than by object identity', () => {
+    create(
+      request({
+        scopeOptions: [{ kind: 'exact', rule: { kind: 'exact', value: 'tool *' } }],
+      }),
+    );
+    fixture.componentInstance['selectedScopeRule'].set({ value: 'tool *', kind: 'exact' });
+    fixture.detectChanges();
+    expect(buttons().find((button) => button.querySelector('code'))?.className).toContain(
+      'border-accent/60',
+    );
+  });
+
+  it('keeps exact and glob rules with identical values distinct across compound segments', () => {
+    create(
+      request({
+        command: 'tool * && tool *',
+        segments: ['tool * ', ' tool *'].map((text) => ({
+          text,
+          allowed: false,
+          scopeOptions: [
+            { kind: 'program', rule: { kind: 'glob', value: 'tool *' } },
+            { kind: 'exact', rule: { kind: 'exact', value: 'tool *' } },
+          ],
+        })),
+      }),
+    );
+    const scopes = buttons().filter((button) => button.querySelector('code'));
+    expect(scopes).toHaveLength(4);
+    expect(scopes.map((button) => button.className.includes('border-accent/60'))).toEqual([
+      false,
+      true,
+      false,
+      true,
+    ]);
+    scopes[0].click();
+    fixture.detectChanges();
+    expect(scopes.map((button) => button.className.includes('border-accent/60'))).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ]);
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowAlways'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
+      { kind: 'glob', value: 'tool *' },
+      { kind: 'exact', value: 'tool *' },
+    ]);
+  });
+
+  it('does not use a suggested command string when typed scopes are absent', () => {
+    create(request({ suggestedRule: 'tool *' }));
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowAlways'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith('allow_always', []);
   });
 
   it('shows a risk chip with the impact detail on hover', () => {
@@ -194,9 +317,7 @@ describe('PermissionOverlay', () => {
         risk: { level: 'danger', detail: 'It touches sensitive files.' },
       }),
     );
-    const chip = fixture.nativeElement.querySelector(
-      '[tabindex="0"]',
-    ) as HTMLElement | null;
+    const chip = fixture.nativeElement.querySelector('[tabindex="0"]') as HTMLElement | null;
     expect(chip?.textContent).toContain('permission.risk.danger');
     expect(fixture.nativeElement.textContent).toContain('It touches sensitive files.');
   });

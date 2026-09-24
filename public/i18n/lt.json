@@ -932,7 +932,7 @@
       "credentials": "Kredencialai, raktai ir paslaptys"
     },
     "commandRules": "Leidžiamos komandų taisyklės",
-    "commandRulesHint": "Glob šablonai, kurie niekada nesukelia leidimo prašymo. Pavojingos komandos visada klausia.",
+    "commandRulesHint": "Tikslios taisyklės lygina komandos tekstą pažodžiui; glob taisyklės naudoja pakaitos simbolius. Abu tipai gali egzistuoti su tuo pačiu tekstu. Saugos patikros ir toliau taikomos.",
     "commandAllowlist": "Leidžiami",
     "commandDenylist": "Blokuoti",
     "allowCommand": "Leisti komandą",
