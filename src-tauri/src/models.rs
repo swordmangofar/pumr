@@ -538,6 +538,17 @@ pub struct SkillRef {
     pub name: String,
 }
 
+/// A discovered skill advertised to the agent as a name + short description.
+/// The full instructions are read on demand by the `skill` tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillEntry {
+    pub name: String,
+    pub description: String,
+    /// Absolute path to the skill directory (containing `SKILL.md`).
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(
     tag = "kind",
@@ -558,7 +569,18 @@ pub enum StreamEvent {
         prompt_tokens: i64,
         completion_tokens: i64,
         cached_tokens: i64,
+        cache_write_tokens: i64,
         cost: f64,
+    },
+    ContextUsage {
+        /// Estimated input tokens that will be sent this iteration.
+        used_tokens: i64,
+        /// Input token budget derived from the model's context window (0 if unknown).
+        budget_tokens: i64,
+        system_tokens: i64,
+        history_tokens: i64,
+        tool_schema_tokens: i64,
+        tool_output_tokens: i64,
     },
     Assistant {
         message: Message,

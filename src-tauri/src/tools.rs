@@ -3,7 +3,7 @@ use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, ignored_paths, GitProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
-    EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
+    EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, SkillEntry, StreamEvent,
 };
 use crate::permissions::{
     self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
@@ -36,12 +36,17 @@ pub struct ToolRuntime {
     pub permissions: Arc<LivePermissions>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub session_id: String,
+    /// Root session for the conversation; session grants are keyed by this so
+    /// subagents share the chat's "allow in this chat" rules.
+    pub conversation_id: String,
     pub shadow: Arc<ShadowRepo>,
     pub processes: Arc<ProcessRegistry>,
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
     pub http: reqwest::Client,
     pub mcp: Option<Arc<McpManager>>,
+    /// Catalogue of discovered skills the `skill` tool can load on demand.
+    pub skills: Vec<SkillEntry>,
     pub cancel: CancellationToken,
     pub emit: EventSink,
 }
@@ -140,7 +145,7 @@ pub fn tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "edit",
-                "description": "Replace an exact string in an existing file. old_string must match exactly and uniquely unless replace_all is true.",
+                "description": "Replace a string in an existing file. old_string must be the exact current text without the line-number prefix from read; minor indentation and whitespace differences are tolerated. It must match uniquely unless replace_all is true.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -310,9 +315,186 @@ pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -
         "webfetch" => web_fetch(runtime, arguments).await,
         "websearch" => web_search(runtime, arguments).await,
         "question" => ask_question(runtime, arguments).await,
+        "skill" => load_skill(runtime, arguments).await,
+        "tool_search" => search_mcp_tools(runtime, arguments).await,
+        "mcp_invoke" => invoke_mcp_tool(runtime, arguments).await,
         other if other.starts_with("mcp__") => call_mcp_tool(runtime, other, arguments).await,
         other => ToolOutcome::error(format!("Unknown tool: {other}")),
     }
+}
+
+/// Schema for the progressive-disclosure search tool. Added to the tool set
+/// only when MCP schemas are deferred (see `agent::build_tool_schemas`).
+pub fn tool_search_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "tool_search",
+            "description": "Search the connected MCP tools by keyword and get their input schema. Use this when you need an MCP capability that is not already in your tool list, then call it with mcp_invoke.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Keywords describing the capability you need" },
+                    "limit": { "type": "integer", "description": "Maximum number of matches (default 8, max 20)" }
+                },
+                "required": ["query"]
+            }
+        }
+    })
+}
+
+/// Schema for invoking a deferred MCP tool by name.
+pub fn mcp_invoke_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "mcp_invoke",
+            "description": "Invoke an MCP tool by its exposed name. Find the name and its input schema with tool_search first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": { "type": "string", "description": "The exposed MCP tool name, e.g. mcp__server__tool" },
+                    "arguments": { "type": "object", "description": "Arguments object matching the tool's input schema" }
+                },
+                "required": ["tool"]
+            }
+        }
+    })
+}
+
+/// Schema for loading a discovered skill's instructions on demand.
+pub fn skill_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "skill",
+            "description": "Load a skill's full instructions by name. The available skills are listed in your system prompt. Use this when a skill applies to the user's request.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "The skill name to load" }
+                },
+                "required": ["name"]
+            }
+        }
+    })
+}
+
+async fn load_skill(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let name = arguments
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return ToolOutcome::error("The skill tool requires a 'name'.");
+    }
+    let Some(entry) = runtime
+        .skills
+        .iter()
+        .find(|skill| skill.name == name)
+        .cloned()
+    else {
+        let available: Vec<&str> = runtime.skills.iter().map(|skill| skill.name.as_str()).collect();
+        return ToolOutcome::error(format!(
+            "No skill named '{name}'. Available skills: {}.",
+            if available.is_empty() {
+                "(none)".to_string()
+            } else {
+                available.join(", ")
+            }
+        ));
+    };
+
+    let directory = Path::new(&entry.path);
+    let skill_file = directory.join("SKILL.md");
+    let mut files: Vec<PathBuf> = Vec::new();
+    if skill_file.is_file() {
+        files.push(skill_file.clone());
+    }
+    if let Ok(entries) = std::fs::read_dir(directory) {
+        for file in entries.flatten() {
+            let path = file.path();
+            if path.is_file()
+                && path.extension().map(|ext| ext == "md").unwrap_or(false)
+                && path != skill_file
+            {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files.truncate(20);
+
+    let mut body = String::new();
+    for file in &files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            if let Some(file_name) = file.file_name() {
+                body.push_str(&format!(
+                    "\n### {}\n{}\n",
+                    file_name.to_string_lossy(),
+                    content.trim()
+                ));
+            }
+        }
+    }
+    if body.trim().is_empty() {
+        return ToolOutcome::error(format!("Skill '{name}' has no readable instructions."));
+    }
+    ToolOutcome::ok(format!(
+        "<skill name=\"{name}\" path=\"{}\">\n{}\n</skill>\n\nFollow the skill instructions above when they apply to the user's request.",
+        entry.path,
+        body.trim()
+    ))
+}
+
+async fn search_mcp_tools(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let Some(manager) = runtime.mcp.clone() else {
+        return ToolOutcome::error("No MCP tools are available in this session.");
+    };
+    let query = arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return ToolOutcome::error("The tool_search query is empty.");
+    }
+    let limit = arguments
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(8)
+        .clamp(1, 20) as usize;
+    let matches = manager.search(&query, limit);
+    if matches.is_empty() {
+        return ToolOutcome::ok(format!(
+            "No MCP tools match '{query}'. Try different keywords."
+        ));
+    }
+    let mut output = format!("MCP tools matching '{query}':\n");
+    for tool in matches {
+        output.push_str(&format!(
+            "\n- {} (server: {})\n  {}\n  input schema: {}\n",
+            tool.exposed_name, tool.server, tool.description, tool.input_schema
+        ));
+    }
+    output.push_str(
+        "\nCall one with mcp_invoke: { tool: <exposed name>, arguments: <input object> }.",
+    );
+    ToolOutcome::ok(output)
+}
+
+async fn invoke_mcp_tool(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let Some(name) = arguments.get("tool").and_then(Value::as_str) else {
+        return ToolOutcome::error("mcp_invoke requires the 'tool' exposed MCP tool name.");
+    };
+    let call_arguments = arguments
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    call_mcp_tool(runtime, name, &call_arguments).await
 }
 
 async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -> ToolOutcome {
@@ -340,6 +522,7 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -530,6 +713,7 @@ async fn ensure_path_access(
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -565,6 +749,7 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -608,6 +793,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     segments: Vec::new(),
                     risk: None,
                     scope_options: Vec::new(),
+                    grant_session_id: runtime.conversation_id.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
@@ -643,10 +829,11 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     let shown_end = (offset - 1 + limit).min(lines.len());
     if lines.len() > shown_end {
         output.push_str(&format!(
-            "\n… file has {} lines total; showing {}-{}",
+            "\n… file has {} lines total; showing {}-{}. Continue with offset={} and the same limit to read on.",
             lines.len(),
             offset,
-            shown_end
+            shown_end,
+            shown_end + 1
         ));
     }
     ToolOutcome::ok(output)
@@ -721,21 +908,24 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             return ToolOutcome::error(format!("Cannot read {}: {error}", absolute.display()))
         }
     };
-    let occurrences = current.matches(&old_string).count();
-    if occurrences == 0 {
-        return ToolOutcome::error(
-            "old_string was not found. Read the file and provide the exact current text.",
-        );
-    }
-    if occurrences > 1 && !replace_all {
-        return ToolOutcome::error(format!(
-            "old_string occurs {occurrences} times. Add more context to make it unique or set replace_all."
-        ));
-    }
-    let updated = if replace_all {
-        current.replace(&old_string, &new_string)
-    } else {
-        current.replacen(&old_string, &new_string, 1)
+    let (updated, occurrences) = match apply_edit(&current, &old_string, &new_string, replace_all) {
+        Ok(applied) => applied,
+        Err(EditError::EmptyOldString) => {
+            return ToolOutcome::error(
+                "old_string must not be empty. Provide the exact current text to replace.",
+            )
+        }
+        Err(EditError::NotFound) => {
+            let relative = relative_display(runtime, &absolute);
+            return ToolOutcome::error(format!(
+                "old_string was not found in {relative}. Read the file with the read tool and copy the exact current text, without line-number prefixes or surrounding quotes."
+            ));
+        }
+        Err(EditError::NotUnique(count)) => {
+            return ToolOutcome::error(format!(
+                "old_string occurs {count} times. Add more surrounding context to make it unique or set replace_all to true."
+            ));
+        }
     };
     if let Err(error) = tokio::fs::write(&absolute, &updated).await {
         return ToolOutcome::error(format!("Cannot write {}: {error}", absolute.display()));
@@ -757,8 +947,255 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     }
 }
 
+#[derive(Debug)]
+enum EditError {
+    EmptyOldString,
+    NotFound,
+    NotUnique(usize),
+}
+
+enum EditMatch {
+    Exact(Vec<(usize, usize)>),
+    LineTrimmed {
+        ranges: Vec<(usize, usize)>,
+        old_indent: String,
+        target_indent: String,
+    },
+    Whitespace(Vec<(usize, usize)>),
+}
+
+impl EditMatch {
+    fn ranges(&self) -> &[(usize, usize)] {
+        match self {
+            EditMatch::Exact(ranges) | EditMatch::Whitespace(ranges) => ranges,
+            EditMatch::LineTrimmed { ranges, .. } => ranges,
+        }
+    }
+}
+
+/// Apply an exact-string edit, falling back to progressively more forgiving
+/// matchers so small differences in indentation or whitespace do not fail the
+/// edit. Returns the updated content and the number of replacements made.
+fn apply_edit(
+    content: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> std::result::Result<(String, usize), EditError> {
+    if old.is_empty() {
+        return Err(EditError::EmptyOldString);
+    }
+    let matched = find_match(content, old);
+    let ranges = matched.ranges();
+    if ranges.is_empty() {
+        return Err(EditError::NotFound);
+    }
+    if ranges.len() > 1 && !replace_all {
+        return Err(EditError::NotUnique(ranges.len()));
+    }
+    let replacement = match &matched {
+        EditMatch::LineTrimmed {
+            old_indent,
+            target_indent,
+            ..
+        } => reindent(new, old_indent, target_indent),
+        _ => new.to_string(),
+    };
+    let take = if replace_all { ranges.len() } else { 1 };
+    let mut result = String::with_capacity(content.len() + replacement.len());
+    let mut cursor = 0;
+    let mut replaced = 0;
+    for (start, end) in ranges.iter().take(take) {
+        if *start < cursor {
+            continue;
+        }
+        result.push_str(&content[cursor..*start]);
+        result.push_str(&replacement);
+        cursor = *end;
+        replaced += 1;
+    }
+    result.push_str(&content[cursor..]);
+    Ok((result, replaced))
+}
+
+/// Try an exact byte-for-byte match first, then a line-trimmed match (ignores
+/// leading/trailing whitespace on each line), then a whitespace-normalised
+/// match (any run of whitespace equals any other).
+fn find_match(content: &str, old: &str) -> EditMatch {
+    let exact = exact_ranges(content, old);
+    if !exact.is_empty() {
+        return EditMatch::Exact(exact);
+    }
+    let trimmed = line_trimmed_ranges(content, old);
+    if !trimmed.ranges().is_empty() {
+        return trimmed;
+    }
+    EditMatch::Whitespace(whitespace_ranges(content, old))
+}
+
+fn leading_whitespace(line: &str) -> &str {
+    &line[..line.len() - line.trim_start().len()]
+}
+
+/// Rewrite `new` so its indentation matches the file when `old` was matched
+/// with different leading whitespace.
+fn reindent(new: &str, old_indent: &str, target_indent: &str) -> String {
+    if old_indent == target_indent {
+        return new.to_string();
+    }
+    let mut result = String::with_capacity(new.len());
+    for (index, line) in new.split('\n').enumerate() {
+        if index > 0 {
+            result.push('\n');
+        }
+        if line.trim().is_empty() {
+            result.push_str(line);
+            continue;
+        }
+        match line.strip_prefix(old_indent) {
+            Some(rest) => {
+                result.push_str(target_indent);
+                result.push_str(rest);
+            }
+            None => result.push_str(line),
+        }
+    }
+    result
+}
+
+fn exact_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(position) = content[cursor..].find(old) {
+        let start = cursor + position;
+        ranges.push((start, start + old.len()));
+        cursor = start + old.len();
+    }
+    ranges
+}
+
+/// A line together with its byte span. `end` includes the trailing newline
+/// (if any); `text` excludes it. `content_end` is `start + text.len()`.
+struct LineSpan<'a> {
+    start: usize,
+    end: usize,
+    text: &'a str,
+}
+
+fn line_spans(content: &str) -> Vec<LineSpan<'_>> {
+    let bytes = content.as_bytes();
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            let text_end = if index > start && bytes[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            spans.push(LineSpan {
+                start,
+                end: index + 1,
+                text: &content[start..text_end],
+            });
+            start = index + 1;
+        }
+        index += 1;
+    }
+    if start <= content.len() {
+        spans.push(LineSpan {
+            start,
+            end: content.len(),
+            text: &content[start..],
+        });
+    }
+    spans
+}
+
+fn line_trimmed_ranges(content: &str, old: &str) -> EditMatch {
+    let haystack = line_spans(content);
+    let needle: Vec<&str> = old.lines().collect();
+    let mut target_indent = String::new();
+    let mut old_indent = String::new();
+    let mut ranges = Vec::new();
+    if !needle.is_empty() && needle.len() <= haystack.len() {
+        old_indent = leading_whitespace(needle[0]).to_string();
+        for index in 0..=(haystack.len() - needle.len()) {
+            let matched = needle
+                .iter()
+                .zip(&haystack[index..index + needle.len()])
+                .all(|(expected, span)| expected.trim() == span.text.trim());
+            if matched {
+                if ranges.is_empty() {
+                    target_indent = leading_whitespace(haystack[index].text).to_string();
+                }
+                let start = haystack[index].start;
+                let last = &haystack[index + needle.len() - 1];
+                let end = if old.ends_with('\n') {
+                    last.end
+                } else {
+                    last.start + last.text.len()
+                };
+                ranges.push((start, end));
+            }
+        }
+    }
+    EditMatch::LineTrimmed {
+        ranges,
+        old_indent,
+        target_indent,
+    }
+}
+
+fn normalize_whitespace(text: &str) -> (String, Vec<usize>) {
+    let mut normalized = String::with_capacity(text.len());
+    let mut map = Vec::with_capacity(text.len());
+    let mut in_whitespace = false;
+    for (index, character) in text.char_indices() {
+        if character.is_whitespace() {
+            if !in_whitespace {
+                normalized.push(' ');
+                map.push(index);
+                in_whitespace = true;
+            }
+        } else {
+            let before = normalized.len();
+            normalized.push(character);
+            for _ in before..normalized.len() {
+                map.push(index);
+            }
+            in_whitespace = false;
+        }
+    }
+    (normalized, map)
+}
+
+fn whitespace_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
+    let (haystack, map) = normalize_whitespace(content);
+    let (needle, _) = normalize_whitespace(old);
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(position) = haystack[cursor..].find(&needle) {
+        let start = cursor + position;
+        let end = start + needle.len();
+        let original_start = map[start];
+        let original_end = map.get(end).copied().unwrap_or(content.len());
+        ranges.push((original_start, original_end));
+        cursor = end;
+    }
+    ranges
+}
+
 /// Build a directory walker that never descends into `.git` and that prunes
-/// generated/dependency directories unless the user allowed scanning them.
+/// generated/dependency directories (`node_modules`, `target`, `dist`, …)
+/// regardless of `scanGeneratedFiles`. That flag only controls whether
+/// generated *files* (`*.min.js`, `*.log`, …) are surfaced, so a project with
+/// dependencies enabled can still be searched quickly. A user exemption or an
+/// explicitly disabled generated rule re-enables the matching subtree.
 /// `.gitignore` is handled separately so user exemptions can override it.
 fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>) -> ignore::Walk {
     let root = project_root.to_path_buf();
@@ -786,10 +1223,9 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir
-            && !config.scan_generated_files
             && !config.has_exemptions()
             && config.is_generated_path(path)
-            && !config.generated_rule_disabled(path)
+            && !config.generated_rule_explicitly_disabled(path)
         {
             return false;
         }
@@ -947,7 +1383,14 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     if results.is_empty() {
         return ToolOutcome::ok(format!("No matches for '{pattern}'."));
     }
-    ToolOutcome::ok(results.join("\n"))
+    let capped = results.len() >= 200;
+    let mut output = results.join("\n");
+    if capped {
+        output.push_str(
+            "\n\n… showing the first 200 matches only. Narrow the pattern or add include/path to see more.",
+        );
+    }
+    ToolOutcome::ok(output)
 }
 
 async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -1046,6 +1489,7 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         segments: Vec::new(),
                         risk: None,
                         scope_options: Vec::new(),
+                        grant_session_id: runtime.conversation_id.clone(),
                     },
                     &runtime.cancel,
                     &runtime.session_id,
@@ -1549,16 +1993,17 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     allowed_rules.extend(
         runtime
             .permissions
-            .session_command_rules(&runtime.session_id),
+            .session_command_rules(&runtime.conversation_id),
     );
     let denied_rules = runtime.permissions.denied_command_rules();
-    let decision = permissions::evaluate_command(
+    let decision = permissions::evaluate_command_with(
         &command,
         &runtime.project_root,
         &cwd,
         &runtime.permissions.extra_folders(),
         &allowed_rules,
         &denied_rules,
+        &runtime.permissions.auto_approve(),
     );
     if let CommandDecision::Deny { reason } = decision {
         return ToolOutcome::denied_with_reason(reason);
@@ -1588,6 +2033,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     segments,
                     risk: Some(risk),
                     scope_options,
+                    grant_session_id: runtime.conversation_id.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
@@ -1773,14 +2219,49 @@ fn spawn_waiter(
 }
 
 fn truncate(text: String) -> String {
-    if text.len() <= MAX_TOOL_OUTPUT {
-        return text;
+    head_tail(&text, MAX_TOOL_OUTPUT)
+}
+
+/// Truncates to at most `max_bytes` while keeping both the beginning and the
+/// end of the output, since failures and errors usually appear at the tail.
+/// The split favours the head slightly (~55/45) to preserve the leading context.
+fn head_tail(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
     }
-    let mut end = MAX_TOOL_OUTPUT;
-    while !text.is_char_boundary(end) {
-        end -= 1;
+    let notice = format!(
+        "\n\n…(output truncated: {} of {} bytes kept; head and tail shown)\n\n",
+        max_bytes,
+        text.len()
+    );
+    // When the budget cannot hold the notice plus both ends, fall back to a
+    // plain prefix cut so the result never exceeds `max_bytes`.
+    if max_bytes <= notice.len() + 1 {
+        let end = floor_char_boundary(text, max_bytes);
+        return text[..end].to_string();
     }
-    format!("{}\n…(output truncated)", &text[..end])
+    let budget = max_bytes - notice.len();
+    let head_budget = budget * 55 / 100;
+    let tail_budget = budget - head_budget;
+    let head_end = floor_char_boundary(text, head_budget);
+    let tail_start = ceil_char_boundary(text, text.len().saturating_sub(tail_budget));
+    format!("{}{}{}", &text[..head_end], notice, &text[tail_start..])
+}
+
+fn floor_char_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 #[cfg(test)]
@@ -1806,6 +2287,31 @@ mod tests {
         assert!(!missing.exists());
         assert_eq!(permission_path(&missing), missing);
         assert!(permission_path(&missing).is_absolute());
+    }
+
+    #[test]
+    fn head_tail_keeps_both_ends_within_budget() {
+        let text = format!("{}{}", "a".repeat(1000), "b".repeat(1000));
+        let limited = head_tail(&text, 600);
+        assert!(limited.starts_with("aaa"));
+        assert!(limited.ends_with("bbb"));
+        assert!(limited.len() <= 600, "expected <= 600, got {}", limited.len());
+        assert!(limited.contains("truncated"));
+    }
+
+    #[test]
+    fn head_tail_leaves_short_output_untouched() {
+        let text = "short output".to_string();
+        assert_eq!(head_tail(&text, 100), text);
+    }
+
+    #[test]
+    fn head_tail_respects_utf8_boundaries() {
+        let text = "é".repeat(400);
+        let limited = head_tail(&text, 300);
+        assert!(limited.len() <= 300);
+        // Must remain valid UTF-8; `.chars()` would panic on a broken boundary.
+        assert!(limited.chars().count() > 0);
     }
 
     #[cfg(unix)]
@@ -1854,6 +2360,67 @@ mod tests {
         );
     }
 
+    fn walk_relative(base: &Path, config: &Arc<FileIgnoreConfig>) -> Vec<String> {
+        let mut found: Vec<String> = file_walker(base, base, config)
+            .flatten()
+            .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+            .map(|entry| {
+                entry
+                    .path()
+                    .strip_prefix(base)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn walk_prunes_generated_dirs_even_when_scanning_is_enabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::write(root.join("dist/app.js"), "y").unwrap();
+
+        let config = Arc::new(FileIgnoreConfig::new(true, true, false, true, &[]));
+        assert_eq!(walk_relative(root, &config), vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn walk_reenters_generated_dirs_for_exemptions_and_disabled_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::write(root.join("dist/app.js"), "y").unwrap();
+        std::fs::write(root.join("src/main.rs"), "z").unwrap();
+
+        let exempted = Arc::new(FileIgnoreConfig::new(
+            true,
+            true,
+            false,
+            true,
+            &["node_modules/**".to_string()],
+        ));
+        assert!(walk_relative(root, &exempted).contains(&"node_modules/pkg/index.js".to_string()));
+
+        let disabled = Arc::new(
+            FileIgnoreConfig::new(true, true, false, true, &[])
+                .with_overrides(&["dir:node_modules".to_string()], &[]),
+        );
+        let found = walk_relative(root, &disabled);
+        assert!(found.contains(&"node_modules/pkg/index.js".to_string()));
+        assert!(!found.contains(&"dist/app.js".to_string()));
+    }
+
     #[test]
     fn duckduckgo_results_are_parsed() {
         let html = r#"
@@ -1868,5 +2435,77 @@ mod tests {
         assert_eq!(results[0].title, "serde - Rust");
         assert_eq!(results[0].snippet, "A serialization framework.");
         assert_eq!(results[1].url, "https://example.com/page");
+    }
+
+    #[test]
+    fn edit_matches_exact_text_once() {
+        let (updated, count) = apply_edit("let a = 1;\n", "a = 1", "a = 2", false).unwrap();
+        assert_eq!(updated, "let a = 2;\n");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn edit_replace_all_replaces_every_match() {
+        let (updated, count) = apply_edit("x x x", "x", "y", true).unwrap();
+        assert_eq!(updated, "y y y");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn edit_requires_unique_match_without_replace_all() {
+        assert!(matches!(
+            apply_edit("x x", "x", "y", false),
+            Err(EditError::NotUnique(2))
+        ));
+    }
+
+    #[test]
+    fn edit_rejects_empty_old_string() {
+        assert!(matches!(
+            apply_edit("abc", "", "y", false),
+            Err(EditError::EmptyOldString)
+        ));
+    }
+
+    #[test]
+    fn edit_reports_missing_text() {
+        assert!(matches!(
+            apply_edit("abc", "zzz", "y", false),
+            Err(EditError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn edit_restores_indentation_when_old_string_is_flattened() {
+        let content = "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n}\n";
+        let old = "let x = 1;\nprintln!(\"{x}\");";
+        let (updated, count) = apply_edit(content, old, "let x = 2;", false).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "fn main() {\n    let x = 2;\n}\n");
+    }
+
+    #[test]
+    fn edit_removes_extra_indentation_from_replacement() {
+        let content = "fn main() {\n    let x = 1;\n}\n";
+        let old = "        let x = 1;";
+        let (updated, count) = apply_edit(content, old, "        let x = 2;", false).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "fn main() {\n    let x = 2;\n}\n");
+    }
+
+    #[test]
+    fn edit_tolerates_whitespace_runs() {
+        let (updated, count) = apply_edit("a = 1\nb = 2\n", "a = 1   b = 2", "c = 3", false)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "c = 3\n");
+    }
+
+    #[test]
+    fn edit_tolerates_carriage_returns() {
+        let (updated, count) = apply_edit("a = 1\r\nb = 2\r\n", "a = 1\nb = 2", "c = 3", false)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "c = 3\r\n");
     }
 }

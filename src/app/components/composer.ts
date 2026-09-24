@@ -1268,7 +1268,7 @@ export class Composer {
     if (session && override?.sessionId === session.id) {
       return override.value;
     }
-    return session?.provider || 'auto';
+    return session?.provider || this.providerForModel(this.model()) || 'auto';
   });
   protected readonly selectedModel = computed(() => this.modelsService.byId(this.model()));
   protected readonly modes = computed(() => this.settings.modes());
@@ -2261,13 +2261,39 @@ export class Composer {
 
   protected async selectModel(modelId: string): Promise<void> {
     const session = this.workspace.activeAgent();
+    const provider = this.providerForModel(modelId) || 'auto';
     this.modelOverride.set(session ? { sessionId: session.id, value: modelId } : null);
-    this.providerOverride.set(session ? { sessionId: session.id, value: 'auto' } : null);
+    this.providerOverride.set(session ? { sessionId: session.id, value: provider } : null);
     this.modelOpen.set(false);
     this.focusInput();
     if (session) {
-      await this.workspace.updateSession({ sessionId: session.id, model: modelId, provider: '' });
+      await this.workspace.updateSession({
+        sessionId: session.id,
+        model: modelId,
+        provider: provider === 'auto' ? '' : provider,
+      });
     }
+  }
+
+  private providerForModel(modelId: string): string {
+    return this.settings.settings()?.providerByModel?.[modelId] ?? '';
+  }
+
+  private async rememberProvider(modelId: string, value: string): Promise<void> {
+    const current = this.settings.settings()?.providerByModel ?? {};
+    if (value === 'auto') {
+      if (!(modelId in current)) {
+        return;
+      }
+      const next = { ...current };
+      delete next[modelId];
+      await this.settings.patch({ providerByModel: next });
+      return;
+    }
+    if (current[modelId] === value) {
+      return;
+    }
+    await this.settings.patch({ providerByModel: { ...current, [modelId]: value } });
   }
 
   protected isFavorite(modelId: string): boolean {
@@ -2334,33 +2360,32 @@ export class Composer {
   }
 
   protected async selectProvider(endpoint: EndpointInfo): Promise<void> {
-    const session = this.workspace.activeAgent();
     const slug = endpoint.slug.split('/')[0] || endpoint.providerName;
-    this.providerOverride.set(session ? { sessionId: session.id, value: slug } : null);
-    this.providerOpen.set(false);
-    this.focusInput();
-    if (session) {
-      await this.workspace.updateSession({ sessionId: session.id, provider: slug });
-    }
+    await this.applyProvider(slug);
   }
 
   protected async selectAutoProvider(): Promise<void> {
-    const session = this.workspace.activeAgent();
-    this.providerOverride.set(session ? { sessionId: session.id, value: 'auto' } : null);
-    this.providerOpen.set(false);
-    this.focusInput();
-    if (session) {
-      await this.workspace.updateSession({ sessionId: session.id, provider: '' });
-    }
+    await this.applyProvider('auto');
   }
 
   protected async selectPreset(value: string): Promise<void> {
+    await this.applyProvider(value);
+  }
+
+  private async applyProvider(value: string): Promise<void> {
     const session = this.workspace.activeAgent();
     this.providerOverride.set(session ? { sessionId: session.id, value } : null);
     this.providerOpen.set(false);
     this.focusInput();
+    const model = this.model();
+    if (model) {
+      await this.rememberProvider(model, value);
+    }
     if (session) {
-      await this.workspace.updateSession({ sessionId: session.id, provider: value });
+      await this.workspace.updateSession({
+        sessionId: session.id,
+        provider: value === 'auto' ? '' : value,
+      });
     }
   }
 

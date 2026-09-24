@@ -238,6 +238,15 @@ const SYSTEM_DANGEROUS_PROGRAMS: &[&str] = &[
 const DATABASE_DANGEROUS_PROGRAMS: &[&str] =
     &["dropdb", "mysql", "psql", "mongo", "mongosh", "redis-cli"];
 
+/// Package managers and build runners whose normal in-project invocations are
+/// safe enough to auto-approve when the user enables the corresponding setting.
+/// Their dangerous subcommands are caught by `danger_reason` first, and any path
+/// outside the project still asks.
+const PACKAGE_SCRIPT_PROGRAMS: &[&str] = &[
+    "pnpm", "npm", "yarn", "bun", "ng", "npx", "make", "gradle", "gradlew", "mvn", "vite",
+    "webpack", "esbuild", "tsx", "ts-node",
+];
+
 /// One shell segment of a compound command, tagged with whether it was
 /// auto-allowed. Streamed to the permission overlay so the user can see which
 /// part of the line actually triggered the prompt.
@@ -334,6 +343,28 @@ impl CommandDecision {
     }
 }
 
+/// Live automatic-approval policy. These only skip the final "unrecognised
+/// program" prompt; the dangerous, outside-project, sensitive-file and
+/// shell-substitution checks run before them and still ask.
+#[derive(Debug, Clone, Copy)]
+pub struct AutoApproveConfig {
+    pub read_only: bool,
+    pub package_scripts: bool,
+    pub project_executables: bool,
+    pub project_commands: bool,
+}
+
+impl Default for AutoApproveConfig {
+    fn default() -> Self {
+        Self {
+            read_only: true,
+            package_scripts: false,
+            project_executables: false,
+            project_commands: false,
+        }
+    }
+}
+
 /// Shared, live permission configuration. Running turns read from this so a
 /// rule, folder or website granted with "allow always" applies immediately,
 /// including to subagents that are already in flight.
@@ -346,12 +377,16 @@ pub struct LivePermissions {
     /// current app session only and are never written to settings, so they
     /// disappear on restart.
     session_folders: RwLock<Vec<String>>,
-    /// Command allow rules granted for one chat only, keyed by session id. They
-    /// live in memory and disappear when the chat is deleted or the app
-    /// restarts.
+    /// Command allow rules granted for one chat only, keyed by conversation id
+    /// (the root session, so every subagent in the chat shares it). They live in
+    /// memory and disappear when the chat is deleted or the app restarts.
     session_command_rules: RwLock<HashMap<String, Vec<CommandRule>>>,
     allowed_websites: RwLock<Vec<String>>,
     denied_websites: RwLock<Vec<String>>,
+    /// Websites granted with "allow for this session". These live for the
+    /// current app session only and are never written to settings.
+    session_allowed_websites: RwLock<Vec<String>>,
+    auto_approve: RwLock<AutoApproveConfig>,
 }
 
 impl LivePermissions {
@@ -361,6 +396,7 @@ impl LivePermissions {
         extra_folders: Vec<String>,
         allowed_websites: Vec<String>,
         denied_websites: Vec<String>,
+        auto_approve: AutoApproveConfig,
     ) -> Self {
         Self {
             command_rules: RwLock::new(command_rules),
@@ -370,6 +406,8 @@ impl LivePermissions {
             session_command_rules: RwLock::new(HashMap::new()),
             allowed_websites: RwLock::new(allowed_websites),
             denied_websites: RwLock::new(denied_websites),
+            session_allowed_websites: RwLock::new(Vec::new()),
+            auto_approve: RwLock::new(auto_approve),
         }
     }
 
@@ -380,6 +418,7 @@ impl LivePermissions {
         extra_folders: Vec<String>,
         allowed_websites: Vec<String>,
         denied_websites: Vec<String>,
+        auto_approve: AutoApproveConfig,
     ) {
         *self.command_rules.write().unwrap() = command_rules;
         *self.denied_command_rules.write().unwrap() = denied_command_rules;
@@ -388,6 +427,11 @@ impl LivePermissions {
         // granted for the whole app session, not persisted to disk.
         *self.allowed_websites.write().unwrap() = allowed_websites;
         *self.denied_websites.write().unwrap() = denied_websites;
+        *self.auto_approve.write().unwrap() = auto_approve;
+    }
+
+    pub fn auto_approve(&self) -> AutoApproveConfig {
+        *self.auto_approve.read().unwrap()
     }
 
     pub fn command_rules(&self) -> Vec<CommandRule> {
@@ -398,32 +442,35 @@ impl LivePermissions {
         self.denied_command_rules.read().unwrap().clone()
     }
 
-    /// Grants a command allow rule for one chat only. Returns once the rule is
-    /// stored; duplicates are ignored.
-    pub fn add_session_command_rule(&self, session_id: &str, rule: &CommandRule) {
+    /// Grants a command allow rule for one chat only, keyed by the shared
+    /// conversation id so every subagent sees it. Duplicates are ignored.
+    pub fn add_session_command_rule(&self, conversation_id: &str, rule: &CommandRule) {
         let rule = rule.trimmed();
-        if session_id.is_empty() || rule.value().is_empty() {
+        if conversation_id.is_empty() || rule.value().is_empty() {
             return;
         }
         let mut sessions = self.session_command_rules.write().unwrap();
-        let rules = sessions.entry(session_id.to_string()).or_default();
+        let rules = sessions.entry(conversation_id.to_string()).or_default();
         if !rules.contains(&rule) {
             rules.push(rule);
         }
     }
 
-    pub fn session_command_rules(&self, session_id: &str) -> Vec<CommandRule> {
+    pub fn session_command_rules(&self, conversation_id: &str) -> Vec<CommandRule> {
         self.session_command_rules
             .read()
             .unwrap()
-            .get(session_id)
+            .get(conversation_id)
             .cloned()
             .unwrap_or_default()
     }
 
     /// Drops every session rule for a chat, used when the chat is deleted.
-    pub fn clear_session(&self, session_id: &str) {
-        self.session_command_rules.write().unwrap().remove(session_id);
+    pub fn clear_session(&self, conversation_id: &str) {
+        self.session_command_rules
+            .write()
+            .unwrap()
+            .remove(conversation_id);
     }
 
     /// Grants a folder for the current app session only. Used when the user
@@ -457,8 +504,28 @@ impl LivePermissions {
         folders
     }
 
+    /// Grants a website for the current app session only, used when the user
+    /// picks "allow for this session" on a website prompt. Session rules are
+    /// merged after the persistent ones so both can match.
+    pub fn add_session_website(&self, rule: &str) {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            return;
+        }
+        let mut session = self.session_allowed_websites.write().unwrap();
+        if !session.iter().any(|entry| entry == rule) {
+            session.push(rule.to_string());
+        }
+    }
+
     pub fn allowed_websites(&self) -> Vec<String> {
-        self.allowed_websites.read().unwrap().clone()
+        let mut websites = self.allowed_websites.read().unwrap().clone();
+        for rule in self.session_allowed_websites.read().unwrap().iter() {
+            if !websites.iter().any(|entry| entry == rule) {
+                websites.push(rule.clone());
+            }
+        }
+        websites
     }
 
     pub fn denied_websites(&self) -> Vec<String> {
@@ -534,6 +601,10 @@ fn glob_matches(value: &str, pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Convenience wrapper over [`evaluate_command_with`] using the legacy default
+/// automatic-approval policy. Kept for callers and tests that do not thread the
+/// live settings.
+#[allow(dead_code)]
 pub fn evaluate_command(
     command: &str,
     project_root: &Path,
@@ -541,6 +612,27 @@ pub fn evaluate_command(
     extra_folders: &[PathBuf],
     rules: &[CommandRule],
     denied: &[CommandRule],
+) -> CommandDecision {
+    evaluate_command_with(
+        command,
+        project_root,
+        cwd,
+        extra_folders,
+        rules,
+        denied,
+        &AutoApproveConfig::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_command_with(
+    command: &str,
+    project_root: &Path,
+    cwd: &Path,
+    extra_folders: &[PathBuf],
+    rules: &[CommandRule],
+    denied: &[CommandRule],
+    auto: &AutoApproveConfig,
 ) -> CommandDecision {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -554,17 +646,32 @@ pub fn evaluate_command(
     // first token. Command substitution stays inside its segment and still
     // fails the operator check below.
     let Some(segments) = split_segments(trimmed) else {
-        return ask(
+        // The line cannot be split safely, so its only rememberable scope is the
+        // whole command. An explicit, identical exact rule lets "allow in this
+        // chat"/"allow always" stop the same line from asking again.
+        if matches_exact_rule(trimmed, rules) {
+            return CommandDecision::Allow;
+        }
+        return ask_scoped(
             "Command uses shell control operators and needs review".to_string(),
             whole_line_rule(trimmed),
             CommandRisk::new(
                 CommandRiskLevel::High,
                 "The command could not be safely split and may hide additional commands.",
             ),
+            whole_line_options(trimmed),
         );
     };
     if segments.len() == 1 {
-        return evaluate_segment(&segments[0], project_root, cwd, extra_folders, rules, denied);
+        return evaluate_segment(
+            &segments[0],
+            project_root,
+            cwd,
+            extra_folders,
+            rules,
+            denied,
+            auto,
+        );
     }
     // Evaluate every segment so the prompt can show which parts are already
     // allowed, and keep the highest-risk asking segment's reason, rule, risk
@@ -577,7 +684,15 @@ pub fn evaluate_command(
     // backend actually proposed.
     let mut all_options: Vec<CommandScopeOption> = Vec::new();
     for segment in &segments {
-        let decision = evaluate_segment(segment, project_root, cwd, extra_folders, rules, denied);
+        let decision = evaluate_segment(
+            segment,
+            project_root,
+            cwd,
+            extra_folders,
+            rules,
+            denied,
+            auto,
+        );
         match decision {
             CommandDecision::Deny { reason } => return CommandDecision::Deny { reason },
             CommandDecision::Allow => {
@@ -637,8 +752,30 @@ fn whole_line_rule(command: &str) -> String {
     suggest_rule(command, &program)
 }
 
+/// The exact whole-line scope offered for a command that cannot be split into
+/// scopes. An exact rule only ever matches the byte-identical command, so it is
+/// safe to remember and the user can still become stuck in no prompt loop.
+fn whole_line_options(command: &str) -> Vec<CommandScopeOption> {
+    vec![CommandScopeOption {
+        kind: CommandScopeKind::Exact,
+        rule: CommandRule::Exact(command.trim().to_string()),
+    }]
+}
+
+/// True when an `Exact` rule matches the command literally. Used to honour an
+/// explicit grant for a line that cannot be otherwise classified. Glob rules are
+/// deliberately ignored here so they cannot widen access.
+fn matches_exact_rule(command: &str, rules: &[CommandRule]) -> bool {
+    let command = command.trim();
+    rules.iter().any(|rule| match rule {
+        CommandRule::Exact(value) => !value.trim().is_empty() && command == value.trim(),
+        CommandRule::Glob(_) => false,
+    })
+}
+
 /// Classifies a single shell segment: no `;`, `&&`, `|` or newline is left in
 /// it, so at most one program runs and the usual program/path checks apply.
+#[allow(clippy::too_many_arguments)]
 fn evaluate_segment(
     segment: &str,
     project_root: &Path,
@@ -646,6 +783,7 @@ fn evaluate_segment(
     extra_folders: &[PathBuf],
     rules: &[CommandRule],
     denied: &[CommandRule],
+    auto: &AutoApproveConfig,
 ) -> CommandDecision {
     let trimmed = segment.trim();
     if trimmed.is_empty() {
@@ -656,14 +794,18 @@ fn evaluate_segment(
         // A command the tokenizer cannot parse cannot be safely classified, so
         // fail closed and ask the user instead of guessing.
         _ => {
-            return ask(
+            if matches_exact_rule(trimmed, rules) {
+                return CommandDecision::Allow;
+            }
+            return ask_scoped(
                 "Command could not be parsed and needs review".to_string(),
                 suggest_rule(trimmed, ""),
                 CommandRisk::new(
                     CommandRiskLevel::Medium,
                     "The command could not be parsed, so its effects cannot be verified.",
                 ),
-            )
+                whole_line_options(trimmed),
+            );
         }
     };
     let program = base_name(&tokens[0]);
@@ -682,13 +824,17 @@ fn evaluate_segment(
     // What is left of the operators that split this segment: backticks,
     // `$(...)` and subshell syntax can run code the named program never sees.
     if has_shell_control_operators(trimmed) {
-        return ask(
+        if matches_exact_rule(trimmed, rules) {
+            return CommandDecision::Allow;
+        }
+        return ask_scoped(
             "Command uses shell control operators and needs review".to_string(),
             suggested_rule,
             CommandRisk::new(
                 CommandRiskLevel::High,
                 "Inline shell substitution can run hidden commands.",
             ),
+            whole_line_options(trimmed),
         );
     }
 
@@ -780,11 +926,29 @@ fn evaluate_segment(
     if matches_rules(trimmed, rules) {
         return CommandDecision::Allow;
     }
+    // Automatic approvals only reach this point: dangerous programs, paths
+    // outside the project, sensitive files and shell substitution have all
+    // returned above, so none of them can widen access to those cases.
+    if auto.package_scripts
+        && PACKAGE_SCRIPT_PROGRAMS.contains(&program.as_str())
+        && (known_executable
+            || is_project_executable(&tokens[0], cwd, project_root, extra_folders))
+    {
+        return CommandDecision::Allow;
+    }
+    if auto.project_executables
+        && is_project_executable(&tokens[0], cwd, project_root, extra_folders)
+    {
+        return CommandDecision::Allow;
+    }
+    if auto.project_commands {
+        return CommandDecision::Allow;
+    }
     // A redirect turns a read-only program into a writer (`ls > out`), so it
     // never counts as read-only. The target was already path- and
     // sensitivity-checked above, so this only decides whether to ask.
     let reads_only = is_read_only(&program, &tokens) || is_safe_cd(&program, &tokens);
-    if known_executable && reads_only && !has_redirect_operator(trimmed) {
+    if auto.read_only && known_executable && reads_only && !has_redirect_operator(trimmed) {
         return CommandDecision::Allow;
     }
     let risk = if has_redirect_operator(trimmed) {
@@ -809,6 +973,10 @@ fn evaluate_segment(
 /// Builds the allow/deny scopes offered for a segment: the whole program, the
 /// program plus its leading flags, and the exact command line. Duplicate rules
 /// are dropped, and the exact rule is always last.
+///
+/// The program glob uses the executable token exactly as written, so a
+/// path-qualified invocation (`./node_modules/.bin/pnpm`) produces a scope that
+/// can actually match it instead of an unusable basename (`pnpm *`).
 fn command_scope_options(
     program: &str,
     tokens: &[String],
@@ -820,9 +988,10 @@ fn command_scope_options(
             options.push(CommandScopeOption { kind, rule });
         }
     };
+    let executable = tokens.first().map(String::as_str).unwrap_or(program);
     push(
         CommandScopeKind::Program,
-        CommandRule::Glob(format!("{program} *")),
+        CommandRule::Glob(format!("{executable} *")),
     );
     let flags: Vec<&str> = tokens
         .iter()
@@ -833,7 +1002,7 @@ fn command_scope_options(
     if !flags.is_empty() {
         push(
             CommandScopeKind::ProgramFlags,
-            CommandRule::Glob(format!("{program} {} *", flags.join(" "))),
+            CommandRule::Glob(format!("{executable} {} *", flags.join(" "))),
         );
     }
     push(
@@ -1016,10 +1185,6 @@ fn has_shell_control_operators(command: &str) -> bool {
     false
 }
 
-fn ask(reason: String, suggested_rule: String, risk: CommandRisk) -> CommandDecision {
-    ask_with_segments(reason, suggested_rule, Vec::new(), risk, Vec::new())
-}
-
 fn ask_scoped(
     reason: String,
     suggested_rule: String,
@@ -1052,9 +1217,20 @@ pub fn matches_rules(command: &str, rules: &[CommandRule]) -> bool {
         !value.is_empty()
             && match rule {
                 CommandRule::Exact(_) => command == value,
-                CommandRule::Glob(_) => glob_matches(command, value),
+                CommandRule::Glob(_) => glob_rule_matches(command, value),
             }
     })
+}
+
+/// A whole-line glob cannot make the separator before a trailing `*` optional,
+/// so `pnpm *` would reject a bare `pnpm` even though the scope is meant to
+/// cover the program with any arguments, including none. Treat a rule that ends
+/// in `" *"` as also matching the command without that trailing wildcard.
+fn glob_rule_matches(command: &str, pattern: &str) -> bool {
+    glob_matches(command, pattern)
+        || pattern
+            .strip_suffix(" *")
+            .is_some_and(|prefix| !prefix.is_empty() && command == prefix)
 }
 
 pub fn suggest_rule(command: &str, program: &str) -> String {
@@ -1070,6 +1246,38 @@ fn base_name(program: &str) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| program.to_string())
+}
+
+/// True when the command's executable token is a path that resolves inside the
+/// project (or an extra folder) without a symlink escape. Used only for the
+/// explicit auto-approval settings, so it cannot widen access on its own.
+fn is_project_executable(
+    token: &str,
+    cwd: &Path,
+    project_root: &Path,
+    extra_folders: &[PathBuf],
+) -> bool {
+    if !token.contains(['/', '\\']) {
+        return false;
+    }
+    let path = Path::new(token);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let resolved = absolute.canonicalize().unwrap_or(absolute);
+    if !resolved.is_file() {
+        return false;
+    }
+    let root = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let extras: Vec<PathBuf> = extra_folders
+        .iter()
+        .map(|folder| folder.canonicalize().unwrap_or_else(|_| folder.clone()))
+        .collect();
+    path_is_inside(&resolved, &root, &extras)
 }
 
 fn is_known_executable(
@@ -1562,10 +1770,13 @@ impl FileIgnoreConfig {
         self.generated_rule_id(path).is_some()
     }
 
-    /// True when the matching generated rule was explicitly turned off.
-    pub fn generated_rule_disabled(&self, path: &Path) -> bool {
+    /// True when the user explicitly turned off the generated rule that would
+    /// otherwise hide this path. This ignores `scan_generated_files`, so a user
+    /// who only wants generated *files* included still gets dependency
+    /// directories pruned from directory walks.
+    pub fn generated_rule_explicitly_disabled(&self, path: &Path) -> bool {
         self.generated_rule_id(path)
-            .map(|id| !self.rule_on(!self.scan_generated_files, &id))
+            .map(|id| self.disabled.contains(&id))
             .unwrap_or(false)
     }
 
@@ -1818,6 +2029,99 @@ mod tests {
     fn commands_need_approval_by_default() {
         assert!(evaluate("pnpm build", &[]).is_ask());
         assert!(evaluate("node scripts/seed.js", &[]).is_ask());
+    }
+
+    fn evaluate_auto(command: &str, auto: AutoApproveConfig) -> CommandDecision {
+        evaluate_command_with(
+            command,
+            Path::new("/project"),
+            Path::new("/project"),
+            &[],
+            &[],
+            &[],
+            &auto,
+        )
+    }
+
+    #[test]
+    fn automatic_approvals_are_off_by_default() {
+        for command in ["pnpm build", "ng build", "make all"] {
+            assert!(evaluate(command, &[]).is_ask(), "{command}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_runners_auto_approve_when_enabled() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let bin = root.join("node_modules").join(".bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let ng = bin.join("ng");
+        std::fs::write(&ng, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&ng, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let command = "./node_modules/.bin/ng build";
+        let package_only = AutoApproveConfig {
+            package_scripts: true,
+            ..AutoApproveConfig::default()
+        };
+        assert_eq!(
+            evaluate_command_with(command, root, root, &[], &[], &[], &package_only),
+            CommandDecision::Allow,
+        );
+        let executables_only = AutoApproveConfig {
+            project_executables: true,
+            ..AutoApproveConfig::default()
+        };
+        assert_eq!(
+            evaluate_command_with(command, root, root, &[], &[], &[], &executables_only),
+            CommandDecision::Allow,
+        );
+        assert!(evaluate_command_with(
+            command,
+            root,
+            root,
+            &[],
+            &[],
+            &[],
+            &AutoApproveConfig::default(),
+        )
+        .is_ask());
+    }
+
+    #[test]
+    fn project_command_auto_approval_leaves_safety_checks_intact() {
+        let auto = AutoApproveConfig {
+            project_commands: true,
+            ..AutoApproveConfig::default()
+        };
+        assert_eq!(evaluate_auto("ng build", auto), CommandDecision::Allow);
+        assert_eq!(evaluate_auto("make all", auto), CommandDecision::Allow);
+        assert!(evaluate_auto("cat /etc/passwd", auto).is_ask());
+        assert!(evaluate_auto("sudo apt install", auto).is_ask());
+        assert!(evaluate_auto(r#"echo "$(whoami)""#, auto).is_ask());
+    }
+
+    #[test]
+    fn session_websites_are_merged_with_persistent_allows() {
+        let permissions = LivePermissions::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec!["example.com".to_string()],
+            Vec::new(),
+            AutoApproveConfig::default(),
+        );
+        permissions.add_session_website("docs.rs");
+        let allowed = permissions.allowed_websites();
+        assert!(allowed.contains(&"example.com".to_string()));
+        assert!(allowed.contains(&"docs.rs".to_string()));
+        assert!(matches!(
+            evaluate_website("docs.rs", &allowed, &[]),
+            WebsiteDecision::Allow,
+        ));
     }
 
     #[test]
@@ -2143,6 +2447,30 @@ mod tests {
     }
 
     #[test]
+    fn every_offered_scope_matches_the_command_it_was_offered_for() {
+        for command in [
+            "pnpm install",
+            "pnpm",
+            "pnpm --version",
+            "./node_modules/.bin/pnpm install",
+        ] {
+            let CommandDecision::Ask { scope_options, .. } = evaluate(command, &[]) else {
+                panic!("expected an ask decision for {command}");
+            };
+            for option in &scope_options {
+                if option.kind == CommandScopeKind::Exact {
+                    continue;
+                }
+                assert!(
+                    matches_rules(command, std::slice::from_ref(&option.rule)),
+                    "offered {:?} does not match {command}",
+                    option.rule,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn scope_options_drop_program_flags_when_there_are_none() {
         let CommandDecision::Ask { scope_options, .. } = evaluate("tr a b", &[]) else {
             panic!("expected an ask decision");
@@ -2159,8 +2487,14 @@ mod tests {
 
     #[test]
     fn session_command_rules_are_scoped_to_one_chat() {
-        let permissions =
-            LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let permissions = LivePermissions::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            AutoApproveConfig::default(),
+        );
         permissions.add_session_command_rule("chat-a", &CommandRule::Exact("pnpm *".into()));
         permissions.add_session_command_rule("chat-a", &CommandRule::Exact("pnpm *".into()));
         assert_eq!(
@@ -2251,6 +2585,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                AutoApproveConfig::default(),
             );
             permissions.add_session_command_rule("chat-a", &CommandRule::Exact("pnpm test '*'".into()));
             let mut rules = permissions.command_rules();
@@ -2478,7 +2813,14 @@ mod tests {
 
     #[test]
     fn session_folder_covers_every_file_and_subfolder_below_it() {
-        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let permissions = LivePermissions::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            AutoApproveConfig::default(),
+        );
         permissions.add_session_folder("/test/test2");
         let folders = permissions.extra_folders();
         assert!(path_is_inside(
@@ -2517,7 +2859,14 @@ mod tests {
 
     #[test]
     fn session_folders_survive_a_settings_save() {
-        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let permissions = LivePermissions::new(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            AutoApproveConfig::default(),
+        );
         permissions.add_session_folder("/test/test2");
         permissions.replace(
             Vec::new(),
@@ -2525,6 +2874,7 @@ mod tests {
             vec!["/persisted".to_string()],
             Vec::new(),
             Vec::new(),
+            AutoApproveConfig::default(),
         );
         let folders = permissions.extra_folders();
         assert!(folders.contains(&PathBuf::from("/persisted")));

@@ -589,8 +589,8 @@ fn select_command_rules(
         }
     }
     // Missing segment selections use only backend-owned exact options, never
-    // the display suggestion. Unscoped commands cannot create allow grants;
-    // command_rules_for_decision handles their deny-only fallback separately.
+    // the display suggestion. An unscoped command offers its whole line as an
+    // exact option, so allow and deny can both remember it without widening.
     for option in options {
         if option.kind == CommandScopeKind::Exact {
             if let CommandRule::Exact(command) = &option.rule {
@@ -700,15 +700,14 @@ mod permission_rule_tests {
     }
 
     #[test]
-    fn commands_without_scopes_cannot_select_renderer_rules() {
-        let scopes = options("echo $(whoami)");
-        assert!(scopes.is_empty());
+    fn empty_scope_options_cannot_select_renderer_rules() {
+        let scopes: Vec<CommandScopeOption> = Vec::new();
         assert!(select_command_rules(&scopes, vec![]).is_empty());
         assert!(select_command_rules(&scopes, vec![CommandRule::Glob("echo *".into())]).is_empty());
     }
 
     #[test]
-    fn unscoped_shell_deny_remembers_only_the_original_exact_command() {
+    fn unscoped_shell_command_offers_only_its_exact_line() {
         let command = r#"echo "$(whoami)""#;
         let pending = crate::broker::PendingPrompt {
             kind: "command".into(),
@@ -717,14 +716,33 @@ mod permission_rule_tests {
             suggested_rule: Some("echo *".into()),
             scope_options: options(command),
             session_id: "chat".into(),
+            grant_session_id: "chat".into(),
         };
-        assert!(pending.scope_options.is_empty());
+        // The only offered scope is the byte-identical whole line.
+        assert_eq!(
+            pending.scope_options,
+            vec![CommandScopeOption {
+                kind: CommandScopeKind::Exact,
+                rule: CommandRule::Exact(command.into()),
+            }],
+        );
+        // A submitted rule the backend did not offer is dropped; the exact
+        // whole-line fallback is remembered for deny and allow alike.
+        for decision in ["deny_always", "allow_always", "allow_session"] {
+            assert_eq!(
+                command_rules_for_decision(
+                    &pending,
+                    decision,
+                    vec![CommandRule::Glob("echo *".into())],
+                ),
+                vec![CommandRule::Exact(command.into())],
+            );
+        }
         let denied = command_rules_for_decision(
             &pending,
             "deny_always",
             vec![CommandRule::Glob("*".into())],
         );
-        assert_eq!(denied, vec![CommandRule::Exact(command.into())]);
         assert!(matches!(
             evaluate_command(
                 command,
@@ -743,24 +761,22 @@ mod permission_rule_tests {
             &[],
             &[],
             &denied,
-        ).is_ask());
-        for decision in ["allow_always", "allow_session", "allow_once", "deny"] {
-            assert!(command_rules_for_decision(
-                &pending,
-                decision,
-                vec![CommandRule::Glob("echo *".into())],
-            ).is_empty());
-        }
+        )
+        .is_ask());
 
-        let mut mcp = pending.clone();
-        mcp.suggested_rule = None;
+        // An MCP prompt carries no command and no scopes, so nothing is
+        // remembered for it.
+        let mcp = crate::broker::PendingPrompt {
+            kind: "command".into(),
+            command: None,
+            folder: None,
+            suggested_rule: None,
+            scope_options: Vec::new(),
+            session_id: "chat".into(),
+            grant_session_id: "chat".into(),
+        };
         for decision in ["deny_always", "allow_always", "allow_session"] {
             assert!(command_rules_for_decision(&mcp, decision, vec![]).is_empty());
-        }
-        let mut missing_command = pending.clone();
-        for command in [None, Some("  ".into())] {
-            missing_command.command = command;
-            assert!(command_rules_for_decision(&missing_command, "deny_always", vec![]).is_empty());
         }
         let mut other_kind = pending;
         other_kind.kind = "web".into();
@@ -838,6 +854,11 @@ pub fn resolve_permission(
                 }
             }
         }
+        if allowed && decision == "allow_session" {
+            if let Some(rule) = &rule {
+                state.permissions.add_session_website(rule);
+            }
+        }
         if changed {
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
@@ -874,15 +895,15 @@ pub fn resolve_permission(
             state.set_settings(settings);
         }
     } else if allowed && decision == "allow_session" {
-        // A command granted "in this chat" is remembered for that chat only,
-        // while a folder granted for the session stays available until the app
-        // restarts (including every file and subfolder below it). Neither is
-        // written to settings.
+        // A command granted "in this chat" is remembered for the whole
+        // conversation (root session, shared with subagents) while a folder or
+        // website granted for the session stays available until the app
+        // restarts. None of these are written to settings.
         if is_command {
             for rule in &chosen_rules {
                 state
                     .permissions
-                    .add_session_command_rule(&pending.session_id, rule);
+                    .add_session_command_rule(&pending.grant_session_id, rule);
             }
         }
         if let Some(folder) = &folder {
@@ -1843,8 +1864,25 @@ pub async fn send_message(
     } else {
         Vec::new()
     };
-    let system_prompt =
-        build_system_prompt(&setup.settings, &setup.session, &mode, &mcp_manager, &rules);
+    let skills = if mode.include_global_prompts {
+        crate::discovery::skill_catalog(
+            &setup.settings.integrations.skill_folders,
+            &setup.settings.integrations.skills_disabled,
+            &setup.settings.integrations.skills_disabled_items,
+            setup.settings.integrations.skills_auto_discovery,
+            &state.marketplace.installed_skill_dirs(),
+        )
+    } else {
+        Vec::new()
+    };
+    let system_prompt = build_system_prompt(
+        &setup.settings,
+        &setup.session,
+        &mode,
+        &mcp_manager,
+        &rules,
+        &skills,
+    );
 
     let cached_model = state
         .cached_models()
@@ -1867,6 +1905,11 @@ pub async fn send_message(
         provider: setup.selected_provider,
         system_prompt,
         session_id: session_id.clone(),
+        conversation_id: setup
+            .session
+            .parent_session_id
+            .clone()
+            .unwrap_or_else(|| session_id.clone()),
         project_id: setup.project.id.clone(),
         depth: 0,
         project_root: setup.project_root,
@@ -1888,6 +1931,24 @@ pub async fn send_message(
         base_commit: setup.base_commit,
         resume: setup.resume,
         plan_only: mode.plan_only,
+        read_only: mode.read_only,
+        mcp_progressive_disclosure: setup.settings.integrations.mcp_progressive_disclosure,
+        skills,
+        prompt_caching: setup.settings.model.prompt_caching,
+        subagent_model: setup
+            .settings
+            .model
+            .subagent_model
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| model.clone()),
+        compaction_model: setup
+            .settings
+            .model
+            .compaction_model
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| model.clone()),
         cancel,
     };
     let deps = TurnDeps {
@@ -2075,12 +2136,14 @@ async fn assemble_turn_context(
             permissions: state.permissions.clone(),
             file_ignore,
             session_id: session_id.to_string(),
+            conversation_id: session_id.to_string(),
             shadow,
             processes: state.processes.clone(),
             broker: state.broker.clone(),
             questions: state.questions.clone(),
             http: state.http.clone(),
             mcp: None,
+            skills: Vec::new(),
             cancel,
             emit: sink.clone(),
         };
@@ -2167,6 +2230,7 @@ async fn assemble_turn_context(
                                 segments: Vec::new(),
                                 risk: None,
                                 scope_options: Vec::new(),
+                                grant_session_id: session_id.to_string(),
                             },
                             &approval_cancel,
                             session_id,
@@ -2246,6 +2310,7 @@ fn build_system_prompt(
     mode: &config::Mode,
     mcp_manager: &McpManager,
     rules: &[ProjectRule],
+    skills: &[crate::models::SkillEntry],
 ) -> String {
     let mut system_prompt = session
         .system_prompt
@@ -2343,6 +2408,21 @@ fn build_system_prompt(
         }
     }
 
+    if !skills.is_empty() {
+        system_prompt.push_str("\n\n# Skills\n");
+        system_prompt.push_str(
+            "The following skills are available. When one applies to the user's request, call the `skill` tool with its name to load the full instructions before proceeding. Do not load a skill that is not relevant.\n",
+        );
+        for skill in skills {
+            let description = skill.description.trim();
+            if description.is_empty() {
+                system_prompt.push_str(&format!("\n- {}", skill.name));
+            } else {
+                system_prompt.push_str(&format!("\n- {}: {}", skill.name, description));
+            }
+        }
+    }
+
     system_prompt
 }
 
@@ -2402,6 +2482,7 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
             None,
             fallback_pricing,
             &[],
+            false,
             cancel,
             &mut |chunk| {
                 if let ChatChunk::Delta(text) = chunk {

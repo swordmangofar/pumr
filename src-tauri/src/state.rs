@@ -3,7 +3,7 @@ use crate::config::Settings;
 use crate::db::Db;
 use crate::marketplace::MarketplaceService;
 use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
-use crate::permissions::LivePermissions;
+use crate::permissions::{AutoApproveConfig, LivePermissions};
 use crate::power::PowerManager;
 use crate::processes::ProcessRegistry;
 use crate::providers::openrouter::OpenRouterClient;
@@ -44,6 +44,7 @@ impl AppState {
             settings.permissions.extra_folders.clone(),
             settings.permissions.allowed_websites.clone(),
             settings.permissions.denied_websites.clone(),
+            auto_approve(&settings),
         ));
         Self {
             db: Arc::new(db),
@@ -75,6 +76,7 @@ impl AppState {
             settings.permissions.extra_folders.clone(),
             settings.permissions.allowed_websites.clone(),
             settings.permissions.denied_websites.clone(),
+            auto_approve(&settings),
         );
         *self.settings.lock().unwrap() = settings;
     }
@@ -130,5 +132,14 @@ impl AppState {
 
     pub fn clear_cancel(&self, key: &str) {
         self.cancels.lock().unwrap().remove(key);
+    }
+}
+
+fn auto_approve(settings: &Settings) -> AutoApproveConfig {
+    AutoApproveConfig {
+        read_only: settings.permissions.auto_approve_read_only,
+        package_scripts: settings.permissions.auto_approve_package_scripts,
+        project_executables: settings.permissions.auto_approve_project_executables,
+        project_commands: settings.permissions.auto_approve_project_commands,
     }
 }

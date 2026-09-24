@@ -263,14 +263,23 @@ export interface Settings {
   handoverModel: string | null;
   defaultReasoningEffort: string | null;
   favoriteModels: string[];
+  providerByModel: Record<string, string>;
   contextMessageLimit: number;
   maxToolIterations: number;
   autoContinueAllSessions: boolean;
+  subagentModel: string | null;
+  compactionModel: string | null;
+  titleModel: string | null;
+  promptCaching: boolean;
   commandRules: CommandRule[];
   deniedCommandRules: CommandRule[];
   allowedWebsites: string[];
   deniedWebsites: string[];
   permissionDefaults: PermissionDefaults;
+  autoApproveReadOnly: boolean;
+  autoApprovePackageScripts: boolean;
+  autoApproveProjectExecutables: boolean;
+  autoApproveProjectCommands: boolean;
   ignoreGitignored: boolean;
   scanGeneratedFiles: boolean;
   ignoreLocalDatabases: boolean;
@@ -283,6 +292,7 @@ export interface Settings {
   mcpFolders: string[];
   mcpDisabled: string[];
   mcpDisabledServers: McpServerRef[];
+  mcpProgressiveDisclosure: boolean;
   skillsAutoDiscovery: boolean;
   skillFolders: string[];
   skillsDisabled: string[];
@@ -632,6 +642,15 @@ export type PermissionRequestEvent = Extract<StreamEvent, { kind: 'permissionReq
 
 export type QuestionRequestEvent = Extract<StreamEvent, { kind: 'questionRequest' }>;
 
+export interface ContextUsageInfo {
+  usedTokens: number;
+  budgetTokens: number;
+  systemTokens: number;
+  historyTokens: number;
+  toolSchemaTokens: number;
+  toolOutputTokens: number;
+}
+
 export type StreamEvent =
   | { kind: 'started'; message: Message }
   | { kind: 'delta'; text: string }
@@ -641,7 +660,17 @@ export type StreamEvent =
       promptTokens: number;
       completionTokens: number;
       cachedTokens: number;
+      cacheWriteTokens: number;
       cost: number;
+    }
+  | {
+      kind: 'contextUsage';
+      usedTokens: number;
+      budgetTokens: number;
+      systemTokens: number;
+      historyTokens: number;
+      toolSchemaTokens: number;
+      toolOutputTokens: number;
     }
   | { kind: 'assistant'; message: Message }
   | { kind: 'toolStart'; callId: string; name: string; summary: string; arguments: string }

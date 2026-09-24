@@ -26,6 +26,7 @@ Guidelines:
 - Respect the project's existing conventions, tooling and style.
 - Never run destructive commands (rm, deletes, database drops, force pushes) without approval; pumr enforces this.
 - Ask for clarification when requirements are ambiguous instead of guessing.
+- Before reporting a task as complete, verify it: run the project's build, tests or lint when they exist, and state exactly what you ran and the outcome. Report what passed, what failed and what you could not verify; never claim success you have not checked.
 - Format code in fenced blocks with the correct language tag."#
         .to_string()
 }
@@ -134,6 +135,19 @@ Do not produce code changes, diffs or file writes in this mode — only analysis
         .to_string()
 }
 
+pub fn default_verifier_prompt() -> String {
+    r#"# Verification
+
+You are a read-only verifier. Do not modify code, configuration or documentation — the write and edit tools are disabled. Your job is to produce trustworthy evidence about whether a change actually works.
+
+- Identify the project's verification contract before guessing commands: read the rule files, README, package manifest scripts and CI configuration.
+- Prefer the project's single build/test entry point when one exists; run the narrowest check that covers the change first, then the full applicable set.
+- Run the commands yourself and capture real output. Never infer success from reading source.
+- Report each check as PASS (ran and succeeded), FAIL (ran and failed), BLOCKED (could not run — say why) or NOT_RUN (skipped — say why). Never claim a check passed when it was not run.
+- Lead with the outcome, then the exact commands and relevant output. Name the likely cause of any failure."#
+        .to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mode {
@@ -163,6 +177,10 @@ pub struct Mode {
     /// Disables the write/edit tools so the agent can only plan.
     #[serde(default)]
     pub plan_only: bool,
+    /// Keeps the read tools and `bash` but disables `write`/`edit`, so the
+    /// agent can reproduce and verify behaviour without changing the project.
+    #[serde(default)]
+    pub read_only: bool,
     #[serde(default)]
     pub builtin: bool,
 }
@@ -184,6 +202,7 @@ pub fn default_modes() -> Vec<Mode> {
             include_global_prompts: true,
             include_project_rules: true,
             plan_only: false,
+            read_only: false,
             builtin: true,
         },
         Mode {
@@ -199,6 +218,23 @@ pub fn default_modes() -> Vec<Mode> {
             include_global_prompts: true,
             include_project_rules: true,
             plan_only: true,
+            read_only: false,
+            builtin: true,
+        },
+        Mode {
+            id: "verification".to_string(),
+            name: "Verification".to_string(),
+            description:
+                "Verifies a change without modifying it: reproduces behaviour, runs the project's build and tests, and reports PASS/FAIL/BLOCKED evidence."
+                    .to_string(),
+            system_prompt: default_verifier_prompt(),
+            user_prompt_ids: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
+            include_global_prompts: true,
+            include_project_rules: true,
+            plan_only: false,
+            read_only: true,
             builtin: true,
         },
         Mode {
@@ -214,6 +250,7 @@ pub fn default_modes() -> Vec<Mode> {
             include_global_prompts: false,
             include_project_rules: false,
             plan_only: false,
+            read_only: false,
             builtin: true,
         },
     ]
@@ -386,6 +423,10 @@ pub struct ModelSettings {
     pub handover_model: Option<String>,
     pub default_reasoning_effort: Option<String>,
     pub favorite_models: Vec<String>,
+    /// Remembered provider/routing selection per model id, so the composer can
+    /// restore a model's provider choice (e.g. "auto:throughput") when it is
+    /// selected again.
+    pub provider_by_model: std::collections::BTreeMap<String, String>,
     pub context_message_limit: usize,
     /// Maximum number of consecutive model turns that may request tool calls
     /// before the agent pauses. Acts as a safety valve against runaway loops.
@@ -393,6 +434,17 @@ pub struct ModelSettings {
     /// When enabled, the agent automatically continues past the tool-iteration
     /// limit for all sessions instead of pausing and asking the user.
     pub auto_continue_all_sessions: bool,
+    /// Model used for subagents. Empty falls back to the session's model.
+    pub subagent_model: Option<String>,
+    /// Model used to summarise trimmed history (compaction). Empty falls back
+    /// to the session's model.
+    pub compaction_model: Option<String>,
+    /// Reserved for model-generated session titles. Empty falls back to the
+    /// session's model.
+    pub title_model: Option<String>,
+    /// Whether to mark the stable prompt prefix as cacheable. OpenRouter
+    /// forwards the marker to providers that support prompt caching.
+    pub prompt_caching: bool,
 }
 
 impl Default for ModelSettings {
@@ -404,9 +456,14 @@ impl Default for ModelSettings {
             handover_model: None,
             default_reasoning_effort: Some("medium".to_string()),
             favorite_models: Vec::new(),
+            provider_by_model: std::collections::BTreeMap::new(),
             context_message_limit: 40,
             max_tool_iterations: 35,
             auto_continue_all_sessions: false,
+            subagent_model: None,
+            compaction_model: None,
+            title_model: None,
+            prompt_caching: true,
         }
     }
 }
@@ -423,6 +480,13 @@ pub struct PermissionSettings {
     pub denied_websites: Vec<String>,
     /// Default action of the primary allow button per prompt category.
     pub permission_defaults: PermissionDefaults,
+    /// Automatic approvals that skip the prompt for recognizable safe work.
+    /// They never bypass the dangerous, outside-project, sensitive-file or
+    /// shell-substitution checks, which still ask.
+    pub auto_approve_read_only: bool,
+    pub auto_approve_package_scripts: bool,
+    pub auto_approve_project_executables: bool,
+    pub auto_approve_project_commands: bool,
     pub ignore_gitignored: bool,
     pub scan_generated_files: bool,
     pub ignore_local_databases: bool,
@@ -476,6 +540,10 @@ impl Default for PermissionSettings {
             allowed_websites: Vec::new(),
             denied_websites: Vec::new(),
             permission_defaults: PermissionDefaults::default(),
+            auto_approve_read_only: true,
+            auto_approve_package_scripts: true,
+            auto_approve_project_executables: true,
+            auto_approve_project_commands: false,
             ignore_gitignored: true,
             scan_generated_files: false,
             ignore_local_databases: false,
@@ -527,6 +595,10 @@ pub struct IntegrationSettings {
     /// Secure default: only show curated/verified marketplace entries and block
     /// installing from unverified sources unless the user opts out.
     pub marketplace_verified_only: bool,
+    /// Defer large MCP tool schemas behind `tool_search`/`mcp_invoke` instead of
+    /// inlining them for every request. Falls back to inlining when the schemas
+    /// are small relative to the model's context window.
+    pub mcp_progressive_disclosure: bool,
 }
 
 impl Default for IntegrationSettings {
@@ -541,6 +613,7 @@ impl Default for IntegrationSettings {
             skills_disabled: Vec::new(),
             skills_disabled_items: Vec::new(),
             marketplace_verified_only: true,
+            mcp_progressive_disclosure: true,
         }
     }
 }

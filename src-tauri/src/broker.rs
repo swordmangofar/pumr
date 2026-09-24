@@ -40,6 +40,9 @@ pub struct PermissionPrompt {
     pub risk: Option<CommandRisk>,
     /// Allow/deny scopes the user can pick for a command prompt.
     pub scope_options: Vec<CommandScopeOption>,
+    /// The conversation (root session) an "allow in this chat" grant belongs to.
+    /// Distinct from the routing `session_id`, which may be a subagent.
+    pub grant_session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -81,6 +84,7 @@ struct PendingPermission {
     suggested_rule: Option<String>,
     scope_options: Vec<CommandScopeOption>,
     session_id: String,
+    grant_session_id: String,
 }
 
 /// The backend-owned fields of a pending prompt, used to validate a renderer's
@@ -92,7 +96,12 @@ pub struct PendingPrompt {
     pub folder: Option<String>,
     pub suggested_rule: Option<String>,
     pub scope_options: Vec<CommandScopeOption>,
+    /// Routing session id of the prompt (may be a subagent); kept for callers
+    /// and tests that distinguish the asking session from the chat.
+    #[allow(dead_code)]
     pub session_id: String,
+    /// The conversation to store an "allow in this chat" grant under.
+    pub grant_session_id: String,
 }
 
 fn deny() -> PermissionDecision {
@@ -144,6 +153,7 @@ impl PermissionBroker {
                 suggested_rule: entry.suggested_rule.clone(),
                 scope_options: entry.scope_options.clone(),
                 session_id: entry.session_id.clone(),
+                grant_session_id: entry.grant_session_id.clone(),
             })
     }
 
@@ -189,6 +199,7 @@ impl PermissionBroker {
                             suggested_rule: prompt.suggested_rule.clone(),
                             scope_options: prompt.scope_options.clone(),
                             session_id: session_id.to_string(),
+                            grant_session_id: prompt.grant_session_id.clone(),
                         },
                     );
                     (true, request_id, receiver)
@@ -347,6 +358,7 @@ mod tests {
             segments: Vec::new(),
             risk: None,
             scope_options: Vec::new(),
+            grant_session_id: "chat".to_string(),
         }
     }
 
@@ -478,6 +490,35 @@ mod tests {
     #[tokio::test]
     async fn equivalent_same_session_requests_share_one_decision() {
         assert_prompt_sharing(command_prompt(), "chat", command_prompt(), "chat", true).await;
+    }
+
+    #[tokio::test]
+    async fn pending_prompt_exposes_the_grant_conversation() {
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let mut prompt = command_prompt();
+        prompt.grant_session_id = "root-chat".to_string();
+        // The asking session is a subagent; grants belong to the root chat.
+        let future = broker.ask(prompt, &cancel, "subagent", &emit);
+        tokio::pin!(future);
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+
+        let request_id = broker
+            .inner
+            .lock()
+            .unwrap()
+            .by_signature
+            .values()
+            .next()
+            .cloned()
+            .unwrap();
+        let pending = broker.pending_prompt(&request_id).unwrap();
+        assert_eq!(pending.session_id, "subagent");
+        assert_eq!(pending.grant_session_id, "root-chat");
+
+        broker.resolve(&request_id, deny());
+        future.await;
     }
 
     #[tokio::test]

@@ -14,6 +14,12 @@ import { Toggle } from '../toggle';
 type FileToggleKey =
   'ignoreGitignored' | 'scanGeneratedFiles' | 'ignoreLocalDatabases' | 'ignoreEnvFiles';
 
+type AutoApproveToggleKey =
+  | 'autoApproveReadOnly'
+  | 'autoApprovePackageScripts'
+  | 'autoApproveProjectExecutables'
+  | 'autoApproveProjectCommands';
+
 interface CatalogGroup {
   key: string;
   labelKey: string;
@@ -462,6 +468,34 @@ import { TypedInput } from '../typed-input';
         }
       </div>
     </section>
+
+    <section class="mt-8">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.autoApprove' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.autoApproveHint' | transloco }}</p>
+      <div class="space-y-1.5">
+        @for (row of autoApproveRows; track row.key) {
+          <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
+            <div class="flex items-start gap-3">
+              <app-toggle
+                class="mt-0.5"
+                [checked]="isAuto(row.key)"
+                (toggled)="toggleAuto(row.key)"
+              />
+              <div>
+                <label class="block text-sm font-medium text-mist">
+                  {{ row.labelKey | transloco }}
+                </label>
+                <p class="mt-1 text-xs leading-relaxed text-mist/30">
+                  {{ row.hintKey | transloco }}
+                </p>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    </section>
   `,
 })
 export class AgentRulesSettings {
@@ -502,6 +536,41 @@ export class AgentRulesSettings {
 
   protected toggleAdvanced(): void {
     this.draft.patch('fileIgnoreAdvanced', !this.draft.draft().fileIgnoreAdvanced);
+  }
+
+  protected readonly autoApproveRows: ReadonlyArray<{
+    key: AutoApproveToggleKey;
+    labelKey: string;
+    hintKey: string;
+  }> = [
+    {
+      key: 'autoApproveReadOnly',
+      labelKey: 'settings.autoApproveReadOnly',
+      hintKey: 'settings.autoApproveReadOnlyHint',
+    },
+    {
+      key: 'autoApprovePackageScripts',
+      labelKey: 'settings.autoApprovePackageScripts',
+      hintKey: 'settings.autoApprovePackageScriptsHint',
+    },
+    {
+      key: 'autoApproveProjectExecutables',
+      labelKey: 'settings.autoApproveProjectExecutables',
+      hintKey: 'settings.autoApproveProjectExecutablesHint',
+    },
+    {
+      key: 'autoApproveProjectCommands',
+      labelKey: 'settings.autoApproveProjectCommands',
+      hintKey: 'settings.autoApproveProjectCommandsHint',
+    },
+  ];
+
+  protected isAuto(key: AutoApproveToggleKey): boolean {
+    return this.draft.draft()[key];
+  }
+
+  protected toggleAuto(key: AutoApproveToggleKey): void {
+    this.draft.patch(key, !this.draft.draft()[key]);
   }
 
   private baseOn(group: string): boolean {

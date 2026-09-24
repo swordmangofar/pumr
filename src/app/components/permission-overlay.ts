@@ -409,7 +409,7 @@ export class PermissionOverlay {
       const selection: Record<number, CommandRule> = {};
       for (const group of this.segmentScopes()) {
         const preferred =
-          group.options.find((option) => option.rule.kind === 'exact') ??
+          group.options.find((option) => option.kind === 'program') ??
           group.options[group.options.length - 1];
         if (preferred) {
           selection[group.index] = preferred.rule;
@@ -418,7 +418,7 @@ export class PermissionOverlay {
       this.selectedSegmentRules.set(selection);
       const options = this.scopeOptions();
       const preferred =
-        options.find((option) => option.rule.kind === 'exact') ?? options[options.length - 1];
+        options.find((option) => option.kind === 'program') ?? options[options.length - 1];
       this.selectedScopeRule.set(preferred?.rule ?? null);
     });
 

@@ -224,19 +224,10 @@ describe('PermissionOverlay', () => {
       'tool *',
       'tool *',
     ]);
-    expect(scopes[0].className).not.toContain('border-accent/60');
-    expect(scopes[1].className).toContain('border-accent/60');
-
-    const action = buttons().find((button) => button.textContent?.includes(label))!;
-    action.click();
-    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
-      { kind: 'exact', value: 'tool *' },
-    ]);
-
-    scopes[0].click();
-    fixture.detectChanges();
     expect(scopes[0].className).toContain('border-accent/60');
     expect(scopes[1].className).not.toContain('border-accent/60');
+
+    const action = buttons().find((button) => button.textContent?.includes(label))!;
     action.click();
     expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
       { kind: 'glob', value: 'tool *' },
@@ -244,12 +235,14 @@ describe('PermissionOverlay', () => {
 
     scopes[1].click();
     fixture.detectChanges();
+    expect(scopes[0].className).not.toContain('border-accent/60');
+    expect(scopes[1].className).toContain('border-accent/60');
+
     action.click();
     expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
       { kind: 'exact', value: 'tool *' },
     ]);
   });
-
   it('compares selected rules structurally rather than by object identity', () => {
     create(
       request({
@@ -280,25 +273,25 @@ describe('PermissionOverlay', () => {
     const scopes = buttons().filter((button) => button.querySelector('code'));
     expect(scopes).toHaveLength(4);
     expect(scopes.map((button) => button.className.includes('border-accent/60'))).toEqual([
-      false,
       true,
       false,
       true,
+      false,
     ]);
-    scopes[0].click();
+    scopes[1].click();
     fixture.detectChanges();
     expect(scopes.map((button) => button.className.includes('border-accent/60'))).toEqual([
-      true,
-      false,
       false,
       true,
+      true,
+      false,
     ]);
     buttons()
       .find((button) => button.textContent?.includes('permission.allowAlways'))!
       .click();
     expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'glob', value: 'tool *' },
       { kind: 'exact', value: 'tool *' },
+      { kind: 'glob', value: 'tool *' },
     ]);
   });
 

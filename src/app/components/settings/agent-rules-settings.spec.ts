@@ -19,16 +19,20 @@ describe('AgentRulesSettings command rules', () => {
   let settings: ReturnType<typeof signal<Settings>>;
   let addCommandRule: ReturnType<typeof vi.fn>;
   let deleteCommandRule: ReturnType<typeof vi.fn>;
+  let patch: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.spyOn(api, 'getFileIgnoreCatalog').mockResolvedValue([]);
     settings = signal<Settings>({ ...FALLBACK_SETTINGS });
     addCommandRule = vi.fn().mockResolvedValue(undefined);
     deleteCommandRule = vi.fn().mockResolvedValue(undefined);
+    patch = vi.fn((key: keyof Settings, value: Settings[keyof Settings]) =>
+      settings.update((current) => ({ ...current, [key]: value })),
+    );
     TestBed.configureTestingModule({
       providers: [
         { provide: SettingsService, useValue: { settings, addCommandRule, deleteCommandRule } },
-        { provide: SettingsDraftService, useValue: { draft: settings } },
+        { provide: SettingsDraftService, useValue: { draft: settings, patch } },
       ],
     });
     TestBed.overrideComponent(AgentRulesSettings, {
@@ -126,5 +130,22 @@ describe('AgentRulesSettings command rules', () => {
       .find((button) => button.textContent?.includes('settings.allowCommand'))!
       .click();
     expect(addCommandRule).not.toHaveBeenCalled();
+  });
+
+  it('toggles automatic approval settings', () => {
+    const section = [...fixture.nativeElement.querySelectorAll('section')].find((entry) =>
+      (entry as HTMLElement).querySelector('h3')?.textContent?.includes('settings.autoApprove'),
+    ) as HTMLElement;
+    expect(section).toBeTruthy();
+    expect(section.querySelectorAll('app-toggle')).toHaveLength(4);
+
+    const instance = fixture.componentInstance as unknown as {
+      isAuto: (key: string) => boolean;
+      toggleAuto: (key: string) => void;
+    };
+    expect(instance.isAuto('autoApproveProjectCommands')).toBe(false);
+    instance.toggleAuto('autoApproveProjectCommands');
+    expect(patch).toHaveBeenCalledWith('autoApproveProjectCommands', true);
+    expect(instance.isAuto('autoApproveProjectCommands')).toBe(true);
   });
 });

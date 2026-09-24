@@ -23,7 +23,6 @@ body {
     'Segoe UI',
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
 }
 
 /* The gradient lives on <html> so it becomes the canvas background. That keeps

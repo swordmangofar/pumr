@@ -7,6 +7,7 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
+    "verify": "node scripts/verify.mjs",
     "tauri": "node scripts/tauri.mjs",
     "dev": "node scripts/tauri.mjs dev",
     "bundle": "node scripts/tauri.mjs build"

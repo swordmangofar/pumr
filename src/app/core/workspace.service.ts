@@ -5,6 +5,7 @@ import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
   CommandRule,
+  ContextUsageInfo,
   FileChange,
   FileDiff,
   GitInfo,
@@ -90,6 +91,7 @@ export class WorkspaceService {
   private readonly spendState = signal<SpendSummary | null>(null);
   private readonly liveToolsState = signal<Record<string, LiveToolCall[]>>({});
   private readonly changesState = signal<Record<string, FileChange[]>>({});
+  private readonly contextUsageState = signal<Record<string, ContextUsageInfo>>({});
   private readonly selectedPathState = signal<Record<string, string | null>>({});
   private readonly diffState = signal<FileDiff | null>(null);
   private readonly leftTabState = signal<LeftTab>('projects');
@@ -156,6 +158,7 @@ export class WorkspaceService {
   readonly processes = this.processesService.processes;
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
+  readonly contextUsage = this.contextUsageState.asReadonly();
   readonly leftTab = this.leftTabState.asReadonly();
   readonly rightTab = this.rightTabState.asReadonly();
   readonly sessionView = this.sessionViewState.asReadonly();
@@ -853,6 +856,19 @@ export class WorkspaceService {
             completionTokens: event.completionTokens,
             cachedTokens: event.cachedTokens,
             cost: event.cost,
+          }));
+          break;
+        case 'contextUsage':
+          this.contextUsageState.update((state) => ({
+            ...state,
+            [sessionId]: {
+              usedTokens: event.usedTokens,
+              budgetTokens: event.budgetTokens,
+              systemTokens: event.systemTokens,
+              historyTokens: event.historyTokens,
+              toolSchemaTokens: event.toolSchemaTokens,
+              toolOutputTokens: event.toolOutputTokens,
+            },
           }));
           break;
         case 'assistant':
