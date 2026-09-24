@@ -247,6 +247,18 @@ const PACKAGE_SCRIPT_PROGRAMS: &[&str] = &[
     "webpack", "esbuild", "tsx", "ts-node",
 ];
 
+/// Programs that execute their standard input as a script when they are
+/// invoked without a script file (bare), with `-s`/`-`, or with a heredoc.
+/// A heredoc body is blanked before evaluation, so these invocations must ask:
+/// the script contents were never checked. `bash -c '...'` and
+/// `python script.py` pass their code explicitly and stay on the normal path.
+/// `ssh` runs a heredoc as a remote script the same way.
+const STDIN_SCRIPT_PROGRAMS: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "python", "python3", "node",
+    "nodejs", "deno", "bun", "ruby", "perl", "php", "lua", "osascript", "Rscript", "cmd",
+    "powershell", "pwsh", "ssh",
+];
+
 /// One shell segment of a compound command, tagged with whether it was
 /// auto-allowed. Streamed to the permission overlay so the user can see which
 /// part of the line actually triggered the prompt.
@@ -333,6 +345,10 @@ pub enum CommandDecision {
         risk: CommandRisk,
         /// Allow/deny scopes the user can pick for the segment that asked.
         scope_options: Vec<CommandScopeOption>,
+        /// Directories outside the project that the command touches. Each can be
+        /// whitelisted (with everything below it) so the same path stops asking.
+        /// Empty unless the ask was caused by an outside path.
+        outside_folders: Vec<String>,
     },
 }
 
@@ -344,8 +360,13 @@ impl CommandDecision {
 }
 
 /// Live automatic-approval policy. These only skip the final "unrecognised
-/// program" prompt; the dangerous, outside-project, sensitive-file and
-/// shell-substitution checks run before them and still ask.
+/// program" prompt; the dangerous, outside-project and sensitive-file checks
+/// run before them and still ask. With `project_commands` (the opencode-style
+/// default) a non-dangerous in-project command runs even when it contains a
+/// command substitution: the substitution's inner program and paths are
+/// checked by the same rules as everything else. Heredoc bodies are stdin data
+/// and are never split into commands; an interpreter that runs such a body
+/// always asks.
 #[derive(Debug, Clone, Copy)]
 pub struct AutoApproveConfig {
     pub read_only: bool,
@@ -643,9 +664,16 @@ pub fn evaluate_command_with(
     // shell segment at a time: `;`, `&&`, `||`, `|`, newlines and subshells
     // each start a new segment. A line is only auto-allowed when *every*
     // segment is individually safe, so nothing can hide behind a harmless
-    // first token. Command substitution stays inside its segment and still
-    // fails the operator check below.
-    let Some(segments) = split_segments(trimmed) else {
+    // first token. A `$(...)` or backtick substitution stays whole inside its
+    // segment so the operator check sees it (and its scopes never truncate at
+    // an inner `)`).
+    //
+    // Heredoc bodies are stdin data, not commands, so they are blanked before
+    // segmentation: JSON, prose or loops inside `cat > file <<'EOF'` cannot be
+    // mistaken for separate shell commands. The `<<DELIM` operator stays on the
+    // command line, so the evaluator still sees which program receives it.
+    let blanked = blank_heredoc_bodies(trimmed);
+    let Some(segments) = split_segments(&blanked) else {
         // The line cannot be split safely, so its only rememberable scope is the
         // whole command. An explicit, identical exact rule lets "allow in this
         // chat"/"allow always" stop the same line from asking again.
@@ -683,6 +711,9 @@ pub fn evaluate_command_with(
     // `resolve_permission` can validate each chosen rule against what the
     // backend actually proposed.
     let mut all_options: Vec<CommandScopeOption> = Vec::new();
+    // Outside folders contributed by every asking segment, so the prompt can
+    // offer to whitelist each touched directory even in a compound line.
+    let mut all_folders: Vec<String> = Vec::new();
     for segment in &segments {
         let decision = evaluate_segment(
             segment,
@@ -708,11 +739,17 @@ pub fn evaluate_command_with(
                 suggested_rule,
                 risk,
                 scope_options,
+                outside_folders,
                 ..
             } => {
                 for option in &scope_options {
                     if !all_options.iter().any(|existing| existing.rule == option.rule) {
                         all_options.push(option.clone());
+                    }
+                }
+                for folder in outside_folders {
+                    if !all_folders.contains(&folder) {
+                        all_folders.push(folder);
                     }
                 }
                 annotated.push(CommandSegment {
@@ -738,6 +775,7 @@ pub fn evaluate_command_with(
             annotated,
             risk,
             all_options,
+            all_folders,
         );
     }
     CommandDecision::Allow
@@ -816,26 +854,62 @@ fn evaluate_segment(
             reason: format!("Command '{program}' is on the deny list"),
         };
     }
-    let danger = danger_reason(trimmed, &tokens);
+    let direct_danger = danger_reason(trimmed, &tokens);
+    // A command substitution can run a program the token check never sees, so
+    // scan for dangerous programs hidden inside `$(...)` or backticks.
+    let substitution = substitution_danger(trimmed);
+    let danger = direct_danger.clone().or_else(|| {
+        substitution
+            .as_ref()
+            .map(|program| format!("'{program}' runs inside a command substitution"))
+    });
     let dangerous = danger.is_some();
     let suggested_rule = suggest_rule(trimmed, &program);
     let scope_options = command_scope_options(&program, &tokens, trimmed);
 
-    // What is left of the operators that split this segment: backticks,
-    // `$(...)` and subshell syntax can run code the named program never sees.
-    if has_shell_control_operators(trimmed) {
-        if matches_exact_rule(trimmed, rules) {
-            return CommandDecision::Allow;
-        }
+    // An interpreter with a heredoc or no script file executes whatever its
+    // standard input contains. The body was blanked before segmentation, so
+    // that code was never evaluated: always ask, and offer no reusable scope
+    // because a saved rule would not include the body.
+    if STDIN_SCRIPT_PROGRAMS.contains(&program.as_str())
+        && (has_heredoc_operator(trimmed)
+            || tokens.len() == 1
+            || tokens
+                .iter()
+                .skip(1)
+                .any(|token| token == "-" || token == "-s"))
+    {
         return ask_scoped(
-            "Command uses shell control operators and needs review".to_string(),
+            format!("Command runs a script from standard input ({program})"),
             suggested_rule,
             CommandRisk::new(
                 CommandRiskLevel::High,
-                "Inline shell substitution can run hidden commands.",
+                "A script from standard input or a heredoc is not evaluated as commands and could do anything.",
             ),
-            whole_line_options(trimmed),
+            Vec::new(),
         );
+    }
+
+    // What is left of the operators that split this segment: backticks,
+    // `$(...)` and subshell syntax can run code the named program never sees.
+    if has_shell_control_operators(trimmed) {
+        // With whole-project auto-approval the user already trusts these
+        // commands, so only ask when a dangerous program hides in the
+        // substitution; the path and sensitivity checks below still run.
+        if !(auto.project_commands && !dangerous) {
+            if matches_exact_rule(trimmed, rules) {
+                return CommandDecision::Allow;
+            }
+            return ask_scoped(
+                "Command uses shell control operators and needs review".to_string(),
+                suggested_rule,
+                CommandRisk::new(
+                    CommandRiskLevel::High,
+                    "Inline shell substitution can run hidden commands.",
+                ),
+                whole_line_options(trimmed),
+            );
+        }
     }
 
     let path_tokens = candidate_paths(&tokens, dangerous);
@@ -872,14 +946,26 @@ fn evaluate_segment(
                 ),
             )
         };
-        return ask_scoped(
+        // The command rules offered below can never bypass the outside-project
+        // check, so also offer each touched directory as a folder the user can
+        // whitelist permanently (the folder and everything below it).
+        let mut outside_folders: Vec<String> = outside
+            .iter()
+            .map(|token| containing_folder(&resolve_path(project_root, token)))
+            .map(|folder| folder.display().to_string())
+            .collect();
+        outside_folders.sort();
+        outside_folders.dedup();
+        return ask_with_segments(
             format!(
                 "Command touches paths outside the project: {}",
                 preview(&outside)
             ),
             suggested_rule,
+            Vec::new(),
             risk,
             scope_options,
+            outside_folders,
         );
     }
     if !sensitive.is_empty() {
@@ -905,20 +991,24 @@ fn evaluate_segment(
         std::env::var_os("PATH").as_deref(),
     );
     if dangerous {
-        if known_executable
+        if direct_danger.is_some()
+            && known_executable
             && PATH_DANGEROUS_PROGRAMS.contains(&program.as_str())
             && !path_tokens.is_empty()
         {
             return CommandDecision::Allow;
         }
         let reason = danger.unwrap_or_else(|| "Command needs approval".to_string());
-        let level = danger_risk_level(&program, &reason);
-        return ask_scoped(
-            reason.clone(),
-            suggested_rule,
-            CommandRisk::new(level, reason),
-            scope_options,
-        );
+        let level = danger_risk_level(substitution.as_deref().unwrap_or(&program), &reason);
+        // A dangerous program hidden in a substitution is offered as an exact
+        // whole-line rule only: a program glob on the outer command would not
+        // show the substituted part it would then allow.
+        let options = if substitution.is_some() {
+            whole_line_options(trimmed)
+        } else {
+            scope_options
+        };
+        return ask_scoped(reason.clone(), suggested_rule, CommandRisk::new(level, reason), options);
     }
     // Rules can only ever skip the program check for a plain, path-checked
     // command. Dangerous programs and paths outside/sensitive above already
@@ -1081,7 +1171,12 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
+    let mut in_backtick = false;
     let mut escaped = false;
+    // Nesting of `$(` substitutions. While inside one, operators stay in the
+    // current segment so the substitution is evaluated (and asked about) as one
+    // unit instead of being truncated at its closing `)`.
+    let mut substitution_depth = 0usize;
     while let Some(character) = chars.next() {
         if escaped {
             escaped = false;
@@ -1094,19 +1189,52 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
                 segments.last_mut()?.push(character);
                 continue;
             }
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
+            '\'' if !in_double && !in_backtick => in_single = !in_single,
+            '"' if !in_single && !in_backtick => in_double = !in_double,
+            // Backticks expand even inside double quotes. Keep them (and their
+            // contents) in the current segment so the operator check sees them.
+            '`' if !in_single => {
+                in_backtick = !in_backtick;
+                segments.last_mut()?.push(character);
+                continue;
+            }
             // Command substitution expands even inside double quotes. Keep the
             // `$(` in the current segment so `has_shell_control_operators`
             // still sees it and refuses to auto-allow the segment.
             '$' if !in_single && chars.peek() == Some(&'(') => {
                 chars.next();
+                substitution_depth += 1;
                 let segment = segments.last_mut()?;
                 segment.push('$');
                 segment.push('(');
                 continue;
             }
-            ';' | '|' | '\n' | '\r' | '(' | ')' if !in_single && !in_double => {
+            '(' if !in_single => {
+                if substitution_depth > 0 {
+                    substitution_depth += 1;
+                    segments.last_mut()?.push(character);
+                } else if in_double || in_backtick {
+                    // Literal text inside quotes, or inside a backtick.
+                    segments.last_mut()?.push(character);
+                } else {
+                    segments.push(String::new());
+                }
+                continue;
+            }
+            ')' if !in_single => {
+                if substitution_depth > 0 {
+                    substitution_depth -= 1;
+                    segments.last_mut()?.push(character);
+                } else if in_double || in_backtick {
+                    segments.last_mut()?.push(character);
+                } else {
+                    segments.push(String::new());
+                }
+                continue;
+            }
+            ';' | '|' | '\n' | '\r'
+                if !in_single && !in_double && !in_backtick && substitution_depth == 0 =>
+            {
                 // Swallow `||` instead of emitting an empty segment for the
                 // second character of the operator.
                 if let Some(peeked) = chars.peek() {
@@ -1117,7 +1245,7 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
                 segments.push(String::new());
                 continue;
             }
-            '&' if !in_single && !in_double => {
+            '&' if !in_single && !in_double && !in_backtick && substitution_depth == 0 => {
                 // `>&`, `<&` and `&>` are redirections, not command separators,
                 // so a file descriptor duplication like `2>&1` stays in one
                 // segment instead of splitting off a bogus `1` command.
@@ -1140,11 +1268,256 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
         }
         segments.last_mut()?.push(character);
     }
-    if in_single || in_double || escaped {
+    if in_single || in_double || in_backtick || escaped || substitution_depth > 0 {
         return None;
     }
     segments.retain(|segment| !segment.trim().is_empty());
     Some(segments)
+}
+
+/// Replaces heredoc bodies (and their terminator lines) with spaces so a body
+/// is treated as data instead of being split into fake shell commands. The
+/// `<<DELIM` operator on the command line is preserved, so the evaluator still
+/// sees which program receives the body. Multiple heredocs on one line are
+/// consumed in order, mirroring the shell.
+fn blank_heredoc_bodies(command: &str) -> String {
+    let chars: Vec<char> = command.chars().collect();
+    let mut output: Vec<char> = Vec::with_capacity(chars.len());
+    let mut index = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    while index < chars.len() {
+        // Copy one command line, collecting the heredocs it starts.
+        let mut delimiters: Vec<(String, bool)> = Vec::new();
+        while index < chars.len() && chars[index] != '\n' {
+            let character = chars[index];
+            match character {
+                '\\' if !in_single => {
+                    output.push(character);
+                    index += 1;
+                    if index < chars.len() {
+                        output.push(chars[index]);
+                        index += 1;
+                    }
+                }
+                '\'' if !in_double => {
+                    in_single = !in_single;
+                    output.push(character);
+                    index += 1;
+                }
+                '"' if !in_single => {
+                    in_double = !in_double;
+                    output.push(character);
+                    index += 1;
+                }
+                '<' if !in_single
+                    && !in_double
+                    && chars.get(index + 1) == Some(&'<')
+                    && chars.get(index + 2) != Some(&'<') =>
+                {
+                    output.push('<');
+                    output.push('<');
+                    index += 2;
+                    let mut strip_tabs = false;
+                    if chars.get(index) == Some(&'-') {
+                        output.push('-');
+                        index += 1;
+                        strip_tabs = true;
+                    }
+                    while matches!(chars.get(index), Some(' ') | Some('\t')) {
+                        output.push(chars[index]);
+                        index += 1;
+                    }
+                    let mut delimiter = String::new();
+                    match chars.get(index) {
+                        Some('\'') | Some('"') => {
+                            let quote = chars[index];
+                            output.push(quote);
+                            index += 1;
+                            while index < chars.len()
+                                && chars[index] != quote
+                                && chars[index] != '\n'
+                            {
+                                delimiter.push(chars[index]);
+                                output.push(chars[index]);
+                                index += 1;
+                            }
+                            if chars.get(index) == Some(&quote) {
+                                output.push(quote);
+                                index += 1;
+                            }
+                        }
+                        Some('\\') => {
+                            output.push('\\');
+                            index += 1;
+                            if let Some(escaped) = chars.get(index) {
+                                delimiter.push(*escaped);
+                                output.push(*escaped);
+                                index += 1;
+                            }
+                        }
+                        _ => {
+                            while let Some(character) = chars.get(index) {
+                                if character.is_whitespace()
+                                    || matches!(
+                                        character,
+                                        ';' | '|' | '&' | '(' | ')' | '<' | '>' | '\'' | '"'
+                                    )
+                                {
+                                    break;
+                                }
+                                delimiter.push(*character);
+                                output.push(*character);
+                                index += 1;
+                            }
+                        }
+                    }
+                    if !delimiter.is_empty() {
+                        delimiters.push((delimiter, strip_tabs));
+                    }
+                }
+                _ => {
+                    output.push(character);
+                    index += 1;
+                }
+            }
+        }
+        if index < chars.len() {
+            output.push('\n');
+            index += 1;
+        } else if delimiters.is_empty() {
+            break;
+        }
+        // Blank one body per heredoc, in the order the delimiters appeared.
+        for (delimiter, strip_tabs) in delimiters {
+            loop {
+                let mut line = String::new();
+                while index < chars.len() && chars[index] != '\n' {
+                    line.push(chars[index]);
+                    index += 1;
+                }
+                let candidate = if strip_tabs {
+                    line.trim_start_matches('\t')
+                } else {
+                    line.as_str()
+                };
+                let terminated = candidate.trim_end_matches('\r') == delimiter;
+                output.extend(line.chars().map(|_| ' '));
+                if index < chars.len() {
+                    output.push('\n');
+                    index += 1;
+                } else {
+                    break;
+                }
+                if terminated {
+                    break;
+                }
+            }
+        }
+    }
+    output.into_iter().collect()
+}
+
+/// Dangerous programs hidden behind `$(...)` or backticks. The token check only
+/// sees the outer program, so scan the raw line for the first word after each
+/// substitution opener and compare it against the danger lists.
+fn substitution_danger(command: &str) -> Option<String> {
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    while let Some(character) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if !in_single => escaped = true,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            _ if in_single => {}
+            '$' if chars.peek() == Some(&'(') => {
+                chars.next();
+                if let Some(program) = next_word(&mut chars) {
+                    if is_substitution_dangerous(&program) {
+                        return Some(program);
+                    }
+                }
+            }
+            '`' => {
+                if let Some(program) = next_word(&mut chars) {
+                    if is_substitution_dangerous(&program) {
+                        return Some(program);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The program word that follows a substitution opener, or `None` when the
+/// substitution starts with something other than a program (a variable, a
+/// path-qualified program is returned as-is).
+fn next_word(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<String> {
+    while matches!(chars.peek(), Some(character) if character.is_whitespace() || matches!(character, '\'' | '"'))
+    {
+        chars.next();
+    }
+    let mut word = String::new();
+    while let Some(&character) = chars.peek() {
+        if character.is_whitespace()
+            || matches!(
+                character,
+                ';' | '|' | '&' | '(' | ')' | '<' | '>' | '\'' | '"' | '`' | '{' | '}'
+            )
+        {
+            break;
+        }
+        word.push(character);
+        chars.next();
+    }
+    if word.is_empty() {
+        None
+    } else {
+        Some(word)
+    }
+}
+
+fn is_substitution_dangerous(program: &str) -> bool {
+    let program = base_name(program);
+    DANGEROUS_PROGRAMS.contains(&program.as_str())
+        || DATABASE_DANGEROUS_PROGRAMS.contains(&program.as_str())
+}
+
+/// True when the segment runs a program through a heredoc (`<<DELIM`). Used to
+/// keep interpreters from silently executing a blanked body as a script.
+fn has_heredoc_operator(command: &str) -> bool {
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    while let Some(character) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if !in_single => escaped = true,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '<' if !in_single && !in_double && chars.peek() == Some(&'<') => {
+                let mut look = chars.clone();
+                look.next();
+                if look.peek() != Some(&'<') {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// True when the command line contains shell syntax that can run code beyond
@@ -1169,6 +1542,32 @@ fn has_shell_control_operators(command: &str) -> bool {
             // Backticks and `$(` expand even inside double quotes.
             '`' => return true,
             '$' if chars.peek() == Some(&'(') => return true,
+            // `${VAR}` is parameter expansion, not a control operator. Skip to
+            // its closing brace so a plain variable reference does not ask; a
+            // command substitution inside it is still caught.
+            '$' if chars.peek() == Some(&'{') => {
+                chars.next();
+                let mut depth = 1usize;
+                while let Some(inner) = chars.next() {
+                    match inner {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        '$' if chars.peek() == Some(&'(') => return true,
+                        '`' => return true,
+                        _ => {}
+                    }
+                }
+            }
+            // `{}` is find's placeholder (and an empty bash literal), not a shell
+            // block; only braces with content can run code.
+            '{' if !in_single && !in_double && chars.peek() == Some(&'}') => {
+                chars.next();
+            }
             // `>&`, `<&` and `&>` are redirections, not control operators.
             '&' if !in_single && !in_double => {
                 if previous != '>' && previous != '<' && chars.peek() != Some(&'>') {
@@ -1191,15 +1590,17 @@ fn ask_scoped(
     risk: CommandRisk,
     scope_options: Vec<CommandScopeOption>,
 ) -> CommandDecision {
-    ask_with_segments(reason, suggested_rule, Vec::new(), risk, scope_options)
+    ask_with_segments(reason, suggested_rule, Vec::new(), risk, scope_options, Vec::new())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ask_with_segments(
     reason: String,
     suggested_rule: String,
     segments: Vec<CommandSegment>,
     risk: CommandRisk,
     scope_options: Vec<CommandScopeOption>,
+    outside_folders: Vec<String>,
 ) -> CommandDecision {
     CommandDecision::Ask {
         reason,
@@ -1207,6 +1608,7 @@ fn ask_with_segments(
         segments,
         risk,
         scope_options,
+        outside_folders,
     }
 }
 
@@ -1461,7 +1863,9 @@ fn candidate_paths(tokens: &[String], dangerous: bool) -> Vec<String> {
         let token = &tokens[index];
         if token == ">" || token == ">>" || token == "<" {
             if let Some(next) = tokens.get(index + 1) {
-                paths.push(next.clone());
+                if !is_null_device(next) {
+                    paths.push(next.clone());
+                }
                 index += 2;
                 continue;
             }
@@ -1471,15 +1875,88 @@ fn candidate_paths(tokens: &[String], dangerous: bool) -> Vec<String> {
             .or_else(|| token.strip_prefix('>'))
             .or_else(|| token.strip_prefix('<'))
         {
-            if !target.is_empty() {
+            if !target.is_empty() && !is_null_device(target) {
                 paths.push(target.to_string());
             }
         }
         index += 1;
     }
 
-    for token in tokens.iter().skip(1) {
-        if token.starts_with('-') || token.starts_with('$') {
+    let program = tokens.first().map(|token| base_name(token)).unwrap_or_default();
+    // `find -name/-path/...` arguments are glob patterns, not paths being
+    // touched; treating `-not -path './.git/*'` as a sensitive path would ask
+    // for nearly every find command.
+    let find_pattern_flags = [
+        "-path",
+        "-ipath",
+        "-wholename",
+        "-iwholename",
+        "-name",
+        "-iname",
+        "-lname",
+        "-ilname",
+        "-regex",
+        "-iregex",
+    ];
+    let grep_like = matches!(
+        program.as_str(),
+        "grep" | "egrep" | "fgrep" | "rg" | "ag" | "ack"
+    );
+    // `export PATH=...` / `local FILE=...` take assignments as arguments; the
+    // value is data, not a path the command opens.
+    let assignment_builtins = matches!(
+        program.as_str(),
+        "export" | "declare" | "typeset" | "readonly" | "local"
+    );
+    let mut grep_pattern_seen = false;
+    let mut grep_uses_e = false;
+    let mut before_program = true;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        index += 1;
+        // Leading `NAME=value` tokens are shell variable assignments, not
+        // paths (`db=~/store`). A later `NAME=value` is a program argument.
+        if before_program && is_assignment(token) {
+            continue;
+        }
+        if before_program {
+            before_program = false;
+            continue;
+        }
+        if assignment_builtins && is_assignment(token) {
+            continue;
+        }
+        if program == "find" && find_pattern_flags.contains(&token.as_str()) {
+            // The token that follows is a glob pattern.
+            index += 1;
+            continue;
+        }
+        if grep_like {
+            if token == "-e" || token == "--regexp" {
+                grep_uses_e = true;
+                index += 1;
+                continue;
+            }
+            if !token.starts_with('-') && !grep_uses_e && !grep_pattern_seen {
+                grep_pattern_seen = true;
+                continue;
+            }
+        }
+        // A command substitution can hide the paths it touches
+        // (`echo "$(cat /etc/passwd)"` becomes a single quoted token), so its
+        // inner words are path-checked as well.
+        for word in substitution_words(token) {
+            if word.starts_with('-') || word.starts_with('$') || is_null_device(&word) {
+                continue;
+            }
+            let looks_like_path =
+                word.contains('/') || word.starts_with('~') || word.starts_with('.');
+            if looks_like_path {
+                paths.push(word);
+            }
+        }
+        if token.starts_with('-') || token.starts_with('$') || is_null_device(token) {
             continue;
         }
         let looks_like_path =
@@ -1489,6 +1966,67 @@ fn candidate_paths(tokens: &[String], dangerous: bool) -> Vec<String> {
         }
     }
     paths
+}
+
+/// True for shell variable assignments (`NAME=value`), which carry data rather
+/// than a path the command touches.
+fn is_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+/// Kernel device files that are not real filesystem access.
+fn is_null_device(token: &str) -> bool {
+    matches!(
+        token,
+        "/dev/null"
+            | "/dev/stdout"
+            | "/dev/stderr"
+            | "/dev/tty"
+            | "/dev/zero"
+            | "/dev/random"
+            | "/dev/urandom"
+            | "NUL"
+            | "nul"
+    )
+}
+
+/// The words inside every `$(...)` and backtick substitution of a token, so a
+/// path referenced through a substitution is still subject to the outside and
+/// sensitivity checks.
+fn substitution_words(token: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut rest = token;
+    while let Some(start) = rest.find("$(") {
+        let after = start + 2;
+        let Some(end) = rest[after..].find(')') else {
+            break;
+        };
+        if let Ok(inner) = shell_words::split(&rest[after..after + end]) {
+            words.extend(inner);
+        }
+        rest = &rest[after + end + 1..];
+    }
+    let mut rest = token;
+    while let Some(start) = rest.find('`') {
+        let Some(end) = rest[start + 1..].find('`') else {
+            break;
+        };
+        if let Ok(inner) = shell_words::split(&rest[start + 1..start + 1 + end]) {
+            words.extend(inner);
+        }
+        rest = &rest[start + 1 + end + 1..];
+    }
+    words
 }
 
 pub fn resolve_path(project_root: &Path, token: &str) -> PathBuf {
@@ -1519,6 +2057,20 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+/// The directory a user would whitelist for a path: the path itself when it is
+/// an existing directory, otherwise its parent. New files (which do not exist
+/// yet) therefore whitelist the folder they would be created in.
+fn containing_folder(absolute: &Path) -> PathBuf {
+    if absolute.is_dir() {
+        absolute.to_path_buf()
+    } else {
+        absolute
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| absolute.to_path_buf())
+    }
 }
 
 pub fn path_is_inside(path: &Path, project_root: &Path, extra_folders: &[PathBuf]) -> bool {
@@ -2101,7 +2653,177 @@ mod tests {
         assert_eq!(evaluate_auto("make all", auto), CommandDecision::Allow);
         assert!(evaluate_auto("cat /etc/passwd", auto).is_ask());
         assert!(evaluate_auto("sudo apt install", auto).is_ask());
-        assert!(evaluate_auto(r#"echo "$(whoami)""#, auto).is_ask());
+        // Command substitution is part of the trusted in-project work, but a
+        // dangerous program hiding in it, an outside path or a sensitive file
+        // still asks.
+        assert_eq!(evaluate_auto(r#"echo "$(whoami)""#, auto), CommandDecision::Allow);
+        assert!(evaluate_auto(r#"echo "$(sudo id)""#, auto).is_ask());
+        assert!(evaluate_auto(r#"echo "$(cat /etc/passwd)""#, auto).is_ask());
+        assert!(evaluate_auto(r#"echo "$(cat .env)""#, auto).is_ask());
+    }
+
+    fn project_mode() -> AutoApproveConfig {
+        AutoApproveConfig {
+            project_commands: true,
+            ..AutoApproveConfig::default()
+        }
+    }
+
+    fn evaluate_project(command: &str, extra_folders: &[&str]) -> CommandDecision {
+        let extra: Vec<PathBuf> = extra_folders.iter().map(PathBuf::from).collect();
+        evaluate_command_with(
+            command,
+            Path::new("/project"),
+            Path::new("/project"),
+            &extra,
+            &[],
+            &[],
+            &project_mode(),
+        )
+    }
+
+    #[test]
+    fn heredoc_data_bodies_are_not_treated_as_commands() {
+        // The package.json write that flooded prompts: the JSON body must not
+        // become a pile of `{`/`}` command fragments.
+        let command = "cd /tmp && mkdir pntest && cd pntest && cat > package.json <<'EOF'\n{\n  \"name\": \"pntest\",\n  \"dependencies\": {\n    \"three\": \"0.186.0\"\n  }\n}\nEOF\npnpm install --offline 2>&1 | tail -20";
+        let decision = evaluate_project(command, &["/tmp"]);
+        assert_eq!(decision, CommandDecision::Allow, "{decision:?}");
+    }
+
+    #[test]
+    fn heredoc_line_asks_once_without_brace_fragments() {
+        let command = "cat > package.json <<'EOF'\n{\n  \"dependencies\": {\n    \"three\": \"1.0.0\"\n  }\n}\nEOF";
+        let CommandDecision::Ask {
+            segments,
+            scope_options,
+            ..
+        } = evaluate_auto(command, AutoApproveConfig::default())
+        else {
+            panic!("expected an ask decision");
+        };
+        // One clean segment (the command line), no fake body segments.
+        assert!(segments.is_empty(), "{segments:?}");
+        assert!(scope_options
+            .iter()
+            .any(|option| option.rule == CommandRule::Glob("cat *".into())));
+    }
+
+    #[test]
+    fn heredoc_bodies_with_unbalanced_quotes_still_parse() {
+        let command = "cat > notes.md <<'EOF'\nit's fine, don't worry\nEOF";
+        assert_eq!(evaluate_project(command, &[]), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn heredoc_bodies_are_data_for_non_interpreters() {
+        let command = "cat > script.txt <<'EOF'\nrm -rf /\nsudo reboot\nEOF";
+        assert_eq!(evaluate_project(command, &[]), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn interpreters_running_stdin_scripts_always_ask() {
+        let auto = project_mode();
+        let command = "bash <<'EOF'\nrm -rf ~\nEOF";
+        let CommandDecision::Ask { scope_options, .. } = evaluate_auto(command, auto) else {
+            panic!("expected an ask decision");
+        };
+        // No reusable scope: a saved rule would not include the body.
+        assert!(scope_options.is_empty());
+        // A piped script reaches the interpreter the same way.
+        assert!(evaluate_auto("cat script.sh | bash", auto).is_ask());
+        assert!(evaluate_auto("python3 -s", auto).is_ask());
+        // Code passed explicitly stays on the normal path.
+        assert_eq!(
+            evaluate_auto("python3 -c 'print(1)'", auto),
+            CommandDecision::Allow,
+        );
+        // `ssh` runs a heredoc as a remote script.
+        assert!(evaluate_auto("ssh host <<'EOF'\nrm -rf /\nEOF", auto).is_ask());
+        assert_eq!(evaluate_auto("ssh host uptime", auto), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn substitution_commands_stay_whole_and_auto_approve_in_project_mode() {
+        // The cacache/gs3d extraction commands from real sessions.
+        let command = "cd /tmp && rm -rf gs3d && mkdir gs3d && integ=\"sha512-x\" && hash=$(printf '%s' \"${integ#sha512-}\" | base64 -d | xxd -p | tr -d '\\n') && echo \"len=${#hash}\"";
+        let decision = evaluate_project(command, &["/tmp"]);
+        assert_eq!(decision, CommandDecision::Allow, "{decision:?}");
+    }
+
+    #[test]
+    fn substitution_scopes_offer_the_whole_line_not_a_fragment() {
+        let command = "idx=$(grep -rl \"needle\" index-v5 | head -1)";
+        let CommandDecision::Ask { scope_options, .. } =
+            evaluate_auto(command, AutoApproveConfig::default())
+        else {
+            panic!("expected an ask decision");
+        };
+        // The exact option must be the byte-identical whole line, never the
+        // old truncated `idx=$(grep -rl "needle" index-v5` fragment.
+        assert!(scope_options
+            .iter()
+            .any(|option| option.rule == CommandRule::Exact(command.into())));
+    }
+
+    #[test]
+    fn parameter_expansion_is_not_a_control_operator() {
+        assert_eq!(
+            evaluate_auto("echo ${PATH}", AutoApproveConfig::default()),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn here_strings_are_not_heredocs() {
+        assert_eq!(
+            evaluate_auto("cat <<< 'hello'", project_mode()),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn quoted_heredoc_markers_are_not_heredocs() {
+        assert_eq!(
+            evaluate_auto("bash -c \"cat << x\"", project_mode()),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn multi_line_loops_auto_approve_in_project_mode() {
+        let command = "for p in a b; do\n  echo \"$p\";\ndone";
+        assert_eq!(evaluate_project(command, &[]), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn find_pattern_arguments_are_not_touched_paths() {
+        // `-not -path './.git/*'` is a glob pattern, not access to `.git`.
+        let command = "find . -type f -not -path './.git/*' -not -path '*/node_modules/*' | wc -l";
+        assert_eq!(evaluate_project(command, &[]), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn grep_patterns_are_not_touched_paths() {
+        let command =
+            "grep -rnE 'TODO|FIXME' --include='*.ts' . | grep -v '/dist/' | head -50";
+        assert_eq!(evaluate_project(command, &[]), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn shell_assignments_and_null_devices_are_not_touched_paths() {
+        assert_eq!(
+            evaluate_project("db=~/Library/pnpm/store/index.db; sqlite3 \"$db\" 'SELECT 1'", &[]),
+            CommandDecision::Allow,
+        );
+        assert_eq!(
+            evaluate_project("export PATH=\"/opt/homebrew/bin:$PATH\"; node -v", &[]),
+            CommandDecision::Allow,
+        );
+        assert_eq!(
+            evaluate_project("echo done > /dev/null", &[]),
+            CommandDecision::Allow,
+        );
     }
 
     #[test]
@@ -2447,6 +3169,22 @@ mod tests {
     }
 
     #[test]
+    fn outside_paths_offer_the_touched_folder_for_whitelisting() {
+        let CommandDecision::Ask { outside_folders, .. } = evaluate("cat /etc/hosts", &[]) else {
+            panic!("expected an ask decision");
+        };
+        assert_eq!(outside_folders, vec!["/etc".to_string()]);
+    }
+
+    #[test]
+    fn inside_paths_offer_no_outside_folder() {
+        let CommandDecision::Ask { outside_folders, .. } = evaluate("mytool /project/file", &[]) else {
+            panic!("expected an ask decision");
+        };
+        assert!(outside_folders.is_empty());
+    }
+
+    #[test]
     fn every_offered_scope_matches_the_command_it_was_offered_for() {
         for command in [
             "pnpm install",
@@ -2546,7 +3284,7 @@ mod tests {
             CommandDecision::Allow,
         );
         assert!(evaluate_command("pnpm test other", Path::new("/project"), Path::new("/project"), &[], &rules, &[]).is_ask());
-        for command in ["cat .env", "cat /etc/hosts", "sudo reboot", "echo $(whoami)"] {
+        for command in ["cat .env", "cat /etc/hosts", "sudo reboot"] {
             assert!(evaluate_command(
                 command,
                 Path::new("/project"),
@@ -2556,6 +3294,29 @@ mod tests {
                 &[],
             ).is_ask());
         }
+        // An exact rule only ever matches the byte-identical line, so it may
+        // stop the prompt for that one command (including its substitution),
+        // but never for a different one.
+        assert_eq!(
+            evaluate_command(
+                "echo $(whoami)",
+                Path::new("/project"),
+                Path::new("/project"),
+                &[],
+                &[CommandRule::Exact("echo $(whoami)".into())],
+                &[],
+            ),
+            CommandDecision::Allow,
+        );
+        assert!(evaluate_command(
+            "echo $(id)",
+            Path::new("/project"),
+            Path::new("/project"),
+            &[],
+            &[CommandRule::Exact("echo $(whoami)".into())],
+            &[],
+        )
+        .is_ask());
     }
 
     #[test]

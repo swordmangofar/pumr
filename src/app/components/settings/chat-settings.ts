@@ -17,7 +17,7 @@ import { TypedInput } from '../typed-input';
         type="number"
         min="0"
         step="50"
-        class="field w-40 rounded-xl px-4 py-2 text-sm"
+        class="field w-full max-w-40 rounded-xl px-4 py-2 text-sm"
         [value]="draft.draft().pasteWordLimit"
         (typedValue)="draft.patch('pasteWordLimit', +$event)"
       />

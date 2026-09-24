@@ -71,8 +71,12 @@
     "unstage": "Avstagea",
     "stageAll": "Stagea alla",
     "unstageAll": "Avstagea alla",
+    "stageSelected": "Stagea {{ count }} valda",
+    "unstageSelected": "Avstagea {{ count }} valda",
     "discard": "Kasta",
     "discardConfirm": "Ignorera ändringar i \"{{ path }}\"? Detta kan inte ångras.",
+    "discardSelected": "Kassera {{ count }} filer",
+    "discardSelectedConfirm": "Kassera ändringar i {{ count }} filer? Detta kan inte ångras.",
     "blame": "Blame",
     "blameEmpty": "Ingen blame-information tillgänglig.",
     "ignore": "Lägg till i .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Regelomfattning",
       "hint": "Välj hur brett regeln gäller."
+    },
+    "folderScope": {
+      "title": "Tillåt mapp",
+      "hint": "Lägger till mappen och allt under den bland de alltid tillåtna mapparna.",
+      "option": "Mapp + undermappar"
     },
     "allowChat": "Tillåt i denna chatt"
   },

@@ -1021,6 +1021,7 @@ export class WorkspaceService {
   async resolvePermission(
     decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
     rulesOverride?: CommandRule[],
+    foldersOverride?: string[],
   ): Promise<void> {
     const request = this.permission();
     if (!request) {
@@ -1035,6 +1036,7 @@ export class WorkspaceService {
       request.folder,
       request.promptKind,
       isCommand ? rulesOverride ?? null : null,
+      foldersOverride ?? null,
     );
     // Allow-always/deny-always persist a rule in settings; refresh so the
     // settings lists reflect it immediately.

@@ -71,8 +71,12 @@
     "unstage": "Odebrat z indexu",
     "stageAll": "Přidat vše do indexu",
     "unstageAll": "Odebrat vše z indexu",
+    "stageSelected": "Přidat {{ count }} vybrané do indexu",
+    "unstageSelected": "Odebrat {{ count }} vybrané z indexu",
     "discard": "Zahodit",
     "discardConfirm": "Zahodit změny v „{{ path }}“? Tuto akci nelze vrátit zpět.",
+    "discardSelected": "Zahodit {{ count }} souborů",
+    "discardSelectedConfirm": "Zahodit změny v {{ count }} souborech? Tuto akci nelze vrátit zpět.",
     "blame": "Blame",
     "blameEmpty": "Nejsou k dispozici informace o autorství.",
     "ignore": "Přidat do .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Rozsah pravidla",
       "hint": "Zvolte, jak široce se pravidlo použije."
+    },
+    "folderScope": {
+      "title": "Povolit složku",
+      "hint": "Přidá složku a vše v ní do vždy povolených složek.",
+      "option": "Složka + podsložky"
     },
     "allowChat": "Povolit v tomto chatu"
   },

@@ -431,7 +431,9 @@ const PROVIDER_PRESETS = [
           (paste)="onPaste($event)"
         ></div>
 
-        <div class="flex items-end justify-between gap-2 border-t border-white/5 px-4 py-2">
+        <div
+          class="flex flex-wrap items-end justify-between gap-2 border-t border-white/5 px-4 py-2"
+        >
           <div class="flex min-w-0 flex-wrap items-center gap-1">
             <button
               type="button"
@@ -951,7 +953,7 @@ const PROVIDER_PRESETS = [
             </div>
           </div>
 
-          <div class="flex shrink-0 items-center gap-1.5">
+          <div class="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
             @if (streaming()) {
               <button
                 type="button"
@@ -1001,7 +1003,7 @@ const PROVIDER_PRESETS = [
       >
         <p class="hidden min-w-0 flex-1 truncate sm:block">{{ 'chat.hint' | transloco }}</p>
 
-        <div class="ml-auto flex shrink-0 items-center gap-3">
+        <div class="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1">
           @if (workspace.activeSession()) {
             <div class="group relative">
               <button

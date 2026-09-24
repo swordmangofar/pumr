@@ -71,8 +71,12 @@
     "unstage": "Scoate din stage",
     "stageAll": "Adaugă tot în stage",
     "unstageAll": "Scoate tot din stage",
+    "stageSelected": "Adaugă {{ count }} selectate în stage",
+    "unstageSelected": "Scoate {{ count }} selectate din stage",
     "discard": "Renunță",
     "discardConfirm": "Renunți la modificările din „{{ path }}”? Această acțiune nu poate fi anulată.",
+    "discardSelected": "Renunță la {{ count }} fișiere",
+    "discardSelectedConfirm": "Renunți la modificările din {{ count }} fișiere? Această acțiune nu poate fi anulată.",
     "blame": "Blame",
     "blameEmpty": "Nu există informații blame disponibile.",
     "ignore": "Adaugă la .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Domeniul regulii",
       "hint": "Alege cât de larg se aplică regula."
+    },
+    "folderScope": {
+      "title": "Permite folderul",
+      "hint": "Adaugă folderul și tot ce se află în el la folderele permise mereu.",
+      "option": "Folder + subfoldere"
     },
     "allowChat": "Permite în acest chat"
   },

@@ -29,7 +29,7 @@ import { TypedInput } from '../typed-input';
         {{ 'settings.replyLanguage' | transloco }}
       </label>
       <select
-        class="field field-select w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
+        class="field field-select w-full max-w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
         (typedValue)="draft.patch('replyLanguage', $event || null)"
       >
         <option value="" [selected]="!draft.draft().replyLanguage">
@@ -44,7 +44,7 @@ import { TypedInput } from '../typed-input';
       <p class="mt-2 text-xs text-mist/30">{{ 'settings.replyLanguageHint' | transloco }}</p>
     </section>
 
-    <section class="mt-8 grid grid-cols-2 gap-6">
+    <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div>
         <label class="mb-2 block text-sm text-mist/50">{{ 'settings.budget' | transloco }}</label>
         <input
@@ -82,7 +82,7 @@ import { TypedInput } from '../typed-input';
         type="number"
         min="1"
         step="1"
-        class="field w-40 rounded-xl px-4 py-2 text-sm"
+        class="field w-full max-w-40 rounded-xl px-4 py-2 text-sm"
         [value]="draft.draft().maxToolIterations"
         (typedValue)="draft.patch('maxToolIterations', +$event)"
       />
@@ -106,7 +106,7 @@ import { TypedInput } from '../typed-input';
       </p>
     </section>
 
-    <section class="mt-8 grid grid-cols-2 gap-6">
+    <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div>
         <label class="mb-2 block text-sm font-semibold text-white">{{
           'settings.subagentModel' | transloco

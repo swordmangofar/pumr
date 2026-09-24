@@ -39,7 +39,9 @@ sessions in SQLite. No project files leave the machine except the requests you a
 
 - A real tool loop in Rust: `read`, `write`, `edit`, `glob`, `grep`, `ls`, `bash`,
   `webfetch`, `websearch`, plus MCP tools.
-- Every non read-only command asks first — allow once, allow always (glob rule), or deny.
+- Non-dangerous commands inside the project just run. When a prompt does appear —
+  allow once, allow for this chat/session, allow always (glob rule), or deny; one
+  grant auto-approves every queued request it covers, one deny clears the queue.
 - Dangerous commands and sensitive files (`.env`, keys, databases) get extra checks,
   especially outside the project.
 - Tools are sandboxed to the active project and the extra folders you allow.

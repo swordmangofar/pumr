@@ -71,8 +71,12 @@
     "unstage": "Zurücknehmen",
     "stageAll": "Alle vormerken",
     "unstageAll": "Alle zurücknehmen",
+    "stageSelected": "{{ count }} ausgewählte vormerken",
+    "unstageSelected": "{{ count }} ausgewählte zurücknehmen",
     "discard": "Verwerfen",
     "discardConfirm": "Änderungen an „{{ path }}“ verwerfen? Dies kann nicht rückgängig gemacht werden.",
+    "discardSelected": "{{ count }} Dateien verwerfen",
+    "discardSelectedConfirm": "Änderungen an {{ count }} Dateien verwerfen? Dies kann nicht rückgängig gemacht werden.",
     "blame": "Blame",
     "blameEmpty": "Keine Blame-Informationen verfügbar.",
     "ignore": "Zu .gitignore hinzufügen",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Regelbereich",
       "hint": "Wähle, wie breit diese Regel gilt."
+    },
+    "folderScope": {
+      "title": "Ordner freigeben",
+      "hint": "Fügt den Ordner und alles darunter zu den immer erlaubten Ordnern hinzu.",
+      "option": "Ordner + Unterordner"
     },
     "allowChat": "In diesem Chat erlauben"
   },

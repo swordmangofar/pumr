@@ -615,6 +615,9 @@ pub enum StreamEvent {
         segments: Vec<crate::permissions::CommandSegment>,
         risk: Option<crate::permissions::CommandRisk>,
         scope_options: Vec<crate::permissions::CommandScopeOption>,
+        /// Outside-project directories a command touches that the user can
+        /// whitelist (with everything below them).
+        folders: Vec<String>,
     },
     PermissionResolved {
         request_id: String,

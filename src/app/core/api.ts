@@ -96,8 +96,17 @@ export const api = {
     folder: string | null = null,
     promptKind: string | null = null,
     commandRules: CommandRule[] | null = null,
+    folders: string[] | null = null,
   ) =>
-    invoke<void>('resolve_permission', { requestId, decision, rules, folder, promptKind, commandRules }),
+    invoke<void>('resolve_permission', {
+      requestId,
+      decision,
+      rules,
+      folder,
+      promptKind,
+      commandRules,
+      folders,
+    }),
   resolveQuestion: (requestId: string, answers: QuestionAnswer[] | null) =>
     invoke<void>('resolve_question', { requestId, answers }),
   addCommandRule: (rule: CommandRule, allow: boolean) =>
@@ -129,9 +138,15 @@ export const api = {
     invoke<FileDiff>('get_git_file_diff', { projectId, path, staged }),
   gitStage: (projectId: string, path: string | null = null) =>
     invoke<void>('git_stage', { projectId, path }),
+  gitStagePaths: (projectId: string, paths: string[]) =>
+    invoke<void>('git_stage_paths', { projectId, paths }),
   gitUnstage: (projectId: string, path: string | null = null) =>
     invoke<void>('git_unstage', { projectId, path }),
+  gitUnstagePaths: (projectId: string, paths: string[]) =>
+    invoke<void>('git_unstage_paths', { projectId, paths }),
   gitDiscard: (projectId: string, path: string) => invoke<void>('git_discard', { projectId, path }),
+  gitDiscardPaths: (projectId: string, paths: string[]) =>
+    invoke<void>('git_discard_paths', { projectId, paths }),
   getGitBlame: (projectId: string, path: string) =>
     invoke<GitBlameLine[]>('get_git_blame', { projectId, path }),
   gitIgnore: (projectId: string, path: string) => invoke<void>('git_ignore', { projectId, path }),

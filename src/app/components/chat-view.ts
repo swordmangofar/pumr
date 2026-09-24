@@ -273,7 +273,7 @@ import { TypedInput } from './typed-input';
                             </svg>
                           </button>
                           <div
-                            class="max-w-[85%] rounded-2xl rounded-tr-md border px-4 py-3 text-[15px] whitespace-pre-wrap text-white"
+                            class="min-w-0 max-w-[85%] rounded-2xl rounded-tr-md border px-4 py-3 text-[15px] break-words whitespace-pre-wrap text-white"
                             [class]="
                               entry.message.id === delegatedPromptId()
                                 ? 'border-sky-400/30 bg-sky-500/10'
@@ -374,7 +374,7 @@ import { TypedInput } from './typed-input';
                                 }
                               </summary>
                               <div
-                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-mist/60"
+                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed break-words whitespace-pre-wrap text-mist/60"
                               >
                                 <app-stream-text
                                   [content]="entry.message.reasoning"
@@ -392,7 +392,9 @@ import { TypedInput } from './typed-input';
                           }
 
                           @if (entry.message.content) {
-                            <div class="text-[15px] leading-relaxed whitespace-pre-wrap text-mist">
+                            <div
+                              class="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-mist"
+                            >
                               <app-stream-text [content]="entry.message.content" />
                               @if (streaming() && isLast(entry.message)) {
                                 <span

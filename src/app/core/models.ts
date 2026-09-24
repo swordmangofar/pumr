@@ -241,6 +241,7 @@ export interface Mode {
 }
 
 export interface Settings {
+  settingsVersion: number;
   defaultSystemPrompt: string;
   securitySystemPromptEnabled: boolean;
   securitySystemPrompt: string;
@@ -697,6 +698,7 @@ export type StreamEvent =
       segments: CommandSegment[];
       risk: CommandRisk | null;
       scopeOptions: CommandScopeOption[];
+      folders: string[];
     }
   | { kind: 'permissionResolved'; requestId: string; allowed: boolean }
   | { kind: 'questionRequest'; requestId: string; questions: QuestionItem[] }

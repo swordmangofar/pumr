@@ -71,8 +71,12 @@
     "unstage": "Ukini pripremu",
     "stageAll": "Pripremi sve",
     "unstageAll": "Ukini pripremu svega",
+    "stageSelected": "Pripremi {{ count }} odabranih",
+    "unstageSelected": "Ukloni {{ count }} odabranih iz pripreme",
     "discard": "Odbaci",
     "discardConfirm": "Odbaciti promjene u „{{ path }}“? To se ne može poništiti.",
+    "discardSelected": "Odbaci {{ count }} datoteka",
+    "discardSelectedConfirm": "Odbaciti promjene u {{ count }} datoteka? To se ne može poništiti.",
     "blame": "Blame",
     "blameEmpty": "Nema dostupnih blame informacija.",
     "ignore": "Dodaj u .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Opseg pravila",
       "hint": "Odaberi koliko široko pravilo vrijedi."
+    },
+    "folderScope": {
+      "title": "Dopusti mapu",
+      "hint": "Dodaje mapu i sve unutar nje u uvijek dopuštene mape.",
+      "option": "Mapa + podmape"
     },
     "allowChat": "Dopusti u ovom razgovoru"
   },

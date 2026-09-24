@@ -165,4 +165,37 @@ describe('GitService', () => {
     await git.abortOperation('p1', 'merge');
     expect(api.gitOperationAbort).toHaveBeenCalledWith('p1', 'merge');
   });
+
+  it('stages a batch in one call and reloads status once', async () => {
+    const git = service();
+    const stage = vi.spyOn(api, 'gitStagePaths').mockResolvedValue();
+    vi.spyOn(api, 'getGitStatus').mockResolvedValue(status);
+
+    await git.stagePaths('p1', ['a', 'b', 'c']);
+
+    expect(stage).toHaveBeenCalledWith('p1', ['a', 'b', 'c']);
+    expect(api.getGitStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards a batch in one call and reloads status', async () => {
+    const git = service();
+    const discard = vi.spyOn(api, 'gitDiscardPaths').mockResolvedValue();
+    const loadStatus = vi.spyOn(git, 'loadStatus').mockResolvedValue();
+
+    await git.discardPaths('p1', ['a', 'b', 'c']);
+
+    expect(discard).toHaveBeenCalledWith('p1', ['a', 'b', 'c']);
+    expect(loadStatus).toHaveBeenCalledWith('p1');
+  });
+
+  it('reloads status after a batch discard even when the command fails', async () => {
+    const git = service();
+    vi.spyOn(api, 'gitDiscardPaths').mockRejectedValue(new Error('boom'));
+    const loadStatus = vi.spyOn(git, 'loadStatus').mockResolvedValue();
+
+    await git.discardPaths('p1', ['a', 'b', 'c']);
+
+    expect(loadStatus).toHaveBeenCalledWith('p1');
+    expect(git.errorFor('p1')).not.toBeNull();
+  });
 });

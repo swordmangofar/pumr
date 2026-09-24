@@ -237,6 +237,36 @@ interface SegmentScope {
               </p>
             </div>
           }
+
+          @if (folderOptions().length > 0) {
+            <div>
+              <label class="mb-1.5 block text-sm text-mist/50">
+                {{ 'permission.folderScope.title' | transloco }}
+              </label>
+              <div class="space-y-1.5">
+                @for (folder of folderOptions(); track folder) {
+                  <button
+                    type="button"
+                    class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
+                    [class]="folderOptionClass(folder)"
+                    (click)="toggleFolder(folder)"
+                  >
+                    <span
+                      class="h-2.5 w-2.5 shrink-0 rounded-full"
+                      [class]="selectedFolders().includes(folder) ? 'bg-accent' : 'bg-white/20'"
+                    ></span>
+                    <span class="shrink-0 text-xs text-mist/50">
+                      {{ 'permission.folderScope.option' | transloco }}
+                    </span>
+                    <code class="ml-auto truncate font-mono text-xs text-mist">{{ folder }}</code>
+                  </button>
+                }
+              </div>
+              <p class="mt-1.5 text-xs text-mist/30">
+                {{ 'permission.folderScope.hint' | transloco }}
+              </p>
+            </div>
+          }
         </div>
 
         <footer class="flex items-center justify-end gap-2 border-t border-white/10 px-5 py-3">
@@ -273,6 +303,12 @@ export class PermissionOverlay {
   });
 
   protected readonly scopeOptions = computed(() => this.request().scopeOptions ?? []);
+
+  /// Outside-project directories the command touched, each of which can be
+  /// whitelisted (with everything below it) from the prompt.
+  protected readonly folderOptions = computed(() => this.request().folders ?? []);
+
+  protected readonly selectedFolders = signal<string[]>([]);
 
   protected readonly selectedSegmentRules = signal<Record<number, CommandRule>>({});
 
@@ -370,7 +406,9 @@ export class PermissionOverlay {
         },
       ];
     }
-    const session = this.defaultAction() === 'session';
+    // opencode-style: every prompt offers once + session + always side by
+    // side, so the grant that stops repeat prompts is always one click away.
+    // `permissionDefaults` only picks which allow button is focused.
     const actions: PermissionAction[] = [
       { id: 'deny', labelKey: 'permission.deny', decision: 'deny', variant: 'danger' },
     ];
@@ -384,11 +422,17 @@ export class PermissionOverlay {
     }
     actions.push({
       id: 'allow',
-      labelKey: session ? 'permission.allowSession' : 'permission.allowOnce',
-      decision: session ? 'allow_session' : 'allow_once',
+      labelKey: 'permission.allowOnce',
+      decision: 'allow_once',
       variant: 'neutral',
     });
     if (kind !== 'file') {
+      actions.push({
+        id: 'allow_session',
+        labelKey: 'permission.allowSession',
+        decision: 'allow_session',
+        variant: 'neutral',
+      });
       actions.push({
         id: 'allow_always',
         labelKey: kind === 'folder' ? 'permission.addFolder' : 'permission.allowAlways',
@@ -399,13 +443,24 @@ export class PermissionOverlay {
     return actions;
   });
 
-  private readonly defaultIndex = computed(() =>
-    this.actions().findIndex((action) => action.id === 'allow'),
-  );
+  private readonly defaultIndex = computed(() => {
+    const actions = this.actions();
+    const preferred =
+      this.defaultAction() === 'session'
+        ? actions.findIndex((action) => action.id === 'allow_session')
+        : actions.findIndex((action) => action.id === 'allow');
+    if (preferred >= 0) {
+      return preferred;
+    }
+    return actions.findIndex(
+      (action) => action.id === 'allow' || action.id === 'allow_session',
+    );
+  });
 
   constructor() {
     effect(() => {
       this.rule.set(this.request().suggestedRule ?? '');
+      this.selectedFolders.set([]);
       const selection: Record<number, CommandRule> = {};
       for (const group of this.segmentScopes()) {
         const preferred =
@@ -470,6 +525,18 @@ export class PermissionOverlay {
     return this.ruleKey(this.selectedScopeRule()) === this.ruleKey(rule)
       ? 'border-accent/60 bg-accent/10'
       : 'border-white/10 hover:bg-white/5';
+  }
+
+  protected folderOptionClass(folder: string): string {
+    return this.selectedFolders().includes(folder)
+      ? 'border-accent/60 bg-accent/10'
+      : 'border-white/10 hover:bg-white/5';
+  }
+
+  protected toggleFolder(folder: string): void {
+    this.selectedFolders.update((folders) =>
+      folders.includes(folder) ? folders.filter((entry) => entry !== folder) : [...folders, folder],
+    );
   }
 
   protected selectedSegmentRule(index: number): CommandRule | null {
@@ -571,12 +638,17 @@ export class PermissionOverlay {
   }
 
   protected run(action: PermissionAction): void {
-    if (action.decision === 'allow_always' || action.decision === 'deny_always') {
-      void this.workspace.resolvePermission(action.decision, this.chosenRules());
+    const folders = this.selectedFolders();
+    if (action.decision === 'allow_always') {
+      void this.workspace.resolvePermission('allow_always', this.chosenRules(), folders);
+      return;
+    }
+    if (action.decision === 'deny_always') {
+      void this.workspace.resolvePermission('deny_always', this.chosenRules(), []);
       return;
     }
     if (action.decision === 'allow_session' && this.request().promptKind === 'command') {
-      void this.workspace.resolvePermission('allow_session', this.chosenRules());
+      void this.workspace.resolvePermission('allow_session', this.chosenRules(), folders);
       return;
     }
     void this.workspace.resolvePermission(action.decision);

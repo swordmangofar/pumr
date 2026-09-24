@@ -143,9 +143,9 @@ describe('AgentRulesSettings command rules', () => {
       isAuto: (key: string) => boolean;
       toggleAuto: (key: string) => void;
     };
-    expect(instance.isAuto('autoApproveProjectCommands')).toBe(false);
-    instance.toggleAuto('autoApproveProjectCommands');
-    expect(patch).toHaveBeenCalledWith('autoApproveProjectCommands', true);
     expect(instance.isAuto('autoApproveProjectCommands')).toBe(true);
+    instance.toggleAuto('autoApproveProjectCommands');
+    expect(patch).toHaveBeenCalledWith('autoApproveProjectCommands', false);
+    expect(instance.isAuto('autoApproveProjectCommands')).toBe(false);
   });
 });

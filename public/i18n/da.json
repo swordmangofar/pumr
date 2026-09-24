@@ -71,8 +71,12 @@
     "unstage": "Unstage",
     "stageAll": "Stage alle",
     "unstageAll": "Unstage alle",
+    "stageSelected": "Stage {{ count }} valgte",
+    "unstageSelected": "Unstage {{ count }} valgte",
     "discard": "Kassér",
     "discardConfirm": "Kassér ændringer i \"{{ path }}\"? Dette kan ikke fortrydes.",
+    "discardSelected": "Kassér {{ count }} filer",
+    "discardSelectedConfirm": "Kassér ændringer i {{ count }} filer? Dette kan ikke fortrydes.",
     "blame": "Blame",
     "blameEmpty": "Ingen blame-information tilgængelig.",
     "ignore": "Føj til .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Regelomfang",
       "hint": "Vælg hvor bredt reglen gælder."
+    },
+    "folderScope": {
+      "title": "Tillad mappe",
+      "hint": "Føjer mappen og alt indeni til de altid tilladte mapper.",
+      "option": "Mappe + undermapper"
     },
     "allowChat": "Tillad i denne chat"
   },

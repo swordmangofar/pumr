@@ -71,8 +71,12 @@
     "unstage": "Unstage",
     "stageAll": "Stage all",
     "unstageAll": "Unstage all",
+    "stageSelected": "Stage {{ count }} selected",
+    "unstageSelected": "Unstage {{ count }} selected",
     "discard": "Discard",
     "discardConfirm": "Discard changes to \"{{ path }}\"? This cannot be undone.",
+    "discardSelected": "Discard {{ count }} files",
+    "discardSelectedConfirm": "Discard changes to {{ count }} files? This cannot be undone.",
     "blame": "Blame",
     "blameEmpty": "No blame information available.",
     "ignore": "Add to .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Rule scope",
       "hint": "Choose how broadly this rule applies."
+    },
+    "folderScope": {
+      "title": "Whitelist folder",
+      "hint": "Adds the folder and everything below it to the always-allowed folders.",
+      "option": "Folder + subfolders"
     },
     "allowChat": "Allow in this chat"
   },

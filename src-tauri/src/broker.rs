@@ -1,7 +1,9 @@
 use crate::models::{
     EventSink, PermissionDecision, QuestionAnswer, QuestionItem, RoutedEvent, StreamEvent,
 };
-use crate::permissions::{CommandRisk, CommandScopeOption, CommandSegment};
+use crate::permissions::{
+    CommandRisk, CommandScopeOption, CommandSegment, LivePermissions,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -27,6 +29,10 @@ pub struct PermissionPrompt {
     /// Backend-only identity; neither field changes the streamed prompt contract.
     pub operation: PermissionOperation,
     pub cwd: Option<PathBuf>,
+    /// Project root the prompt was issued from. Backend-only: used to
+    /// re-evaluate queued prompts against freshly granted rules and folders
+    /// (opencode-style auto-resolution), never streamed to the renderer.
+    pub project_root: PathBuf,
     pub title: String,
     pub detail: String,
     pub command: Option<String>,
@@ -40,6 +46,8 @@ pub struct PermissionPrompt {
     pub risk: Option<CommandRisk>,
     /// Allow/deny scopes the user can pick for a command prompt.
     pub scope_options: Vec<CommandScopeOption>,
+    /// Outside-project directories the user can whitelist from a command prompt.
+    pub folders: Vec<String>,
     /// The conversation (root session) an "allow in this chat" grant belongs to.
     /// Distinct from the routing `session_id`, which may be a subagent.
     pub grant_session_id: String,
@@ -83,8 +91,10 @@ struct PendingPermission {
     folder: Option<String>,
     suggested_rule: Option<String>,
     scope_options: Vec<CommandScopeOption>,
+    folders: Vec<String>,
     session_id: String,
     grant_session_id: String,
+    project_root: PathBuf,
 }
 
 /// The backend-owned fields of a pending prompt, used to validate a renderer's
@@ -96,6 +106,8 @@ pub struct PendingPrompt {
     pub folder: Option<String>,
     pub suggested_rule: Option<String>,
     pub scope_options: Vec<CommandScopeOption>,
+    /// Outside-project directories the backend proposed for whitelisting.
+    pub folders: Vec<String>,
     /// Routing session id of the prompt (may be a subagent); kept for callers
     /// and tests that distinguish the asking session from the chat.
     #[allow(dead_code)]
@@ -109,6 +121,98 @@ fn deny() -> PermissionDecision {
         allowed: false,
         rule: None,
         folder: None,
+    }
+}
+
+fn allow() -> PermissionDecision {
+    PermissionDecision {
+        allowed: true,
+        rule: None,
+        folder: None,
+    }
+}
+
+/// A queued prompt's backend-owned state, snapshotted so it can be
+/// re-evaluated against the live permissions without holding the broker lock.
+struct PendingSnapshot {
+    request_id: String,
+    kind: String,
+    operation: PermissionOperation,
+    command: Option<String>,
+    cwd: Option<PathBuf>,
+    path: Option<String>,
+    url: Option<String>,
+    project_root: PathBuf,
+    grant_session_id: String,
+}
+
+impl PendingSnapshot {
+    /// Re-checks the prompt against the live permissions after a grant.
+    /// `Some(true)` auto-allows, `Some(false)` auto-denies (a fresh deny rule
+    /// now covers it), `None` leaves the prompt for the user. Mirrors
+    /// opencode's reply flow, where an "always" grant auto-approves every
+    /// pending request it covers.
+    fn evaluate(&self, permissions: &LivePermissions) -> Option<bool> {
+        match self.kind.as_str() {
+            // Only real shell commands can be re-evaluated; MCP prompts carry a
+            // JSON preview, not a command line.
+            "command" if self.operation == PermissionOperation::Execute => {
+                let command = self.command.as_deref()?.trim().to_string();
+                if command.is_empty() {
+                    return None;
+                }
+                let cwd = self.cwd.clone()?;
+                let mut rules = permissions.command_rules();
+                rules.extend(permissions.session_command_rules(&self.grant_session_id));
+                match crate::permissions::evaluate_command_with(
+                    &command,
+                    &self.project_root,
+                    &cwd,
+                    &permissions.extra_folders(),
+                    &rules,
+                    &permissions.denied_command_rules(),
+                    &permissions.auto_approve(),
+                ) {
+                    crate::permissions::CommandDecision::Allow => Some(true),
+                    crate::permissions::CommandDecision::Deny { .. } => Some(false),
+                    crate::permissions::CommandDecision::Ask { .. } => None,
+                }
+            }
+            // Folder prompts become obsolete once the folder (or a parent of
+            // it) was granted. Sensitive-file prompts ("file") never
+            // auto-resolve: no grant covers them.
+            "folder" => {
+                let path = self.path.as_deref()?;
+                let absolute = crate::permissions::resolve_path(&self.project_root, path);
+                let extra = permissions.extra_folders();
+                if crate::permissions::path_is_inside(&absolute, &self.project_root, &extra)
+                    && !crate::permissions::symlink_escapes(
+                        &absolute,
+                        &self.project_root,
+                        &extra,
+                    )
+                {
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            kind if kind.starts_with("web") => {
+                let host = reqwest::Url::parse(self.url.as_deref()?)
+                    .ok()
+                    .and_then(|parsed| parsed.host_str().map(str::to_string))?;
+                match crate::permissions::evaluate_website(
+                    &host,
+                    &permissions.allowed_websites(),
+                    &permissions.denied_websites(),
+                ) {
+                    crate::permissions::WebsiteDecision::Allow => Some(true),
+                    crate::permissions::WebsiteDecision::Deny { .. } => Some(false),
+                    crate::permissions::WebsiteDecision::Ask { .. } => None,
+                }
+            }
+            _ => None,
+        }
     }
 }
 
@@ -152,6 +256,7 @@ impl PermissionBroker {
                 folder: entry.folder.clone(),
                 suggested_rule: entry.suggested_rule.clone(),
                 scope_options: entry.scope_options.clone(),
+                folders: entry.folders.clone(),
                 session_id: entry.session_id.clone(),
                 grant_session_id: entry.grant_session_id.clone(),
             })
@@ -161,6 +266,71 @@ impl PermissionBroker {
         let inner = self.inner.lock().unwrap();
         for entry in inner.pending.values() {
             entry.sender.send_replace(Some(deny()));
+        }
+    }
+
+    /// Re-evaluates every queued prompt of a chat against the live permissions
+    /// and resolves the ones a fresh grant now covers. Returns the request ids
+    /// that were resolved without user interaction.
+    pub fn auto_resolve(
+        &self,
+        grant_session_id: &str,
+        permissions: &LivePermissions,
+    ) -> Vec<String> {
+        let snapshots: Vec<PendingSnapshot> = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .pending
+                .iter()
+                .filter(|(_, entry)| entry.grant_session_id == grant_session_id)
+                .map(|(request_id, entry)| PendingSnapshot {
+                    request_id: request_id.clone(),
+                    kind: entry.kind.clone(),
+                    operation: entry.signature.operation,
+                    command: entry.signature.command.clone(),
+                    cwd: entry.signature.cwd.clone(),
+                    path: entry.signature.path.clone(),
+                    url: entry.signature.url.clone(),
+                    project_root: entry.project_root.clone(),
+                    grant_session_id: entry.grant_session_id.clone(),
+                })
+                .collect()
+        };
+        let mut resolved = Vec::new();
+        for snapshot in snapshots {
+            match snapshot.evaluate(permissions) {
+                Some(true) => {
+                    self.resolve(&snapshot.request_id, allow());
+                    resolved.push(snapshot.request_id);
+                }
+                Some(false) => {
+                    self.resolve(&snapshot.request_id, deny());
+                    resolved.push(snapshot.request_id);
+                }
+                None => {}
+            }
+        }
+        resolved
+    }
+
+    /// Denies every other queued prompt of a chat. opencode's reject cascade:
+    /// one rejection stops the session's whole pending batch instead of making
+    /// the user deny each prompt individually.
+    pub fn deny_chat(&self, grant_session_id: &str, except_request_id: &str) {
+        let request_ids: Vec<String> = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .pending
+                .iter()
+                .filter(|(request_id, entry)| {
+                    entry.grant_session_id == grant_session_id
+                        && request_id.as_str() != except_request_id
+                })
+                .map(|(request_id, _)| request_id.clone())
+                .collect()
+        };
+        for request_id in request_ids {
+            self.resolve(&request_id, deny());
         }
     }
 
@@ -198,8 +368,10 @@ impl PermissionBroker {
                             folder: prompt.folder.clone(),
                             suggested_rule: prompt.suggested_rule.clone(),
                             scope_options: prompt.scope_options.clone(),
+                            folders: prompt.folders.clone(),
                             session_id: session_id.to_string(),
                             grant_session_id: prompt.grant_session_id.clone(),
+                            project_root: prompt.project_root.clone(),
                         },
                     );
                     (true, request_id, receiver)
@@ -223,6 +395,7 @@ impl PermissionBroker {
                     segments: prompt.segments.clone(),
                     risk: prompt.risk.clone(),
                     scope_options: prompt.scope_options.clone(),
+                    folders: prompt.folders.clone(),
                 },
             });
         }
@@ -341,6 +514,9 @@ impl Default for QuestionBroker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::CommandRule;
+    use crate::permissions::AutoApproveConfig;
+    use std::path::Path;
     use std::sync::Arc;
 
     fn command_prompt() -> PermissionPrompt {
@@ -348,6 +524,7 @@ mod tests {
             kind: "command".to_string(),
             operation: PermissionOperation::Execute,
             cwd: Some(std::env::current_dir().unwrap()),
+            project_root: std::env::current_dir().unwrap(),
             title: "Run command?".to_string(),
             detail: "Approval required".to_string(),
             command: Some("npm install".to_string()),
@@ -358,6 +535,7 @@ mod tests {
             segments: Vec::new(),
             risk: None,
             scope_options: Vec::new(),
+            folders: Vec::new(),
             grant_session_id: "chat".to_string(),
         }
     }
@@ -553,5 +731,225 @@ mod tests {
             second.operation = second_operation;
             assert_prompt_sharing(first, "chat", second, "chat", false).await;
         }
+    }
+
+    fn folder_prompt(root: &Path, path: &Path, grant_session_id: &str) -> PermissionPrompt {
+        PermissionPrompt {
+            kind: "folder".to_string(),
+            operation: PermissionOperation::Read,
+            cwd: Some(root.to_path_buf()),
+            project_root: root.to_path_buf(),
+            title: "Access file outside the project?".to_string(),
+            detail: "Approval required".to_string(),
+            command: None,
+            path: Some(path.display().to_string()),
+            folder: path.parent().map(|parent| parent.display().to_string()),
+            url: None,
+            suggested_rule: None,
+            segments: Vec::new(),
+            risk: None,
+            scope_options: Vec::new(),
+            folders: Vec::new(),
+            grant_session_id: grant_session_id.to_string(),
+        }
+    }
+
+    fn live_permissions(extra_folders: Vec<String>) -> LivePermissions {
+        LivePermissions::new(
+            Vec::new(),
+            Vec::new(),
+            extra_folders,
+            Vec::new(),
+            Vec::new(),
+            AutoApproveConfig::default(),
+        )
+    }
+
+    fn outside_test_dir(tag: &str) -> PathBuf {
+        let unique = format!(
+            "pumr-broker-test-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_allows_queued_folder_prompts_covered_by_a_grant() {
+        let root = std::env::current_dir().unwrap();
+        let outside = outside_test_dir("folders");
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        // Two different files in the same outside folder queue two prompts.
+        let first = broker.ask(
+            folder_prompt(&root, &outside.join("a.txt"), "chat"),
+            &cancel,
+            "chat",
+            &emit,
+        );
+        let second = broker.ask(
+            folder_prompt(&root, &outside.join("b.txt"), "chat"),
+            &cancel,
+            "chat",
+            &emit,
+        );
+        tokio::pin!(first, second);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+
+        // Granting the folder (session or permanent) resolves both at once.
+        let permissions = live_permissions(vec![outside.display().to_string()]);
+        let mut resolved = broker.auto_resolve("chat", &permissions);
+        resolved.sort();
+        assert_eq!(resolved.len(), 2);
+        assert!(first.await.allowed);
+        assert!(second.await.allowed);
+        assert!(broker.inner.lock().unwrap().pending.is_empty());
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_only_touches_the_granted_chat() {
+        let root = std::env::current_dir().unwrap();
+        let outside = outside_test_dir("chats");
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let first = broker.ask(
+            folder_prompt(&root, &outside.join("a.txt"), "chat-a"),
+            &cancel,
+            "chat-a",
+            &emit,
+        );
+        let second = broker.ask(
+            folder_prompt(&root, &outside.join("b.txt"), "chat-b"),
+            &cancel,
+            "chat-b",
+            &emit,
+        );
+        tokio::pin!(first, second);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+
+        let permissions = live_permissions(vec![outside.display().to_string()]);
+        assert_eq!(broker.auto_resolve("chat-a", &permissions).len(), 1);
+        assert!(first.await.allowed);
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+
+        broker.deny_all();
+        assert!(!second.await.allowed);
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_applies_new_command_rules_to_queued_prompts() {
+        let root = std::env::current_dir().unwrap();
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let mut prompt = command_prompt();
+        prompt.command = Some("git commit -m test".to_string());
+        let future = broker.ask(prompt, &cancel, "chat", &emit);
+        tokio::pin!(future);
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+
+        // Without a rule the command still needs a user decision.
+        let permissions = live_permissions(Vec::new());
+        assert!(broker.auto_resolve("chat", &permissions).is_empty());
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+
+        // A fresh "allow in this chat" rule covers the queued prompt.
+        permissions.add_session_command_rule("chat", &CommandRule::Glob("git *".into()));
+        assert_eq!(broker.auto_resolve("chat", &permissions).len(), 1);
+        assert!(future.await.allowed);
+        let _ = root;
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_denies_queued_commands_covered_by_a_new_deny_rule() {
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let mut prompt = command_prompt();
+        prompt.command = Some("git commit -m test".to_string());
+        let future = broker.ask(prompt, &cancel, "chat", &emit);
+        tokio::pin!(future);
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+
+        let permissions = LivePermissions::new(
+            Vec::new(),
+            vec![CommandRule::Glob("git *".into())],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            AutoApproveConfig::default(),
+        );
+        assert_eq!(broker.auto_resolve("chat", &permissions).len(), 1);
+        assert!(!future.await.allowed);
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_never_allows_sensitive_file_prompts() {
+        let root = std::env::current_dir().unwrap();
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        // A folder grant covering the path must not approve a sensitive-file
+        // ("file") prompt: no grant ever covers those.
+        let mut prompt = folder_prompt(&root, &root.join(".env"), "chat");
+        prompt.kind = "file".to_string();
+        let future = broker.ask(prompt, &cancel, "chat", &emit);
+        tokio::pin!(future);
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+
+        let permissions = live_permissions(vec![root.display().to_string()]);
+        assert!(broker.auto_resolve("chat", &permissions).is_empty());
+        assert!(futures_util::poll!(future.as_mut()).is_pending());
+
+        broker.deny_all();
+        assert!(!future.await.allowed);
+    }
+
+    #[tokio::test]
+    async fn deny_chat_cascades_to_the_chats_other_queued_prompts() {
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let first = broker.ask(command_prompt(), &cancel, "chat", &emit);
+        tokio::pin!(first);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        // The only pending request at this point, so the id is unambiguous.
+        let first_id = broker
+            .inner
+            .lock()
+            .unwrap()
+            .by_signature
+            .values()
+            .next()
+            .cloned()
+            .unwrap();
+
+        let mut second_prompt = command_prompt();
+        second_prompt.command = Some("npm publish".to_string());
+        let second = broker.ask(second_prompt, &cancel, "chat", &emit);
+        tokio::pin!(second);
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+
+        // Denying one prompt denies everything else queued for the chat.
+        broker.deny_chat("chat", &first_id);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(!second.await.allowed);
+
+        broker.resolve(&first_id, deny());
+        assert!(!first.await.allowed);
     }
 }

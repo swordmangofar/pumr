@@ -71,8 +71,12 @@
     "unstage": "Usuń z indeksu",
     "stageAll": "Dodaj wszystko do indeksu",
     "unstageAll": "Usuń wszystko z indeksu",
+    "stageSelected": "Dodaj {{ count }} wybrane do indeksu",
+    "unstageSelected": "Usuń {{ count }} wybrane z indeksu",
     "discard": "Odrzuć",
     "discardConfirm": "Odrzucić zmiany w „{{ path }}”? Tej operacji nie można cofnąć.",
+    "discardSelected": "Odrzuć {{ count }} plików",
+    "discardSelectedConfirm": "Odrzucić zmiany w {{ count }} plikach? Tej operacji nie można cofnąć.",
     "blame": "Blame",
     "blameEmpty": "Brak informacji blame.",
     "ignore": "Dodaj do .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Zakres reguły",
       "hint": "Wybierz, jak szeroko obowiązuje reguła."
+    },
+    "folderScope": {
+      "title": "Zezwól na folder",
+      "hint": "Dodaje folder i wszystko w nim do folderów zawsze dozwolonych.",
+      "option": "Folder + podfoldery"
     },
     "allowChat": "Zezwól na tym czacie"
   },

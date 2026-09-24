@@ -21,6 +21,8 @@ use crate::git::{
     git_unstage as unstage_worktree, project_blame, project_branches, project_commit_detail,
     project_commit_file_diff, project_commits, project_file_diff, project_git_info,
     project_git_status, project_rebase_commits, project_remotes,
+    git_discard_paths as discard_worktree_paths, git_stage_paths as stage_paths_worktree,
+    git_unstage_paths as unstage_paths_worktree,
     reveal_path as reveal_path_worktree, ShadowRepo,
 };
 use crate::mcp::McpManager;
@@ -715,6 +717,7 @@ mod permission_rule_tests {
             folder: None,
             suggested_rule: Some("echo *".into()),
             scope_options: options(command),
+            folders: Vec::new(),
             session_id: "chat".into(),
             grant_session_id: "chat".into(),
         };
@@ -772,6 +775,7 @@ mod permission_rule_tests {
             folder: None,
             suggested_rule: None,
             scope_options: Vec::new(),
+            folders: Vec::new(),
             session_id: "chat".into(),
             grant_session_id: "chat".into(),
         };
@@ -792,6 +796,7 @@ pub fn resolve_permission(
     rules: Option<Vec<String>>,
     command_rules: Option<Vec<CommandRule>>,
     folder: Option<String>,
+    folders: Option<Vec<String>>,
     prompt_kind: Option<String>,
 ) -> Result<()> {
     // Never act on a decision that does not match a prompt the backend is
@@ -800,14 +805,29 @@ pub fn resolve_permission(
     let Some(pending) = state.broker.pending_prompt(&request_id) else {
         return Ok(());
     };
-    // The renderer's `folder` is intentionally ignored: the backend persists
-    // only the folder it proposed, so a renderer cannot widen access.
+    // The renderer's `folder`/`folders` are intentionally ignored as grants: the
+    // backend persists only the folders it proposed, so a renderer cannot widen
+    // access. `folders` is intersected with what the prompt offered below.
     let _ = (prompt_kind, folder);
     let allowed = decision != "deny" && decision != "deny_always";
     let is_web = pending.kind.starts_with("web");
     let is_command = pending.kind == "command";
     let chosen_rules =
         command_rules_for_decision(&pending, &decision, command_rules.unwrap_or_default());
+    // Only folders this prompt actually offered can be whitelisted. Deduplicate
+    // while preserving the backend order.
+    let mut chosen_folders: Vec<String> = Vec::new();
+    for candidate in folders.unwrap_or_default() {
+        let candidate = candidate.trim().to_string();
+        if candidate.is_empty() {
+            continue;
+        }
+        if pending.folders.iter().any(|folder| folder == &candidate)
+            && !chosen_folders.contains(&candidate)
+        {
+            chosen_folders.push(candidate);
+        }
+    }
     // Website rules remain strings, but only the backend's proposed host may
     // be saved. Command decision metadata is display-only, not a grant.
     let _ = rules;
@@ -825,6 +845,10 @@ pub fn resolve_permission(
         .folder
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    // Whether this decision granted anything reusable (a rule, folder or
+    // website). Queued prompts the grant covers are then auto-resolved, like
+    // opencode's "always" reply approving every pending request it matches.
+    let mut grants_applied = false;
     if is_web {
         let mut settings = state.settings();
         let mut changed = false;
@@ -857,9 +881,11 @@ pub fn resolve_permission(
         if allowed && decision == "allow_session" {
             if let Some(rule) = &rule {
                 state.permissions.add_session_website(rule);
+                grants_applied = true;
             }
         }
         if changed {
+            grants_applied = true;
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
         }
@@ -890,7 +916,19 @@ pub fn resolve_permission(
                 changed = true;
             }
         }
+        for candidate in &chosen_folders {
+            if !settings
+                .permissions
+                .extra_folders
+                .iter()
+                .any(|entry| entry == candidate)
+            {
+                settings.permissions.extra_folders.push(candidate.clone());
+                changed = true;
+            }
+        }
         if changed {
+            grants_applied = true;
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
         }
@@ -904,10 +942,16 @@ pub fn resolve_permission(
                 state
                     .permissions
                     .add_session_command_rule(&pending.grant_session_id, rule);
+                grants_applied = true;
             }
         }
         if let Some(folder) = &folder {
             state.permissions.add_session_folder(folder);
+            grants_applied = true;
+        }
+        for candidate in &chosen_folders {
+            state.permissions.add_session_folder(candidate);
+            grants_applied = true;
         }
     } else if !allowed && decision == "deny_always" && is_command {
         // Persist chosen scopes or the backend-owned exact fallback for an
@@ -938,6 +982,19 @@ pub fn resolve_permission(
             folder,
         },
     );
+    if !allowed {
+        // opencode's reject cascade: one denial stops the chat's whole pending
+        // batch instead of making the user deny each queued prompt.
+        state
+            .broker
+            .deny_chat(&pending.grant_session_id, &request_id);
+    } else if grants_applied {
+        // A fresh grant (rule, folder or website) covers other queued prompts
+        // of this chat; resolve them without asking again.
+        state
+            .broker
+            .auto_resolve(&pending.grant_session_id, &state.permissions);
+    }
     Ok(())
 }
 
@@ -1179,9 +1236,39 @@ pub fn git_unstage(
 }
 
 #[tauri::command]
+pub fn git_stage_paths(
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    stage_paths_worktree(&root, &paths)
+}
+
+#[tauri::command]
+pub fn git_unstage_paths(
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    unstage_paths_worktree(&root, &paths)
+}
+
+#[tauri::command]
 pub fn git_discard(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
     let root = project_root(&state, &project_id)?;
     discard_worktree(&root, &path)
+}
+
+#[tauri::command]
+pub fn git_discard_paths(
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<()> {
+    let root = project_root(&state, &project_id)?;
+    discard_worktree_paths(&root, &paths)
 }
 
 #[tauri::command]
@@ -2217,6 +2304,7 @@ async fn assemble_turn_context(
                                 cwd: std::env::current_dir()
                                     .ok()
                                     .map(|path| path.canonicalize().unwrap_or(path)),
+                                project_root: project_root.to_path_buf(),
                                 title: format!("Start MCP server '{}'?", config.name),
                                 detail: format!(
                                     "The assistant wants to start MCP server '{}' configured in {}.",
@@ -2230,6 +2318,7 @@ async fn assemble_turn_context(
                                 segments: Vec::new(),
                                 risk: None,
                                 scope_options: Vec::new(),
+                                folders: Vec::new(),
                                 grant_session_id: session_id.to_string(),
                             },
                             &approval_cancel,

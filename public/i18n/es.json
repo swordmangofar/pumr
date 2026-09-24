@@ -71,8 +71,12 @@
     "unstage": "Despreparar",
     "stageAll": "Preparar todo",
     "unstageAll": "Despreparar todo",
+    "stageSelected": "Preparar {{ count }} seleccionados",
+    "unstageSelected": "Despreparar {{ count }} seleccionados",
     "discard": "Descartar",
     "discardConfirm": "¿Descartar los cambios en «{{ path }}»? Esto no se puede deshacer.",
+    "discardSelected": "Descartar {{ count }} archivos",
+    "discardSelectedConfirm": "¿Descartar los cambios en {{ count }} archivos? Esto no se puede deshacer.",
     "blame": "Blame",
     "blameEmpty": "No hay información de blame disponible.",
     "ignore": "Añadir a .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Ámbito de la regla",
       "hint": "Elige qué tan amplia se aplica la regla."
+    },
+    "folderScope": {
+      "title": "Permitir carpeta",
+      "hint": "Añade la carpeta y todo su contenido a las carpetas siempre permitidas.",
+      "option": "Carpeta + subcarpetas"
     },
     "allowChat": "Permitir en este chat"
   },

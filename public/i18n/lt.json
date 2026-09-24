@@ -71,8 +71,12 @@
     "unstage": "Atšaukti paruošimą",
     "stageAll": "Paruošti viską",
     "unstageAll": "Atšaukti viską",
+    "stageSelected": "Paruošti {{ count }} pasirinktus",
+    "unstageSelected": "Atšaukti {{ count }} pasirinktų paruošimą",
     "discard": "Atmesti",
     "discardConfirm": "Atmesti „{{ path }}“ pakeitimus? To negalima atšaukti.",
+    "discardSelected": "Atmesti {{ count }} failus",
+    "discardSelectedConfirm": "Atmesti pakeitimus {{ count }} failuose? To negalima atšaukti.",
     "blame": "Blame",
     "blameEmpty": "Nėra blame informacijos.",
     "ignore": "Pridėti prie .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Taisyklės apimtis",
       "hint": "Pasirink, kaip plačiai taikoma taisyklė."
+    },
+    "folderScope": {
+      "title": "Leisti aplanką",
+      "hint": "Prideda aplanką ir viską jame prie visada leidžiamų aplankų.",
+      "option": "Aplankas + poaplankiai"
     },
     "allowChat": "Leisti šiame pokalbyje"
   },

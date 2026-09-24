@@ -71,8 +71,12 @@
     "unstage": "Előkészítés visszavonása",
     "stageAll": "Összes előkészítése",
     "unstageAll": "Összes visszavonása",
+    "stageSelected": "{{ count }} kijelölt előkészítése",
+    "unstageSelected": "{{ count }} kijelölt visszavonása",
     "discard": "Elvetés",
     "discardConfirm": "Elveti a(z) „{{ path }}” módosításait? Ez nem vonható vissza.",
+    "discardSelected": "{{ count }} fájl elvetése",
+    "discardSelectedConfirm": "Elveti a módosításokat {{ count }} fájlban? Ez nem vonható vissza.",
     "blame": "Blame",
     "blameEmpty": "Nincs elérhető blame információ.",
     "ignore": "Hozzáadás a .gitignore-hoz",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Szabály hatóköre",
       "hint": "Válaszd ki, milyen szélesen érvényes a szabály."
+    },
+    "folderScope": {
+      "title": "Mappa engedélyezése",
+      "hint": "Hozzáadja a mappát és mindent, ami benne van, a mindig engedélyezett mappákhoz.",
+      "option": "Mappa + almappák"
     },
     "allowChat": "Engedélyezés ebben a csevegésben"
   },

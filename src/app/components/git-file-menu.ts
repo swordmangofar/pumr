@@ -38,14 +38,14 @@ type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignor
       >
         @if (staged()) {
           <button type="button" class="menu-item" (click)="run('unstage')">
-            {{ 'git.unstage' | transloco }}
+            {{ unstageLabel() | transloco: { count: count() } }}
           </button>
         } @else {
           <button type="button" class="menu-item" (click)="run('stage')">
-            {{ 'git.stage' | transloco }}
+            {{ stageLabel() | transloco: { count: count() } }}
           </button>
           <button type="button" class="menu-item text-rose-400" (click)="run('discard')">
-            {{ 'git.discard' | transloco }}
+            {{ discardLabel() | transloco: { count: count() } }}
           </button>
         }
 
@@ -151,6 +151,7 @@ export class GitFileMenu {
   private readonly transloco = inject(TranslocoService);
 
   readonly path = input.required<string>();
+  readonly paths = input<string[]>([]);
   readonly staged = input.required<boolean>();
   readonly x = input.required<number>();
   readonly y = input.required<number>();
@@ -161,6 +162,20 @@ export class GitFileMenu {
   protected readonly blameLoading = signal(false);
   protected readonly blameError = signal<string | null>(null);
   protected readonly blameLines = signal<GitBlameLine[]>([]);
+
+  protected readonly count = computed(() => {
+    const paths = this.paths();
+    return paths.length > 1 ? paths.length : 1;
+  });
+  protected readonly stageLabel = computed(() =>
+    this.paths().length > 1 ? 'git.stageSelected' : 'git.stage',
+  );
+  protected readonly unstageLabel = computed(() =>
+    this.paths().length > 1 ? 'git.unstageSelected' : 'git.unstage',
+  );
+  protected readonly discardLabel = computed(() =>
+    this.paths().length > 1 ? 'git.discardSelected' : 'git.discard',
+  );
 
   protected readonly menuStyle = computed(() => {
     if (typeof window === 'undefined') {
@@ -212,11 +227,19 @@ export class GitFileMenu {
     }
     switch (action) {
       case 'stage':
-        void this.git.stagePath(projectId, this.path());
+        if (this.paths().length > 1) {
+          void this.git.stagePaths(projectId, this.paths());
+        } else {
+          void this.git.stagePath(projectId, this.path());
+        }
         this.close();
         break;
       case 'unstage':
-        void this.git.unstagePath(projectId, this.path());
+        if (this.paths().length > 1) {
+          void this.git.unstagePaths(projectId, this.paths());
+        } else {
+          void this.git.unstagePath(projectId, this.path());
+        }
         this.close();
         break;
       case 'discard':
@@ -245,12 +268,15 @@ export class GitFileMenu {
   }
 
   private async discard(projectId: string): Promise<void> {
+    const paths = this.paths().length > 0 ? this.paths() : [this.path()];
     const confirmed = await confirm(
-      this.transloco.translate('git.discardConfirm', { path: this.path() }),
+      paths.length > 1
+        ? this.transloco.translate('git.discardSelectedConfirm', { count: paths.length })
+        : this.transloco.translate('git.discardConfirm', { path: this.path() }),
       { title: 'pumr', kind: 'warning' },
     );
     if (confirmed) {
-      await this.git.discardPath(projectId, this.path());
+      await this.git.discardPaths(projectId, paths);
     }
     this.close();
   }

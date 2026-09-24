@@ -57,7 +57,7 @@ import { SettingsDraftService } from './settings-draft.service';
     @if (draft.draft().windowToggleEnabled) {
       <section class="mt-8">
         <div
-          class="flex items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
+          class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
         >
           <div class="min-w-0">
             <p class="text-sm font-medium text-white">
@@ -103,7 +103,7 @@ import { SettingsDraftService } from './settings-draft.service';
           <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
             {{ 'settings.window.behaviourHint' | transloco }}
           </p>
-          <div class="mt-3 flex gap-2">
+          <div class="mt-3 flex flex-wrap gap-2">
             @for (option of actions; track option.value) {
               <button
                 type="button"
@@ -147,7 +147,9 @@ import { SettingsDraftService } from './settings-draft.service';
       </section>
     }
 
-    <section class="mt-8">
+    <section
+      class="sticky bottom-0 -mx-6 mt-8 border-t border-white/10 bg-navy/90 px-6 pt-4 pb-5 backdrop-blur-sm"
+    >
       <div class="flex items-center justify-between gap-3">
         <div>
           <h3 class="text-sm font-semibold text-white">

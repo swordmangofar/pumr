@@ -71,8 +71,12 @@
     "unstage": "Odobrať z indexu",
     "stageAll": "Pridať všetko do indexu",
     "unstageAll": "Odobrať všetko z indexu",
+    "stageSelected": "Pridať {{ count }} vybrané do indexu",
+    "unstageSelected": "Odobrať {{ count }} vybrané z indexu",
     "discard": "Zahodiť",
     "discardConfirm": "Zahodiť zmeny v „{{ path }}“? Toto sa nedá vrátiť.",
+    "discardSelected": "Zahodiť {{ count }} súborov",
+    "discardSelectedConfirm": "Zahodiť zmeny v {{ count }} súboroch? Túto akciu nie je možné vrátiť späť.",
     "blame": "Blame",
     "blameEmpty": "Nie sú k dispozícii informácie o autorstve.",
     "ignore": "Pridať do .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Rozsah pravidla",
       "hint": "Vyberte, ako široko sa pravidlo použije."
+    },
+    "folderScope": {
+      "title": "Povoliť priečinok",
+      "hint": "Pridá priečinok a všetko v ňom medzi vždy povolené priečinky.",
+      "option": "Priečinok + podpriečinky"
     },
     "allowChat": "Povoliť v tomto chate"
   },

@@ -180,7 +180,7 @@ import { TypedInput } from '../typed-input';
                   />
                 }
               </div>
-              <div class="grid grid-cols-2 gap-1.5">
+              <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 @for (entry of catalogFor(group.key); track entry.id) {
                   <div
                     class="flex items-center justify-between gap-2 rounded-lg border border-white/10 px-3 py-1.5"

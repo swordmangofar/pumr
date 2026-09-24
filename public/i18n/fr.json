@@ -71,8 +71,12 @@
     "unstage": "Désindexer",
     "stageAll": "Tout indexer",
     "unstageAll": "Tout désindexer",
+    "stageSelected": "Indexer {{ count }} sélectionnés",
+    "unstageSelected": "Désindexer {{ count }} sélectionnés",
     "discard": "Annuler",
     "discardConfirm": "Abandonner les modifications de « {{ path }} » ? Cette action est irréversible.",
+    "discardSelected": "Abandonner {{ count }} fichiers",
+    "discardSelectedConfirm": "Abandonner les modifications de {{ count }} fichiers ? Cette action est irréversible.",
     "blame": "Blame",
     "blameEmpty": "Aucune information de blame disponible.",
     "ignore": "Ajouter à .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Portée de la règle",
       "hint": "Choisis la portée de la règle."
+    },
+    "folderScope": {
+      "title": "Autoriser le dossier",
+      "hint": "Ajoute le dossier et tout son contenu aux dossiers toujours autorisés.",
+      "option": "Dossier + sous-dossiers"
     },
     "allowChat": "Autoriser dans ce chat"
   },

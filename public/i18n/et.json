@@ -71,8 +71,12 @@
     "unstage": "Eemalda valmistamisest",
     "stageAll": "Valmista kõik",
     "unstageAll": "Eemalda kõik",
+    "stageSelected": "Valmista {{ count }} valitud",
+    "unstageSelected": "Eemalda valmistamisest {{ count }} valitud",
     "discard": "Hülga",
     "discardConfirm": "Kas loobuda muudatustest failis „{{ path }}“? Seda ei saa tagasi võtta.",
+    "discardSelected": "Loobu {{ count }} failist",
+    "discardSelectedConfirm": "Kas loobuda {{ count }} faili muudatustest? Seda ei saa tagasi võtta.",
     "blame": "Blame",
     "blameEmpty": "Blame-teave pole saadaval.",
     "ignore": "Lisa .gitignore'i",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Reegli ulatus",
       "hint": "Vali, kui laialt reegel kehtib."
+    },
+    "folderScope": {
+      "title": "Luba kaust",
+      "hint": "Lisab kausta ja kõik selle sisu alati lubatud kaustade hulka.",
+      "option": "Kaust + alamkaustad"
     },
     "allowChat": "Luba selles vestluses"
   },

@@ -71,8 +71,12 @@
     "unstage": "Dí-ullmhaigh",
     "stageAll": "Ullmhaigh uile",
     "unstageAll": "Dí-ullmhaigh uile",
+    "stageSelected": "Cuir {{ count }} roghnaithe in airde",
+    "unstageSelected": "Bain {{ count }} roghnaithe as",
     "discard": "Caith amach",
     "discardConfirm": "An ndéantar athruithe ar \"{{ path }}\" a scriosadh? Ní féidir é seo a chur ar ceal.",
+    "discardSelected": "Déan neamhaird de {{ count }} chomhad",
+    "discardSelectedConfirm": "Déan neamhaird de athruithe ar {{ count }} chomhad? Ní féidir é seo a chur ar ais.",
     "blame": "Blame",
     "blameEmpty": "Níl aon eolas blame ar fáil.",
     "ignore": "Cuir le .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Raon an rialach",
       "hint": "Roghnaigh cé chomh leathan a bhfuil an riail."
+    },
+    "folderScope": {
+      "title": "Ceadaigh fillteán",
+      "hint": "Cuireann sé an fillteán agus gach rud faoina bhun leis na fillteáin a cheadaítear i gcónaí.",
+      "option": "Fillteán + fofhillteáin"
     },
     "allowChat": "Ceadaigh sa chomhrá seo"
   },

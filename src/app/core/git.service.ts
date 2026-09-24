@@ -338,6 +338,30 @@ export class GitService {
     }
   }
 
+  async stagePaths(projectId: string, paths: string[]): Promise<void> {
+    if (paths.length === 0) {
+      return;
+    }
+    try {
+      await api.gitStagePaths(projectId, paths);
+    } catch (error) {
+      this.setError(projectId, error);
+    }
+    await this.afterBatchMutation(projectId, paths, true);
+  }
+
+  async unstagePaths(projectId: string, paths: string[]): Promise<void> {
+    if (paths.length === 0) {
+      return;
+    }
+    try {
+      await api.gitUnstagePaths(projectId, paths);
+    } catch (error) {
+      this.setError(projectId, error);
+    }
+    await this.afterBatchMutation(projectId, paths, false);
+  }
+
   async discardPath(projectId: string, path: string): Promise<void> {
     try {
       await api.gitDiscard(projectId, path);
@@ -348,6 +372,22 @@ export class GitService {
     } catch (error) {
       this.setError(projectId, error);
     }
+  }
+
+  async discardPaths(projectId: string, paths: string[]): Promise<void> {
+    if (paths.length === 0) {
+      return;
+    }
+    try {
+      await api.gitDiscardPaths(projectId, paths);
+    } catch (error) {
+      this.setError(projectId, error);
+    }
+    const selected = this.diffFor(projectId);
+    if (selected && paths.includes(selected.path)) {
+      this.set(this.diffState, projectId, null);
+    }
+    await this.loadStatus(projectId);
   }
 
   async blame(projectId: string, path: string): Promise<GitBlameLine[]> {
@@ -604,6 +644,18 @@ export class GitService {
     const selected = this.diffFor(projectId);
     if (path && selected?.path === path) {
       await this.selectChange(projectId, path, staged);
+    }
+  }
+
+  private async afterBatchMutation(
+    projectId: string,
+    paths: string[],
+    staged: boolean,
+  ): Promise<void> {
+    await this.loadStatus(projectId);
+    const selected = this.diffFor(projectId);
+    if (selected && paths.includes(selected.path)) {
+      await this.selectChange(projectId, selected.path, staged);
     }
   }
 

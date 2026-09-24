@@ -71,8 +71,12 @@
     "unstage": "Neħħi l-preparazzjoni",
     "stageAll": "Ipprepara kollha",
     "unstageAll": "Neħħi l-preparazzjoni kollha",
+    "stageSelected": "Ipprepara {{ count }} magħżula",
+    "unstageSelected": "Neħħi l-preparazzjoni ta' {{ count }} magħżula",
     "discard": "Warrab",
     "discardConfirm": "Twarrab il-bidliet f'\"{{ path }}\"? Dan ma jistax jiġi annullat.",
+    "discardSelected": "Tiskarta {{ count }} fajls",
+    "discardSelectedConfirm": "Tiskarta l-bidliet f'{{ count }} fajls? Dan ma jistax jiġi annullat.",
     "blame": "Blame",
     "blameEmpty": "M'hemmx informazzjoni tal-blame disponibbli.",
     "ignore": "Żid ma' .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Ambitu tar-regola",
       "hint": "Agħżel kemm tapplika wiesgħa r-regola."
+    },
+    "folderScope": {
+      "title": "Ippermetti l-folder",
+      "hint": "Iżżid il-folder u kull ma hemm fih mal-folders dejjem permessi.",
+      "option": "Folder + sottfolders"
     },
     "allowChat": "Ippermetti f’dan iċ-chat"
   },

@@ -71,8 +71,12 @@
     "unstage": "Unstagen",
     "stageAll": "Alles stagen",
     "unstageAll": "Alles unstagen",
+    "stageSelected": "{{ count }} geselecteerde stagen",
+    "unstageSelected": "{{ count }} geselecteerde unstagen",
     "discard": "Verwerpen",
     "discardConfirm": "Wijzigingen in \"{{ path }}\" verwerpen? Dit kan niet ongedaan worden gemaakt.",
+    "discardSelected": "{{ count }} bestanden verwijderen",
+    "discardSelectedConfirm": "Wijzigingen in {{ count }} bestanden verwijderen? Dit kan niet ongedaan worden gemaakt.",
     "blame": "Blame",
     "blameEmpty": "Geen blame-informatie beschikbaar.",
     "ignore": "Toevoegen aan .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Regelbereik",
       "hint": "Kies hoe breed de regel geldt."
+    },
+    "folderScope": {
+      "title": "Map toestaan",
+      "hint": "Voegt de map en alles eronder toe aan de altijd toegestane mappen.",
+      "option": "Map + submappen"
     },
     "allowChat": "Toestaan in deze chat"
   },

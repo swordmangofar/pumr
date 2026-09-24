@@ -71,8 +71,12 @@
     "unstage": "Poista valmistelusta",
     "stageAll": "Valmistele kaikki",
     "unstageAll": "Poista kaikki valmistelusta",
+    "stageSelected": "Valmistele {{ count }} valittua",
+    "unstageSelected": "Poista valmistelusta {{ count }} valittua",
     "discard": "Hylkää",
     "discardConfirm": "Hylätäänkö muutokset kohteessa \"{{ path }}\"? Tätä ei voi peruuttaa.",
+    "discardSelected": "Hylkää {{ count }} tiedostoa",
+    "discardSelectedConfirm": "Hylätäänkö muutokset {{ count }} tiedostoon? Tätä ei voi perua.",
     "blame": "Blame",
     "blameEmpty": "Blame-tietoja ei ole saatavilla.",
     "ignore": "Lisää .gitignore-tiedostoon",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Säännön laajuus",
       "hint": "Valitse, kuinka laajasti sääntöä sovelletaan."
+    },
+    "folderScope": {
+      "title": "Salli kansio",
+      "hint": "Lisää kansion ja kaiken sen sisällön aina sallittuihin kansioihin.",
+      "option": "Kansio + alikansiot"
     },
     "allowChat": "Salli tässä keskustelussa"
   },

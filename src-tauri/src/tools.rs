@@ -511,6 +511,7 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 kind: "command".to_string(),
                 operation: PermissionOperation::McpTool,
                 cwd: Some(permission_path(&runtime.project_root)),
+                project_root: runtime.project_root.clone(),
                 title: format!("Run MCP tool {name}?"),
                 detail: "The assistant wants to call an MCP server tool. Review the arguments before allowing."
                     .to_string(),
@@ -522,6 +523,7 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                folders: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
@@ -700,6 +702,7 @@ async fn ensure_path_access(
                 kind: "folder".to_string(),
                 operation,
                 cwd: Some(permission_path(&runtime.project_root)),
+                project_root: runtime.project_root.clone(),
                 title: format!("Access {label} outside the project?"),
                 detail: format!(
                     "The assistant wants to access {}. Allow once, or add the folder permanently so it never asks again.",
@@ -713,6 +716,7 @@ async fn ensure_path_access(
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                folders: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
@@ -739,6 +743,7 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
                 kind: "file".to_string(),
                 operation: PermissionOperation::Write,
                 cwd: Some(permission_path(&runtime.project_root)),
+                project_root: runtime.project_root.clone(),
                 title: format!("Modify {}?", relative),
                 detail: format!("The assistant wants to modify {relative}, but {reason}."),
                 command: None,
@@ -749,6 +754,7 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                folders: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
@@ -783,6 +789,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     kind: "file".to_string(),
                     operation: PermissionOperation::Read,
                     cwd: Some(permission_path(&runtime.project_root)),
+                    project_root: runtime.project_root.clone(),
                     title: format!("Read {relative}?"),
                     detail: format!("{relative} looks like a sensitive file: {sensitive}."),
                     command: None,
@@ -793,6 +800,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     segments: Vec::new(),
                     risk: None,
                     scope_options: Vec::new(),
+                    folders: Vec::new(),
                     grant_session_id: runtime.conversation_id.clone(),
                 },
                 &runtime.cancel,
@@ -1477,6 +1485,7 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         kind: kind.to_string(),
                         operation: PermissionOperation::Fetch,
                         cwd: Some(permission_path(&runtime.project_root)),
+                        project_root: runtime.project_root.clone(),
                         title: format!("Visit {host}?"),
                         detail: format!(
                             "{reason} The assistant wants to access this website. Allow once, always allow it, or deny it."
@@ -1489,6 +1498,7 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         segments: Vec::new(),
                         risk: None,
                         scope_options: Vec::new(),
+                        folders: Vec::new(),
                         grant_session_id: runtime.conversation_id.clone(),
                     },
                     &runtime.cancel,
@@ -2014,6 +2024,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         segments,
         risk,
         scope_options,
+        outside_folders,
     } = decision
     {
         let allowed = runtime
@@ -2023,6 +2034,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     kind: "command".to_string(),
                     operation: PermissionOperation::Execute,
                     cwd: Some(permission_path(&cwd)),
+                    project_root: runtime.project_root.clone(),
                     title: "Run command?".to_string(),
                     detail: reason,
                     command: Some(command.clone()),
@@ -2033,6 +2045,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     segments,
                     risk: Some(risk),
                     scope_options,
+                    folders: outside_folders,
                     grant_session_id: runtime.conversation_id.clone(),
                 },
                 &runtime.cancel,

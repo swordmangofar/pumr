@@ -35,6 +35,7 @@ function request(patch: Partial<PermissionRequestEvent> = {}): PermissionRequest
     segments: [],
     risk: null,
     scopeOptions: [],
+    folders: [],
     ...patch,
   };
 }
@@ -72,8 +73,19 @@ describe('PermissionOverlay', () => {
     return [...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[];
   }
 
-  it('focuses the allow button by default', async () => {
+  it('focuses the chat-scoped allow button by default', async () => {
     create(request());
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const allow = buttons().find((b) => b.textContent?.includes('permission.allowChat'));
+    expect(allow).toBeTruthy();
+    expect(document.activeElement).toBe(allow);
+  });
+
+  it('focuses allow-once when the command default is once', async () => {
+    create(request(), {
+      permissionDefaults: { website: 'once', command: 'once', folder: 'once' },
+    });
     await fixture.whenStable();
     fixture.detectChanges();
     const allow = buttons().find((b) => b.textContent?.includes('permission.allowOnce'));
@@ -88,12 +100,10 @@ describe('PermissionOverlay', () => {
     const event = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true });
     document.activeElement?.dispatchEvent(event);
     fixture.detectChanges();
-    document.activeElement?.dispatchEvent(event);
-    fixture.detectChanges();
     expect(document.activeElement?.textContent).toContain('permission.allowAlways');
   });
 
-  it('resolves allow_once on Enter', async () => {
+  it('resolves allow_session on Enter by default', async () => {
     create(request());
     await fixture.whenStable();
     fixture.detectChanges();
@@ -101,7 +111,83 @@ describe('PermissionOverlay', () => {
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
     );
     fixture.detectChanges();
+    expect(resolvePermission).toHaveBeenCalledWith('allow_session', [], []);
+  });
+
+  it('resolves allow_once on Enter when the command default is once', async () => {
+    create(request(), {
+      permissionDefaults: { website: 'once', command: 'once', folder: 'once' },
+    });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    fixture.detectChanges();
     expect(resolvePermission).toHaveBeenCalledWith('allow_once');
+  });
+
+  it('offers once, session and permanent grants for folder prompts', () => {
+    create(
+      request({
+        promptKind: 'folder',
+        command: null,
+        folder: '/outside/project',
+        suggestedRule: null,
+      }),
+    );
+    const labels = buttons().map((button) => button.textContent ?? '');
+    expect(labels.some((text) => text.includes('permission.deny'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.allowOnce'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.allowSession'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.addFolder'))).toBe(true);
+  });
+
+  it('resolves a folder session grant with the backend-owned folder', async () => {
+    create(
+      request({
+        promptKind: 'folder',
+        command: null,
+        folder: '/outside/project',
+        suggestedRule: null,
+      }),
+    );
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowSession'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith('allow_session');
+  });
+
+  it('offers once, session and always for website prompts', () => {
+    create(
+      request({
+        promptKind: 'web',
+        command: null,
+        url: 'https://example.com/page',
+        suggestedRule: 'example.com',
+      }),
+    );
+    const labels = buttons().map((button) => button.textContent ?? '');
+    expect(labels.some((text) => text.includes('permission.deny'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.denyAlways'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.allowOnce'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.allowSession'))).toBe(true);
+    expect(labels.some((text) => text.includes('permission.allowAlways'))).toBe(true);
+  });
+
+  it('resolves a website session grant', async () => {
+    create(
+      request({
+        promptKind: 'web',
+        command: null,
+        url: 'https://example.com/page',
+        suggestedRule: 'example.com',
+      }),
+    );
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowSession'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith('allow_session');
   });
 
   it('marks auto-allowed and pending segments for a compound command', () => {
@@ -147,9 +233,11 @@ describe('PermissionOverlay', () => {
     buttons.find((button) => button.textContent?.includes('ls -la /test'))?.click();
     fixture.detectChanges();
     buttons.find((button) => button.textContent?.includes('permission.allowAlways'))?.click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'exact', value: 'ls -la /test' },
-    ]);
+    expect(resolvePermission).toHaveBeenCalledWith(
+      'allow_always',
+      [{ kind: 'exact', value: 'ls -la /test' }],
+      [],
+    );
   });
 
   it('offers one scope picker per asking segment and grants them separately', async () => {
@@ -185,10 +273,14 @@ describe('PermissionOverlay', () => {
     buttons.find((button) => button.textContent?.includes('tr *'))?.click();
     fixture.detectChanges();
     buttons.find((button) => button.textContent?.includes('permission.allowAlways'))?.click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'glob', value: 'pnpm *' },
-      { kind: 'glob', value: 'tr *' },
-    ]);
+    expect(resolvePermission).toHaveBeenCalledWith(
+      'allow_always',
+      [
+        { kind: 'glob', value: 'pnpm *' },
+        { kind: 'glob', value: 'tr *' },
+      ],
+      [],
+    );
   });
 
   it('offers allow-in-this-chat for command prompts', () => {
@@ -229,9 +321,11 @@ describe('PermissionOverlay', () => {
 
     const action = buttons().find((button) => button.textContent?.includes(label))!;
     action.click();
-    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
-      { kind: 'glob', value: 'tool *' },
-    ]);
+    expect(resolvePermission).toHaveBeenLastCalledWith(
+      decision,
+      [{ kind: 'glob', value: 'tool *' }],
+      [],
+    );
 
     scopes[1].click();
     fixture.detectChanges();
@@ -239,9 +333,11 @@ describe('PermissionOverlay', () => {
     expect(scopes[1].className).toContain('border-accent/60');
 
     action.click();
-    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
-      { kind: 'exact', value: 'tool *' },
-    ]);
+    expect(resolvePermission).toHaveBeenLastCalledWith(
+      decision,
+      [{ kind: 'exact', value: 'tool *' }],
+      [],
+    );
   });
   it('compares selected rules structurally rather than by object identity', () => {
     create(
@@ -289,10 +385,14 @@ describe('PermissionOverlay', () => {
     buttons()
       .find((button) => button.textContent?.includes('permission.allowAlways'))!
       .click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'exact', value: 'tool *' },
-      { kind: 'glob', value: 'tool *' },
-    ]);
+    expect(resolvePermission).toHaveBeenCalledWith(
+      'allow_always',
+      [
+        { kind: 'exact', value: 'tool *' },
+        { kind: 'glob', value: 'tool *' },
+      ],
+      [],
+    );
   });
 
   it('does not use a suggested command string when typed scopes are absent', () => {
@@ -300,7 +400,7 @@ describe('PermissionOverlay', () => {
     buttons()
       .find((button) => button.textContent?.includes('permission.allowAlways'))!
       .click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', []);
+    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [], []);
   });
 
   it('shows a risk chip with the impact detail on hover', () => {
@@ -318,5 +418,33 @@ describe('PermissionOverlay', () => {
   it('omits the risk chip for prompts without risk', () => {
     create(request({ command: 'ls', risk: null }));
     expect(fixture.nativeElement.querySelector('[tabindex="0"]')).toBeNull();
+  });
+
+  it('offers outside folders for permanent whitelisting', async () => {
+    create(
+      request({
+        command: 'cat /etc/hosts',
+        folders: ['/etc'],
+        scopeOptions: [{ kind: 'exact', rule: { kind: 'exact', value: 'cat /etc/hosts' } }],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const folderButton = buttons().find((button) =>
+      button.textContent?.includes('permission.folderScope.option'),
+    )!;
+    expect(folderButton).toBeTruthy();
+    expect(folderButton.textContent).toContain('/etc');
+    folderButton.click();
+    fixture.detectChanges();
+    expect(folderButton.className).toContain('border-accent/60');
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowAlways'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith(
+      'allow_always',
+      [{ kind: 'exact', value: 'cat /etc/hosts' }],
+      ['/etc'],
+    );
   });
 });

@@ -352,6 +352,9 @@ impl Default for CustomTheme {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Schema version of the settings file. Missing means 0 (pre-versioning),
+    /// which lets `load_settings` migrate older files exactly once.
+    pub settings_version: u32,
     #[serde(flatten)]
     pub prompts: PromptSettings,
     #[serde(flatten)]
@@ -543,7 +546,11 @@ impl Default for PermissionSettings {
             auto_approve_read_only: true,
             auto_approve_package_scripts: true,
             auto_approve_project_executables: true,
-            auto_approve_project_commands: false,
+            // opencode-style default: any non-dangerous command whose paths stay
+            // inside the project runs without asking. Dangerous programs,
+            // sensitive files, outside-project paths and shell substitution
+            // still always ask.
+            auto_approve_project_commands: true,
             ignore_gitignored: true,
             scan_generated_files: false,
             ignore_local_databases: false,
@@ -557,8 +564,9 @@ impl Default for PermissionSettings {
 }
 
 /// Default action used by the primary "allow" button in a permission prompt.
-/// `once` allows a single request, `session` remembers the folder for the rest
-/// of the app session. Stored as `"once"` or `"session"`.
+/// `once` focuses the single-use grant, `session` focuses the grant that is
+/// remembered for the rest of the chat/app session. Stored as `"once"` or
+/// `"session"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PermissionDefaults {
@@ -571,8 +579,8 @@ impl Default for PermissionDefaults {
     fn default() -> Self {
         Self {
             website: "once".to_string(),
-            command: "once".to_string(),
-            folder: "once".to_string(),
+            command: "session".to_string(),
+            folder: "session".to_string(),
         }
     }
 }
@@ -800,9 +808,29 @@ pub fn load_settings(path: &Path) -> Settings {
         .ok()
         .and_then(|raw| serde_json::from_str::<Settings>(&raw).ok())
         .unwrap_or_default();
+    if migrate_settings(&mut settings) {
+        let _ = save_settings(path, &settings);
+    }
     merge_default_user_system_prompts(&mut settings);
     merge_default_modes(&mut settings);
     settings
+}
+
+/// One-time settings migrations, keyed by `settings_version`. Returns true when
+/// a migration ran and the file should be rewritten.
+fn migrate_settings(settings: &mut Settings) -> bool {
+    if settings.settings_version >= 1 {
+        return false;
+    }
+    // Version 1: opencode-style permission defaults. Normal in-project commands
+    // stop asking (dangerous programs, sensitive files, outside-project paths
+    // and shell substitution still do), and the focused allow button grants the
+    // chat/session scope so one keystroke stops repeat prompts.
+    settings.settings_version = 1;
+    settings.permissions.auto_approve_project_commands = true;
+    settings.permissions.permission_defaults.command = "session".to_string();
+    settings.permissions.permission_defaults.folder = "session".to_string();
+    true
 }
 
 /// Built-in user prompts are always available. If a settings file predates a
@@ -1039,8 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_command_rule_fields_keep_settings_defaults() {
-        for input in [
+    fn missing_command_rule_fields_keep_settings_defaults() {        for input in [
             json!({"theme": "custom"}),
             json!({"theme": "custom", "commandRules": ["pnpm *"]}),
             json!({"theme": "custom", "deniedCommandRules": ["rm *"]}),
@@ -1056,5 +1083,64 @@ mod tests {
             assert_eq!(settings.permissions.denied_command_rules, expected);
             assert!(settings.permissions.ignore_gitignored);
         }
+    }
+
+    #[test]
+    fn version_zero_settings_migrate_to_opencode_style_defaults_once() {
+        let mut settings = Settings::default();
+        settings.permissions.auto_approve_project_commands = false;
+        settings.permissions.permission_defaults.command = "once".to_string();
+        settings.permissions.permission_defaults.folder = "once".to_string();
+
+        assert!(migrate_settings(&mut settings));
+        assert_eq!(settings.settings_version, 1);
+        assert!(settings.permissions.auto_approve_project_commands);
+        assert_eq!(settings.permissions.permission_defaults.command, "session");
+        assert_eq!(settings.permissions.permission_defaults.folder, "session");
+        // Websites keep the single-use default.
+        assert_eq!(settings.permissions.permission_defaults.website, "once");
+
+        // The migration runs exactly once, so an explicit opt-out afterwards
+        // is never flipped back.
+        settings.permissions.auto_approve_project_commands = false;
+        settings.permissions.permission_defaults.command = "once".to_string();
+        assert!(!migrate_settings(&mut settings));
+        assert!(!settings.permissions.auto_approve_project_commands);
+        assert_eq!(settings.permissions.permission_defaults.command, "once");
+    }
+
+    #[test]
+    fn load_settings_migrates_version_zero_files_and_rewrites_them() {
+        let unique = format!(
+            "pumr-config-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // A pre-versioning file: no settingsVersion, old defaults materialised.
+        let mut stored = serde_json::to_value(Settings::default()).unwrap();
+        stored.as_object_mut().unwrap().remove("settingsVersion");
+        stored["autoApproveProjectCommands"] = json!(false);
+        stored["permissionDefaults"] = json!({"website": "once", "command": "once", "folder": "once"});
+        std::fs::write(&path, serde_json::to_string_pretty(&stored).unwrap()).unwrap();
+
+        let settings = load_settings(&path);
+        assert_eq!(settings.settings_version, 1);
+        assert!(settings.permissions.auto_approve_project_commands);
+        assert_eq!(settings.permissions.permission_defaults.command, "session");
+        assert_eq!(settings.permissions.permission_defaults.folder, "session");
+
+        // The migrated file was persisted, so reloading does not migrate again.
+        let reloaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(reloaded["settingsVersion"], json!(1));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

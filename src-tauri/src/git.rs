@@ -425,6 +425,23 @@ fn git_stdout_opt(project_root: &Path, args: &[&str]) -> Option<String> {
         })
 }
 
+fn git_stdout_nul(project_root: &Path, args: &[&str]) -> Vec<String> {
+    git(project_root)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            output
+                .stdout
+                .split(|byte| *byte == 0)
+                .filter(|part| !part.is_empty())
+                .map(|part| String::from_utf8_lossy(part).to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn git_stdout_raw(project_root: &Path, args: &[&str]) -> Option<String> {
     git(project_root)
         .args(args)
@@ -893,7 +910,13 @@ fn count_untracked_lines(project_root: &Path, paths: &[String]) -> HashMap<Strin
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    if paths.is_empty() {
+    // Counting lines means opening every untracked file. With tens of thousands
+    // of untracked files (build output, node_modules, ...) that turns a status
+    // refresh into a multi-second disk scan, so skip the line badge for large
+    // sets and keep status responsive.
+    const UNTRACKED_LINE_SCAN_LIMIT: usize = 500;
+
+    if paths.is_empty() || paths.len() > UNTRACKED_LINE_SCAN_LIMIT {
         return HashMap::new();
     }
     let workers = std::thread::available_parallelism()
@@ -1158,6 +1181,46 @@ pub fn git_unstage(project_root: &Path, path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Stages many paths in a few `git add` invocations instead of one process per
+/// file, which is what makes "select all" usable in large repositories.
+pub fn git_stage_paths(project_root: &Path, paths: &[String]) -> Result<()> {
+    /// Keep each `git` invocation comfortably under the platform ARG_MAX.
+    const CHUNK: usize = 512;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    for chunk in paths.chunks(CHUNK) {
+        let mut args: Vec<&str> = vec!["add", "-A", "--"];
+        args.extend(chunk.iter().map(|path| path.as_str()));
+        git_stdout(project_root, &args)?;
+    }
+    Ok(())
+}
+
+/// Unstages many paths in a few `git` invocations instead of one process per file.
+pub fn git_unstage_paths(project_root: &Path, paths: &[String]) -> Result<()> {
+    /// Keep each `git` invocation comfortably under the platform ARG_MAX.
+    const CHUNK: usize = 512;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let has_head = git(project_root)
+        .args(["rev-parse", "--quiet", "--verify", "HEAD"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    for chunk in paths.chunks(CHUNK) {
+        let mut args: Vec<&str> = if has_head {
+            vec!["restore", "--staged", "--"]
+        } else {
+            vec!["rm", "--cached", "-r", "--quiet", "--"]
+        };
+        args.extend(chunk.iter().map(|path| path.as_str()));
+        git_stdout(project_root, &args)?;
+    }
+    Ok(())
+}
+
 pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
     let Some(absolute) = crate::permissions::resolve_inside_project(project_root, path) else {
         return Err(AppError::msg("path is outside the project"));
@@ -1188,6 +1251,67 @@ pub fn git_discard(project_root: &Path, path: &str) -> Result<()> {
         std::fs::remove_file(&absolute)?;
     } else if absolute.is_dir() {
         std::fs::remove_dir_all(&absolute)?;
+    }
+    Ok(())
+}
+
+/// Discards worktree changes for many paths at once.
+///
+/// Spawning one `git` process per path does not scale to the tens of thousands
+/// of files a large repository can show, so this restores tracked files in
+/// chunks, drops staged-but-never-committed paths from the index, and removes
+/// the remaining worktree files directly.
+pub fn git_discard_paths(project_root: &Path, paths: &[String]) -> Result<()> {
+    /// Keep each `git` invocation comfortably under the platform ARG_MAX.
+    const CHUNK: usize = 512;
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+    for path in paths {
+        if crate::permissions::resolve_inside_project(project_root, path).is_none() {
+            return Err(AppError::msg("path is outside the project"));
+        }
+    }
+
+    let head: std::collections::HashSet<String> = git_stdout_nul(
+        project_root,
+        &["ls-tree", "-r", "--name-only", "-z", "HEAD"],
+    )
+    .into_iter()
+    .collect();
+    let index: std::collections::HashSet<String> =
+        git_stdout_nul(project_root, &["ls-files", "-z"])
+            .into_iter()
+            .collect();
+
+    let tracked: Vec<&String> = paths.iter().filter(|path| head.contains(*path)).collect();
+    let staged_new: Vec<&String> = paths
+        .iter()
+        .filter(|path| !head.contains(*path) && index.contains(*path))
+        .collect();
+
+    for chunk in tracked.chunks(CHUNK) {
+        let mut args: Vec<&str> = vec!["checkout", "--"];
+        args.extend(chunk.iter().map(|path| path.as_str()));
+        git_stdout(project_root, &args)?;
+    }
+    for chunk in staged_new.chunks(CHUNK) {
+        let mut args: Vec<&str> = vec!["rm", "--cached", "-r", "--quiet", "--"];
+        args.extend(chunk.iter().map(|path| path.as_str()));
+        git_stdout(project_root, &args)?;
+    }
+    for path in paths.iter().filter(|path| !head.contains(*path)) {
+        let Some(absolute) =
+            crate::permissions::resolve_inside_project(project_root, path.as_str())
+        else {
+            continue;
+        };
+        if absolute.is_file() {
+            let _ = std::fs::remove_file(&absolute);
+        } else if absolute.is_dir() {
+            let _ = std::fs::remove_dir_all(&absolute);
+        }
     }
     Ok(())
 }
@@ -1884,6 +2008,79 @@ mod tests {
 
         git_unstage(&project, Some("new.txt")).unwrap();
         assert!(project_git_status(&project).unwrap().staged.is_empty());
+    }
+
+    #[test]
+    fn skips_line_counts_for_huge_untracked_sets() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        std::fs::write(project.join("small.txt"), "one\ntwo\nthree\n").unwrap();
+        let status = project_git_status(&project).unwrap();
+        let small = status
+            .unstaged
+            .iter()
+            .find(|change| change.path == "small.txt")
+            .unwrap();
+        assert_eq!(small.additions, 3);
+
+        for index in 0..501 {
+            std::fs::write(project.join(format!("file-{index}.txt")), "x\n").unwrap();
+        }
+        let status = project_git_status(&project).unwrap();
+        assert!(!status.unstaged.is_empty());
+        assert!(status.unstaged.iter().all(|change| change.additions == 0));
+    }
+
+    #[test]
+    fn discard_paths_restores_tracked_and_removes_new_and_untracked() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        std::fs::write(project.join("tracked.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(project.join("staged_new.txt"), "staged\n").unwrap();
+        git_stage(&project, Some("staged_new.txt")).unwrap();
+        std::fs::write(project.join("untracked.txt"), "untracked\n").unwrap();
+
+        let paths = vec![
+            "tracked.txt".to_string(),
+            "staged_new.txt".to_string(),
+            "untracked.txt".to_string(),
+        ];
+        git_discard_paths(&project, &paths).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(project.join("tracked.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(!project.join("staged_new.txt").exists());
+        assert!(!project.join("untracked.txt").exists());
+        let status = project_git_status(&project).unwrap();
+        assert!(status.unstaged.is_empty());
+        assert!(status.staged.is_empty());
+    }
+
+    #[test]
+    fn stage_and_unstage_paths_handle_many_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+
+        let mut paths = Vec::new();
+        for index in 0..3 {
+            let name = format!("file-{index}.txt");
+            std::fs::write(project.join(&name), "x\n").unwrap();
+            paths.push(name);
+        }
+        git_stage_paths(&project, &paths).unwrap();
+        assert_eq!(project_git_status(&project).unwrap().staged.len(), 3);
+
+        git_unstage_paths(&project, &paths).unwrap();
+        let status = project_git_status(&project).unwrap();
+        assert!(status.staged.is_empty());
+        assert_eq!(status.unstaged.len(), 3);
     }
 
     #[test]

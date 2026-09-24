@@ -71,8 +71,12 @@
     "unstage": "Rimuovi dallo stage",
     "stageAll": "Aggiungi tutto allo stage",
     "unstageAll": "Rimuovi tutto dallo stage",
+    "stageSelected": "Aggiungi {{ count }} selezionati allo stage",
+    "unstageSelected": "Rimuovi {{ count }} selezionati dallo stage",
     "discard": "Scarta",
     "discardConfirm": "Annullare le modifiche a \"{{ path }}\"? Questa azione non può essere annullata.",
+    "discardSelected": "Scarta {{ count }} file",
+    "discardSelectedConfirm": "Scartare le modifiche a {{ count }} file? Questa operazione non può essere annullata.",
     "blame": "Blame",
     "blameEmpty": "Nessuna informazione di blame disponibile.",
     "ignore": "Aggiungi a .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Ambito della regola",
       "hint": "Scegli quanto ampia si applica la regola."
+    },
+    "folderScope": {
+      "title": "Consenti cartella",
+      "hint": "Aggiunge la cartella e tutto il suo contenuto alle cartelle sempre consentite.",
+      "option": "Cartella + sottocartelle"
     },
     "allowChat": "Consenti in questa chat"
   },

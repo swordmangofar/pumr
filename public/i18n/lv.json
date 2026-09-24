@@ -71,8 +71,12 @@
     "unstage": "Atsaukt sagatavošanu",
     "stageAll": "Sagatavot visu",
     "unstageAll": "Atsaukt visu",
+    "stageSelected": "Sagatavot {{ count }} atlasītos",
+    "unstageSelected": "Atsaukt {{ count }} atlasīto sagatavošanu",
     "discard": "Atmest",
     "discardConfirm": "Atmest izmaiņas failā \"{{ path }}\"? To nevar atsaukt.",
+    "discardSelected": "Atmest {{ count }} failus",
+    "discardSelectedConfirm": "Atmest izmaiņas {{ count }} failos? To nevar atsaukt.",
     "blame": "Blame",
     "blameEmpty": "Nav pieejama blame informācija.",
     "ignore": "Pievienot .gitignore",
@@ -1011,6 +1015,11 @@
     "scope": {
       "title": "Noteikuma tvērums",
       "hint": "Izvēlies, cik plaši noteikums attiecas."
+    },
+    "folderScope": {
+      "title": "Atļaut mapi",
+      "hint": "Pievieno mapi un visu tajā esošo vienmēr atļautajām mapēm.",
+      "option": "Mape + apakšmapes"
     },
     "allowChat": "Atļaut šajā tērzēšanā"
   },
