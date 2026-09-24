@@ -892,6 +892,8 @@
       "behaviourHint": "Qué hace el atajo cuando la ventana ya está delante.",
       "actionHide": "Ocultar",
       "actionMinimize": "Minimizar",
+      "fillScreen": "Rellenar la pantalla",
+      "fillScreenHint": "La ventana invocada llena el monitor activo en lugar de mantener su tamaño anterior.",
       "zoom": "Escala de visualización",
       "zoomHint": "Escala toda la interfaz. Atajo: Ctrl/⌘ + + para acercar, Ctrl/⌘ + - para alejar, Ctrl/⌘ + 0 para restablecer.",
       "zoomReset": "Restablecer"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Reglas de comandos permitidos",
     "commandRulesHint": "Patrones glob que nunca activan una solicitud de permiso. Los comandos peligrosos siempre preguntan.",
+    "commandAllowlist": "Permitidos",
+    "commandDenylist": "Bloqueados",
+    "allowCommand": "Permitir comando",
+    "denyCommand": "Bloquear comando",
+    "noDeniedCommandRules": "No hay comandos bloqueados.",
+    "scope": {
+      "program": "Programa",
+      "programFlags": "Programa + opciones",
+      "exact": "Exacto"
+    },
+    "websiteAllowlist": "Permitidos",
+    "websiteDenylist": "Bloqueados",
+    "websiteScope": {
+      "domain": "Dominio",
+      "glob": "Glob"
+    },
     "noCommandRules": "Aún no hay reglas de comandos. Usa «permitir siempre» en una solicitud de permiso para crear una.",
     "websiteRules": "Sitios web",
     "websiteRulesHint": "Sitios web que el asistente puede visitar. Las reglas de denegación prevalecen sobre las de permiso; un dominio simple también cubre sus subdominios. Usa «permitir siempre» o «denegar siempre» en una solicitud de permiso para crear una.",
@@ -961,7 +979,22 @@
     "allowAlways": "Permitir siempre",
     "addFolder": "Añadir carpeta permanentemente",
     "siteRuleLabel": "Regla de sitio web (dominio o glob)",
-    "siteRuleHint": "Por ejemplo: docs.rs permite ese sitio, *.github.com permite todos sus subdominios."
+    "siteRuleHint": "Por ejemplo: docs.rs permite ese sitio, *.github.com permite todos sus subdominios.",
+    "segment": {
+      "allowed": "Permitido",
+      "needsApproval": "Requiere aprobación"
+    },
+    "risk": {
+      "low": "Bajo",
+      "medium": "Medio",
+      "high": "Alto",
+      "danger": "Peligro"
+    },
+    "scope": {
+      "title": "Ámbito de la regla",
+      "hint": "Elige qué tan amplia se aplica la regla."
+    },
+    "allowChat": "Permitir en este chat"
   },
   "question": {
     "title": "Pregunta",

@@ -120,6 +120,30 @@ import { SettingsDraftService } from './settings-draft.service';
             }
           </div>
         </div>
+
+        <div class="mt-3 flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium text-white">
+              {{ 'settings.window.fillScreen' | transloco }}
+            </p>
+            <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
+              {{ 'settings.window.fillScreenHint' | transloco }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+            [class]="draft.draft().windowToggleMaximize ? 'bg-accent' : 'bg-white/15'"
+            (click)="draft.patch('windowToggleMaximize', !draft.draft().windowToggleMaximize)"
+          >
+            <span
+              class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
+              [class]="
+                draft.draft().windowToggleMaximize ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'
+              "
+            ></span>
+          </button>
+        </div>
       </section>
     }
 

@@ -892,6 +892,8 @@
       "behaviourHint": "Ce que fait le raccourci lorsque la fenêtre est déjà au premier plan.",
       "actionHide": "Masquer",
       "actionMinimize": "Réduire",
+      "fillScreen": "Remplir l'écran",
+      "fillScreenHint": "La fenêtre appelée remplit l'écran actif au lieu de conserver sa taille précédente.",
       "zoom": "Mise à l'échelle de l'affichage",
       "zoomHint": "Met à l'échelle toute l'interface. Raccourci : Ctrl/⌘ + + pour zoomer, Ctrl/⌘ + - pour dézoomer, Ctrl/⌘ + 0 pour réinitialiser.",
       "zoomReset": "Réinitialiser"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Règles de commandes autorisées",
     "commandRulesHint": "Motifs glob qui ne déclenchent jamais de demande d'autorisation. Les commandes dangereuses demandent toujours.",
+    "commandAllowlist": "Autorisées",
+    "commandDenylist": "Bloquées",
+    "allowCommand": "Autoriser la commande",
+    "denyCommand": "Bloquer la commande",
+    "noDeniedCommandRules": "Aucune commande bloquée.",
+    "scope": {
+      "program": "Programme",
+      "programFlags": "Programme + options",
+      "exact": "Exacte"
+    },
+    "websiteAllowlist": "Autorisés",
+    "websiteDenylist": "Bloqués",
+    "websiteScope": {
+      "domain": "Domaine",
+      "glob": "Glob"
+    },
     "noCommandRules": "Aucune règle de commande pour l'instant. Utilise « toujours autoriser » dans une demande d'autorisation pour en créer une.",
     "websiteRules": "Sites web",
     "websiteRulesHint": "Sites web que l'assistant peut visiter. Les règles de refus l'emportent sur les règles d'autorisation ; un simple domaine couvre aussi ses sous-domaines. Utilise « toujours autoriser » ou « toujours refuser » dans une demande d'autorisation pour en créer une.",
@@ -961,7 +979,22 @@
     "allowAlways": "Toujours autoriser",
     "addFolder": "Ajouter le dossier définitivement",
     "siteRuleLabel": "Règle de site web (domaine ou glob)",
-    "siteRuleHint": "Par exemple : docs.rs autorise ce site, *.github.com autorise tous ses sous-domaines."
+    "siteRuleHint": "Par exemple : docs.rs autorise ce site, *.github.com autorise tous ses sous-domaines.",
+    "segment": {
+      "allowed": "Autorisé",
+      "needsApproval": "Nécessite une approbation"
+    },
+    "risk": {
+      "low": "Faible",
+      "medium": "Moyen",
+      "high": "Élevé",
+      "danger": "Danger"
+    },
+    "scope": {
+      "title": "Portée de la règle",
+      "hint": "Choisis la portée de la règle."
+    },
+    "allowChat": "Autoriser dans ce chat"
   },
   "question": {
     "title": "Question",

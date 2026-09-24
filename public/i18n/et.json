@@ -892,6 +892,8 @@
       "behaviourHint": "Mida kiirklahv teeb, kui aken on juba ees.",
       "actionHide": "Peida",
       "actionMinimize": "Minimeeri",
+      "fillScreen": "Täida ekraan",
+      "fillScreenHint": "Esile kutsutud aken täidab aktiivse monitori, säilitamata varasemat suurust.",
       "zoom": "Kuvamise skaala",
       "zoomHint": "Muudab kogu liidese suurust. Otsetee: Ctrl/⌘ + + suurendamiseks, Ctrl/⌘ + - vähendamiseks, Ctrl/⌘ + 0 lähtestamiseks.",
       "zoomReset": "Lähtesta"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Lubatud käskude reeglid",
     "commandRulesHint": "Glob-mustrid, mis ei käivita kunagi õiguste küsimist. Ohtlikud käsud küsivad alati.",
+    "commandAllowlist": "Lubatud",
+    "commandDenylist": "Blokeeritud",
+    "allowCommand": "Luba käsk",
+    "denyCommand": "Blokeeri käsk",
+    "noDeniedCommandRules": "Blokeeritud käske pole.",
+    "scope": {
+      "program": "Programm",
+      "programFlags": "Programm + lipud",
+      "exact": "Täpne"
+    },
+    "websiteAllowlist": "Lubatud",
+    "websiteDenylist": "Blokeeritud",
+    "websiteScope": {
+      "domain": "Domeen",
+      "glob": "Glob"
+    },
     "noCommandRules": "Käskude reegleid veel pole. Kasutage õiguste küsimuses „luba alati“, et üks luua.",
     "websiteRules": "Veebisaidid",
     "websiteRulesHint": "Veebisaidid, mida assistent võib külastada. Keelureeglid on lubamisreeglitest ülekaalus; lihtdomeen katab ka selle alamdomeenid. Kasutage õiguste küsimuses „luba alati“ või „keela alati“, et üks luua.",
@@ -961,7 +979,22 @@
     "allowAlways": "Luba alati",
     "addFolder": "Lisa kaust jäädavalt",
     "siteRuleLabel": "Veebisaidi reegel (domeen või glob)",
-    "siteRuleHint": "Näiteks: docs.rs lubab seda saiti, *.github.com lubab kõiki selle alamdomeene."
+    "siteRuleHint": "Näiteks: docs.rs lubab seda saiti, *.github.com lubab kõiki selle alamdomeene.",
+    "segment": {
+      "allowed": "Lubatud",
+      "needsApproval": "Vajab kinnitust"
+    },
+    "risk": {
+      "low": "Madal",
+      "medium": "Keskmine",
+      "high": "Kõrge",
+      "danger": "Oht"
+    },
+    "scope": {
+      "title": "Reegli ulatus",
+      "hint": "Vali, kui laialt reegel kehtib."
+    },
+    "allowChat": "Luba selles vestluses"
   },
   "question": {
     "title": "Küsimus",

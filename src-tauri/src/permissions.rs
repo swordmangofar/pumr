@@ -1,6 +1,6 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
@@ -214,12 +214,115 @@ const PATH_DANGEROUS_PROGRAMS: &[&str] = &[
     "rm", "rmdir", "unlink", "shred", "chmod", "chown", "chgrp", "mv", "truncate",
 ];
 
+/// Dangerous programs whose impact reaches the whole machine: credentials,
+/// system settings, shutdown, filesystems or package removal.
+const SYSTEM_DANGEROUS_PROGRAMS: &[&str] = &[
+    "sudo",
+    "su",
+    "doas",
+    "shutdown",
+    "reboot",
+    "halt",
+    "mkfs",
+    "fdisk",
+    "diskutil",
+    "launchctl",
+    "systemctl",
+    "defaults",
+    "nvram",
+    "csrutil",
+];
+
+/// Database clients whose destructive subcommands can wipe a whole database.
+const DATABASE_DANGEROUS_PROGRAMS: &[&str] =
+    &["dropdb", "mysql", "psql", "mongo", "mongosh", "redis-cli"];
+
+/// One shell segment of a compound command, tagged with whether it was
+/// auto-allowed. Streamed to the permission overlay so the user can see which
+/// part of the line actually triggered the prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSegment {
+    pub text: String,
+    pub allowed: bool,
+    /// For a segment that needs approval, the rule suggested for it; `None` for
+    /// auto-allowed segments.
+    pub suggested_rule: Option<String>,
+    /// Allow/deny scopes offered for this segment; empty for auto-allowed ones.
+    /// Lets the overlay grant a rule per asking segment instead of forcing one
+    /// rule for the whole compound line.
+    pub scope_options: Vec<CommandScopeOption>,
+}
+
+/// How risky a command prompt is, with a human-readable impact explanation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandRiskLevel {
+    Low,
+    Medium,
+    High,
+    Danger,
+}
+
+impl CommandRiskLevel {
+    fn severity(self) -> u8 {
+        match self {
+            Self::Low => 0,
+            Self::Medium => 1,
+            Self::High => 2,
+            Self::Danger => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRisk {
+    pub level: CommandRiskLevel,
+    pub detail: String,
+}
+
+impl CommandRisk {
+    fn new(level: CommandRiskLevel, detail: impl Into<String>) -> Self {
+        Self {
+            level,
+            detail: detail.into(),
+        }
+    }
+}
+
+/// How broad an allow/deny rule is: the whole program, the program plus its
+/// flags, or one exact command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandScopeKind {
+    Program,
+    ProgramFlags,
+    Exact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandScopeOption {
+    pub kind: CommandScopeKind,
+    pub rule: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandDecision {
     Allow,
+    Deny {
+        reason: String,
+    },
     Ask {
         reason: String,
         suggested_rule: String,
+        /// Per-segment breakdown for compound lines; empty for single-segment
+        /// or unsplittable commands.
+        segments: Vec<CommandSegment>,
+        risk: CommandRisk,
+        /// Allow/deny scopes the user can pick for the segment that asked.
+        scope_options: Vec<CommandScopeOption>,
     },
 }
 
@@ -236,11 +339,16 @@ impl CommandDecision {
 #[derive(Debug, Default)]
 pub struct LivePermissions {
     command_rules: RwLock<Vec<String>>,
+    denied_command_rules: RwLock<Vec<String>>,
     extra_folders: RwLock<Vec<String>>,
     /// Folders granted with "allow once" on a folder prompt. These live for the
     /// current app session only and are never written to settings, so they
     /// disappear on restart.
     session_folders: RwLock<Vec<String>>,
+    /// Command allow rules granted for one chat only, keyed by session id. They
+    /// live in memory and disappear when the chat is deleted or the app
+    /// restarts.
+    session_command_rules: RwLock<HashMap<String, Vec<String>>>,
     allowed_websites: RwLock<Vec<String>>,
     denied_websites: RwLock<Vec<String>>,
 }
@@ -248,14 +356,17 @@ pub struct LivePermissions {
 impl LivePermissions {
     pub fn new(
         command_rules: Vec<String>,
+        denied_command_rules: Vec<String>,
         extra_folders: Vec<String>,
         allowed_websites: Vec<String>,
         denied_websites: Vec<String>,
     ) -> Self {
         Self {
             command_rules: RwLock::new(command_rules),
+            denied_command_rules: RwLock::new(denied_command_rules),
             extra_folders: RwLock::new(extra_folders),
             session_folders: RwLock::new(Vec::new()),
+            session_command_rules: RwLock::new(HashMap::new()),
             allowed_websites: RwLock::new(allowed_websites),
             denied_websites: RwLock::new(denied_websites),
         }
@@ -264,11 +375,13 @@ impl LivePermissions {
     pub fn replace(
         &self,
         command_rules: Vec<String>,
+        denied_command_rules: Vec<String>,
         extra_folders: Vec<String>,
         allowed_websites: Vec<String>,
         denied_websites: Vec<String>,
     ) {
         *self.command_rules.write().unwrap() = command_rules;
+        *self.denied_command_rules.write().unwrap() = denied_command_rules;
         *self.extra_folders.write().unwrap() = extra_folders;
         // Session-only folders deliberately survive a settings save: they were
         // granted for the whole app session, not persisted to disk.
@@ -278,6 +391,38 @@ impl LivePermissions {
 
     pub fn command_rules(&self) -> Vec<String> {
         self.command_rules.read().unwrap().clone()
+    }
+
+    pub fn denied_command_rules(&self) -> Vec<String> {
+        self.denied_command_rules.read().unwrap().clone()
+    }
+
+    /// Grants a command allow rule for one chat only. Returns once the rule is
+    /// stored; duplicates are ignored.
+    pub fn add_session_command_rule(&self, session_id: &str, rule: &str) {
+        let rule = rule.trim();
+        if session_id.is_empty() || rule.is_empty() {
+            return;
+        }
+        let mut sessions = self.session_command_rules.write().unwrap();
+        let rules = sessions.entry(session_id.to_string()).or_default();
+        if !rules.iter().any(|entry| entry == rule) {
+            rules.push(rule.to_string());
+        }
+    }
+
+    pub fn session_command_rules(&self, session_id: &str) -> Vec<String> {
+        self.session_command_rules
+            .read()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Drops every session rule for a chat, used when the chat is deleted.
+    pub fn clear_session(&self, session_id: &str) {
+        self.session_command_rules.write().unwrap().remove(session_id);
     }
 
     /// Grants a folder for the current app session only. Used when the user
@@ -393,8 +538,113 @@ pub fn evaluate_command(
     project_root: &Path,
     extra_folders: &[PathBuf],
     rules: &[String],
+    denied: &[String],
 ) -> CommandDecision {
     let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return CommandDecision::Allow;
+    }
+
+    // The raw line is handed to `sh -c` / `cmd /C`, so it is evaluated one
+    // shell segment at a time: `;`, `&&`, `||`, `|`, newlines and subshells
+    // each start a new segment. A line is only auto-allowed when *every*
+    // segment is individually safe, so nothing can hide behind a harmless
+    // first token. Command substitution stays inside its segment and still
+    // fails the operator check below.
+    let Some(segments) = split_segments(trimmed) else {
+        return ask(
+            "Command uses shell control operators and needs review".to_string(),
+            whole_line_rule(trimmed),
+            CommandRisk::new(
+                CommandRiskLevel::High,
+                "The command could not be safely split and may hide additional commands.",
+            ),
+        );
+    };
+    if segments.len() == 1 {
+        return evaluate_segment(&segments[0], project_root, extra_folders, rules, denied);
+    }
+    // Evaluate every segment so the prompt can show which parts are already
+    // allowed, and keep the highest-risk asking segment's reason, rule, risk
+    // and scope options. A denied segment denies the whole line outright.
+    let mut annotated: Vec<CommandSegment> = Vec::with_capacity(segments.len());
+    let mut failing: Option<(String, String, CommandRisk, Vec<CommandScopeOption>)> = None;
+    // Every asking segment contributes its own scopes here. The prompt carries
+    // the union so the overlay can grant one rule per part, and so
+    // `resolve_permission` can validate each chosen rule against what the
+    // backend actually proposed.
+    let mut all_options: Vec<CommandScopeOption> = Vec::new();
+    for segment in &segments {
+        let decision = evaluate_segment(segment, project_root, extra_folders, rules, denied);
+        match decision {
+            CommandDecision::Deny { reason } => return CommandDecision::Deny { reason },
+            CommandDecision::Allow => {
+                annotated.push(CommandSegment {
+                    text: segment.clone(),
+                    allowed: true,
+                    suggested_rule: None,
+                    scope_options: Vec::new(),
+                });
+            }
+            CommandDecision::Ask {
+                reason,
+                suggested_rule,
+                risk,
+                scope_options,
+                ..
+            } => {
+                for option in &scope_options {
+                    if !all_options.iter().any(|existing| existing.rule == option.rule) {
+                        all_options.push(option.clone());
+                    }
+                }
+                annotated.push(CommandSegment {
+                    text: segment.clone(),
+                    allowed: false,
+                    suggested_rule: Some(suggested_rule.clone()),
+                    scope_options: scope_options.clone(),
+                });
+                let worse = failing
+                    .as_ref()
+                    .map(|(_, _, current, _)| risk.level.severity() > current.level.severity())
+                    .unwrap_or(true);
+                if worse {
+                    failing = Some((reason, suggested_rule, risk, scope_options));
+                }
+            }
+        }
+    }
+    if let Some((reason, suggested_rule, risk, _)) = failing {
+        return ask_with_segments(
+            format!("Command uses shell control operators and needs review: {reason}"),
+            suggested_rule,
+            annotated,
+            risk,
+            all_options,
+        );
+    }
+    CommandDecision::Allow
+}
+
+/// The rule offered for a line that could not be evaluated segment by segment.
+fn whole_line_rule(command: &str) -> String {
+    let program = shell_words::split(command)
+        .ok()
+        .and_then(|tokens| tokens.first().map(|token| base_name(token)))
+        .unwrap_or_default();
+    suggest_rule(command, &program)
+}
+
+/// Classifies a single shell segment: no `;`, `&&`, `|` or newline is left in
+/// it, so at most one program runs and the usual program/path checks apply.
+fn evaluate_segment(
+    segment: &str,
+    project_root: &Path,
+    extra_folders: &[PathBuf],
+    rules: &[String],
+    denied: &[String],
+) -> CommandDecision {
+    let trimmed = segment.trim();
     if trimmed.is_empty() {
         return CommandDecision::Allow;
     }
@@ -406,22 +656,36 @@ pub fn evaluate_command(
             return ask(
                 "Command could not be parsed and needs review".to_string(),
                 suggest_rule(trimmed, ""),
+                CommandRisk::new(
+                    CommandRiskLevel::Medium,
+                    "The command could not be parsed, so its effects cannot be verified.",
+                ),
             )
         }
     };
     let program = base_name(&tokens[0]);
+    // A deny rule always wins: it removes the command outright instead of
+    // prompting. It can only ever restrict, never widen, access.
+    if matches_rules(trimmed, denied) {
+        return CommandDecision::Deny {
+            reason: format!("Command '{program}' is on the deny list"),
+        };
+    }
     let danger = danger_reason(trimmed, &tokens);
     let dangerous = danger.is_some();
     let suggested_rule = suggest_rule(trimmed, &program);
+    let scope_options = command_scope_options(&program, &tokens, trimmed);
 
-    // The whole raw line is handed to `sh -c` / `cmd /C`, so any control
-    // operator (`;`, `&&`, `|`, backticks, `$(...)`, subshells, newlines) can
-    // append further commands after a harmless first token. Never auto-allow
-    // such a line, and never let a saved rule bypass the review.
+    // What is left of the operators that split this segment: backticks,
+    // `$(...)` and subshell syntax can run code the named program never sees.
     if has_shell_control_operators(trimmed) {
         return ask(
             "Command uses shell control operators and needs review".to_string(),
             suggested_rule,
+            CommandRisk::new(
+                CommandRiskLevel::High,
+                "Inline shell substitution can run hidden commands.",
+            ),
         );
     }
 
@@ -442,18 +706,45 @@ pub fn evaluate_command(
     }
 
     if !outside.is_empty() {
-        return ask(
+        let risk = if dangerous {
+            let reason = danger
+                .as_deref()
+                .unwrap_or("This command can damage files");
+            CommandRisk::new(
+                danger_risk_level(&program, reason),
+                format!("{reason} It also touches paths outside the project."),
+            )
+        } else {
+            CommandRisk::new(
+                CommandRiskLevel::Medium,
+                format!(
+                    "It touches paths outside the project: {}.",
+                    preview(&outside)
+                ),
+            )
+        };
+        return ask_scoped(
             format!(
                 "Command touches paths outside the project: {}",
                 preview(&outside)
             ),
             suggested_rule,
+            risk,
+            scope_options,
         );
     }
     if !sensitive.is_empty() {
-        return ask(
+        return ask_scoped(
             format!("Command touches sensitive files: {}", preview(&sensitive)),
             suggested_rule,
+            CommandRisk::new(
+                CommandRiskLevel::Danger,
+                format!(
+                    "It touches sensitive files and could expose credentials: {}.",
+                    preview(&sensitive)
+                ),
+            ),
+            scope_options,
         );
     }
 
@@ -461,9 +752,13 @@ pub fn evaluate_command(
         if PATH_DANGEROUS_PROGRAMS.contains(&program.as_str()) && !path_tokens.is_empty() {
             return CommandDecision::Allow;
         }
-        return ask(
-            danger.unwrap_or_else(|| "Command needs approval".to_string()),
+        let reason = danger.unwrap_or_else(|| "Command needs approval".to_string());
+        let level = danger_risk_level(&program, &reason);
+        return ask_scoped(
+            reason.clone(),
             suggested_rule,
+            CommandRisk::new(level, reason),
+            scope_options,
         );
     }
     // Rules can only ever skip the program check for a plain, path-checked
@@ -472,13 +767,165 @@ pub fn evaluate_command(
     if matches_rules(trimmed, rules) {
         return CommandDecision::Allow;
     }
-    if is_read_only(&program, &tokens) {
+    // A redirect turns a read-only program into a writer (`ls > out`), so it
+    // never counts as read-only. The target was already path- and
+    // sensitivity-checked above, so this only decides whether to ask.
+    let reads_only = is_read_only(&program, &tokens) || is_safe_cd(&program, &tokens);
+    if reads_only && !has_redirect_operator(trimmed) {
         return CommandDecision::Allow;
     }
-    ask(
-        danger.unwrap_or_else(|| format!("Command '{program}' requires approval")),
+    let risk = if has_redirect_operator(trimmed) {
+        CommandRisk::new(
+            CommandRiskLevel::Medium,
+            "It writes command output to a file.",
+        )
+    } else {
+        CommandRisk::new(
+            CommandRiskLevel::Low,
+            "This command is not recognised as read-only and may change files.",
+        )
+    };
+    ask_scoped(
+        format!("Command '{program}' requires approval"),
         suggested_rule,
+        risk,
+        scope_options,
     )
+}
+
+/// Builds the allow/deny scopes offered for a segment: the whole program, the
+/// program plus its leading flags, and the exact command line. Duplicate rules
+/// are dropped, and the exact rule is always last.
+fn command_scope_options(
+    program: &str,
+    tokens: &[String],
+    trimmed: &str,
+) -> Vec<CommandScopeOption> {
+    let mut options: Vec<CommandScopeOption> = Vec::new();
+    let mut push = |kind: CommandScopeKind, rule: String| {
+        if !options.iter().any(|option| option.rule == rule) {
+            options.push(CommandScopeOption { kind, rule });
+        }
+    };
+    push(CommandScopeKind::Program, format!("{program} *"));
+    let flags: Vec<&str> = tokens
+        .iter()
+        .skip(1)
+        .take_while(|token| token.starts_with('-'))
+        .map(String::as_str)
+        .collect();
+    if !flags.is_empty() {
+        push(
+            CommandScopeKind::ProgramFlags,
+            format!("{program} {} *", flags.join(" ")),
+        );
+    }
+    push(CommandScopeKind::Exact, trimmed.to_string());
+    options
+}
+
+/// A dangerous program's risk level: machine-wide programs, database
+/// destruction and piping into an interpreter rank above plain file damage.
+fn danger_risk_level(program: &str, reason: &str) -> CommandRiskLevel {
+    if SYSTEM_DANGEROUS_PROGRAMS.contains(&program)
+        || DATABASE_DANGEROUS_PROGRAMS.contains(&program)
+        || reason.contains("interpreter")
+    {
+        CommandRiskLevel::Danger
+    } else {
+        CommandRiskLevel::High
+    }
+}
+
+/// `cd` is a shell builtin, not a program on the read-only list. It is safe
+/// exactly when it has one literal target that the path checks above already
+/// proved to be inside the project: `cd src && ...` is the common way to scope
+/// a compound line. A `~` or `$VAR` target is not a literal, so it stays on the
+/// normal "requires approval" path rather than being trusted.
+fn is_safe_cd(program: &str, tokens: &[String]) -> bool {
+    program == "cd"
+        && tokens.len() == 2
+        && !tokens[1].contains('$')
+        && !tokens[1].starts_with('~')
+}
+
+/// True when an unquoted `<` or `>` appears, i.e. the segment writes or reads
+/// through a redirection rather than only inspecting its input.
+fn has_redirect_operator(command: &str) -> bool {
+    let mut chars = command.chars();
+    let mut in_single = false;
+    let mut in_double = false;
+    while let Some(character) = chars.next() {
+        match character {
+            '\\' if !in_single => {
+                chars.next();
+            }
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '<' | '>' if !in_single && !in_double => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Splits a command line into the shell segments a `sh -c` line would run.
+///
+/// Operators `;`, `&&`, `||`, `|`, `&`, newlines and `(`, `)` end a segment
+/// unless they are quoted. Quotes are closed with their own syntax, so a quote
+/// left open means the line is not safely splittable and `None` is returned.
+/// Backticks and `$(` are *not* separators: they stay inside their segment so
+/// the operator check still catches them.
+fn split_segments(command: &str) -> Option<Vec<String>> {
+    let mut segments = vec![String::new()];
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    while let Some(character) = chars.next() {
+        if escaped {
+            escaped = false;
+            segments.last_mut()?.push(character);
+            continue;
+        }
+        match character {
+            '\\' if !in_single => {
+                escaped = true;
+                segments.last_mut()?.push(character);
+                continue;
+            }
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            // Command substitution expands even inside double quotes. Keep the
+            // `$(` in the current segment so `has_shell_control_operators`
+            // still sees it and refuses to auto-allow the segment.
+            '$' if !in_single && chars.peek() == Some(&'(') => {
+                chars.next();
+                let segment = segments.last_mut()?;
+                segment.push('$');
+                segment.push('(');
+                continue;
+            }
+            ';' | '|' | '&' | '\n' | '\r' | '(' | ')' if !in_single && !in_double => {
+                // Swallow `&&`, `||` and `>>` instead of emitting an empty
+                // segment for the second character of the operator.
+                if let Some(peeked) = chars.peek() {
+                    if matches!(peeked, '&' | '|' | '>') {
+                        chars.next();
+                    }
+                }
+                segments.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        segments.last_mut()?.push(character);
+    }
+    if in_single || in_double || escaped {
+        return None;
+    }
+    segments.retain(|segment| !segment.trim().is_empty());
+    Some(segments)
 }
 
 /// True when the command line contains shell syntax that can run code beyond
@@ -508,10 +955,32 @@ fn has_shell_control_operators(command: &str) -> bool {
     false
 }
 
-fn ask(reason: String, suggested_rule: String) -> CommandDecision {
+fn ask(reason: String, suggested_rule: String, risk: CommandRisk) -> CommandDecision {
+    ask_with_segments(reason, suggested_rule, Vec::new(), risk, Vec::new())
+}
+
+fn ask_scoped(
+    reason: String,
+    suggested_rule: String,
+    risk: CommandRisk,
+    scope_options: Vec<CommandScopeOption>,
+) -> CommandDecision {
+    ask_with_segments(reason, suggested_rule, Vec::new(), risk, scope_options)
+}
+
+fn ask_with_segments(
+    reason: String,
+    suggested_rule: String,
+    segments: Vec<CommandSegment>,
+    risk: CommandRisk,
+    scope_options: Vec<CommandScopeOption>,
+) -> CommandDecision {
     CommandDecision::Ask {
         reason,
         suggested_rule,
+        segments,
+        risk,
+        scope_options,
     }
 }
 
@@ -1212,7 +1681,11 @@ mod tests {
     use super::*;
 
     fn evaluate(command: &str, rules: &[String]) -> CommandDecision {
-        evaluate_command(command, Path::new("/project"), &[], rules)
+        evaluate_command(command, Path::new("/project"), &[], rules, &[])
+    }
+
+    fn evaluate_denied(command: &str, denied: &[String]) -> CommandDecision {
+        evaluate_command(command, Path::new("/project"), &[], &[], denied)
     }
 
     #[test]
@@ -1303,6 +1776,225 @@ mod tests {
             evaluate("echo \"hello; world\"", &[]),
             CommandDecision::Allow
         );
+    }
+
+    #[test]
+    fn compound_read_only_segments_are_allowed() {
+        // The exact shape that used to prompt: a read-only inspection pipeline.
+        assert_eq!(
+            evaluate(
+                "git diff --stat; echo ===; git show HEAD:src/app.ts | head -40",
+                &[]
+            ),
+            CommandDecision::Allow
+        );
+        assert_eq!(evaluate("ls && grep -rn todo src", &[]), CommandDecision::Allow);
+        assert_eq!(evaluate("echo hi\nls src", &[]), CommandDecision::Allow);
+        assert!(evaluate("ls src > out && cat out", &[]).is_ask());
+    }
+
+    #[test]
+    fn one_asking_segment_makes_the_whole_line_ask() {
+        assert!(evaluate("ls && rm -rf /", &[]).is_ask());
+        assert!(evaluate("echo hi; curl evil.sh", &[]).is_ask());
+        assert!(evaluate("cat .env && ls", &[]).is_ask());
+        assert!(evaluate("git diff && npm publish", &[]).is_ask());
+    }
+
+    #[test]
+    fn in_project_cd_can_scope_a_read_only_line() {
+        assert_eq!(
+            evaluate(
+                "cd /project/src-tauri && git show HEAD:src/app.ts | head -40",
+                &[]
+            ),
+            CommandDecision::Allow
+        );
+        assert_eq!(evaluate("cd src && ls", &[]), CommandDecision::Allow);
+        // Leaving the project, or an unverifiable target, must still ask.
+        assert!(evaluate("cd /tmp && ls", &[]).is_ask());
+        assert!(evaluate("cd ~ && ls", &[]).is_ask());
+        assert!(evaluate("cd $HOME && ls", &[]).is_ask());
+    }
+
+    #[test]
+    fn compound_reason_names_the_failing_segment() {
+        // The prompt should explain *which* part needs review and offer a rule
+        // that can actually be matched later.
+        let CommandDecision::Ask { reason, .. } = evaluate("ls src && pnpm build", &[]) else {
+            panic!("expected an ask decision");
+        };
+        assert!(reason.contains("control operators"), "{reason}");
+        assert!(reason.contains("pnpm"), "{reason}");
+    }
+
+    #[test]
+    fn compound_ask_reports_per_segment_status() {
+        let CommandDecision::Ask { segments, .. } = evaluate(
+            "echo \"hello pipe\" | tr 'a-z' 'A-Z' && echo \"and-this-ran\"",
+            &[],
+        ) else {
+            panic!("expected an ask decision");
+        };
+        let parts: Vec<(String, bool)> = segments
+            .iter()
+            .map(|segment| (segment.text.clone(), segment.allowed))
+            .collect();
+        assert_eq!(
+            parts,
+            vec![
+                ("echo \"hello pipe\" ".to_string(), true),
+                (" tr 'a-z' 'A-Z' ".to_string(), false),
+                (" echo \"and-this-ran\"".to_string(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn compound_ask_offers_a_rule_per_asking_segment() {
+        // `pnpm` and `tr` both need approval; each segment must carry its own
+        // scopes so the user can allow them independently, and the prompt's
+        // scope list is the union the renderer may pick from.
+        let CommandDecision::Ask {
+            segments,
+            scope_options,
+            ..
+        } = evaluate("pnpm --version | tr -d '\\n'", &[])
+        else {
+            panic!("expected an ask decision");
+        };
+        assert_eq!(segments.len(), 2);
+        assert!(!segments[0].allowed);
+        assert!(!segments[1].allowed);
+        assert!(segments[0]
+            .scope_options
+            .iter()
+            .any(|option| option.rule == "pnpm *"));
+        assert!(segments[1]
+            .scope_options
+            .iter()
+            .any(|option| option.rule == "tr *"));
+        assert!(scope_options.iter().any(|option| option.rule == "pnpm *"));
+        assert!(scope_options.iter().any(|option| option.rule == "tr *"));
+    }
+
+    #[test]
+    fn single_segment_ask_has_no_breakdown() {
+        let CommandDecision::Ask { segments, .. } = evaluate("pnpm build", &[]) else {
+            panic!("expected an ask decision");
+        };
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn risk_levels_reflect_command_impact() {
+        let risk_of = |command: &str| {
+            let CommandDecision::Ask { risk, .. } = evaluate(command, &[]) else {
+                panic!("expected an ask for {command}");
+            };
+            risk
+        };
+        assert_eq!(risk_of("cat .env").level, CommandRiskLevel::Danger);
+        assert_eq!(risk_of("sudo rm -rf /etc/hosts").level, CommandRiskLevel::Danger);
+        assert_eq!(risk_of("dropdb production").level, CommandRiskLevel::Danger);
+        assert_eq!(risk_of("rm -rf /etc/hosts").level, CommandRiskLevel::High);
+        assert_eq!(risk_of("cd /tmp && ls").level, CommandRiskLevel::Medium);
+        assert_eq!(risk_of("pnpm build").level, CommandRiskLevel::Low);
+    }
+
+    #[test]
+    fn compound_risk_uses_the_worst_segment() {
+        let CommandDecision::Ask {
+            risk, segments, ..
+        } = evaluate("echo hi && rm -rf /etc/hosts", &[])
+        else {
+            panic!("expected an ask decision");
+        };
+        assert_eq!(risk.level, CommandRiskLevel::High);
+        assert!(risk.detail.contains("rm"), "{}", risk.detail);
+        assert_eq!(segments.len(), 2);
+        assert!(segments[0].allowed);
+        assert!(!segments[1].allowed);
+    }
+
+    #[test]
+    fn deny_rule_blocks_the_command() {
+        let denied = vec!["rm *".to_string()];
+        assert!(matches!(
+            evaluate_denied("rm -rf build", &denied),
+            CommandDecision::Deny { .. }
+        ));
+        assert_eq!(evaluate_denied("ls", &denied), CommandDecision::Allow);
+        // A deny rule wins over a matching allow rule.
+        assert!(matches!(
+            evaluate_command(
+                "rm -rf build",
+                Path::new("/project"),
+                &[],
+                &["rm *".to_string()],
+                &["rm *".to_string()],
+            ),
+            CommandDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn compound_line_is_denied_when_one_segment_is() {
+        assert!(matches!(
+            evaluate_denied("echo hi && rm -rf build", &["rm *".to_string()]),
+            CommandDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn scope_options_offer_program_flags_and_exact() {
+        let CommandDecision::Ask { scope_options, .. } = evaluate("ls -la /test", &[]) else {
+            panic!("expected an ask decision");
+        };
+        let rules: Vec<String> = scope_options
+            .iter()
+            .map(|option| option.rule.clone())
+            .collect();
+        assert_eq!(rules, vec!["ls *", "ls -la *", "ls -la /test"]);
+        assert_eq!(scope_options[0].kind, CommandScopeKind::Program);
+        assert_eq!(scope_options[1].kind, CommandScopeKind::ProgramFlags);
+        assert_eq!(scope_options[2].kind, CommandScopeKind::Exact);
+    }
+
+    #[test]
+    fn scope_options_drop_program_flags_when_there_are_none() {
+        let CommandDecision::Ask { scope_options, .. } = evaluate("tr a b", &[]) else {
+            panic!("expected an ask decision");
+        };
+        let rules: Vec<String> = scope_options
+            .iter()
+            .map(|option| option.rule.clone())
+            .collect();
+        assert_eq!(rules, vec!["tr *", "tr a b"]);
+    }
+
+    #[test]
+    fn session_command_rules_are_scoped_to_one_chat() {
+        let permissions =
+            LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        permissions.add_session_command_rule("chat-a", "ls *");
+        assert_eq!(
+            permissions.session_command_rules("chat-a"),
+            vec!["ls *".to_string()]
+        );
+        assert!(permissions.session_command_rules("chat-b").is_empty());
+        permissions.clear_session("chat-a");
+        assert!(permissions.session_command_rules("chat-a").is_empty());
+    }
+
+    #[test]
+    fn unsafe_substitution_is_never_split_away() {
+        // Backticks and `$()` stay inside a segment, so they still ask.
+        assert!(evaluate("ls && echo `id`", &[]).is_ask());
+        assert!(evaluate("ls && echo $(whoami)", &[]).is_ask());
+        assert!(evaluate("ls | sh", &[]).is_ask());
+        // An unterminated quote cannot be split safely; fail closed.
+        assert!(evaluate("ls && echo 'unterminated", &[]).is_ask());
     }
 
     #[test]
@@ -1502,7 +2194,7 @@ mod tests {
 
     #[test]
     fn session_folder_covers_every_file_and_subfolder_below_it() {
-        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         permissions.add_session_folder("/test/test2");
         let folders = permissions.extra_folders();
         assert!(path_is_inside(
@@ -1524,9 +2216,10 @@ mod tests {
 
     #[test]
     fn session_folders_survive_a_settings_save() {
-        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let permissions = LivePermissions::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         permissions.add_session_folder("/test/test2");
         permissions.replace(
+            Vec::new(),
             Vec::new(),
             vec!["/persisted".to_string()],
             Vec::new(),
@@ -1537,3 +2230,4 @@ mod tests {
         assert!(folders.contains(&PathBuf::from("/test/test2")));
     }
 }
+

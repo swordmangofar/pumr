@@ -322,6 +322,7 @@ pub fn archive_session(
 #[tauri::command]
 pub fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<()> {
     state.processes.stop_for_session(&session_id);
+    state.permissions.clear_session(&session_id);
     state.db.delete_session(&session_id)
 }
 
@@ -574,7 +575,7 @@ pub fn resolve_permission(
     state: State<'_, AppState>,
     request_id: String,
     decision: String,
-    rule: Option<String>,
+    rules: Option<Vec<String>>,
     folder: Option<String>,
     prompt_kind: Option<String>,
 ) -> Result<()> {
@@ -584,19 +585,46 @@ pub fn resolve_permission(
     let Some(pending) = state.broker.pending_prompt(&request_id) else {
         return Ok(());
     };
-    let _ = (&rule, &folder, &prompt_kind);
+    // The renderer's `folder` is intentionally ignored: the backend persists
+    // only the folder it proposed, so a renderer cannot widen access.
+    let _ = (prompt_kind, folder);
     let allowed = decision != "deny" && decision != "deny_always";
-    // Persist only what the backend proposed for this prompt, never values the
-    // renderer supplied.
-    let rule = pending
-        .suggested_rule
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let is_web = pending.kind.starts_with("web");
+    let is_command = pending.kind == "command";
+    // A command prompt offers concrete allow/deny scopes. A compound command
+    // proposes scopes for *every* asking segment, so the user can grant one rule
+    // per part. Accept only rules the backend actually proposed; otherwise fall
+    // back to the backend's suggestion, so the renderer can never widen access.
+    let permitted: Vec<&str> = pending
+        .scope_options
+        .iter()
+        .map(|option| option.rule.as_str())
+        .collect();
+    let mut chosen_rules: Vec<String> = Vec::new();
+    for rule in rules.unwrap_or_default() {
+        let rule = rule.trim().to_string();
+        if rule.is_empty() || !permitted.contains(&rule.as_str()) {
+            continue;
+        }
+        if !chosen_rules.iter().any(|existing| existing == &rule) {
+            chosen_rules.push(rule);
+        }
+    }
+    if chosen_rules.is_empty() {
+        if let Some(suggested) = pending
+            .suggested_rule
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            chosen_rules.push(suggested.to_string());
+        }
+    }
+    let rule = chosen_rules.first().cloned();
     let folder = pending
         .folder
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let is_web = pending.kind.starts_with("web");
     if is_web {
         let mut settings = state.settings();
         let mut changed = false;
@@ -623,10 +651,12 @@ pub fn resolve_permission(
     } else if allowed && decision == "allow_always" {
         let mut settings = state.settings();
         let mut changed = false;
-        if let Some(rule) = &rule {
-            if !settings.permissions.command_rules.iter().any(|entry| entry == rule) {
-                settings.permissions.command_rules.push(rule.clone());
-                changed = true;
+        if is_command {
+            for rule in &chosen_rules {
+                if !settings.permissions.command_rules.iter().any(|entry| entry == rule) {
+                    settings.permissions.command_rules.push(rule.clone());
+                    changed = true;
+                }
             }
         }
         if let Some(folder) = &folder {
@@ -640,12 +670,39 @@ pub fn resolve_permission(
             state.set_settings(settings);
         }
     } else if allowed && decision == "allow_session" {
-        // A folder granted for the session stays available until the app
-        // restarts (including every file and subfolder below it), but is not
-        // written to settings. Commands and websites are resolved for this
-        // prompt only and are not remembered for the session.
+        // A command granted "in this chat" is remembered for that chat only,
+        // while a folder granted for the session stays available until the app
+        // restarts (including every file and subfolder below it). Neither is
+        // written to settings.
+        if is_command {
+            for rule in &chosen_rules {
+                state
+                    .permissions
+                    .add_session_command_rule(&pending.session_id, rule);
+            }
+        }
         if let Some(folder) = &folder {
             state.permissions.add_session_folder(folder);
+        }
+    } else if !allowed && decision == "deny_always" && is_command {
+        // "Deny always" on a command prompt persists the chosen scopes to the
+        // command denylist.
+        let mut settings = state.settings();
+        let mut changed = false;
+        for rule in &chosen_rules {
+            if !settings
+                .permissions
+                .denied_command_rules
+                .iter()
+                .any(|entry| entry == rule)
+            {
+                settings.permissions.denied_command_rules.push(rule.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            config::save_settings(&state.settings_path, &settings)?;
+            state.set_settings(settings);
         }
     }
     state.broker.resolve(
@@ -710,21 +767,39 @@ pub fn delete_website_rule(
 }
 
 #[tauri::command]
-pub fn add_command_rule(state: State<'_, AppState>, rule: String) -> Result<Settings> {
+pub fn add_command_rule(state: State<'_, AppState>, rule: String, allow: bool) -> Result<Settings> {
     let mut settings = state.settings();
     let rule = rule.trim().to_string();
-    if !rule.is_empty() && !settings.permissions.command_rules.iter().any(|entry| entry == &rule) {
-        settings.permissions.command_rules.push(rule);
-        config::save_settings(&state.settings_path, &settings)?;
-        state.set_settings(settings.clone());
+    if !rule.is_empty() {
+        let list = if allow {
+            &mut settings.permissions.command_rules
+        } else {
+            &mut settings.permissions.denied_command_rules
+        };
+        if !list.iter().any(|entry| entry == &rule) {
+            list.push(rule);
+            config::save_settings(&state.settings_path, &settings)?;
+            state.set_settings(settings.clone());
+        }
     }
     Ok(settings)
 }
 
 #[tauri::command]
-pub fn delete_command_rule(state: State<'_, AppState>, rule: String) -> Result<Settings> {
+pub fn delete_command_rule(
+    state: State<'_, AppState>,
+    rule: String,
+    allow: bool,
+) -> Result<Settings> {
     let mut settings = state.settings();
-    settings.permissions.command_rules.retain(|entry| entry != &rule);
+    if allow {
+        settings.permissions.command_rules.retain(|entry| entry != &rule);
+    } else {
+        settings
+            .permissions
+            .denied_command_rules
+            .retain(|entry| entry != &rule);
+    }
     config::save_settings(&state.settings_path, &settings)?;
     state.set_settings(settings.clone());
     Ok(settings)
@@ -1854,6 +1929,9 @@ async fn assemble_turn_context(
                                 folder: None,
                                 url: config.url.clone(),
                                 suggested_rule: None,
+                                segments: Vec::new(),
+                                risk: None,
+                                scope_options: Vec::new(),
                             },
                             &approval_cancel,
                             session_id,

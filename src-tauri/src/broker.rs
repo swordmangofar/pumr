@@ -1,6 +1,7 @@
 use crate::models::{
     EventSink, PermissionDecision, QuestionAnswer, QuestionItem, RoutedEvent, StreamEvent,
 };
+use crate::permissions::{CommandRisk, CommandScopeOption, CommandSegment};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -18,6 +19,12 @@ pub struct PermissionPrompt {
     pub folder: Option<String>,
     pub url: Option<String>,
     pub suggested_rule: Option<String>,
+    /// Per-segment breakdown of a compound command, empty for other prompts.
+    pub segments: Vec<CommandSegment>,
+    /// Severity and impact of a command prompt; `None` for other prompt kinds.
+    pub risk: Option<CommandRisk>,
+    /// Allow/deny scopes the user can pick for a command prompt.
+    pub scope_options: Vec<CommandScopeOption>,
 }
 
 impl PermissionPrompt {
@@ -44,6 +51,8 @@ struct PendingPermission {
     kind: String,
     folder: Option<String>,
     suggested_rule: Option<String>,
+    scope_options: Vec<CommandScopeOption>,
+    session_id: String,
 }
 
 /// The backend-owned fields of a pending prompt, used to validate a renderer's
@@ -53,6 +62,8 @@ pub struct PendingPrompt {
     pub kind: String,
     pub folder: Option<String>,
     pub suggested_rule: Option<String>,
+    pub scope_options: Vec<CommandScopeOption>,
+    pub session_id: String,
 }
 
 fn deny() -> PermissionDecision {
@@ -101,6 +112,8 @@ impl PermissionBroker {
                 kind: entry.kind.clone(),
                 folder: entry.folder.clone(),
                 suggested_rule: entry.suggested_rule.clone(),
+                scope_options: entry.scope_options.clone(),
+                session_id: entry.session_id.clone(),
             })
     }
 
@@ -144,6 +157,8 @@ impl PermissionBroker {
                             kind: prompt.kind.clone(),
                             folder: prompt.folder.clone(),
                             suggested_rule: prompt.suggested_rule.clone(),
+                            scope_options: prompt.scope_options.clone(),
+                            session_id: session_id.to_string(),
                         },
                     );
                     (true, request_id, receiver)
@@ -164,6 +179,9 @@ impl PermissionBroker {
                     folder: prompt.folder.clone(),
                     url: prompt.url.clone(),
                     suggested_rule: prompt.suggested_rule.clone(),
+                    segments: prompt.segments.clone(),
+                    risk: prompt.risk.clone(),
+                    scope_options: prompt.scope_options.clone(),
                 },
             });
         }

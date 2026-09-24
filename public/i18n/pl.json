@@ -892,6 +892,8 @@
       "behaviourHint": "Co robi skrót, gdy okno jest już na wierzchu.",
       "actionHide": "Ukryj",
       "actionMinimize": "Minimalizuj",
+      "fillScreen": "Wypełnij ekran",
+      "fillScreenHint": "Wywołane okno wypełnia aktywny monitor zamiast zachowywać poprzedni rozmiar.",
       "zoom": "Skalowanie ekranu",
       "zoomHint": "Skaluje cały interfejs. Skrót: Ctrl/⌘ + + aby powiększyć, Ctrl/⌘ + - aby pomniejszyć, Ctrl/⌘ + 0 aby zresetować.",
       "zoomReset": "Resetuj"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Dozwolone reguły poleceń",
     "commandRulesHint": "Wzorce glob, które nigdy nie wywołują prośby o uprawnienia. Niebezpieczne polecenia zawsze pytają.",
+    "commandAllowlist": "Dozwolone",
+    "commandDenylist": "Zablokowane",
+    "allowCommand": "Zezwól na polecenie",
+    "denyCommand": "Zablokuj polecenie",
+    "noDeniedCommandRules": "Brak zablokowanych poleceń.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + flagi",
+      "exact": "Dokładne"
+    },
+    "websiteAllowlist": "Dozwolone",
+    "websiteDenylist": "Zablokowane",
+    "websiteScope": {
+      "domain": "Domena",
+      "glob": "Glob"
+    },
     "noCommandRules": "Brak reguł poleceń. Użyj „zezwalaj zawsze” w prośbie o uprawnienia, aby ją utworzyć.",
     "websiteRules": "Strony internetowe",
     "websiteRulesHint": "Strony, które asystent może odwiedzać. Reguły odmowy mają pierwszeństwo przed regułami zezwolenia; sama domena obejmuje także jej subdomeny. Użyj „zezwalaj zawsze” lub „odmawiaj zawsze” w prośbie o uprawnienia, aby ją utworzyć.",
@@ -961,7 +979,22 @@
     "allowAlways": "Zezwalaj zawsze",
     "addFolder": "Dodaj folder na stałe",
     "siteRuleLabel": "Reguła strony internetowej (domena lub glob)",
-    "siteRuleHint": "Na przykład: docs.rs zezwala na tę witrynę, *.github.com zezwala na wszystkie jej subdomeny."
+    "siteRuleHint": "Na przykład: docs.rs zezwala na tę witrynę, *.github.com zezwala na wszystkie jej subdomeny.",
+    "segment": {
+      "allowed": "Dozwolone",
+      "needsApproval": "Wymaga zatwierdzenia"
+    },
+    "risk": {
+      "low": "Niskie",
+      "medium": "Średnie",
+      "high": "Wysokie",
+      "danger": "Zagrożenie"
+    },
+    "scope": {
+      "title": "Zakres reguły",
+      "hint": "Wybierz, jak szeroko obowiązuje reguła."
+    },
+    "allowChat": "Zezwól na tym czacie"
   },
   "question": {
     "title": "Pytanie",

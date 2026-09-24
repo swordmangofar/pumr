@@ -91,6 +91,14 @@ impl ToolOutcome {
             changes: Vec::new(),
         }
     }
+
+    fn denied_with_reason(reason: impl Into<String>) -> Self {
+        Self {
+            result: reason.into(),
+            status: "denied".to_string(),
+            changes: Vec::new(),
+        }
+    }
 }
 
 pub fn tool_schemas() -> Vec<Value> {
@@ -325,6 +333,9 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 folder: None,
                 url: None,
                 suggested_rule: None,
+                segments: Vec::new(),
+                risk: None,
+                scope_options: Vec::new(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -499,6 +510,9 @@ async fn ensure_path_access(runtime: &mut ToolRuntime, absolute: &Path, label: &
                 folder: Some(folder.display().to_string()),
                 url: None,
                 suggested_rule: None,
+                segments: Vec::new(),
+                risk: None,
+                scope_options: Vec::new(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -529,6 +543,9 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
                 folder: None,
                 url: None,
                 suggested_rule: None,
+                segments: Vec::new(),
+                risk: None,
+                scope_options: Vec::new(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -567,6 +584,9 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     folder: None,
                     url: None,
                     suggested_rule: None,
+                    segments: Vec::new(),
+                    risk: None,
+                    scope_options: Vec::new(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
@@ -779,6 +799,9 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     };
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
+        if runtime.cancel.is_cancelled() {
+            return ToolOutcome::cancelled();
+        }
         if candidates.len() >= 100_000 {
             break;
         }
@@ -791,6 +814,9 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     };
     let mut results: Vec<String> = Vec::new();
     for path in &candidates {
+        if runtime.cancel.is_cancelled() {
+            return ToolOutcome::cancelled();
+        }
         if results.len() >= 500 {
             break;
         }
@@ -841,6 +867,9 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     }
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
+        if runtime.cancel.is_cancelled() {
+            return ToolOutcome::cancelled();
+        }
         if candidates.len() >= 200_000 {
             break;
         }
@@ -859,6 +888,9 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     };
     let mut results: Vec<String> = Vec::new();
     'outer: for path in &candidates {
+        if runtime.cancel.is_cancelled() {
+            return ToolOutcome::cancelled();
+        }
         let relative_to_base = path.strip_prefix(&base).unwrap_or(path);
         if let Some(include) = &include {
             if !include.is_match(relative_to_base) {
@@ -991,6 +1023,9 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         folder: None,
                         url: Some(url.to_string()),
                         suggested_rule: Some(suggested_rule),
+                        segments: Vec::new(),
+                        risk: None,
+                        scope_options: Vec::new(),
                     },
                     &runtime.cancel,
                     &runtime.session_id,
@@ -1490,15 +1525,25 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         return ToolOutcome::denied();
     }
 
+    let mut allowed_rules = runtime.permissions.command_rules();
+    allowed_rules.extend(runtime.permissions.session_command_rules(&runtime.session_id));
+    let denied_rules = runtime.permissions.denied_command_rules();
     let decision = permissions::evaluate_command(
         &command,
         &runtime.project_root,
         &runtime.permissions.extra_folders(),
-        &runtime.permissions.command_rules(),
+        &allowed_rules,
+        &denied_rules,
     );
+    if let CommandDecision::Deny { reason } = decision {
+        return ToolOutcome::denied_with_reason(reason);
+    }
     if let CommandDecision::Ask {
         reason,
         suggested_rule,
+        segments,
+        risk,
+        scope_options,
     } = decision
     {
         let allowed = runtime
@@ -1513,6 +1558,9 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     folder: None,
                     url: None,
                     suggested_rule: Some(suggested_rule),
+                    segments,
+                    risk: Some(risk),
+                    scope_options,
                 },
                 &runtime.cancel,
                 &runtime.session_id,

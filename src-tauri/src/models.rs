@@ -568,6 +568,9 @@ pub enum StreamEvent {
         folder: Option<String>,
         url: Option<String>,
         suggested_rule: Option<String>,
+        segments: Vec<crate::permissions::CommandSegment>,
+        risk: Option<crate::permissions::CommandRisk>,
+        scope_options: Vec<crate::permissions::CommandScopeOption>,
     },
     PermissionResolved {
         request_id: String,

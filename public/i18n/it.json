@@ -892,6 +892,8 @@
       "behaviourHint": "Cosa fa la scorciatoia quando la finestra è già davanti.",
       "actionHide": "Nascondi",
       "actionMinimize": "Riduci a icona",
+      "fillScreen": "Riempi lo schermo",
+      "fillScreenHint": "La finestra richiamata riempie il monitor attivo invece di mantenere la dimensione precedente.",
       "zoom": "Scala di visualizzazione",
       "zoomHint": "Ridimensiona l'intera interfaccia. Scorciatoia: Ctrl/⌘ + + per ingrandire, Ctrl/⌘ + - per ridurre, Ctrl/⌘ + 0 per reimpostare.",
       "zoomReset": "Reimposta"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Regole dei comandi consentiti",
     "commandRulesHint": "Pattern glob che non attivano mai una richiesta di autorizzazione. I comandi pericolosi chiedono sempre.",
+    "commandAllowlist": "Consentiti",
+    "commandDenylist": "Bloccati",
+    "allowCommand": "Consenti comando",
+    "denyCommand": "Blocca comando",
+    "noDeniedCommandRules": "Nessun comando bloccato.",
+    "scope": {
+      "program": "Programma",
+      "programFlags": "Programma + opzioni",
+      "exact": "Esatto"
+    },
+    "websiteAllowlist": "Consentiti",
+    "websiteDenylist": "Bloccati",
+    "websiteScope": {
+      "domain": "Dominio",
+      "glob": "Glob"
+    },
     "noCommandRules": "Ancora nessuna regola sui comandi. Usa «consenti sempre» in una richiesta di autorizzazione per crearne una.",
     "websiteRules": "Siti web",
     "websiteRulesHint": "Siti web che l'assistente può visitare. Le regole di rifiuto prevalgono su quelle di autorizzazione; un semplice dominio copre anche i suoi sottodomini. Usa «consenti sempre» o «rifiuta sempre» in una richiesta di autorizzazione per crearne una.",
@@ -961,7 +979,22 @@
     "allowAlways": "Consenti sempre",
     "addFolder": "Aggiungi cartella in modo permanente",
     "siteRuleLabel": "Regola sito web (dominio o glob)",
-    "siteRuleHint": "Per esempio: docs.rs consente quel sito, *.github.com consente tutti i suoi sottodomini."
+    "siteRuleHint": "Per esempio: docs.rs consente quel sito, *.github.com consente tutti i suoi sottodomini.",
+    "segment": {
+      "allowed": "Consentito",
+      "needsApproval": "Richiede approvazione"
+    },
+    "risk": {
+      "low": "Basso",
+      "medium": "Medio",
+      "high": "Alto",
+      "danger": "Pericolo"
+    },
+    "scope": {
+      "title": "Ambito della regola",
+      "hint": "Scegli quanto ampia si applica la regola."
+    },
+    "allowChat": "Consenti in questa chat"
   },
   "question": {
     "title": "Domanda",

@@ -892,6 +892,8 @@
       "behaviourHint": "Wat de sneltoets doet wanneer het venster al op de voorgrond staat.",
       "actionHide": "Verbergen",
       "actionMinimize": "Minimaliseren",
+      "fillScreen": "Scherm vullen",
+      "fillScreenHint": "Het opgeroepen venster vult het actieve scherm in plaats van de vorige grootte te behouden.",
       "zoom": "Weergaveschaal",
       "zoomHint": "Schaalt de hele interface. Sneltoets: Ctrl/⌘ + + om in te zoomen, Ctrl/⌘ + - om uit te zoomen, Ctrl/⌘ + 0 om te resetten.",
       "zoomReset": "Resetten"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Toegestane opdrachtregels",
     "commandRulesHint": "Glob-patronen die nooit een toestemmingsvraag veroorzaken. Gevaarlijke opdrachten vragen altijd om toestemming.",
+    "commandAllowlist": "Toegestaan",
+    "commandDenylist": "Geblokkeerd",
+    "allowCommand": "Opdracht toestaan",
+    "denyCommand": "Opdracht blokkeren",
+    "noDeniedCommandRules": "Geen geblokkeerde opdrachten.",
+    "scope": {
+      "program": "Programma",
+      "programFlags": "Programma + opties",
+      "exact": "Exact"
+    },
+    "websiteAllowlist": "Toegestaan",
+    "websiteDenylist": "Geblokkeerd",
+    "websiteScope": {
+      "domain": "Domein",
+      "glob": "Glob"
+    },
     "noCommandRules": "Nog geen opdrachtregels. Gebruik \"altijd toestaan\" in een toestemmingsvraag om er een aan te maken.",
     "websiteRules": "Websites",
     "websiteRulesHint": "Websites die de assistent mag bezoeken. Weigerregels gaan voor op toestemmingsregels; een gewoon domein dekt ook de subdomeinen. Gebruik \"altijd toestaan\" of \"altijd weigeren\" in een toestemmingsvraag om er een aan te maken.",
@@ -961,7 +979,22 @@
     "allowAlways": "Altijd toestaan",
     "addFolder": "Map permanent toevoegen",
     "siteRuleLabel": "Website-regel (domein of glob)",
-    "siteRuleHint": "Bijvoorbeeld: docs.rs staat die site toe, *.github.com staat alle subdomeinen toe."
+    "siteRuleHint": "Bijvoorbeeld: docs.rs staat die site toe, *.github.com staat alle subdomeinen toe.",
+    "segment": {
+      "allowed": "Toegestaan",
+      "needsApproval": "Vereist goedkeuring"
+    },
+    "risk": {
+      "low": "Laag",
+      "medium": "Gemiddeld",
+      "high": "Hoog",
+      "danger": "Gevaar"
+    },
+    "scope": {
+      "title": "Regelbereik",
+      "hint": "Kies hoe breed de regel geldt."
+    },
+    "allowChat": "Toestaan in deze chat"
   },
   "question": {
     "title": "Vraag",

@@ -91,14 +91,16 @@ export const api = {
   resolvePermission: (
     requestId: string,
     decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
-    rule: string | null = null,
+    rules: string[] | null = null,
     folder: string | null = null,
     promptKind: string | null = null,
-  ) => invoke<void>('resolve_permission', { requestId, decision, rule, folder, promptKind }),
+  ) => invoke<void>('resolve_permission', { requestId, decision, rules, folder, promptKind }),
   resolveQuestion: (requestId: string, answers: QuestionAnswer[] | null) =>
     invoke<void>('resolve_question', { requestId, answers }),
-  addCommandRule: (rule: string) => invoke<Settings>('add_command_rule', { rule }),
-  deleteCommandRule: (rule: string) => invoke<Settings>('delete_command_rule', { rule }),
+  addCommandRule: (rule: string, allow: boolean) =>
+    invoke<Settings>('add_command_rule', { rule, allow }),
+  deleteCommandRule: (rule: string, allow: boolean) =>
+    invoke<Settings>('delete_command_rule', { rule, allow }),
   addWebsiteRule: (rule: string, allow: boolean) =>
     invoke<Settings>('add_website_rule', { rule, allow }),
   deleteWebsiteRule: (rule: string, allow: boolean) =>

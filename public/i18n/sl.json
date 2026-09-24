@@ -892,6 +892,8 @@
       "behaviourHint": "Kaj bližnjica naredi, ko je okno že v ospredju.",
       "actionHide": "Skrij",
       "actionMinimize": "Pomanjšaj",
+      "fillScreen": "Zapolni zaslon",
+      "fillScreenHint": "Klicano okno zapolni aktivni zaslon, namesto da ohrani prejšnjo velikost.",
       "zoom": "Povečava prikaza",
       "zoomHint": "Poveča celoten vmesnik. Bližnjica: Ctrl/⌘ + + za povečavo, Ctrl/⌘ + - za pomanjšavo, Ctrl/⌘ + 0 za ponastavitev.",
       "zoomReset": "Ponastavi"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Dovoljena pravila ukazov",
     "commandRulesHint": "Vzorci glob, ki nikoli ne sprožijo poziva za dovoljenje. Nevarni ukazi vedno vprašajo.",
+    "commandAllowlist": "Dovoljeni",
+    "commandDenylist": "Blokirani",
+    "allowCommand": "Dovoli ukaz",
+    "denyCommand": "Blokiraj ukaz",
+    "noDeniedCommandRules": "Ni blokiranih ukazov.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + zastavice",
+      "exact": "Natančno"
+    },
+    "websiteAllowlist": "Dovoljeni",
+    "websiteDenylist": "Blokirani",
+    "websiteScope": {
+      "domain": "Domena",
+      "glob": "Glob"
+    },
     "noCommandRules": "Ni še pravil ukazov. Uporabite »dovoli vedno« v pozivu za dovoljenje, da ga ustvarite.",
     "websiteRules": "Spletne strani",
     "websiteRulesHint": "Spletne strani, ki jih pomočnik lahko obišče. Pravila zavrnitve prevladajo nad pravili dovolitve; gola domena pokriva tudi njene poddomene. Uporabite »dovoli vedno« ali »zavrni vedno« v pozivu za dovoljenje, da ga ustvarite.",
@@ -961,7 +979,22 @@
     "allowAlways": "Dovoli vedno",
     "addFolder": "Trajno dodaj mapo",
     "siteRuleLabel": "Pravilo spletne strani (domena ali glob)",
-    "siteRuleHint": "Na primer: docs.rs dovoli to stran, *.github.com dovoli vse njene poddomene."
+    "siteRuleHint": "Na primer: docs.rs dovoli to stran, *.github.com dovoli vse njene poddomene.",
+    "segment": {
+      "allowed": "Dovoljeno",
+      "needsApproval": "Zahteva odobritev"
+    },
+    "risk": {
+      "low": "Nizko",
+      "medium": "Srednje",
+      "high": "Visoko",
+      "danger": "Nevarnost"
+    },
+    "scope": {
+      "title": "Obseg pravila",
+      "hint": "Izberi, kako široko velja pravilo."
+    },
+    "allowChat": "Dovoli v tem klepetu"
   },
   "question": {
     "title": "Vprašanje",

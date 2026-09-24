@@ -892,6 +892,8 @@
       "behaviourHint": "Što prečac radi kada je prozor već u prvom planu.",
       "actionHide": "Sakrij",
       "actionMinimize": "Minimiziraj",
+      "fillScreen": "Ispuni zaslon",
+      "fillScreenHint": "Pozvani prozor ispunjava aktivni monitor umjesto da zadrži prethodnu veličinu.",
       "zoom": "Skaliranje prikaza",
       "zoomHint": "Skalira cijelo sučelje. Prečac: Ctrl/⌘ + + za povećanje, Ctrl/⌘ + - za smanjenje, Ctrl/⌘ + 0 za poništavanje.",
       "zoomReset": "Poništi"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Pravila dopuštenih naredbi",
     "commandRulesHint": "Glob uzorci koji nikad ne pokreću zahtjev za dopuštenje. Opasne naredbe uvijek pitaju.",
+    "commandAllowlist": "Dopuštene",
+    "commandDenylist": "Blokirane",
+    "allowCommand": "Dopusti naredbu",
+    "denyCommand": "Blokiraj naredbu",
+    "noDeniedCommandRules": "Nema blokiranih naredbi.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + zastavice",
+      "exact": "Točno"
+    },
+    "websiteAllowlist": "Dopuštene",
+    "websiteDenylist": "Blokirane",
+    "websiteScope": {
+      "domain": "Domena",
+      "glob": "Glob"
+    },
     "noCommandRules": "Još nema pravila naredbi. Upotrijebite \"dopusti uvijek\" u zahtjevu za dopuštenje da biste ga stvorili.",
     "websiteRules": "Web-lokacije",
     "websiteRulesHint": "Web-lokacije koje asistent može posjetiti. Pravila zabrane imaju prednost pred pravilima dopuštenja; samo domena pokriva i njezine poddomene. Upotrijebite \"dopusti uvijek\" ili \"zabrani uvijek\" u zahtjevu za dopuštenje da biste ga stvorili.",
@@ -961,7 +979,22 @@
     "allowAlways": "Dopusti uvijek",
     "addFolder": "Trajno dodaj mapu",
     "siteRuleLabel": "Pravilo web-lokacije (domena ili glob)",
-    "siteRuleHint": "Na primjer: docs.rs dopušta tu lokaciju, *.github.com dopušta sve njezine poddomene."
+    "siteRuleHint": "Na primjer: docs.rs dopušta tu lokaciju, *.github.com dopušta sve njezine poddomene.",
+    "segment": {
+      "allowed": "Dopušteno",
+      "needsApproval": "Zahtijeva odobrenje"
+    },
+    "risk": {
+      "low": "Nisko",
+      "medium": "Srednje",
+      "high": "Visoko",
+      "danger": "Opasnost"
+    },
+    "scope": {
+      "title": "Opseg pravila",
+      "hint": "Odaberi koliko široko pravilo vrijedi."
+    },
+    "allowChat": "Dopusti u ovom razgovoru"
   },
   "question": {
     "title": "Pitanje",

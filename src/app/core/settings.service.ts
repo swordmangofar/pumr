@@ -42,6 +42,7 @@ export const FALLBACK_SETTINGS: Settings = {
   maxToolIterations: 35,
   autoContinueAllSessions: false,
   commandRules: [],
+  deniedCommandRules: [],
   allowedWebsites: [],
   deniedWebsites: [],
   permissionDefaults: { website: 'once', command: 'once', folder: 'once' },
@@ -72,6 +73,7 @@ export const FALLBACK_SETTINGS: Settings = {
   windowToggleEnabled: false,
   windowToggleHotkey: defaultWindowToggleHotkey(),
   windowToggleAction: 'hide',
+  windowToggleMaximize: false,
   zoom: 1,
   soundsEnabled: true,
   soundVolume: 0.6,
@@ -195,6 +197,14 @@ export class SettingsService {
     return this.save({ ...current, ...patch });
   }
 
+  async reload(): Promise<void> {
+    try {
+      this.state.set(await api.getSettings());
+    } catch {
+      // Keep the last known settings when the refresh fails.
+    }
+  }
+
   async setApiKey(key: string): Promise<void> {
     await api.setApiKey(OPENROUTER_PROVIDER, key);
     this.hasApiKey.set(await api.hasApiKey(OPENROUTER_PROVIDER));
@@ -205,13 +215,13 @@ export class SettingsService {
     this.hasApiKey.set(false);
   }
 
-  async addCommandRule(rule: string): Promise<void> {
-    const settings = await api.addCommandRule(rule);
+  async addCommandRule(rule: string, allow: boolean): Promise<void> {
+    const settings = await api.addCommandRule(rule, allow);
     this.state.set(settings);
   }
 
-  async deleteCommandRule(rule: string): Promise<void> {
-    const settings = await api.deleteCommandRule(rule);
+  async deleteCommandRule(rule: string, allow: boolean): Promise<void> {
+    const settings = await api.deleteCommandRule(rule, allow);
     this.state.set(settings);
   }
 

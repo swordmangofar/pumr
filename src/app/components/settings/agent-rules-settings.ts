@@ -234,16 +234,28 @@ import { TypedInput } from '../typed-input';
       <h3 class="mb-2 text-sm font-semibold text-white">
         {{ 'settings.commandRules' | transloco }}
       </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.commandRulesHint' | transloco }}</p>
+
+      <h4 class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-300/80">
+        {{ 'settings.commandAllowlist' | transloco }} · {{ commandRules().length }}
+      </h4>
       <div class="space-y-1.5">
         @for (rule of commandRules(); track rule) {
           <div
-            class="flex items-center justify-between rounded-xl border border-white/10 bg-ink/40 px-4 py-2"
+            class="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-ink/40 px-4 py-2"
           >
-            <code class="font-mono text-sm text-mist">{{ rule }}</code>
+            <div class="flex min-w-0 items-center gap-2">
+              <code class="truncate font-mono text-sm text-emerald-300">{{ rule }}</code>
+              <span
+                class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
+              >
+                {{ scopeLabel(rule) | transloco }}
+              </span>
+            </div>
             <button
               type="button"
               class="text-mist/40 transition-colors hover:text-rose-400"
-              (click)="deleteRule(rule)"
+              (click)="deleteRule(rule, true)"
             >
               ✕
             </button>
@@ -252,35 +264,83 @@ import { TypedInput } from '../typed-input';
           <p class="text-sm text-mist/30">{{ 'settings.noCommandRules' | transloco }}</p>
         }
       </div>
+
+      <h4 class="mt-4 mb-1.5 text-xs font-semibold uppercase tracking-wide text-rose-300/80">
+        {{ 'settings.commandDenylist' | transloco }} · {{ deniedCommandRules().length }}
+      </h4>
+      <div class="space-y-1.5">
+        @for (rule of deniedCommandRules(); track rule) {
+          <div
+            class="flex items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-ink/40 px-4 py-2"
+          >
+            <div class="flex min-w-0 items-center gap-2">
+              <code class="truncate font-mono text-sm text-rose-300">{{ rule }}</code>
+              <span
+                class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
+              >
+                {{ scopeLabel(rule) | transloco }}
+              </span>
+            </div>
+            <button
+              type="button"
+              class="text-mist/40 transition-colors hover:text-rose-400"
+              (click)="deleteRule(rule, false)"
+            >
+              ✕
+            </button>
+          </div>
+        } @empty {
+          <p class="text-sm text-mist/30">{{ 'settings.noDeniedCommandRules' | transloco }}</p>
+        }
+      </div>
+
       <div class="mt-3 flex gap-2">
         <input
           class="field min-w-0 flex-1 rounded-xl px-4 py-2 font-mono text-sm"
           [placeholder]="'settings.rulePlaceholder' | transloco"
           [value]="newRule()"
           (typedValue)="newRule.set($event)"
-          (keydown.enter)="addRule()"
+          (keydown.enter)="addRule(true)"
         />
         <button
           type="button"
-          class="rounded-full border border-white/15 px-4 py-2 text-sm text-mist transition-colors hover:bg-white/5"
-          (click)="addRule()"
+          class="rounded-full border border-emerald-500/30 px-4 py-2 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/10"
+          (click)="addRule(true)"
         >
-          {{ 'settings.addRule' | transloco }}
+          {{ 'settings.allowCommand' | transloco }}
+        </button>
+        <button
+          type="button"
+          class="rounded-full border border-rose-500/30 px-4 py-2 text-sm text-rose-300 transition-colors hover:bg-rose-500/10"
+          (click)="addRule(false)"
+        >
+          {{ 'settings.denyCommand' | transloco }}
         </button>
       </div>
-      <p class="mt-2 text-xs text-mist/30">{{ 'settings.commandRulesHint' | transloco }}</p>
     </section>
 
     <section class="mt-8">
       <h3 class="mb-2 text-sm font-semibold text-white">
         {{ 'settings.websiteRules' | transloco }}
       </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.websiteRulesHint' | transloco }}</p>
+
+      <h4 class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-300/80">
+        {{ 'settings.websiteAllowlist' | transloco }} · {{ allowedWebsites().length }}
+      </h4>
       <div class="space-y-1.5">
         @for (rule of allowedWebsites(); track rule) {
           <div
-            class="flex items-center justify-between rounded-xl border border-white/10 bg-ink/40 px-4 py-2"
+            class="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-ink/40 px-4 py-2"
           >
-            <code class="font-mono text-sm text-emerald-300">{{ rule }}</code>
+            <div class="flex min-w-0 items-center gap-2">
+              <code class="truncate font-mono text-sm text-emerald-300">{{ rule }}</code>
+              <span
+                class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
+              >
+                {{ websiteLabel(rule) | transloco }}
+              </span>
+            </div>
             <button
               type="button"
               class="text-mist/40 transition-colors hover:text-rose-400"
@@ -293,12 +353,23 @@ import { TypedInput } from '../typed-input';
           <p class="text-sm text-mist/30">{{ 'settings.noAllowedWebsites' | transloco }}</p>
         }
       </div>
-      <div class="mt-3 space-y-1.5">
+
+      <h4 class="mt-4 mb-1.5 text-xs font-semibold uppercase tracking-wide text-rose-300/80">
+        {{ 'settings.websiteDenylist' | transloco }} · {{ deniedWebsites().length }}
+      </h4>
+      <div class="mt-1 space-y-1.5">
         @for (rule of deniedWebsites(); track rule) {
           <div
-            class="flex items-center justify-between rounded-xl border border-rose-500/20 bg-ink/40 px-4 py-2"
+            class="flex items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-ink/40 px-4 py-2"
           >
-            <code class="font-mono text-sm text-rose-300">{{ rule }}</code>
+            <div class="flex min-w-0 items-center gap-2">
+              <code class="truncate font-mono text-sm text-rose-300">{{ rule }}</code>
+              <span
+                class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
+              >
+                {{ websiteLabel(rule) | transloco }}
+              </span>
+            </div>
             <button
               type="button"
               class="text-mist/40 transition-colors hover:text-rose-400"
@@ -334,7 +405,6 @@ import { TypedInput } from '../typed-input';
           {{ 'settings.denyWebsite' | transloco }}
         </button>
       </div>
-      <p class="mt-2 text-xs text-mist/30">{{ 'settings.websiteRulesHint' | transloco }}</p>
     </section>
 
     <section class="mt-8">
@@ -496,6 +566,9 @@ export class AgentRulesSettings {
   protected readonly commandRules = computed(
     () => this.settingsService.settings()?.commandRules ?? [],
   );
+  protected readonly deniedCommandRules = computed(
+    () => this.settingsService.settings()?.deniedCommandRules ?? [],
+  );
   protected readonly newWebsite = signal('');
   protected readonly allowedWebsites = computed(
     () => this.settingsService.settings()?.allowedWebsites ?? [],
@@ -523,17 +596,29 @@ export class AgentRulesSettings {
     });
   }
 
-  protected async addRule(): Promise<void> {
+  protected scopeLabel(rule: string): string {
+    if (rule.endsWith(' *')) {
+      const body = rule.slice(0, -2).trim();
+      return body.includes(' ') ? 'settings.scope.programFlags' : 'settings.scope.program';
+    }
+    return 'settings.scope.exact';
+  }
+
+  protected websiteLabel(rule: string): string {
+    return rule.includes('*') ? 'settings.websiteScope.glob' : 'settings.websiteScope.domain';
+  }
+
+  protected async addRule(allow: boolean): Promise<void> {
     const rule = this.newRule().trim();
     if (!rule) {
       return;
     }
-    await this.settingsService.addCommandRule(rule);
+    await this.settingsService.addCommandRule(rule, allow);
     this.newRule.set('');
   }
 
-  protected async deleteRule(rule: string): Promise<void> {
-    await this.settingsService.deleteCommandRule(rule);
+  protected async deleteRule(rule: string, allow: boolean): Promise<void> {
+    await this.settingsService.deleteCommandRule(rule, allow);
   }
 
   protected async addWebsite(allow: boolean): Promise<void> {

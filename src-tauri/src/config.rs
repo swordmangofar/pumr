@@ -16,7 +16,7 @@ Tools:
 - Use bash to run tests, builds and git commands. Prefer project scripts (pnpm/npm scripts) over ad-hoc commands.
 - Use webfetch to read a specific URL and websearch to look things up on the web. The user must approve every new website; if a website is denied, do not retry it.
 - Use task to spawn subagents for independent work in parallel. Give each subagent a complete, self-contained prompt: it cannot see this conversation. Multiple task calls in one turn run concurrently. Prefer doing the work yourself for small tasks.
-- Use question to ask the user when you are blocked on a decision, need a preference, or requirements are ambiguous. Prefer this over ending your turn with an open question: provide concise options when a small set of choices fits, and the user can always type a custom answer.
+- Use question to ask the user when you are blocked on a decision, need a preference, or requirements are ambiguous. Prefer this over ending your turn with an open question: provide concise options when a small set of choices fits, and the user can always type a custom answer. When you have a preferred option, put it first and append the literal text "(Recommendation)" to the end of its label, with a short description explaining why.
 - Long-running commands are moved to the background automatically; tell the user they can stop them from the running processes indicator.
 - Some tool calls require user approval. If a tool is denied, do not retry it; adapt or ask the user.
 
@@ -415,6 +415,7 @@ impl Default for ModelSettings {
 pub struct PermissionSettings {
     pub extra_folders: Vec<String>,
     pub command_rules: Vec<String>,
+    pub denied_command_rules: Vec<String>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
     /// Default action of the primary allow button per prompt category.
@@ -434,6 +435,7 @@ impl Default for PermissionSettings {
         Self {
             extra_folders: Vec::new(),
             command_rules: Vec::new(),
+            denied_command_rules: Vec::new(),
             allowed_websites: Vec::new(),
             denied_websites: Vec::new(),
             permission_defaults: PermissionDefaults::default(),
@@ -627,6 +629,8 @@ pub struct WindowSettings {
     /// What to do when the shortcut is pressed while pumr is focused:
     /// `hide` or `minimize`.
     pub window_toggle_action: String,
+    /// Whether the summoned window fills the active monitor.
+    pub window_toggle_maximize: bool,
     /// Interface zoom / display scaling, where `1.0` is 100%.
     pub zoom: f64,
 }
@@ -637,6 +641,7 @@ impl Default for WindowSettings {
             window_toggle_enabled: false,
             window_toggle_hotkey: default_window_toggle_hotkey(),
             window_toggle_action: WINDOW_TOGGLE_HIDE.to_string(),
+            window_toggle_maximize: false,
             zoom: default_zoom(),
         }
     }

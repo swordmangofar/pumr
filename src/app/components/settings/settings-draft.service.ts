@@ -94,6 +94,7 @@ export class SettingsDraftService {
       await this.settingsService.save({
         ...this.draft(),
         commandRules: this.settingsService.settings()?.commandRules ?? [],
+        deniedCommandRules: this.settingsService.settings()?.deniedCommandRules ?? [],
         allowedWebsites: this.settingsService.settings()?.allowedWebsites ?? [],
         deniedWebsites: this.settingsService.settings()?.deniedWebsites ?? [],
       });

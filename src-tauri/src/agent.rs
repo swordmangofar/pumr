@@ -337,6 +337,12 @@ async fn execute_tool_calls(
             let outcome = execute_call(deps, request, call, sink).await;
             let duration_ms = started.elapsed().as_millis() as i64;
             record_tool_outcome(deps, request, call, &outcome, duration_ms, emit)?;
+            // A tool that observed the cancellation (e.g. a long grep) reports it
+            // through the token, not this loop's pre-check. Surface it so the turn
+            // stops instead of asking the model for another iteration.
+            if request.cancel.is_cancelled() {
+                cancelled = true;
+            }
         }
     }
 
@@ -347,6 +353,9 @@ async fn execute_tool_calls(
         };
         let duration_ms = started.elapsed().as_millis() as i64;
         record_tool_outcome(deps, request, &call, &outcome, duration_ms, emit)?;
+        if request.cancel.is_cancelled() {
+            cancelled = true;
+        }
     }
     Ok(cancelled)
 }

@@ -80,4 +80,17 @@ describe('WindowSettings', () => {
     fixture.detectChanges();
     expect(draft().windowToggleAction).toBe<WindowToggleAction>('minimize');
   });
+
+  it('toggles filling the screen when summoned', () => {
+    create({ windowToggleEnabled: true });
+    const toggles = [
+      ...fixture.nativeElement.querySelectorAll('button.rounded-full'),
+    ] as HTMLButtonElement[];
+    const fill = toggles.find((button) =>
+      button.parentElement?.textContent?.includes('settings.window.fillScreen'),
+    ) as HTMLButtonElement;
+    fill.click();
+    fixture.detectChanges();
+    expect(draft().windowToggleMaximize).toBe(true);
+  });
 });

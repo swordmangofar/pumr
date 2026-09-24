@@ -892,6 +892,8 @@
       "behaviourHint": "Ką spartusis klavišas daro, kai langas jau priekyje.",
       "actionHide": "Slėpti",
       "actionMinimize": "Sumažinti",
+      "fillScreen": "Užpildyti ekraną",
+      "fillScreenHint": "Iškviesas langas užpildo aktyvų monitorių, o ne išsaugo ankstesnį dydį.",
       "zoom": "Rodymo mastelis",
       "zoomHint": "Keičia visos sąsajos mastelį. Spartusis klavišas: Ctrl/⌘ + + norėdami priartinti, Ctrl/⌘ + - nutolinti, Ctrl/⌘ + 0 atkurti.",
       "zoomReset": "Atkurti"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Leidžiamos komandų taisyklės",
     "commandRulesHint": "Glob šablonai, kurie niekada nesukelia leidimo prašymo. Pavojingos komandos visada klausia.",
+    "commandAllowlist": "Leidžiami",
+    "commandDenylist": "Blokuoti",
+    "allowCommand": "Leisti komandą",
+    "denyCommand": "Blokuoti komandą",
+    "noDeniedCommandRules": "Nėra blokuotų komandų.",
+    "scope": {
+      "program": "Programa",
+      "programFlags": "Programa + parametrai",
+      "exact": "Tiksli"
+    },
+    "websiteAllowlist": "Leidžiami",
+    "websiteDenylist": "Blokuoti",
+    "websiteScope": {
+      "domain": "Domenas",
+      "glob": "Glob"
+    },
     "noCommandRules": "Komandų taisyklių dar nėra. Leidimo prašyme naudokite „leisti visada“, kad sukurtumėte vieną.",
     "websiteRules": "Svetainės",
     "websiteRulesHint": "Svetainės, kurias asistentas gali lankyti. Draudimo taisyklės turi viršenybę prieš leidimo taisykles; paprastas domenas apima ir jo subdomenus. Leidimo prašyme naudokite „leisti visada“ arba „uždrausti visada“, kad sukurtumėte vieną.",
@@ -961,7 +979,22 @@
     "allowAlways": "Leisti visada",
     "addFolder": "Pridėti aplanką visam laikui",
     "siteRuleLabel": "Svetainės taisyklė (domenas arba glob)",
-    "siteRuleHint": "Pavyzdžiui: docs.rs leidžia šią svetainę, *.github.com leidžia visus jos subdomenus."
+    "siteRuleHint": "Pavyzdžiui: docs.rs leidžia šią svetainę, *.github.com leidžia visus jos subdomenus.",
+    "segment": {
+      "allowed": "Leidžiama",
+      "needsApproval": "Reikia patvirtinimo"
+    },
+    "risk": {
+      "low": "Žema",
+      "medium": "Vidutinė",
+      "high": "Aukšta",
+      "danger": "Pavojus"
+    },
+    "scope": {
+      "title": "Taisyklės apimtis",
+      "hint": "Pasirink, kaip plačiai taikoma taisyklė."
+    },
+    "allowChat": "Leisti šiame pokalbyje"
   },
   "question": {
     "title": "Klausimas",

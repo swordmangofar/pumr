@@ -892,6 +892,8 @@
       "behaviourHint": "Vad genvägen gör när fönstret redan är i förgrunden.",
       "actionHide": "Dölj",
       "actionMinimize": "Minimera",
+      "fillScreen": "Fyll skärmen",
+      "fillScreenHint": "Det framkallade fönstret fyller den aktiva skärmen i stället för att behålla sin tidigare storlek.",
       "zoom": "Visningsskala",
       "zoomHint": "Skalar hela gränssnittet. Genväg: Ctrl/⌘ + + för att zooma in, Ctrl/⌘ + - för att zooma ut, Ctrl/⌘ + 0 för att återställa.",
       "zoomReset": "Återställ"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Tillåtna kommandoregler",
     "commandRulesHint": "Glob-mönster som aldrig utlöser en behörighetsfråga. Farliga kommandon frågar alltid.",
+    "commandAllowlist": "Tillåtna",
+    "commandDenylist": "Blockerade",
+    "allowCommand": "Tillåt kommando",
+    "denyCommand": "Blockera kommando",
+    "noDeniedCommandRules": "Inga blockerade kommandon.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + flaggor",
+      "exact": "Exakt"
+    },
+    "websiteAllowlist": "Tillåtna",
+    "websiteDenylist": "Blockerade",
+    "websiteScope": {
+      "domain": "Domän",
+      "glob": "Glob"
+    },
     "noCommandRules": "Inga kommandoregler ännu. Använd \"tillåt alltid\" i en behörighetsfråga för att skapa en.",
     "websiteRules": "Webbplatser",
     "websiteRulesHint": "Webbplatser som assistenten får besöka. Neka-regler vinner över tillåt-regler; en vanlig domän omfattar även dess underdomäner. Använd \"tillåt alltid\" eller \"neka alltid\" i en behörighetsfråga för att skapa en.",
@@ -961,7 +979,22 @@
     "allowAlways": "Tillåt alltid",
     "addFolder": "Lägg till mapp permanent",
     "siteRuleLabel": "Webbplatsregel (domän eller glob)",
-    "siteRuleHint": "Till exempel: docs.rs tillåter den webbplatsen, *.github.com tillåter alla dess underdomäner."
+    "siteRuleHint": "Till exempel: docs.rs tillåter den webbplatsen, *.github.com tillåter alla dess underdomäner.",
+    "segment": {
+      "allowed": "Tillåtet",
+      "needsApproval": "Kräver godkännande"
+    },
+    "risk": {
+      "low": "Låg",
+      "medium": "Medel",
+      "high": "Hög",
+      "danger": "Fara"
+    },
+    "scope": {
+      "title": "Regelomfattning",
+      "hint": "Välj hur brett regeln gäller."
+    },
+    "allowChat": "Tillåt i denna chatt"
   },
   "question": {
     "title": "Fråga",

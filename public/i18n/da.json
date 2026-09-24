@@ -892,6 +892,8 @@
       "behaviourHint": "Hvad genvejen gør, når vinduet allerede er i forgrunden.",
       "actionHide": "Skjul",
       "actionMinimize": "Minimér",
+      "fillScreen": "Udfyld skærmen",
+      "fillScreenHint": "Det fremkaldte vindue udfylder den aktive skærm i stedet for at beholde sin tidligere størrelse.",
       "zoom": "Skalering af visning",
       "zoomHint": "Skalerer hele grænsefladen. Genvej: Ctrl/⌘ + + for at zoome ind, Ctrl/⌘ + - for at zoome ud, Ctrl/⌘ + 0 for at nulstille.",
       "zoomReset": "Nulstil"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Tilladte kommandoregler",
     "commandRulesHint": "Glob-mønstre, der aldrig udløser en tilladelsesprompt. Farlige kommandoer spørger altid.",
+    "commandAllowlist": "Tilladte",
+    "commandDenylist": "Blokerede",
+    "allowCommand": "Tillad kommando",
+    "denyCommand": "Blokér kommando",
+    "noDeniedCommandRules": "Ingen blokerede kommandoer.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + flag",
+      "exact": "Præcis"
+    },
+    "websiteAllowlist": "Tilladte",
+    "websiteDenylist": "Blokerede",
+    "websiteScope": {
+      "domain": "Domæne",
+      "glob": "Glob"
+    },
     "noCommandRules": "Ingen kommandoregler endnu. Brug \"tillad altid\" i en tilladelsesprompt for at oprette en.",
     "websiteRules": "Websites",
     "websiteRulesHint": "Websites, assistenten må besøge. Afvisningsregler vinder over tilladelsesregler; et almindeligt domæne dækker også dets underdomæner. Brug \"tillad altid\" eller \"afvis altid\" i en tilladelsesprompt for at oprette en.",
@@ -961,7 +979,22 @@
     "allowAlways": "Tillad altid",
     "addFolder": "Tilføj mappe permanent",
     "siteRuleLabel": "Websiteregel (domæne eller glob)",
-    "siteRuleHint": "For eksempel: docs.rs tillader dette website, *.github.com tillader alle dets underdomæner."
+    "siteRuleHint": "For eksempel: docs.rs tillader dette website, *.github.com tillader alle dets underdomæner.",
+    "segment": {
+      "allowed": "Tilladt",
+      "needsApproval": "Kræver godkendelse"
+    },
+    "risk": {
+      "low": "Lav",
+      "medium": "Mellem",
+      "high": "Høj",
+      "danger": "Fare"
+    },
+    "scope": {
+      "title": "Regelomfang",
+      "hint": "Vælg hvor bredt reglen gælder."
+    },
+    "allowChat": "Tillad i denne chat"
   },
   "question": {
     "title": "Spørgsmål",

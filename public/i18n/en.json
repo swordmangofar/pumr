@@ -892,6 +892,8 @@
       "behaviourHint": "What the shortcut does when the window is already in front.",
       "actionHide": "Hide",
       "actionMinimize": "Minimize",
+      "fillScreen": "Fill the screen",
+      "fillScreenHint": "Make the summoned window fill the active monitor instead of keeping its previous size.",
       "zoom": "Display scaling",
       "zoomHint": "Scales the whole interface. Shortcut: Ctrl/⌘ + + to zoom in, Ctrl/⌘ + - to zoom out, Ctrl/⌘ + 0 to reset.",
       "zoomReset": "Reset"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Allowed command rules",
     "commandRulesHint": "Glob patterns that never trigger a permission prompt. Dangerous commands always ask.",
+    "commandAllowlist": "Allowed",
+    "commandDenylist": "Denied",
+    "allowCommand": "Allow command",
+    "denyCommand": "Deny command",
+    "noDeniedCommandRules": "No blocked commands.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + flags",
+      "exact": "Exact"
+    },
+    "websiteAllowlist": "Allowed",
+    "websiteDenylist": "Denied",
+    "websiteScope": {
+      "domain": "Domain",
+      "glob": "Glob"
+    },
     "noCommandRules": "No command rules yet. Use \"allow always\" in a permission prompt to create one.",
     "websiteRules": "Websites",
     "websiteRulesHint": "Websites the assistant may visit. Deny rules win over allow rules; a plain domain also covers its subdomains. Use \"allow always\" or \"deny always\" in a permission prompt to create one.",
@@ -961,7 +979,22 @@
     "allowAlways": "Allow always",
     "addFolder": "Add folder permanently",
     "siteRuleLabel": "Website rule (domain or glob)",
-    "siteRuleHint": "For example: docs.rs allows that site, *.github.com allows all its subdomains."
+    "siteRuleHint": "For example: docs.rs allows that site, *.github.com allows all its subdomains.",
+    "segment": {
+      "allowed": "Allowed",
+      "needsApproval": "Needs approval"
+    },
+    "risk": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "danger": "Danger"
+    },
+    "scope": {
+      "title": "Rule scope",
+      "hint": "Choose how broadly this rule applies."
+    },
+    "allowChat": "Allow in this chat"
   },
   "question": {
     "title": "Question",

@@ -892,6 +892,8 @@
       "behaviourHint": "O que o atalho faz quando a janela já está à frente.",
       "actionHide": "Ocultar",
       "actionMinimize": "Minimizar",
+      "fillScreen": "Preencher o ecrã",
+      "fillScreenHint": "A janela invocada preenche o monitor ativo em vez de manter o tamanho anterior.",
       "zoom": "Escala de visualização",
       "zoomHint": "Dimensiona toda a interface. Atalho: Ctrl/⌘ + + para ampliar, Ctrl/⌘ + - para reduzir, Ctrl/⌘ + 0 para redefinir.",
       "zoomReset": "Redefinir"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Regras de comandos permitidos",
     "commandRulesHint": "Padrões glob que nunca acionam uma solicitação de permissão. Comandos perigosos sempre perguntam.",
+    "commandAllowlist": "Permitidos",
+    "commandDenylist": "Bloqueados",
+    "allowCommand": "Permitir comando",
+    "denyCommand": "Bloquear comando",
+    "noDeniedCommandRules": "Nenhum comando bloqueado.",
+    "scope": {
+      "program": "Programa",
+      "programFlags": "Programa + opções",
+      "exact": "Exato"
+    },
+    "websiteAllowlist": "Permitidos",
+    "websiteDenylist": "Bloqueados",
+    "websiteScope": {
+      "domain": "Domínio",
+      "glob": "Glob"
+    },
     "noCommandRules": "Ainda não há regras de comandos. Use «permitir sempre» em uma solicitação de permissão para criar uma.",
     "websiteRules": "Sites",
     "websiteRulesHint": "Sites que o assistente pode visitar. As regras de negação prevalecem sobre as de permissão; um domínio simples também cobre seus subdomínios. Use «permitir sempre» ou «negar sempre» em uma solicitação de permissão para criar uma.",
@@ -961,7 +979,22 @@
     "allowAlways": "Permitir sempre",
     "addFolder": "Adicionar pasta permanentemente",
     "siteRuleLabel": "Regra de site (domínio ou glob)",
-    "siteRuleHint": "Por exemplo: docs.rs permite esse site, *.github.com permite todos os seus subdomínios."
+    "siteRuleHint": "Por exemplo: docs.rs permite esse site, *.github.com permite todos os seus subdomínios.",
+    "segment": {
+      "allowed": "Permitido",
+      "needsApproval": "Requer aprovação"
+    },
+    "risk": {
+      "low": "Baixo",
+      "medium": "Médio",
+      "high": "Alto",
+      "danger": "Perigo"
+    },
+    "scope": {
+      "title": "Âmbito da regra",
+      "hint": "Escolhe a amplitude da regra."
+    },
+    "allowChat": "Permitir neste chat"
   },
   "question": {
     "title": "Pergunta",

@@ -62,8 +62,9 @@ pub fn toggle(app: &AppHandle) {
     let visible = window.is_visible().unwrap_or(true);
     log::info!("window toggle fired (focused={focused}, visible={visible})");
 
+    let settings = app.state::<AppState>().settings();
     if focused {
-        let action = app.state::<AppState>().settings().window.window_toggle_action;
+        let action = settings.window.window_toggle_action.clone();
         if action == WINDOW_TOGGLE_MINIMIZE {
             let _ = window.minimize();
         } else {
@@ -72,10 +73,20 @@ pub fn toggle(app: &AppHandle) {
         return;
     }
 
+    let maximize = settings.window.window_toggle_maximize;
+
+    // Restore first so the window can be moved to the active monitor before it
+    // is maximized there.
+    if maximize {
+        let _ = window.unmaximize();
+    }
     center_on_active_monitor(&window);
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+    if maximize {
+        let _ = window.maximize();
+    }
 }
 
 /// Moves the window to the monitor that currently contains the mouse cursor and

@@ -892,6 +892,8 @@
       "behaviourHint": "Was das Kürzel tut, wenn das Fenster bereits im Vordergrund ist.",
       "actionHide": "Ausblenden",
       "actionMinimize": "Minimieren",
+      "fillScreen": "Bildschirm ausfüllen",
+      "fillScreenHint": "Das aufgerufene Fenster füllt den aktiven Monitor, statt seine vorherige Größe zu behalten.",
       "zoom": "Anzeigeskalierung",
       "zoomHint": "Skaliert die gesamte Oberfläche. Tastenkürzel: Ctrl/⌘ + + zum Vergrößern, Ctrl/⌘ + - zum Verkleinern, Ctrl/⌘ + 0 zum Zurücksetzen.",
       "zoomReset": "Zurücksetzen"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Erlaubte Befehlsregeln",
     "commandRulesHint": "Glob-Muster, die nie eine Freigabe anfordern. Gefährliche Befehle fragen immer.",
+    "commandAllowlist": "Erlaubt",
+    "commandDenylist": "Blockiert",
+    "allowCommand": "Befehl erlauben",
+    "denyCommand": "Befehl blockieren",
+    "noDeniedCommandRules": "Keine blockierten Befehle.",
+    "scope": {
+      "program": "Programm",
+      "programFlags": "Programm + Optionen",
+      "exact": "Exakt"
+    },
+    "websiteAllowlist": "Erlaubt",
+    "websiteDenylist": "Blockiert",
+    "websiteScope": {
+      "domain": "Domain",
+      "glob": "Glob"
+    },
     "noCommandRules": "Noch keine Regeln. Nutze \"Immer erlauben\" in einer Freigabe, um eine anzulegen.",
     "websiteRules": "Websites",
     "websiteRulesHint": "Websites, die der Assistent besuchen darf. Verbotsregeln gewinnen über Erlaubnisregeln; eine reine Domain gilt auch für ihre Subdomains. Nutze \"Immer erlauben\" oder \"Immer verbieten\" in einer Freigabe, um eine Regel anzulegen.",
@@ -961,7 +979,22 @@
     "allowAlways": "Immer erlauben",
     "addFolder": "Ordner dauerhaft hinzufügen",
     "siteRuleLabel": "Website-Regel (Domain oder Glob)",
-    "siteRuleHint": "Zum Beispiel: docs.rs erlaubt diese Seite, *.github.com erlaubt alle Subdomains."
+    "siteRuleHint": "Zum Beispiel: docs.rs erlaubt diese Seite, *.github.com erlaubt alle Subdomains.",
+    "segment": {
+      "allowed": "Erlaubt",
+      "needsApproval": "Erfordert Zustimmung"
+    },
+    "risk": {
+      "low": "Niedrig",
+      "medium": "Mittel",
+      "high": "Hoch",
+      "danger": "Gefahr"
+    },
+    "scope": {
+      "title": "Regelbereich",
+      "hint": "Wähle, wie breit diese Regel gilt."
+    },
+    "allowChat": "In diesem Chat erlauben"
   },
   "question": {
     "title": "Frage",

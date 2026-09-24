@@ -1,0 +1,42 @@
+# Configuration for GitHub's automatically generated release notes.
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+#
+# Note: this repository currently ships via direct commits to `master`, so the
+# generator will not categorise anything until pull requests are used. The
+# hand-written notes in `docs/releases/vX.Y.Z.md` are the primary source and are
+# published into the release body by `.github/workflows/installers.yml`.
+
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - skip-changelog
+  categories:
+    - title: 🚀 Features
+      labels:
+        - feature
+        - enhancement
+        - feat
+    - title: ✨ Improvements
+      labels:
+        - improvement
+        - ui
+        - ux
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+        - fix
+    - title: 🔧 Maintenance
+      labels:
+        - maintenance
+        - chore
+        - dependencies
+        - ci
+        - docs
+        - refactor
+    - title: 🔒 Security
+      labels:
+        - security
+    - title: Other Changes
+      labels:
+        - "*"

@@ -892,6 +892,8 @@
       "behaviourHint": "Co zkratka udělá, když je okno již vpředu.",
       "actionHide": "Skrýt",
       "actionMinimize": "Minimalizovat",
+      "fillScreen": "Vyplnit obrazovku",
+      "fillScreenHint": "Vyvolané okno vyplní aktivní monitor místo zachování předchozí velikosti.",
       "zoom": "Zvětšení zobrazení",
       "zoomHint": "Mění měřítko celého rozhraní. Zkratka: Ctrl/⌘ + + pro přiblížení, Ctrl/⌘ + - pro oddálení, Ctrl/⌘ + 0 pro reset.",
       "zoomReset": "Obnovit"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Povolená pravidla příkazů",
     "commandRulesHint": "Vzory glob, které nikdy nevyvolají výzvu k oprávnění. Nebezpečné příkazy se vždy ptají.",
+    "commandAllowlist": "Povolené",
+    "commandDenylist": "Blokované",
+    "allowCommand": "Povolit příkaz",
+    "denyCommand": "Blokovat příkaz",
+    "noDeniedCommandRules": "Žádné blokované příkazy.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + přepínače",
+      "exact": "Přesný"
+    },
+    "websiteAllowlist": "Povolené",
+    "websiteDenylist": "Blokované",
+    "websiteScope": {
+      "domain": "Doména",
+      "glob": "Glob"
+    },
     "noCommandRules": "Zatím žádná pravidla příkazů. Vytvořte je pomocí „vždy povolit“ ve výzvě k oprávnění.",
     "websiteRules": "Webové stránky",
     "websiteRulesHint": "Webové stránky, které asistent může navštěvovat. Pravidla odmítnutí mají přednost před pravidly povolení; prostá doména zahrnuje i její subdomény. Vytvořte je pomocí „vždy povolit“ nebo „vždy odmítnout“ ve výzvě k oprávnění.",
@@ -961,7 +979,22 @@
     "allowAlways": "Vždy povolit",
     "addFolder": "Trvale přidat složku",
     "siteRuleLabel": "Pravidlo webové stránky (doména nebo glob)",
-    "siteRuleHint": "Například: docs.rs povoluje tento web, *.github.com povoluje všechny jeho subdomény."
+    "siteRuleHint": "Například: docs.rs povoluje tento web, *.github.com povoluje všechny jeho subdomény.",
+    "segment": {
+      "allowed": "Povoleno",
+      "needsApproval": "Vyžaduje schválení"
+    },
+    "risk": {
+      "low": "Nízké",
+      "medium": "Střední",
+      "high": "Vysoké",
+      "danger": "Nebezpečí"
+    },
+    "scope": {
+      "title": "Rozsah pravidla",
+      "hint": "Zvolte, jak široce se pravidlo použije."
+    },
+    "allowChat": "Povolit v tomto chatu"
   },
   "question": {
     "title": "Otázka",

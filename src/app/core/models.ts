@@ -267,6 +267,7 @@ export interface Settings {
   maxToolIterations: number;
   autoContinueAllSessions: boolean;
   commandRules: string[];
+  deniedCommandRules: string[];
   allowedWebsites: string[];
   deniedWebsites: string[];
   permissionDefaults: PermissionDefaults;
@@ -297,6 +298,7 @@ export interface Settings {
   windowToggleEnabled: boolean;
   windowToggleHotkey: string;
   windowToggleAction: WindowToggleAction;
+  windowToggleMaximize: boolean;
   zoom: number;
   soundsEnabled: boolean;
   soundVolume: number;
@@ -603,6 +605,27 @@ export interface LiveToolCall {
   anchor: string | null;
 }
 
+export interface CommandSegment {
+  text: string;
+  allowed: boolean;
+  suggestedRule?: string | null;
+  scopeOptions?: CommandScopeOption[];
+}
+
+export type CommandRiskLevel = 'low' | 'medium' | 'high' | 'danger';
+
+export interface CommandRisk {
+  level: CommandRiskLevel;
+  detail: string;
+}
+
+export type CommandScopeKind = 'program' | 'programFlags' | 'exact';
+
+export interface CommandScopeOption {
+  kind: CommandScopeKind;
+  rule: string;
+}
+
 export type PermissionRequestEvent = Extract<StreamEvent, { kind: 'permissionRequest' }>;
 
 export type QuestionRequestEvent = Extract<StreamEvent, { kind: 'questionRequest' }>;
@@ -640,6 +663,9 @@ export type StreamEvent =
       folder: string | null;
       url: string | null;
       suggestedRule: string | null;
+      segments: CommandSegment[];
+      risk: CommandRisk | null;
+      scopeOptions: CommandScopeOption[];
     }
   | { kind: 'permissionResolved'; requestId: string; allowed: boolean }
   | { kind: 'questionRequest'; requestId: string; questions: QuestionItem[] }

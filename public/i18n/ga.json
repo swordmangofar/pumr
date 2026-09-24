@@ -892,6 +892,8 @@
       "behaviourHint": "Cad a dhéanann an t-aicearra nuair a bhíonn an fhuinneog chun tosaigh cheana.",
       "actionHide": "Ceil",
       "actionMinimize": "Íoslaghdaigh",
+      "fillScreen": "Líon an scáileán",
+      "fillScreenHint": "Líonann an fhuinneog a ghlaoitear an monatóir gníomhach in ionad a méid roimhe a choinneáil.",
       "zoom": "Scálú taispeána",
       "zoomHint": "Scálaíonn sé an comhéadan iomlán. Aicearra: Ctrl/⌘ + + chun zúmáil isteach, Ctrl/⌘ + - chun zúmáil amach, Ctrl/⌘ + 0 chun athshocrú.",
       "zoomReset": "Athshocraigh"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Rialacha orduithe ceadaithe",
     "commandRulesHint": "Patrúin glob nach spreagann leid ceada riamh. Fiafraíonn orduithe contúirteacha i gcónaí.",
+    "commandAllowlist": "Ceadaithe",
+    "commandDenylist": "Blocáilte",
+    "allowCommand": "Ceadaigh ordú",
+    "denyCommand": "Blocáil ordú",
+    "noDeniedCommandRules": "Níl aon ordú blocáilte.",
+    "scope": {
+      "program": "Clár",
+      "programFlags": "Clár + roghanna",
+      "exact": "Cruinn"
+    },
+    "websiteAllowlist": "Ceadaithe",
+    "websiteDenylist": "Blocáilte",
+    "websiteScope": {
+      "domain": "Fearann",
+      "glob": "Glob"
+    },
     "noCommandRules": "Níl aon rialacha orduithe fós. Úsáid \"ceadaigh i gcónaí\" i leid ceada chun ceann a chruthú.",
     "websiteRules": "Suíomhanna gréasáin",
     "websiteRulesHint": "Suíomhanna gréasáin a bhféadfaidh an cúntóir cuairt a thabhairt orthu. Buaann rialacha séanta ar rialacha ceada; clúdaíonn fearann lom a fhofhearainn freisin. Úsáid \"ceadaigh i gcónaí\" nó \"séan i gcónaí\" i leid ceada chun ceann a chruthú.",
@@ -961,7 +979,22 @@
     "allowAlways": "Ceadaigh i gcónaí",
     "addFolder": "Cuir fillteán leis go buan",
     "siteRuleLabel": "Riail suímh ghréasáin (fearann nó glob)",
-    "siteRuleHint": "Mar shampla: ceadaíonn docs.rs an suíomh sin, ceadaíonn *.github.com a fhofhearainn uile."
+    "siteRuleHint": "Mar shampla: ceadaíonn docs.rs an suíomh sin, ceadaíonn *.github.com a fhofhearainn uile.",
+    "segment": {
+      "allowed": "Ceadaithe",
+      "needsApproval": "Teastaíonn ceadú"
+    },
+    "risk": {
+      "low": "Íseal",
+      "medium": "Meánach",
+      "high": "Ard",
+      "danger": "Contúirt"
+    },
+    "scope": {
+      "title": "Raon an rialach",
+      "hint": "Roghnaigh cé chomh leathan a bhfuil an riail."
+    },
+    "allowChat": "Ceadaigh sa chomhrá seo"
   },
   "question": {
     "title": "Ceist",

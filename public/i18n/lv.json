@@ -892,6 +892,8 @@
       "behaviourHint": "Ko īsinājumtaustiņš dara, ja logs jau ir priekšplānā.",
       "actionHide": "Paslēpt",
       "actionMinimize": "Minimizēt",
+      "fillScreen": "Aizpildīt ekrānu",
+      "fillScreenHint": "Izsauktais logs aizpilda aktīvo monitoru, nevis saglabā iepriekšējo izmēru.",
       "zoom": "Attēlojuma mērogošana",
       "zoomHint": "Mērogo visu saskarni. Īsinieki: Ctrl/⌘ + + tuvināšanai, Ctrl/⌘ + - tālināšanai, Ctrl/⌘ + 0 atiestatīšanai.",
       "zoomReset": "Atiestatīt"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Atļautie komandu noteikumi",
     "commandRulesHint": "Glob modeļi, kas nekad neizraisa atļaujas pieprasījumu. Bīstamas komandas vienmēr jautā.",
+    "commandAllowlist": "Atļautas",
+    "commandDenylist": "Bloķētas",
+    "allowCommand": "Atļaut komandu",
+    "denyCommand": "Bloķēt komandu",
+    "noDeniedCommandRules": "Nav bloķētu komandu.",
+    "scope": {
+      "program": "Programma",
+      "programFlags": "Programma + karodziņi",
+      "exact": "Precīza"
+    },
+    "websiteAllowlist": "Atļautas",
+    "websiteDenylist": "Bloķētas",
+    "websiteScope": {
+      "domain": "Domēns",
+      "glob": "Glob"
+    },
     "noCommandRules": "Vēl nav komandu noteikumu. Izmantojiet „atļaut vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
     "websiteRules": "Tīmekļa vietnes",
     "websiteRulesHint": "Vietnes, ko asistents drīkst apmeklēt. Aizlieguma noteikumi uzvar atļaujas noteikumus; vienkāršs domēns aptver arī tā apakšdomēnus. Izmantojiet „atļaut vienmēr“ vai „aizliegt vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
@@ -961,7 +979,22 @@
     "allowAlways": "Atļaut vienmēr",
     "addFolder": "Pievienot mapi pastāvīgi",
     "siteRuleLabel": "Vietnes noteikums (domēns vai glob)",
-    "siteRuleHint": "Piemēram: docs.rs atļauj šo vietni, *.github.com atļauj visus tās apakšdomēnus."
+    "siteRuleHint": "Piemēram: docs.rs atļauj šo vietni, *.github.com atļauj visus tās apakšdomēnus.",
+    "segment": {
+      "allowed": "Atļauts",
+      "needsApproval": "Nepieciešams apstiprinājums"
+    },
+    "risk": {
+      "low": "Zems",
+      "medium": "Vidējs",
+      "high": "Augsts",
+      "danger": "Bīstami"
+    },
+    "scope": {
+      "title": "Noteikuma tvērums",
+      "hint": "Izvēlies, cik plaši noteikums attiecas."
+    },
+    "allowChat": "Atļaut šajā tērzēšanā"
   },
   "question": {
     "title": "Jautājums",

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "pumr",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "identifier": "dev.pumr.app",
   "build": {
     "frontendDist": "../dist/pumr/browser",

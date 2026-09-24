@@ -40,6 +40,7 @@ impl AppState {
         let marketplace = MarketplaceService::new(http.clone(), data_dir.join("marketplaces"));
         let permissions = Arc::new(LivePermissions::new(
             settings.permissions.command_rules.clone(),
+            settings.permissions.denied_command_rules.clone(),
             settings.permissions.extra_folders.clone(),
             settings.permissions.allowed_websites.clone(),
             settings.permissions.denied_websites.clone(),
@@ -70,6 +71,7 @@ impl AppState {
     pub fn set_settings(&self, settings: Settings) {
         self.permissions.replace(
             settings.permissions.command_rules.clone(),
+            settings.permissions.denied_command_rules.clone(),
             settings.permissions.extra_folders.clone(),
             settings.permissions.allowed_websites.clone(),
             settings.permissions.denied_websites.clone(),

@@ -11,17 +11,35 @@ import {
   viewChildren,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { PermissionDefaultAction, PermissionRequestEvent } from '../core/models';
+import {
+  CommandRiskLevel,
+  CommandScopeOption,
+  PermissionDefaultAction,
+  PermissionRequestEvent,
+} from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 
 type PermissionDecision = 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always';
+
+type CommandPartStatus = 'allowed' | 'pending' | 'plain';
+
+interface CommandPart {
+  text: string;
+  status: CommandPartStatus;
+}
 
 interface PermissionAction {
   id: string;
   labelKey: string;
   decision: PermissionDecision;
   variant: 'danger' | 'neutral' | 'primary';
+}
+
+interface SegmentScope {
+  index: number;
+  text: string;
+  options: CommandScopeOption[];
 }
 
 @Component({
@@ -52,15 +70,47 @@ interface PermissionAction {
             {{ ('permission.kind.' + request().promptKind) | transloco }}
           </span>
           <h2 class="min-w-0 flex-1 text-sm font-semibold text-white">{{ request().title }}</h2>
+          @if (request().risk; as risk) {
+            <span class="group relative shrink-0">
+              <span
+                tabindex="0"
+                class="inline-flex cursor-help items-center rounded-full px-2.5 py-0.5 text-xs font-medium uppercase tracking-wider outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                [class]="riskClass(risk.level)"
+              >
+                {{ ('permission.risk.' + risk.level) | transloco }}
+              </span>
+              <span
+                class="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-64 rounded-lg border border-white/10 bg-navy px-3 py-2 text-xs font-normal normal-case tracking-normal text-mist shadow-xl group-hover:block group-focus-within:block"
+              >
+                {{ risk.detail }}
+              </span>
+            </span>
+          }
         </header>
 
         <div class="space-y-3 px-5 py-3">
           <p class="text-sm leading-relaxed text-mist/60">{{ request().detail }}</p>
 
           @if (request().command; as command) {
-            <pre
-              class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
-              >{{ command }}</pre>
+            @if (commandParts(); as parts) {
+              <pre
+                class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
+              >@for (part of parts; track $index) {<span [class]="partClass(part.status)">{{ part.text }}</span>}</pre>
+              <div class="flex flex-wrap items-center gap-3 text-xs text-mist/40">
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="h-2 w-2 rounded-full bg-mist/40"></span>
+                  {{ 'permission.segment.allowed' | transloco }}
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="h-2 w-2 rounded-full bg-accent"></span>
+                  {{ 'permission.segment.needsApproval' | transloco }}
+                </span>
+              </div>
+            } @else {
+              <pre
+                class="max-h-40 overflow-auto rounded-xl border border-white/10 bg-ink/60 px-4 py-3 font-mono text-sm text-mist"
+                >{{ command }}</pre>
+            }
           }
 
           @if (request().folder; as folder) {
@@ -79,10 +129,10 @@ interface PermissionAction {
             </div>
           }
 
-          @if (request().promptKind === 'command' || isWeb()) {
+          @if (isWeb()) {
             <div>
               <label class="mb-1.5 block text-sm text-mist/50">
-                {{ (isWeb() ? 'permission.siteRuleLabel' : 'permission.ruleLabel') | transloco }}
+                {{ 'permission.siteRuleLabel' | transloco }}
               </label>
               <input
                 class="field w-full rounded-xl px-4 py-2 font-mono text-sm"
@@ -90,7 +140,80 @@ interface PermissionAction {
                 (input)="onRuleInput($event)"
               />
               <p class="mt-1.5 text-xs text-mist/30">
-                {{ (isWeb() ? 'permission.siteRuleHint' : 'permission.ruleHint') | transloco }}
+                {{ 'permission.siteRuleHint' | transloco }}
+              </p>
+            </div>
+          } @else if (request().promptKind === 'command' && segmentScopes().length > 0) {
+            <div>
+              <label class="mb-1.5 block text-sm text-mist/50">
+                {{ 'permission.scope.title' | transloco }}
+              </label>
+              <div class="space-y-3">
+                @for (group of segmentScopes(); track group.index) {
+                  <div>
+                    <code class="mb-1.5 block truncate font-mono text-xs text-mist/70">{{
+                      group.text
+                    }}</code>
+                    <div class="space-y-1.5">
+                      @for (option of group.options; track option.rule) {
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
+                          [class]="segmentScopeClass(group.index, option.rule)"
+                          (click)="selectSegmentRule(group.index, option.rule)"
+                        >
+                          <span
+                            class="h-2.5 w-2.5 shrink-0 rounded-full"
+                            [class]="
+                              selectedSegmentRule(group.index) === option.rule
+                                ? 'bg-accent'
+                                : 'bg-white/20'
+                            "
+                          ></span>
+                          <span class="shrink-0 text-xs text-mist/50">
+                            {{ ('settings.scope.' + option.kind) | transloco }}
+                          </span>
+                          <code class="ml-auto truncate font-mono text-xs text-mist">{{
+                            option.rule
+                          }}</code>
+                        </button>
+                      }
+                    </div>
+                  </div>
+                }
+              </div>
+              <p class="mt-1.5 text-xs text-mist/30">
+                {{ 'permission.scope.hint' | transloco }}
+              </p>
+            </div>
+          } @else if (request().promptKind === 'command' && scopeOptions().length > 0) {
+            <div>
+              <label class="mb-1.5 block text-sm text-mist/50">
+                {{ 'permission.scope.title' | transloco }}
+              </label>
+              <div class="space-y-1.5">
+                @for (option of scopeOptions(); track option.rule) {
+                  <button
+                    type="button"
+                    class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
+                    [class]="scopeOptionClass(option.rule)"
+                    (click)="selectedScopeRule.set(option.rule)"
+                  >
+                    <span
+                      class="h-2.5 w-2.5 shrink-0 rounded-full"
+                      [class]="selectedScopeRule() === option.rule ? 'bg-accent' : 'bg-white/20'"
+                    ></span>
+                    <span class="shrink-0 text-xs text-mist/50">
+                      {{ ('settings.scope.' + option.kind) | transloco }}
+                    </span>
+                    <code class="ml-auto truncate font-mono text-xs text-mist">{{
+                      option.rule
+                    }}</code>
+                  </button>
+                }
+              </div>
+              <p class="mt-1.5 text-xs text-mist/30">
+                {{ 'permission.scope.hint' | transloco }}
               </p>
             </div>
           }
@@ -118,6 +241,7 @@ export class PermissionOverlay {
   protected readonly workspace = inject(WorkspaceService);
   private readonly settings = inject(SettingsService);
   protected readonly rule = signal('');
+  protected readonly selectedScopeRule = signal('');
   protected readonly activeIndex = signal(0);
 
   private readonly actionButtons = viewChildren<ElementRef<HTMLButtonElement>>('actionButton');
@@ -126,6 +250,58 @@ export class PermissionOverlay {
   protected readonly isWeb = computed(() => {
     const kind = this.request().promptKind;
     return kind === 'web' || kind === 'websearch';
+  });
+
+  protected readonly scopeOptions = computed(() => this.request().scopeOptions ?? []);
+
+  protected readonly selectedSegmentRules = signal<Record<number, string>>({});
+
+  /// One entry per part of a compound command that still needs approval, each
+  /// carrying its own allow/deny scopes so the user can grant a rule per part.
+  protected readonly segmentScopes = computed<SegmentScope[]>(() => {
+    const segments = this.request().segments ?? [];
+    if (segments.length < 2) {
+      return [];
+    }
+    const groups: SegmentScope[] = [];
+    segments.forEach((segment, index) => {
+      if (!segment.allowed && (segment.scopeOptions?.length ?? 0) > 0) {
+        groups.push({
+          index,
+          text: segment.text.trim(),
+          options: segment.scopeOptions ?? [],
+        });
+      }
+    });
+    return groups;
+  });
+
+  protected readonly commandParts = computed<CommandPart[] | null>(() => {
+    const command = this.request().command;
+    const segments = this.request().segments;
+    if (!command || segments.length < 2) {
+      return null;
+    }
+    const parts: CommandPart[] = [];
+    let cursor = 0;
+    for (const segment of segments) {
+      const index = command.indexOf(segment.text, cursor);
+      if (index < 0) {
+        return null;
+      }
+      if (index > cursor) {
+        parts.push({ text: command.slice(cursor, index), status: 'plain' });
+      }
+      parts.push({
+        text: command.slice(index, index + segment.text.length),
+        status: segment.allowed ? 'allowed' : 'pending',
+      });
+      cursor = index + segment.text.length;
+    }
+    if (cursor < command.length) {
+      parts.push({ text: command.slice(cursor), status: 'plain' });
+    }
+    return parts;
   });
 
   private readonly defaultAction = computed<PermissionDefaultAction>(() => {
@@ -145,6 +321,35 @@ export class PermissionOverlay {
 
   protected readonly actions = computed<PermissionAction[]>(() => {
     const kind = this.request().promptKind;
+    if (kind === 'command') {
+      return [
+        { id: 'deny', labelKey: 'permission.deny', decision: 'deny', variant: 'danger' },
+        {
+          id: 'deny_always',
+          labelKey: 'permission.denyAlways',
+          decision: 'deny_always',
+          variant: 'danger',
+        },
+        {
+          id: 'allow',
+          labelKey: 'permission.allowOnce',
+          decision: 'allow_once',
+          variant: 'neutral',
+        },
+        {
+          id: 'allow_session',
+          labelKey: 'permission.allowChat',
+          decision: 'allow_session',
+          variant: 'neutral',
+        },
+        {
+          id: 'allow_always',
+          labelKey: 'permission.allowAlways',
+          decision: 'allow_always',
+          variant: 'primary',
+        },
+      ];
+    }
     const session = this.defaultAction() === 'session';
     const actions: PermissionAction[] = [
       { id: 'deny', labelKey: 'permission.deny', decision: 'deny', variant: 'danger' },
@@ -181,6 +386,20 @@ export class PermissionOverlay {
   constructor() {
     effect(() => {
       this.rule.set(this.request().suggestedRule ?? '');
+      const selection: Record<number, string> = {};
+      for (const group of this.segmentScopes()) {
+        const preferred =
+          group.options.find((option) => option.kind === 'exact') ??
+          group.options[group.options.length - 1];
+        if (preferred) {
+          selection[group.index] = preferred.rule;
+        }
+      }
+      this.selectedSegmentRules.set(selection);
+      const options = this.scopeOptions();
+      const preferred =
+        options.find((option) => option.kind === 'exact') ?? options[options.length - 1];
+      this.selectedScopeRule.set(preferred?.rule ?? '');
     });
 
     afterRenderEffect(() => {
@@ -197,6 +416,63 @@ export class PermissionOverlay {
       this.activeIndex.set(index);
       buttons[index].nativeElement.focus();
     });
+  }
+
+  protected riskClass(level: CommandRiskLevel): string {
+    switch (level) {
+      case 'danger':
+        return 'bg-rose-500/15 text-rose-300';
+      case 'high':
+        return 'bg-orange-500/15 text-orange-300';
+      case 'medium':
+        return 'bg-amber-500/15 text-amber-300';
+      default:
+        return 'bg-sky-500/15 text-sky-300';
+    }
+  }
+
+  protected partClass(status: CommandPartStatus): string {
+    switch (status) {
+      case 'allowed':
+        return 'text-mist/40';
+      case 'pending':
+        return 'rounded bg-accent/10 text-accent';
+      default:
+        return '';
+    }
+  }
+
+  protected scopeOptionClass(rule: string): string {
+    return this.selectedScopeRule() === rule
+      ? 'border-accent/60 bg-accent/10'
+      : 'border-white/10 hover:bg-white/5';
+  }
+
+  protected selectedSegmentRule(index: number): string {
+    return this.selectedSegmentRules()[index] ?? '';
+  }
+
+  protected selectSegmentRule(index: number, rule: string): void {
+    this.selectedSegmentRules.update((selection) => ({ ...selection, [index]: rule }));
+  }
+
+  protected segmentScopeClass(index: number, rule: string): string {
+    return this.selectedSegmentRule(index) === rule
+      ? 'border-accent/60 bg-accent/10'
+      : 'border-white/10 hover:bg-white/5';
+  }
+
+  /// The rules the allow/deny buttons should persist: one per asking part of a
+  /// compound command, otherwise the single selected scope.
+  private chosenRules(): string[] {
+    const groups = this.segmentScopes();
+    if (groups.length > 0) {
+      return groups
+        .map((group) => this.selectedSegmentRule(group.index))
+        .filter((rule) => rule.length > 0);
+    }
+    const single = this.selectedScopeRule();
+    return single ? [single] : [];
   }
 
   protected actionClass(action: PermissionAction, active: boolean): string {
@@ -271,12 +547,12 @@ export class PermissionOverlay {
   }
 
   protected run(action: PermissionAction): void {
-    if (action.decision === 'allow_always') {
-      void this.workspace.resolvePermission('allow_always', this.rule());
+    if (action.decision === 'allow_always' || action.decision === 'deny_always') {
+      void this.workspace.resolvePermission(action.decision, this.chosenRules());
       return;
     }
-    if (action.decision === 'deny_always') {
-      void this.workspace.resolvePermission('deny_always', this.rule());
+    if (action.decision === 'allow_session' && this.request().promptKind === 'command') {
+      void this.workspace.resolvePermission('allow_session', this.chosenRules());
       return;
     }
     void this.workspace.resolvePermission(action.decision);

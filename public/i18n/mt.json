@@ -892,6 +892,8 @@
       "behaviourHint": "X'jagħmel is-shortcut meta t-tieqa tkun diġà quddiem.",
       "actionHide": "Aħbi",
       "actionMinimize": "Minimizza",
+      "fillScreen": "Imla l-iskrin",
+      "fillScreenHint": "It-tieqa msejħa timla l-monitor attiv minflok ma żżomm id-daqs preċedenti.",
       "zoom": "Skalar tal-wiri",
       "zoomHint": "Iskala l-interfaċċa kollha. Shortcut: Ctrl/⌘ + + biex tkabbar, Ctrl/⌘ + - biex tnaqqas, Ctrl/⌘ + 0 biex terġa' tissettja.",
       "zoomReset": "Erġa' ssettja"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Regoli tal-kmandi permessi",
     "commandRulesHint": "Mudelli glob li qatt ma jqanqlu talba għall-permess. Kmandi perikolużi dejjem jistaqsu.",
+    "commandAllowlist": "Permessi",
+    "commandDenylist": "Imblukkati",
+    "allowCommand": "Ippermetti kmand",
+    "denyCommand": "Imblokka kmand",
+    "noDeniedCommandRules": "L-ebda kmand imblukkat.",
+    "scope": {
+      "program": "Programm",
+      "programFlags": "Programm + flags",
+      "exact": "Eżatt"
+    },
+    "websiteAllowlist": "Permessi",
+    "websiteDenylist": "Imblukkati",
+    "websiteScope": {
+      "domain": "Dominju",
+      "glob": "Glob"
+    },
     "noCommandRules": "Għad m'hemmx regoli tal-kmandi. Uża \"ħalli dejjem\" f'talba għall-permess biex toħloq waħda.",
     "websiteRules": "Siti web",
     "websiteRulesHint": "Siti web li l-assistent jista' jżur. Regoli ta' ċaħda jirbħu fuq regoli ta' permess; dominju sempliċi jkopri wkoll is-sottdominji tiegħu. Uża \"ħalli dejjem\" jew \"iċħad dejjem\" f'talba għall-permess biex toħloq waħda.",
@@ -961,7 +979,22 @@
     "allowAlways": "Ħalli dejjem",
     "addFolder": "Żid folder b'mod permanenti",
     "siteRuleLabel": "Regola tas-sit web (dominju jew glob)",
-    "siteRuleHint": "Pereżempju: docs.rs jippermetti dak is-sit, *.github.com jippermetti s-sottdominji kollha tiegħu."
+    "siteRuleHint": "Pereżempju: docs.rs jippermetti dak is-sit, *.github.com jippermetti s-sottdominji kollha tiegħu.",
+    "segment": {
+      "allowed": "Permess",
+      "needsApproval": "Jeħtieġ approvazzjoni"
+    },
+    "risk": {
+      "low": "Baxx",
+      "medium": "Medju",
+      "high": "Għoli",
+      "danger": "Periklu"
+    },
+    "scope": {
+      "title": "Ambitu tar-regola",
+      "hint": "Agħżel kemm tapplika wiesgħa r-regola."
+    },
+    "allowChat": "Ippermetti f’dan iċ-chat"
   },
   "question": {
     "title": "Mistoqsija",

@@ -779,18 +779,7 @@ export class WorkspaceService {
     if (!next) {
       return;
     }
-    void this.dispatchQueued(sessionId, next);
-  }
-
-  /// Sends the head of a session's queue and removes it only once the send has
-  /// actually started, so a racing stream or a removed session cannot make a
-  /// queued prompt vanish silently.
-  private async dispatchQueued(sessionId: string, args: SendMessageArgs): Promise<void> {
-    const dispatched = await this.send(args);
-    if (!dispatched) {
-      return;
-    }
-    this.queueService.removeFirst(sessionId, args);
+    void this.send(next);
   }
 
   async send(args: SendMessageArgs): Promise<boolean> {
@@ -798,6 +787,10 @@ export class WorkspaceService {
     if (!session || this.isStreaming(args.sessionId)) {
       return false;
     }
+    // Consume the head of the queue as soon as the send actually starts, so a
+    // dispatched prompt leaves the queue immediately instead of lingering until
+    // the whole turn (and its refreshes) finishes.
+    this.queueService.removeFirst(args.sessionId, args);
     const now = Date.now();
     if (!args.resume) {
       this.appendMessage(args.sessionId, {
@@ -1010,19 +1003,30 @@ export class WorkspaceService {
 
   async resolvePermission(
     decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
-    ruleOverride?: string,
+    rulesOverride?: string[],
   ): Promise<void> {
     const request = this.permission();
     if (!request) {
       return;
     }
+    const rules =
+      rulesOverride && rulesOverride.length > 0
+        ? rulesOverride
+        : request.suggestedRule
+          ? [request.suggestedRule]
+          : null;
     await api.resolvePermission(
       request.requestId,
       decision,
-      ruleOverride ?? request.suggestedRule,
+      rules,
       request.folder,
       request.promptKind,
     );
+    // Allow-always/deny-always persist a rule in settings; refresh so the
+    // settings lists reflect it immediately.
+    if (decision === 'allow_always' || decision === 'deny_always') {
+      await this.settings.reload();
+    }
     this.permissionState.update((state) =>
       state.filter((entry) => entry.requestId !== request.requestId),
     );

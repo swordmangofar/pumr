@@ -892,6 +892,8 @@
       "behaviourHint": "Ce face comanda rapidă când fereastra este deja în față.",
       "actionHide": "Ascunde",
       "actionMinimize": "Minimizează",
+      "fillScreen": "Umple ecranul",
+      "fillScreenHint": "Fereastra apelată umple monitorul activ în loc să păstreze dimensiunea anterioară.",
       "zoom": "Scalare afișare",
       "zoomHint": "Scalează întreaga interfață. Scurtătură: Ctrl/⌘ + + pentru mărire, Ctrl/⌘ + - pentru micșorare, Ctrl/⌘ + 0 pentru resetare.",
       "zoomReset": "Resetează"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Reguli de comenzi permise",
     "commandRulesHint": "Modele glob care nu declanșează niciodată o cerere de permisiune. Comenzile periculoase întreabă întotdeauna.",
+    "commandAllowlist": "Permise",
+    "commandDenylist": "Blocate",
+    "allowCommand": "Permite comanda",
+    "denyCommand": "Blochează comanda",
+    "noDeniedCommandRules": "Nicio comandă blocată.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + opțiuni",
+      "exact": "Exact"
+    },
+    "websiteAllowlist": "Permise",
+    "websiteDenylist": "Blocate",
+    "websiteScope": {
+      "domain": "Domeniu",
+      "glob": "Glob"
+    },
     "noCommandRules": "Nicio regulă de comenzi încă. Folosește \"permite mereu\" într-o cerere de permisiune pentru a crea una.",
     "websiteRules": "Site-uri web",
     "websiteRulesHint": "Site-uri pe care asistentul le poate vizita. Regulile de interdicție prevalează asupra celor de permisiune; un domeniu simplu acoperă și subdomeniile sale. Folosește \"permite mereu\" sau \"interzice mereu\" într-o cerere de permisiune pentru a crea una.",
@@ -961,7 +979,22 @@
     "allowAlways": "Permite mereu",
     "addFolder": "Adaugă folder permanent",
     "siteRuleLabel": "Regulă de site (domeniu sau glob)",
-    "siteRuleHint": "De exemplu: docs.rs permite acel site, *.github.com permite toate subdomeniile sale."
+    "siteRuleHint": "De exemplu: docs.rs permite acel site, *.github.com permite toate subdomeniile sale.",
+    "segment": {
+      "allowed": "Permis",
+      "needsApproval": "Necesită aprobare"
+    },
+    "risk": {
+      "low": "Scăzut",
+      "medium": "Mediu",
+      "high": "Ridicat",
+      "danger": "Pericol"
+    },
+    "scope": {
+      "title": "Domeniul regulii",
+      "hint": "Alege cât de larg se aplică regula."
+    },
+    "allowChat": "Permite în acest chat"
   },
   "question": {
     "title": "Întrebare",

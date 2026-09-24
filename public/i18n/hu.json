@@ -892,6 +892,8 @@
       "behaviourHint": "Mit tesz a gyorsbillentyű, ha az ablak már előtérben van.",
       "actionHide": "Elrejtés",
       "actionMinimize": "Kis méret",
+      "fillScreen": "Képernyő kitöltése",
+      "fillScreenHint": "Az előhívott ablak kitölti az aktív monitort a korábbi méret megtartása helyett.",
       "zoom": "Megjelenítés méretezése",
       "zoomHint": "A teljes felületet méretezi. Gyorsbillentyű: Ctrl/⌘ + + nagyításhoz, Ctrl/⌘ + - kicsinyítéshez, Ctrl/⌘ + 0 visszaállításhoz.",
       "zoomReset": "Visszaállítás"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Engedélyezett parancsszabályok",
     "commandRulesHint": "Glob-minták, amelyek soha nem váltanak ki engedélykérést. A veszélyes parancsok mindig kérdeznek.",
+    "commandAllowlist": "Engedélyezett",
+    "commandDenylist": "Blokkolt",
+    "allowCommand": "Parancs engedélyezése",
+    "denyCommand": "Parancs blokkolása",
+    "noDeniedCommandRules": "Nincsenek blokkolt parancsok.",
+    "scope": {
+      "program": "Program",
+      "programFlags": "Program + kapcsolók",
+      "exact": "Pontos"
+    },
+    "websiteAllowlist": "Engedélyezett",
+    "websiteDenylist": "Blokkolt",
+    "websiteScope": {
+      "domain": "Domain",
+      "glob": "Glob"
+    },
     "noCommandRules": "Még nincsenek parancsszabályok. Hozzon létre egyet a „mindig engedélyez” lehetőséggel az engedélykérésben.",
     "websiteRules": "Webhelyek",
     "websiteRulesHint": "Webhelyek, amelyeket az asszisztens felkereshet. A tiltó szabályok elsőbbséget élveznek az engedélyező szabályokkal szemben; egy sima domain a aldomainjeit is lefedi. Hozzon létre egyet a „mindig engedélyez” vagy „mindig tilt” lehetőséggel az engedélykérésben.",
@@ -961,7 +979,22 @@
     "allowAlways": "Mindig engedélyez",
     "addFolder": "Mappa végleges hozzáadása",
     "siteRuleLabel": "Webhely szabálya (domain vagy glob)",
-    "siteRuleHint": "Például: a docs.rs engedélyezi azt az oldalt, a *.github.com engedélyezi annak összes aldomainjét."
+    "siteRuleHint": "Például: a docs.rs engedélyezi azt az oldalt, a *.github.com engedélyezi annak összes aldomainjét.",
+    "segment": {
+      "allowed": "Engedélyezett",
+      "needsApproval": "Jóváhagyást igényel"
+    },
+    "risk": {
+      "low": "Alacsony",
+      "medium": "Közepes",
+      "high": "Magas",
+      "danger": "Veszély"
+    },
+    "scope": {
+      "title": "Szabály hatóköre",
+      "hint": "Válaszd ki, milyen szélesen érvényes a szabály."
+    },
+    "allowChat": "Engedélyezés ebben a csevegésben"
   },
   "question": {
     "title": "Kérdés",

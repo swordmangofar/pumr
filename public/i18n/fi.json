@@ -892,6 +892,8 @@
       "behaviourHint": "Mitä pikanäppäin tekee, kun ikkuna on jo edessä.",
       "actionHide": "Piilota",
       "actionMinimize": "Pienennä",
+      "fillScreen": "Täytä näyttö",
+      "fillScreenHint": "Kutsuttu ikkuna täyttää aktiivisen näytön säilyttämättä aiempaa kokoa.",
       "zoom": "Näytön skaalaus",
       "zoomHint": "Skaalaa koko käyttöliittymän. Pikakuvake: Ctrl/⌘ + + suurentaa, Ctrl/⌘ + - pienentää, Ctrl/⌘ + 0 palauttaa.",
       "zoomReset": "Palauta"
@@ -931,6 +933,22 @@
     },
     "commandRules": "Sallitut komentosäännöt",
     "commandRulesHint": "Glob-kuviot, jotka eivät koskaan laukaise lupakyselyä. Vaaralliset komennot kysyvät aina.",
+    "commandAllowlist": "Sallitut",
+    "commandDenylist": "Estetyt",
+    "allowCommand": "Salli komento",
+    "denyCommand": "Estä komento",
+    "noDeniedCommandRules": "Ei estettyjä komentoja.",
+    "scope": {
+      "program": "Ohjelma",
+      "programFlags": "Ohjelma + valitsimet",
+      "exact": "Tarkka"
+    },
+    "websiteAllowlist": "Sallitut",
+    "websiteDenylist": "Estetyt",
+    "websiteScope": {
+      "domain": "Verkkotunnus",
+      "glob": "Glob"
+    },
     "noCommandRules": "Ei vielä komentosääntöjä. Luo sellainen käyttämällä \"salli aina\" -vaihtoehtoa lupakyselyssä.",
     "websiteRules": "Verkkosivustot",
     "websiteRulesHint": "Verkkosivustot, joilla avustaja voi vierailla. Estosäännöt voittavat sallintasäännöt; pelkkä verkkotunnus kattaa myös sen aliverkkotunnukset. Luo sellainen käyttämällä \"salli aina\" tai \"estä aina\" -vaihtoehtoa lupakyselyssä.",
@@ -961,7 +979,22 @@
     "allowAlways": "Salli aina",
     "addFolder": "Lisää kansio pysyvästi",
     "siteRuleLabel": "Verkkosivustosääntö (verkkotunnus tai glob)",
-    "siteRuleHint": "Esimerkiksi: docs.rs sallii kyseisen sivuston, *.github.com sallii kaikki sen aliverkkotunnukset."
+    "siteRuleHint": "Esimerkiksi: docs.rs sallii kyseisen sivuston, *.github.com sallii kaikki sen aliverkkotunnukset.",
+    "segment": {
+      "allowed": "Sallittu",
+      "needsApproval": "Vaatii hyväksynnän"
+    },
+    "risk": {
+      "low": "Matala",
+      "medium": "Keskitaso",
+      "high": "Korkea",
+      "danger": "Vaara"
+    },
+    "scope": {
+      "title": "Säännön laajuus",
+      "hint": "Valitse, kuinka laajasti sääntöä sovelletaan."
+    },
+    "allowChat": "Salli tässä keskustelussa"
   },
   "question": {
     "title": "Kysymys",
