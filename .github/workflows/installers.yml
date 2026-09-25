@@ -63,7 +63,24 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-alsa
+
+      # The AppImage ships its own GStreamer core, so WebKitGTK audio needs the
+      # plugins bundled next to it (bundleMediaFramework). Only copy the ones
+      # listed, not everything installed on the runner.
+      - name: Stage GStreamer plugins for the AppImage
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/gstreamer-plugins"
+          mkdir -p "$dir"
+          sed 's/#.*//' src-tauri/appimage/gstreamer-plugins.txt | while read -r plugin _; do
+            [ -z "$plugin" ] || cp "/usr/lib/x86_64-linux-gnu/gstreamer-1.0/$plugin" "$dir/"
+          done
+          echo "GSTREAMER_PLUGINS_DIR=$dir" >> "$GITHUB_ENV"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
@@ -121,3 +138,7 @@ jobs:
           tauriScript: pnpm exec tauri
           assetNamePattern: pumr-[version]-${{ matrix.osLabel }}-${{ matrix.archLabel }}[setup][ext]
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - name: Verify AppImage
+        if: startsWith(matrix.os, 'ubuntu')
+        run: bash src-tauri/appimage/verify.sh src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage

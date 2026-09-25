@@ -44,6 +44,11 @@
     "android": {
       "debugApplicationIdSuffix": ".debug"
     },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
     "macOS": {
       "signingIdentity": "-"
     }
