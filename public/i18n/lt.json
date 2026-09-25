@@ -128,7 +128,14 @@
       "banner": "Vykdoma {{ operation }}",
       "files": "{{ count }} failai su konfliktais",
       "continue": "Tęsti",
-      "abort": "Nutraukti"
+      "abort": "Nutraukti",
+      "resolveFirst": "Pirmiausia išspręskite visus konfliktus ir pridėkite failus į stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autentifikavimas nepavyko. Patikrinkite Git prisijungimo duomenis.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Perjungti į naują šaką",
       "confirm": "Patvirtinti",
       "mergeConfirm": "Sujungti '{{branch}}' į '{{current}}'?",
+      "rebaseConfirm": "Atlikti '{{current}}' rebase ant '{{branch}}'? Bus perrašyti šakos '{{current}}' commitai.",
       "deleteConfirm": "Ištrinti šaką '{{branch}}'? To atšaukti negalima.",
       "deleteRemoteConfirm": "Ištrinti nuotolinę šaką '{{branch}}'? Tai paveiks nuotolinę saugyklą.",
+      "forceDeleteConfirm": "Šaka '{{branch}}' nėra visiškai sujungta. Vis tiek ištrinti? Jos nesujungti commitai bus prarasti.",
       "rebaseHint": "Pertvarkykite commit'us ir kiekvienam pasirinkite veiksmą. Rebase vykdomas nuo seniausio iki naujausio.",
-      "nothingToRebase": "Nėra commit'ų, kurių rebase atlikti."
+      "nothingToRebase": "Nėra commit'ų, kurių rebase atlikti.",
+      "rebaseActions": {
+        "pick": "Palikti (pick)",
+        "squash": "Sujungti (squash)",
+        "fixup": "Įlieti (fixup)",
+        "drop": "Atmesti (drop)"
+      },
+      "rebaseSquashFirst": "Pirmojo commit'o negalima sujungti (squash ar fixup): nėra ankstesnio commit'o, su kuriuo jį būtų galima sujungti.",
+      "moveUp": "Perkelti aukštyn",
+      "moveDown": "Perkelti žemyn"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Nė vienas veiksmas neatitinka dabartinių filtrų.",
     "view": {
       "timeline": "Laiko juosta",
-      "branches": "Šakos"
+      "branches": "Šakos",
+      "permissions": "Leidimai"
     },
     "filters": {
       "type": "Tipas",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Seanso nepaisymas",
       "default": "Numatytieji nustatymai"
+    },
+    "permissions": {
+      "empty": "Šiam pokalbiui dar neužfiksuota jokių leidimų sprendimų.",
+      "clear": "Išvalyti žurnalą",
+      "clearConfirm": "Spustelėkite dar kartą, kad išvalytumėte",
+      "allowed": "Leista",
+      "denied": "Atmesta",
+      "why": "Kodėl:",
+      "rule": "Taisyklė:",
+      "filters": {
+        "auto": "Leista neklausiant",
+        "asked": "Paklausta",
+        "denied": "Atmesta"
+      },
+      "by": {
+        "auto": "Automatiškai",
+        "rule": "Draudimo taisyklė",
+        "user": "Jūs",
+        "grant": "Apimta naujo leidimo",
+        "cascade": "Atmesta kartu su kita užklausa",
+        "stopped": "Sustabdyta",
+        "timeout": "Baigėsi laikas",
+        "cancelled": "Atšaukta"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Nėra blokuotų komandų.",
     "scope": {
       "program": "Programa",
+      "subcommand": "Programa + subkomanda",
       "programFlags": "Programa + parametrai",
       "exact": "Tiksli"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Komandų taisyklių dar nėra. Leidimo prašyme naudokite „leisti visada“, kad sukurtumėte vieną.",
     "websiteRules": "Svetainės",
-    "websiteRulesHint": "Svetainės, kurias asistentas gali lankyti. Draudimo taisyklės turi viršenybę prieš leidimo taisykles; paprastas domenas apima ir jo subdomenus. Leidimo prašyme naudokite „leisti visada“ arba „uždrausti visada“, kad sukurtumėte vieną.",
+    "websiteRulesHint": "Svetainės, kurias asistentas gali lankyti savo žiniatinklio įrankiais arba komandomis, tokiomis kaip curl, git ir ssh. Draudimo taisyklės turi viršenybę prieš leidimo taisykles; paprastas domenas apima ir jo subdomenus. Leidimo prašyme naudokite „leisti visada“ arba „uždrausti visada“, kad sukurtumėte vieną.",
     "permissionPrompts": "Leidimų prašymai",
     "permissionPromptsHint": "Pasirink, ką pagrindinis leidimo mygtukas daro pagal numatytuosius nustatymus. Leisti vieną kartą patvirtina vieną prašymą; leisti šiai sesijai įsimena prieigą prie aplanko iki programos paleidimo iš naujo.",
     "autoApprove": "Automatinis patvirtinimas",
-    "autoApproveHint": "Praleidžia užklausas darbui, kurį asistentas gali įrodyti kaip saugų. Pavojingos komandos, keliai už projekto ribų ir jautrūs failai visada klausia.",
+    "autoApproveHint": "Praleidžia užklausas darbui, kurį asistentas gali įrodyti kaip saugų. Pavojingos komandos, įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, keliai už projekto ribų ir jautrūs failai visada klausia.",
     "autoApproveReadOnly": "Tik skaitymo komandos",
     "autoApproveReadOnlyHint": "Leidžia patikros komandas, tokias kaip ls, grep ir git status, neklausdamas.",
     "autoApprovePackageScripts": "Paketų tvarkyklės ir kūrimo įrankiai",
-    "autoApprovePackageScriptsHint": "Leidžia pnpm, npm, yarn, bun, ng, npx, make ir panašius įrankius, kai niekas nenurodo už projekto ribų.",
+    "autoApprovePackageScriptsHint": "Leidžia pnpm, npm, yarn, bun, ng, make ir panašius įrankius, kai niekas nenurodo už projekto ribų.",
     "autoApproveProjectExecutables": "Projekto vykdomieji failai",
     "autoApproveProjectExecutablesHint": "Leidžia vykdomuosius failus projekto viduje, pvz., ./node_modules/.bin/ng, neklausdamas kiekvieną kartą.",
     "autoApproveProjectCommands": "Visos komandos projekto viduje",
-    "autoApproveProjectCommandsHint": "Leidžia bet kurią nepavojingą komandą, kurios keliai lieka projekte. Pavojingos komandos, jautrūs failai ir viskas už projekto vis tiek klausia.",
+    "autoApproveProjectCommandsHint": "Leidžia bet kurią nepavojingą komandą, kurios keliai lieka projekte. Pavojingos komandos, įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, jautrūs failai ir viskas išorėje vis tiek klausia.",
+    "permissionPreset": {
+      "strict": "Griežtas",
+      "strictHint": "Neklausiant vykdomos tik komandos, kurios tik skaito.",
+      "balanced": "Subalansuotas",
+      "balancedHint": "Tik skaitančios komandos, paketų tvarkytuvės, kūrimo įrankiai ir projekto vykdomieji failai vykdomi neklausiant.",
+      "autonomous": "Autonominis",
+      "autonomousHint": "Kiekviena nepavojinga komanda projekte vykdoma neklausiant.",
+      "custom": "Pasirinktinis",
+      "autonomousWarning": "Autonominis režimas pasitiki šiuo projektu: jo scenarijai, Makefile failai ir vykdomieji failai gali daryti bet ką neklausdami. Įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, pavojingos komandos ir viskas už projekto ribų vis tiek klausia.",
+      "confirm": "Naudoti autonominį režimą"
+    },
     "noAllowedWebsites": "Visada leidžiamų svetainių dar nėra.",
     "noDeniedWebsites": "Visada uždraustų svetainių dar nėra.",
     "websitePlaceholder": "pvz., docs.rs arba *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Aplankas"
     },
     "allowAlways": "Leisti visada",
-    "addFolder": "Pridėti aplanką visam laikui",
     "siteRuleLabel": "Svetainės taisyklė (domenas arba glob)",
     "siteRuleHint": "Pavyzdžiui: docs.rs leidžia šią svetainę, *.github.com leidžia visus jos subdomenus.",
-    "segment": {
-      "allowed": "Leidžiama",
-      "needsApproval": "Reikia patvirtinimo",
-      "title": "Kam reikia patvirtinimo",
-      "summary": "{{ count }} iš {{ total }} dalių reikia patvirtinimo",
-      "folderOnly": "Komandų taisyklės negali leisti kelių už projekto ribų. Vietoj to žemiau leiskite aplanką."
-    },
+    "siteRuleInvalid": "Ši taisyklė neapima {{ host }} arba yra per plati, todėl vietoj jos bus išsaugotas {{ host }}.",
     "risk": {
       "low": "Žema",
       "medium": "Vidutinė",
+      "network": "Tinklas",
       "high": "Aukšta",
       "danger": "Pavojus"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Prideda aplanką ir viską jame prie visada leidžiamų aplankų.",
       "option": "Aplankas + poaplankiai"
     },
-    "allowChat": "Leisti šiame pokalbyje"
+    "hostScope": {
+      "title": "Leisti svetainę",
+      "hint": "Prideda svetainę ir jos subdomenus prie leidžiamų svetainių.",
+      "option": "Svetainė + subdomenai"
+    },
+    "allowChat": "Leisti šiame pokalbyje",
+    "option": {
+      "yes": "Taip",
+      "chat": "Taip, ir šiame pokalbyje daugiau neklausti dėl",
+      "session": "Taip, ir iki paleidimo iš naujo daugiau neklausti dėl",
+      "always": "Taip, ir visada leisti",
+      "no": "Ne",
+      "denyAlways": "Ne, ir visada uždrausti"
+    },
+    "customize": "Tinkinti",
+    "keyboardHint": "Spauskite 1–{{ count }} arba naudokite ↑ ↓ ir Enter · Esc atmeta",
+    "url": {
+      "queryWarning": "Šis adresas užklausos eilutėje neša daug duomenų. Prieš leisdami įsitikinkite, kad jame nėra nieko privataus."
+    },
+    "tooltip": {
+      "deny": "Atmesti šią užklausą ir visas kitas šiame pokalbyje laukiančias užklausas.",
+      "denyAlways": "Atmesti ir išsaugoti draudimo taisyklę nustatymuose. Kitos šiame pokalbyje laukiančios užklausos taip pat atmetamos.",
+      "allowOnce": "Leisti tik šią užklausą.",
+      "allowSession": "Įsimenama visuose pokalbiuose, kol programa bus paleista iš naujo.",
+      "allowChat": "Komandų taisyklės įsimenamos šiam pokalbiui ir jo subagentams; aplankai ir svetainės – iki programos paleidimo iš naujo.",
+      "allowAlways": "Išsaugoma nustatymuose ir galioja visiems pokalbiams."
+    }
   },
   "question": {
     "title": "Klausimas",
@@ -1072,6 +1147,8 @@
     "installing": "Diegiama…",
     "uninstall": "Pašalinkite",
     "addFolder": "Pridėti aplanką",
-    "noFolders": "Dar nepridėta jokių aplankų."
+    "noFolders": "Dar nepridėta jokių aplankų.",
+    "binaryFile": "Dvejetainis failas – peržiūra negalima.",
+    "fileTooLarge": "Šis failas per didelis peržiūrai."
   }
 }

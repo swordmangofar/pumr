@@ -128,7 +128,14 @@
       "banner": "Notiek {{ operation }}",
       "files": "{{ count }} faili ar konfliktiem",
       "continue": "Turpināt",
-      "abort": "Pārtraukt"
+      "abort": "Pārtraukt",
+      "resolveFirst": "Vispirms atrisiniet visus konfliktus un pievienojiet failus stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autentifikācija neizdevās. Pārbaudiet Git akreditācijas datus.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Pārslēgties uz jauno zaru",
       "confirm": "Apstiprināt",
       "mergeConfirm": "Sapludināt '{{branch}}' ar '{{current}}'?",
+      "rebaseConfirm": "Veikt '{{current}}' rebase uz '{{branch}}'? Tiks pārrakstīti zara '{{current}}' commit.",
       "deleteConfirm": "Dzēst zaru '{{branch}}'? To nevar atsaukt.",
       "deleteRemoteConfirm": "Dzēst attālināto zaru '{{branch}}'? Tas ietekmēs attālināto repozitoriju.",
+      "forceDeleteConfirm": "Zars '{{branch}}' nav pilnībā sapludināts. Tomēr dzēst? Tā nesapludinātie commit tiks zaudēti.",
       "rebaseHint": "Pārkārtojiet commit'us un izvēlieties darbību katram. Rebase notiek no vecākā uz jaunāko.",
-      "nothingToRebase": "Nav commit'u, ko rebase."
+      "nothingToRebase": "Nav commit'u, ko rebase.",
+      "rebaseActions": {
+        "pick": "Paturēt (pick)",
+        "squash": "Apvienot (squash)",
+        "fixup": "Iekļaut (fixup)",
+        "drop": "Atmest (drop)"
+      },
+      "rebaseSquashFirst": "Pirmo commit nevar apvienot (squash vai fixup): nav iepriekšēja commit, ar ko to apvienot.",
+      "moveUp": "Pārvietot uz augšu",
+      "moveDown": "Pārvietot uz leju"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Neviena darbība neatbilst pašreizējiem filtriem.",
     "view": {
       "timeline": "Laika skala",
-      "branches": "Zari"
+      "branches": "Zari",
+      "permissions": "Atļaujas"
     },
     "filters": {
       "type": "Tips",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Sesijas ignorēšana",
       "default": "Noklusējuma iestatījumi"
+    },
+    "permissions": {
+      "empty": "Šai tērzēšanai vēl nav reģistrēts neviens atļauju lēmums.",
+      "clear": "Notīrīt žurnālu",
+      "clearConfirm": "Noklikšķiniet vēlreiz, lai notīrītu",
+      "allowed": "Atļauts",
+      "denied": "Noraidīts",
+      "why": "Iemesls:",
+      "rule": "Noteikums:",
+      "filters": {
+        "auto": "Atļauts bez jautāšanas",
+        "asked": "Jautāts",
+        "denied": "Noraidīts"
+      },
+      "by": {
+        "auto": "Automātiski",
+        "rule": "Aizlieguma noteikums",
+        "user": "Jūs",
+        "grant": "Aptverts ar jaunu atļauju",
+        "cascade": "Noraidīts kopā ar citu pieprasījumu",
+        "stopped": "Apturēts",
+        "timeout": "Iestājās noildze",
+        "cancelled": "Atcelts"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Nav bloķētu komandu.",
     "scope": {
       "program": "Programma",
+      "subcommand": "Programma + apakškomanda",
       "programFlags": "Programma + karodziņi",
       "exact": "Precīza"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Vēl nav komandu noteikumu. Izmantojiet „atļaut vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
     "websiteRules": "Tīmekļa vietnes",
-    "websiteRulesHint": "Vietnes, ko asistents drīkst apmeklēt. Aizlieguma noteikumi uzvar atļaujas noteikumus; vienkāršs domēns aptver arī tā apakšdomēnus. Izmantojiet „atļaut vienmēr“ vai „aizliegt vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
+    "websiteRulesHint": "Vietnes, ko asistents drīkst apmeklēt ar saviem tīmekļa rīkiem vai ar tādām komandām kā curl, git un ssh. Aizlieguma noteikumi uzvar atļaujas noteikumus; vienkāršs domēns aptver arī tā apakšdomēnus. Izmantojiet „atļaut vienmēr“ vai „aizliegt vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
     "permissionPrompts": "Atļauju pieprasījumi",
     "permissionPromptsHint": "Izvēlies, ko galvenā atļaujas poga dara pēc noklusējuma. Atļaut vienreiz apstiprina vienu pieprasījumu; atļaut šai sesijai atceras piekļuvi mapei līdz lietotnes pārstartēšanai.",
     "autoApprove": "Automātiska apstiprināšana",
-    "autoApproveHint": "Izlaidīs vaicājumus darbam, ko asistents var pierādīt kā drošu. Bīstamas komandas, ceļi ārpus projekta un sensitīvi faili vienmēr jautā.",
+    "autoApproveHint": "Izlaidīs vaicājumus darbam, ko asistents var pierādīt kā drošu. Bīstamas komandas, iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, ceļi ārpus projekta un sensitīvi faili vienmēr jautā.",
     "autoApproveReadOnly": "Tikai lasāmas komandas",
     "autoApproveReadOnlyHint": "Atļauj pārbaudes komandas, piemēram, ls, grep un git status, bez jautāšanas.",
     "autoApprovePackageScripts": "Paku pārvaldnieki un būvēšanas rīki",
-    "autoApprovePackageScriptsHint": "Atļauj pnpm, npm, yarn, bun, ng, npx, make un līdzīgus rīkus, ja nekas nenorāda ārpus projekta.",
+    "autoApprovePackageScriptsHint": "Atļauj pnpm, npm, yarn, bun, ng, make un līdzīgus rīkus, ja nekas nenorāda ārpus projekta.",
     "autoApproveProjectExecutables": "Projekta izpildfaili",
     "autoApproveProjectExecutablesHint": "Atļauj izpildfailus projekta iekšienē, piemēram, ./node_modules/.bin/ng, bez jautāšanas katru reizi.",
     "autoApproveProjectCommands": "Visas komandas projekta iekšienē",
-    "autoApproveProjectCommandsHint": "Atļauj jebkuru nebīstamu komandu, kuras ceļi paliek projektā. Bīstamas komandas, sensitīvi faili un viss ārpus projekta joprojām jautā.",
+    "autoApproveProjectCommandsHint": "Atļauj jebkuru nebīstamu komandu, kuras ceļi paliek projektā. Bīstamas komandas, iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, sensitīvi faili un viss ārpusē joprojām jautā.",
+    "permissionPreset": {
+      "strict": "Stingrs",
+      "strictHint": "Bez jautāšanas darbojas tikai komandas, kas tikai lasa.",
+      "balanced": "Līdzsvarots",
+      "balancedHint": "Tikai lasošās komandas, pakotņu pārvaldnieki, būvēšanas rīki un projekta izpildāmie faili darbojas bez jautāšanas.",
+      "autonomous": "Autonoms",
+      "autonomousHint": "Katra nebīstama komanda projektā darbojas bez jautāšanas.",
+      "custom": "Pielāgots",
+      "autonomousWarning": "Autonomais režīms uzticas šim projektam: tā skripti, Makefile faili un izpildāmie faili var darīt jebko bez jautāšanas. Iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, bīstamas komandas un viss ārpus projekta joprojām jautā.",
+      "confirm": "Izmantot autonomo režīmu"
+    },
     "noAllowedWebsites": "Vēl nav vienmēr atļautu vietņu.",
     "noDeniedWebsites": "Vēl nav vienmēr aizliegtu vietņu.",
     "websitePlaceholder": "piem., docs.rs vai *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Mape"
     },
     "allowAlways": "Atļaut vienmēr",
-    "addFolder": "Pievienot mapi pastāvīgi",
     "siteRuleLabel": "Vietnes noteikums (domēns vai glob)",
     "siteRuleHint": "Piemēram: docs.rs atļauj šo vietni, *.github.com atļauj visus tās apakšdomēnus.",
-    "segment": {
-      "allowed": "Atļauts",
-      "needsApproval": "Nepieciešams apstiprinājums",
-      "title": "Kam nepieciešams apstiprinājums",
-      "summary": "{{ count }} no {{ total }} daļām nepieciešams apstiprinājums",
-      "folderOnly": "Komandu noteikumi nevar atļaut ceļus ārpus projekta. Tā vietā zemāk atļaujiet mapi."
-    },
+    "siteRuleInvalid": "Šis noteikums neaptver {{ host }} vai ir pārāk plašs, tāpēc tā vietā tiks saglabāts {{ host }}.",
     "risk": {
       "low": "Zems",
       "medium": "Vidējs",
+      "network": "Tīkls",
       "high": "Augsts",
       "danger": "Bīstami"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Pievieno mapi un visu tajā esošo vienmēr atļautajām mapēm.",
       "option": "Mape + apakšmapes"
     },
-    "allowChat": "Atļaut šajā tērzēšanā"
+    "hostScope": {
+      "title": "Atļaut tīmekļa vietni",
+      "hint": "Pievieno tīmekļa vietni un tās apakšdomēnus atļautajām tīmekļa vietnēm.",
+      "option": "Tīmekļa vietne + apakšdomēni"
+    },
+    "allowChat": "Atļaut šajā tērzēšanā",
+    "option": {
+      "yes": "Jā",
+      "chat": "Jā, un šajā tērzēšanā vairs nejautāt par",
+      "session": "Jā, un līdz restartēšanai vairs nejautāt par",
+      "always": "Jā, un vienmēr atļaut",
+      "no": "Nē",
+      "denyAlways": "Nē, un vienmēr aizliegt"
+    },
+    "customize": "Pielāgot",
+    "keyboardHint": "Nospiediet 1–{{ count }} vai izmantojiet ↑ ↓ un Enter · Esc noraida",
+    "url": {
+      "queryWarning": "Šī adrese vaicājuma virknē nes daudz datu. Pirms atļaušanas pārliecinieties, ka tajā nav nekā privāta."
+    },
+    "tooltip": {
+      "deny": "Noraidīt šo pieprasījumu un visus citus šajā tērzēšanā gaidošos pieprasījumus.",
+      "denyAlways": "Noraidīt un saglabāt aizlieguma noteikumu iestatījumos. Arī citi šajā tērzēšanā gaidošie pieprasījumi tiek noraidīti.",
+      "allowOnce": "Atļaut tikai šo pieprasījumu.",
+      "allowSession": "Tiek atcerēts visās tērzēšanās līdz lietotnes restartēšanai.",
+      "allowChat": "Komandu noteikumi tiek atcerēti šai tērzēšanai un tās apakšaģentiem; mapes un tīmekļa vietnes līdz lietotnes restartēšanai.",
+      "allowAlways": "Tiek saglabāts iestatījumos un attiecas uz visām tērzēšanām."
+    }
   },
   "question": {
     "title": "Jautājums",
@@ -1072,6 +1147,8 @@
     "installing": "Notiek instalēšana…",
     "uninstall": "Atinstalēt",
     "addFolder": "Pievienot mapi",
-    "noFolders": "Vēl nav pievienota neviena mape."
+    "noFolders": "Vēl nav pievienota neviena mape.",
+    "binaryFile": "Binārs fails – priekšskatījums nav pieejams.",
+    "fileTooLarge": "Šis fails ir pārāk liels priekšskatījumam."
   }
 }

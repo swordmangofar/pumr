@@ -2,21 +2,36 @@ use crate::broker::{PermissionBroker, QuestionBroker};
 use crate::config::Settings;
 use crate::db::Db;
 use crate::marketplace::MarketplaceService;
-use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
+use crate::models::{EndpointInfo, Message, ModelInfo, ProviderInfo};
 use crate::permissions::{AutoApproveConfig, LivePermissions};
 use crate::power::PowerManager;
 use crate::processes::ProcessRegistry;
 use crate::providers::openrouter::{KeyInfo, OpenRouterClient};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 /// How long a fetched API-key credit limit is reused before refreshing from
 /// OpenRouter. The spend view refreshes on every turn, so this avoids a network
 /// round-trip each time while staying reasonably current.
 const KEY_INFO_TTL: Duration = Duration::from_secs(60);
+
+/// How many finished `send_message` requests stay remembered, so a repeat
+/// delivered after the original finished still gets the original's outcome.
+const RECENT_SENDS: usize = 32;
+
+/// The outcome of a `send_message` request, shared with repeated deliveries.
+pub type SendOutcome = std::result::Result<Message, String>;
+
+pub enum SendClaim {
+    /// First delivery of a request: run it and publish the outcome.
+    First(watch::Sender<Option<SendOutcome>>),
+    /// A repeated delivery: wait for the original's outcome instead.
+    Duplicate(watch::Receiver<Option<SendOutcome>>),
+}
 
 pub struct AppState {
     pub db: Arc<Db>,
@@ -31,6 +46,7 @@ pub struct AppState {
     pub power: PowerManager,
     pub marketplace: MarketplaceService,
     cancels: Mutex<HashMap<String, CancellationToken>>,
+    pub sends: SendLedger,
     models_cache: Mutex<Option<Vec<ModelInfo>>>,
     endpoints_cache: Mutex<HashMap<String, Vec<EndpointInfo>>>,
     providers_cache: Mutex<Option<Vec<ProviderInfo>>>,
@@ -53,19 +69,28 @@ impl AppState {
             settings.permissions.denied_websites.clone(),
             auto_approve(&settings),
         ));
+        let db = Arc::new(db);
+        let broker = Arc::new(PermissionBroker::new());
+        let audit_db = db.clone();
+        broker.set_audit_sink(Arc::new(move |entry| {
+            if let Err(error) = audit_db.record_permission_audit(&entry) {
+                eprintln!("failed to record permission decision: {error}");
+            }
+        }));
         Self {
-            db: Arc::new(db),
+            db,
             data_dir,
             settings_path,
             settings: Mutex::new(settings),
             http,
             processes: Arc::new(ProcessRegistry::new()),
-            broker: Arc::new(PermissionBroker::new()),
+            broker,
             questions: Arc::new(QuestionBroker::new()),
             permissions,
             power,
             marketplace,
             cancels: Mutex::new(HashMap::new()),
+            sends: SendLedger::default(),
             models_cache: Mutex::new(None),
             endpoints_cache: Mutex::new(HashMap::new()),
             providers_cache: Mutex::new(None),
@@ -154,12 +179,43 @@ impl AppState {
         if let Some(token) = self.cancels.lock().unwrap().get(key) {
             token.cancel();
         }
-        self.broker.deny_all();
-        self.questions.skip_all();
+        self.broker.deny_session(key);
+        self.questions.skip_session(key);
     }
 
     pub fn clear_cancel(&self, key: &str) {
         self.cancels.lock().unwrap().remove(key);
+    }
+}
+
+/// `send_message` requests by the renderer's request id. Tauri delivers an
+/// invoke a second time over `postMessage` when its IPC fetch fails, which a
+/// webview reload mid-turn causes; the repeat must not start a second turn,
+/// because that cancels the first one and its pending permission prompts.
+#[derive(Default)]
+pub struct SendLedger {
+    sends: Mutex<VecDeque<(String, watch::Receiver<Option<SendOutcome>>)>>,
+}
+
+impl SendLedger {
+    /// Registers a request, or finds the earlier delivery of it.
+    pub fn claim(&self, request_id: &str) -> SendClaim {
+        let mut sends = self.sends.lock().unwrap();
+        if let Some((_, outcome)) = sends.iter().find(|(id, _)| id == request_id) {
+            return SendClaim::Duplicate(outcome.clone());
+        }
+        // Forget the oldest finished request; running ones must stay findable.
+        if sends.len() >= RECENT_SENDS {
+            let finished = sends.iter().position(|(_, outcome)| {
+                outcome.borrow().is_some() || outcome.has_changed().is_err()
+            });
+            if let Some(index) = finished {
+                sends.remove(index);
+            }
+        }
+        let (sender, receiver) = watch::channel(None);
+        sends.push_back((request_id.to_string(), receiver));
+        SendClaim::First(sender)
     }
 }
 
@@ -169,5 +225,41 @@ fn auto_approve(settings: &Settings) -> AutoApproveConfig {
         package_scripts: settings.permissions.auto_approve_package_scripts,
         project_executables: settings.permissions.auto_approve_project_executables,
         project_commands: settings.permissions.auto_approve_project_commands,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_repeated_send_waits_for_the_original_outcome() {
+        let ledger = SendLedger::default();
+        let SendClaim::First(original) = ledger.claim("request") else {
+            panic!("the first delivery must run");
+        };
+        let SendClaim::Duplicate(mut repeat) = ledger.claim("request") else {
+            panic!("a repeated delivery must not run again");
+        };
+        assert!(matches!(ledger.claim("other"), SendClaim::First(_)));
+        assert!(repeat.borrow().is_none());
+
+        original.send_replace(Some(Err("failed".to_string())));
+        let outcome = repeat.wait_for(Option::is_some).await.unwrap().clone();
+        assert!(matches!(outcome, Some(Err(error)) if error == "failed"));
+    }
+
+    #[test]
+    fn running_sends_stay_remembered_past_the_limit() {
+        let ledger = SendLedger::default();
+        let running: Vec<SendClaim> = (0..=RECENT_SENDS)
+            .map(|index| ledger.claim(&index.to_string()))
+            .collect();
+        assert!(matches!(ledger.claim("0"), SendClaim::Duplicate(_)));
+
+        // Finished requests make room for new ones, oldest first.
+        drop(running);
+        ledger.claim("next");
+        assert!(matches!(ledger.claim("0"), SendClaim::First(_)));
     }
 }

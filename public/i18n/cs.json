@@ -128,7 +128,14 @@
       "banner": "Probíhá {{ operation }}",
       "files": "{{ count }} souborů s konflikty",
       "continue": "Pokračovat",
-      "abort": "Zrušit"
+      "abort": "Zrušit",
+      "resolveFirst": "Nejprve vyřešte všechny konflikty a připravte soubory ke commitu (stage)."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Ověření selhalo. Zkontrolujte přihlašovací údaje Git.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Přepnout na novou větev",
       "confirm": "Potvrdit",
       "mergeConfirm": "Sloučit '{{branch}}' do '{{current}}'?",
+      "rebaseConfirm": "Provést rebase '{{current}}' na '{{branch}}'? Commity větve '{{current}}' budou přepsány.",
       "deleteConfirm": "Smazat větev '{{branch}}'? Tuto akci nelze vrátit zpět.",
       "deleteRemoteConfirm": "Smazat vzdálenou větev '{{branch}}'? Ovlivní to vzdálený repozitář.",
+      "forceDeleteConfirm": "Větev '{{branch}}' není plně sloučena. Přesto ji smazat? Její nesloučené commity budou ztraceny.",
       "rebaseHint": "Změňte pořadí commitů a zvolte akci pro každý. Rebase probíhá od nejstaršího po nejnovější.",
-      "nothingToRebase": "Žádné commity k rebase."
+      "nothingToRebase": "Žádné commity k rebase.",
+      "rebaseActions": {
+        "pick": "Ponechat (pick)",
+        "squash": "Sloučit (squash)",
+        "fixup": "Začlenit (fixup)",
+        "drop": "Zahodit (drop)"
+      },
+      "rebaseSquashFirst": "První commit nelze sloučit (squash ani fixup): neexistuje žádný dřívější commit, se kterým by šel spojit.",
+      "moveUp": "Posunout nahoru",
+      "moveDown": "Posunout dolů"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Aktuálním filtrům neodpovídají žádné kroky.",
     "view": {
       "timeline": "Časová osa",
-      "branches": "Větve"
+      "branches": "Větve",
+      "permissions": "Oprávnění"
     },
     "filters": {
       "type": "Typ",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Přepsání relace",
       "default": "Výchozí nastavení"
+    },
+    "permissions": {
+      "empty": "Pro tento chat zatím nejsou zaznamenána žádná rozhodnutí o oprávněních.",
+      "clear": "Vymazat záznam",
+      "clearConfirm": "Klikněte znovu pro vymazání",
+      "allowed": "Povoleno",
+      "denied": "Odmítnuto",
+      "why": "Důvod:",
+      "rule": "Pravidlo:",
+      "filters": {
+        "auto": "Povoleno bez dotazu",
+        "asked": "S dotazem",
+        "denied": "Odmítnuto"
+      },
+      "by": {
+        "auto": "Automaticky",
+        "rule": "Pravidlo odmítnutí",
+        "user": "Vy",
+        "grant": "Pokryto novým povolením",
+        "cascade": "Odmítnuto spolu s jiným požadavkem",
+        "stopped": "Zastaveno",
+        "timeout": "Vypršel čas",
+        "cancelled": "Zrušeno"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Žádné blokované příkazy.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + podpříkaz",
       "programFlags": "Program + přepínače",
       "exact": "Přesný"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Zatím žádná pravidla příkazů. Vytvořte je pomocí „vždy povolit“ ve výzvě k oprávnění.",
     "websiteRules": "Webové stránky",
-    "websiteRulesHint": "Webové stránky, které asistent může navštěvovat. Pravidla odmítnutí mají přednost před pravidly povolení; prostá doména zahrnuje i její subdomény. Vytvořte je pomocí „vždy povolit“ nebo „vždy odmítnout“ ve výzvě k oprávnění.",
+    "websiteRulesHint": "Webové stránky, které asistent může navštěvovat svými webovými nástroji nebo příkazy jako curl, git a ssh. Pravidla odmítnutí mají přednost před pravidly povolení; prostá doména zahrnuje i její subdomény. Vytvořte je pomocí „vždy povolit“ nebo „vždy odmítnout“ ve výzvě k oprávnění.",
     "permissionPrompts": "Žádosti o oprávnění",
     "permissionPromptsHint": "Vyberte, co hlavní tlačítko povolení dělá ve výchozím nastavení. Povolit jednou schválí jednu žádost; povolit pro tuto relaci si pamatuje přístup ke složce do restartu aplikace.",
     "autoApprove": "Automatické schválení",
-    "autoApproveHint": "Přeskočí dotazy u práce, kterou asistent dokáže prokázat jako bezpečnou. Nebezpečné příkazy, cesty mimo projekt a citlivé soubory se vždy ptají.",
+    "autoApproveHint": "Přeskočí dotazy u práce, kterou asistent dokáže prokázat jako bezpečnou. Nebezpečné příkazy, vložený kód, stahování balíčků, dosud nepovolené weby, cesty mimo projekt a citlivé soubory se vždy ptají.",
     "autoApproveReadOnly": "Příkazy pouze pro čtení",
     "autoApproveReadOnlyHint": "Umožní inspekční příkazy jako ls, grep a git status bez dotazování.",
     "autoApprovePackageScripts": "Správci balíčků a nástroje pro sestavení",
-    "autoApprovePackageScriptsHint": "Umožní pnpm, npm, yarn, bun, ng, npx, make a podobné nástroje, když nic nesměřuje mimo projekt.",
+    "autoApprovePackageScriptsHint": "Umožní pnpm, npm, yarn, bun, ng, make a podobné nástroje, když nic nesměřuje mimo projekt.",
     "autoApproveProjectExecutables": "Spustitelné soubory projektu",
     "autoApproveProjectExecutablesHint": "Umožní spustitelné soubory v projektu, jako ./node_modules/.bin/ng, bez dotazování pokaždé.",
     "autoApproveProjectCommands": "Všechny příkazy v projektu",
-    "autoApproveProjectCommandsHint": "Umožní jakýkoli neškodný příkaz, jehož cesty zůstávají v projektu. Nebezpečné příkazy, citlivé soubory a cokoli mimo projekt se stále ptá.",
+    "autoApproveProjectCommandsHint": "Povolí každý nenebezpečný příkaz, jehož cesty zůstávají v projektu. Nebezpečné příkazy, vložený kód, stahování balíčků, dosud nepovolené weby, citlivé soubory a vše mimo projekt se stále ptají.",
+    "permissionPreset": {
+      "strict": "Přísný",
+      "strictHint": "Bez dotazu běží jen příkazy, které pouze čtou.",
+      "balanced": "Vyvážený",
+      "balancedHint": "Příkazy pouze pro čtení, správci balíčků, nástroje pro sestavení a spustitelné soubory projektu běží bez dotazu.",
+      "autonomous": "Autonomní",
+      "autonomousHint": "Každý nenebezpečný příkaz uvnitř projektu běží bez dotazu.",
+      "custom": "Vlastní",
+      "autonomousWarning": "Autonomní režim důvěřuje tomuto projektu: jeho skripty, soubory Makefile a spustitelné soubory mohou bez dotazu dělat cokoli. Vložený kód, stahování balíčků, dosud nepovolené weby, nebezpečné příkazy a vše mimo projekt se stále ptají.",
+      "confirm": "Použít autonomní režim"
+    },
     "noAllowedWebsites": "Zatím žádné vždy povolené webové stránky.",
     "noDeniedWebsites": "Zatím žádné vždy odmítnuté webové stránky.",
     "websitePlaceholder": "např. docs.rs nebo *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Složka"
     },
     "allowAlways": "Vždy povolit",
-    "addFolder": "Trvale přidat složku",
     "siteRuleLabel": "Pravidlo webové stránky (doména nebo glob)",
     "siteRuleHint": "Například: docs.rs povoluje tento web, *.github.com povoluje všechny jeho subdomény.",
-    "segment": {
-      "allowed": "Povoleno",
-      "needsApproval": "Vyžaduje schválení",
-      "title": "Co vyžaduje schválení",
-      "summary": "{{ count }} z {{ total }} částí vyžaduje schválení",
-      "folderOnly": "Pravidla příkazů nemohou povolit cesty mimo projekt. Místo toho níže povolte složku."
-    },
+    "siteRuleInvalid": "Toto pravidlo nezahrnuje {{ host }} nebo je příliš široké, proto se místo něj uloží {{ host }}.",
     "risk": {
       "low": "Nízké",
       "medium": "Střední",
+      "network": "Síť",
       "high": "Vysoké",
       "danger": "Nebezpečí"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Přidá složku a vše v ní do vždy povolených složek.",
       "option": "Složka + podsložky"
     },
-    "allowChat": "Povolit v tomto chatu"
+    "hostScope": {
+      "title": "Povolit web",
+      "hint": "Přidá web a jeho subdomény mezi povolené weby.",
+      "option": "Web + subdomény"
+    },
+    "allowChat": "Povolit v tomto chatu",
+    "option": {
+      "yes": "Ano",
+      "chat": "Ano, a v tomto chatu se už neptat na",
+      "session": "Ano, a do restartu se už neptat na",
+      "always": "Ano, a vždy povolit",
+      "no": "Ne",
+      "denyAlways": "Ne, a vždy odmítnout"
+    },
+    "customize": "Přizpůsobit",
+    "keyboardHint": "Stiskněte 1–{{ count }} nebo použijte ↑ ↓ a Enter · Esc odmítne",
+    "url": {
+      "queryWarning": "Tato adresa nese v dotazu mnoho dat. Než ji povolíte, ověřte, že neobsahuje nic soukromého."
+    },
+    "tooltip": {
+      "deny": "Odmítne tento požadavek i všechny ostatní čekající požadavky v tomto chatu.",
+      "denyAlways": "Odmítne a uloží pravidlo odmítnutí do nastavení. Ostatní čekající požadavky v tomto chatu se také odmítnou.",
+      "allowOnce": "Povolí pouze tento požadavek.",
+      "allowSession": "Platí ve všech chatech do restartu aplikace.",
+      "allowChat": "Pravidla příkazů platí pro tento chat a jeho subagenty; složky a weby do restartu aplikace.",
+      "allowAlways": "Uloží se do nastavení a platí pro všechny chaty."
+    }
   },
   "question": {
     "title": "Otázka",
@@ -1072,6 +1147,8 @@
     "installing": "Instalace…",
     "uninstall": "Odinstalovat",
     "addFolder": "Přidat složku",
-    "noFolders": "Zatím nebyly přidány žádné složky."
+    "noFolders": "Zatím nebyly přidány žádné složky.",
+    "binaryFile": "Binární soubor – náhled není k dispozici.",
+    "fileTooLarge": "Tento soubor je příliš velký pro náhled."
   }
 }

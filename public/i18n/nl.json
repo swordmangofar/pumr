@@ -128,7 +128,14 @@
       "banner": "{{ operation }} bezig",
       "files": "{{ count }} bestanden met conflicten",
       "continue": "Doorgaan",
-      "abort": "Afbreken"
+      "abort": "Afbreken",
+      "resolveFirst": "Los eerst alle conflicten op en stage de bestanden."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Authenticatie mislukt. Controleer je Git-inloggegevens.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "De nieuwe branch uitchecken",
       "confirm": "Bevestigen",
       "mergeConfirm": "'{{branch}}' in '{{current}}' mergen?",
+      "rebaseConfirm": "'{{current}}' rebasen op '{{branch}}'? Hierbij worden de commits van '{{current}}' herschreven.",
       "deleteConfirm": "Branch '{{branch}}' verwijderen? Dit kan niet ongedaan worden gemaakt.",
       "deleteRemoteConfirm": "Remote branch '{{branch}}' verwijderen? Dit beïnvloedt de remote repository.",
+      "forceDeleteConfirm": "Branch '{{branch}}' is niet volledig gemerged. Toch verwijderen? De niet-gemergede commits gaan verloren.",
       "rebaseHint": "Herschik commits en kies een actie voor elke commit. De rebase loopt van oud naar nieuw.",
-      "nothingToRebase": "Geen commits om te rebasen."
+      "nothingToRebase": "Geen commits om te rebasen.",
+      "rebaseActions": {
+        "pick": "Behouden (pick)",
+        "squash": "Samenvoegen (squash)",
+        "fixup": "Samenvoegen zonder bericht (fixup)",
+        "drop": "Weglaten (drop)"
+      },
+      "rebaseSquashFirst": "De eerste commit kan niet worden samengevoegd (squash of fixup): er is geen eerdere commit om mee te combineren.",
+      "moveUp": "Omhoog",
+      "moveDown": "Omlaag"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Er zijn geen stappen die overeenkomen met de huidige filters.",
     "view": {
       "timeline": "Tijdlijn",
-      "branches": "Vertakkingen"
+      "branches": "Vertakkingen",
+      "permissions": "Machtigingen"
     },
     "filters": {
       "type": "Type",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Sessie overschrijven",
       "default": "Standaardinstellingen"
+    },
+    "permissions": {
+      "empty": "Er zijn nog geen machtigingsbeslissingen vastgelegd voor deze chat.",
+      "clear": "Logboek wissen",
+      "clearConfirm": "Klik nogmaals om te wissen",
+      "allowed": "Toegestaan",
+      "denied": "Geweigerd",
+      "why": "Waarom:",
+      "rule": "Regel:",
+      "filters": {
+        "auto": "Toegestaan zonder te vragen",
+        "asked": "Gevraagd",
+        "denied": "Geweigerd"
+      },
+      "by": {
+        "auto": "Automatisch",
+        "rule": "Weigerregel",
+        "user": "Jij",
+        "grant": "Gedekt door een nieuwe toestemming",
+        "cascade": "Geweigerd samen met een ander verzoek",
+        "stopped": "Gestopt",
+        "timeout": "Time-out",
+        "cancelled": "Geannuleerd"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Geen geblokkeerde opdrachten.",
     "scope": {
       "program": "Programma",
+      "subcommand": "Programma + subopdracht",
       "programFlags": "Programma + opties",
       "exact": "Exact"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Nog geen opdrachtregels. Gebruik \"altijd toestaan\" in een toestemmingsvraag om er een aan te maken.",
     "websiteRules": "Websites",
-    "websiteRulesHint": "Websites die de assistent mag bezoeken. Weigerregels gaan voor op toestemmingsregels; een gewoon domein dekt ook de subdomeinen. Gebruik \"altijd toestaan\" of \"altijd weigeren\" in een toestemmingsvraag om er een aan te maken.",
+    "websiteRulesHint": "Websites die de assistent mag bezoeken met zijn webtools of met opdrachten zoals curl, git en ssh. Weigerregels gaan voor op toestemmingsregels; een gewoon domein dekt ook de subdomeinen. Gebruik \"altijd toestaan\" of \"altijd weigeren\" in een toestemmingsvraag om er een aan te maken.",
     "permissionPrompts": "Toestemmingsvragen",
     "permissionPromptsHint": "Kies wat de hoofdknoop voor toestemming standaard doet. Eenmalig toestaan keurt één verzoek goed; voor deze sessie toestaan onthoudt de maptoegang tot de app opnieuw start.",
     "autoApprove": "Automatische goedkeuring",
-    "autoApproveHint": "Slaat prompts over voor werk waarvan de assistent kan bewijzen dat het veilig is. Gevaarlijke opdrachten, paden buiten het project en gevoelige bestanden vragen altijd.",
+    "autoApproveHint": "Slaat prompts over voor werk waarvan de assistent kan bewijzen dat het veilig is. Gevaarlijke opdrachten, inline code, pakketdownloads, websites die nog niet zijn toegestaan, paden buiten het project en gevoelige bestanden vragen altijd.",
     "autoApproveReadOnly": "Alleen-lezen opdrachten",
     "autoApproveReadOnlyHint": "Staat inspectieopdrachten zoals ls, grep en git status toe zonder te vragen.",
     "autoApprovePackageScripts": "Pakketbeheerders en build-tools",
-    "autoApprovePackageScriptsHint": "Staat pnpm, npm, yarn, bun, ng, npx, make en vergelijkbare tools toe wanneer niets buiten het project wijst.",
+    "autoApprovePackageScriptsHint": "Staat pnpm, npm, yarn, bun, ng, make en vergelijkbare tools toe wanneer niets buiten het project wijst.",
     "autoApproveProjectExecutables": "Project-uitvoerbare bestanden",
     "autoApproveProjectExecutablesHint": "Staat uitvoerbare bestanden in het project toe, zoals ./node_modules/.bin/ng, zonder elke keer te vragen.",
     "autoApproveProjectCommands": "Alle opdrachten binnen het project",
-    "autoApproveProjectCommandsHint": "Staat elke niet-gevaarlijke opdracht toe waarvan de paden binnen het project blijven. Gevaarlijke opdrachten, gevoelige bestanden en alles daarbuiten vragen nog steeds.",
+    "autoApproveProjectCommandsHint": "Staat elke ongevaarlijke opdracht toe waarvan de paden binnen het project blijven. Gevaarlijke opdrachten, inline code, pakketdownloads, websites die nog niet zijn toegestaan, gevoelige bestanden en alles daarbuiten vragen nog steeds.",
+    "permissionPreset": {
+      "strict": "Strikt",
+      "strictHint": "Alleen opdrachten die alleen lezen, draaien zonder te vragen.",
+      "balanced": "Gebalanceerd",
+      "balancedHint": "Alleen-lezen opdrachten, pakketbeheerders, buildtools en uitvoerbare bestanden van het project draaien zonder te vragen.",
+      "autonomous": "Autonoom",
+      "autonomousHint": "Elke ongevaarlijke opdracht binnen het project draait zonder te vragen.",
+      "custom": "Aangepast",
+      "autonomousWarning": "Autonoom vertrouwt dit project: de scripts, Makefiles en uitvoerbare bestanden kunnen alles doen zonder te vragen. Inline code, pakketdownloads, websites die nog niet zijn toegestaan, gevaarlijke opdrachten en alles buiten het project vragen nog steeds.",
+      "confirm": "Autonoom gebruiken"
+    },
     "noAllowedWebsites": "Nog geen altijd-toegestane websites.",
     "noDeniedWebsites": "Nog geen altijd-geweigerde websites.",
     "websitePlaceholder": "bijv. docs.rs of *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Map"
     },
     "allowAlways": "Altijd toestaan",
-    "addFolder": "Map permanent toevoegen",
     "siteRuleLabel": "Website-regel (domein of glob)",
     "siteRuleHint": "Bijvoorbeeld: docs.rs staat die site toe, *.github.com staat alle subdomeinen toe.",
-    "segment": {
-      "allowed": "Toegestaan",
-      "needsApproval": "Vereist goedkeuring",
-      "title": "Wat goedkeuring nodig heeft",
-      "summary": "{{ count }} van {{ total }} delen hebben goedkeuring nodig",
-      "folderOnly": "Opdrachtregels kunnen geen paden buiten het project toestaan. Sta in plaats daarvan hieronder een map toe."
-    },
+    "siteRuleInvalid": "Deze regel dekt {{ host }} niet of is te breed, dus wordt in plaats daarvan {{ host }} opgeslagen.",
     "risk": {
       "low": "Laag",
       "medium": "Gemiddeld",
+      "network": "Netwerk",
       "high": "Hoog",
       "danger": "Gevaar"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Voegt de map en alles eronder toe aan de altijd toegestane mappen.",
       "option": "Map + submappen"
     },
-    "allowChat": "Toestaan in deze chat"
+    "hostScope": {
+      "title": "Website toestaan",
+      "hint": "Voegt de website en de subdomeinen toe aan de toegestane websites.",
+      "option": "Website + subdomeinen"
+    },
+    "allowChat": "Toestaan in deze chat",
+    "option": {
+      "yes": "Ja",
+      "chat": "Ja, en in deze chat niet meer vragen voor",
+      "session": "Ja, en tot herstart niet meer vragen voor",
+      "always": "Ja, en altijd toestaan",
+      "no": "Nee",
+      "denyAlways": "Nee, en altijd weigeren"
+    },
+    "customize": "Aanpassen",
+    "keyboardHint": "Druk op 1–{{ count }} of gebruik ↑ ↓ en Enter · Esc weigert",
+    "url": {
+      "queryWarning": "Dit adres bevat veel gegevens in de querystring. Controleer of er niets privés in staat voordat je het toestaat."
+    },
+    "tooltip": {
+      "deny": "Weiger dit verzoek en alle andere wachtende verzoeken in deze chat.",
+      "denyAlways": "Weiger en sla een weigerregel op in je instellingen. Andere wachtende verzoeken in deze chat worden ook geweigerd.",
+      "allowOnce": "Sta alleen dit verzoek toe.",
+      "allowSession": "Onthouden in elke chat totdat de app opnieuw start.",
+      "allowChat": "Opdrachtregels worden onthouden voor deze chat en de subagenten; mappen en websites totdat de app opnieuw start.",
+      "allowAlways": "Opgeslagen in je instellingen en geldt voor elke chat."
+    }
   },
   "question": {
     "title": "Vraag",
@@ -1072,6 +1147,8 @@
     "installing": "Installeren…",
     "uninstall": "Verwijderen",
     "addFolder": "Map toevoegen",
-    "noFolders": "Nog geen mappen toegevoegd."
+    "noFolders": "Nog geen mappen toegevoegd.",
+    "binaryFile": "Binair bestand – geen voorbeeld beschikbaar.",
+    "fileTooLarge": "Dit bestand is te groot voor een voorbeeld."
   }
 }

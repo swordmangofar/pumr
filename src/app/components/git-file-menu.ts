@@ -8,7 +8,8 @@ import {
   signal,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { confirmWarning } from '../core/confirm-warning';
+import { contextMenuStyle } from '../core/menu-position';
 import { GitBlameLine } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
 import { WorkspaceEditorService } from '../core/workspace-editor.service';
@@ -17,7 +18,6 @@ import { GitService } from '../core/git.service';
 /** Rendered menu footprint, used to keep it inside the viewport. */
 const MENU_WIDTH_PX = 240;
 const MENU_HEIGHT_PX = 320;
-const VIEWPORT_MARGIN_PX = 8;
 
 type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignore' | 'open' | 'reveal';
 
@@ -99,7 +99,9 @@ type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignor
               <table class="w-full border-collapse font-mono text-[11px]">
                 <tbody>
                   @for (line of blameLines(); track $index) {
-                    <tr class="hover:bg-white/5">
+                    <tr
+                      class="hover:bg-white/5 [contain-intrinsic-size:auto_20px] [content-visibility:auto]"
+                    >
                       <td class="w-16 shrink-0 border-r border-white/5 px-2 py-0.5 text-right text-mist/25">
                         {{ line.line }}
                       </td>
@@ -177,21 +179,9 @@ export class GitFileMenu {
     this.paths().length > 1 ? 'git.discardSelected' : 'git.discard',
   );
 
-  protected readonly menuStyle = computed(() => {
-    if (typeof window === 'undefined') {
-      return { left: `${this.x()}px`, top: `${this.y()}px` };
-    }
-    const left = Math.max(
-      VIEWPORT_MARGIN_PX,
-      Math.min(this.x(), window.innerWidth - MENU_WIDTH_PX - VIEWPORT_MARGIN_PX),
-    );
-    const flipY = this.y() > window.innerHeight - MENU_HEIGHT_PX;
-    return {
-      left: `${left}px`,
-      top: flipY ? 'auto' : `${this.y()}px`,
-      bottom: flipY ? `${Math.max(VIEWPORT_MARGIN_PX, window.innerHeight - this.y())}px` : 'auto',
-    };
-  });
+  protected readonly menuStyle = computed(() =>
+    contextMenuStyle(this.x(), this.y(), MENU_WIDTH_PX, MENU_HEIGHT_PX),
+  );
 
   private projectId(): string | null {
     return this.workspace.activeProject()?.id ?? null;
@@ -269,13 +259,11 @@ export class GitFileMenu {
 
   private async discard(projectId: string): Promise<void> {
     const paths = this.paths().length > 0 ? this.paths() : [this.path()];
-    const confirmed = await confirm(
+    const message =
       paths.length > 1
         ? this.transloco.translate('git.discardSelectedConfirm', { count: paths.length })
-        : this.transloco.translate('git.discardConfirm', { path: this.path() }),
-      { title: 'pumr', kind: 'warning' },
-    );
-    if (confirmed) {
+        : this.transloco.translate('git.discardConfirm', { path: this.path() });
+    if (await confirmWarning(message)) {
       await this.git.discardPaths(projectId, paths);
     }
     this.close();

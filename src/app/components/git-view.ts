@@ -1,22 +1,27 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { confirm } from '@tauri-apps/plugin-dialog';
-import { FileChange, GitCommit, GitPullStrategy } from '../core/models';
-import { GIT_GRAPH_RADIUS, GIT_GRAPH_ROW_HEIGHT, buildGitGraph } from '../core/git-graph';
+import { confirmWarning } from '../core/confirm-warning';
+import { FileChange, GitCommit, GitOperation, GitPullStrategy } from '../core/models';
+import {
+  GIT_GRAPH_RADIUS,
+  GIT_GRAPH_ROW_HEIGHT,
+  buildGitGraph,
+  linearGitGraph,
+} from '../core/git-graph';
 import { WorkspaceService } from '../core/workspace.service';
 import { GitService } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
 import { GitFileMenu } from './git-file-menu';
-
 import { TypedInput } from './typed-input';
 
 /** Fixed height of a changed-file row, shared by the list and its spacers. */
@@ -59,9 +64,11 @@ interface VirtualWindow {
             <circle cx="12" cy="6.5" r="1.6" />
             <path d="M4 5.1v5.8M5.6 6.5h2.9a2 2 0 0 0 2-2v-.4" />
           </svg>
-          <span class="truncate text-[13px] font-semibold text-mist">
-            {{ status()?.branch ?? ('git.detached' | transloco) }}
-          </span>
+          @if (status(); as current) {
+            <span class="truncate text-[13px] font-semibold text-mist">
+              {{ current.branch ?? ('git.detached' | transloco) }}
+            </span>
+          }
           @if (status()?.upstream; as upstream) {
             <span class="shrink-0 text-[11px] text-mist/30">{{ upstream }}</span>
           }
@@ -195,25 +202,31 @@ interface VirtualWindow {
           <div
             class="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300"
           >
-            <span>{{ 'git.conflict.banner' | transloco: { operation: op } }}</span>
+            <span>{{
+              'git.conflict.banner'
+                | transloco: { operation: (operationLabels[op] | transloco) }
+            }}</span>
             @if (conflicted().length > 0) {
               <span class="text-amber-300/70">{{
                 'git.conflict.files' | transloco: { count: conflicted().length }
               }}</span>
             }
             <div class="ml-auto flex items-center gap-1">
-              @if (op === 'rebase') {
-                <button
-                  type="button"
-                  class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10"
-                  (click)="continueOperation()"
-                >
-                  {{ 'git.conflict.continue' | transloco }}
-                </button>
-              }
               <button
                 type="button"
-                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10"
+                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10 disabled:opacity-40"
+                [disabled]="busy() || conflicted().length > 0"
+                [attr.title]="
+                  conflicted().length > 0 ? ('git.conflict.resolveFirst' | transloco) : null
+                "
+                (click)="continueOperation()"
+              >
+                {{ 'git.conflict.continue' | transloco }}
+              </button>
+              <button
+                type="button"
+                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10 disabled:opacity-40"
+                [disabled]="busy()"
                 (click)="abortOperation()"
               >
                 {{ 'git.conflict.abort' | transloco }}
@@ -807,18 +820,26 @@ export class GitView {
   private readonly transloco = inject(TranslocoService);
 
   protected readonly project = this.workspace.activeProject;
-  protected readonly status = this.workspace.activeGitStatus;
-  protected readonly busy = this.workspace.gitBusy;
-  protected readonly message = this.workspace.gitMessage;
-  protected readonly error = this.workspace.gitError;
-  protected readonly diff = this.workspace.gitDiff;
-  protected readonly view = this.workspace.gitView;
-  protected readonly selectedBranch = this.workspace.selectedGitBranch;
-  protected readonly commits = this.workspace.gitCommits;
-  protected readonly commitsLoading = this.workspace.gitCommitsLoading;
-  protected readonly selectedCommit = this.workspace.selectedGitCommit;
-  protected readonly commitDetail = this.workspace.gitCommitDetail;
-  protected readonly commitFileDiff = this.workspace.gitCommitFileDiff;
+  private readonly gitState = this.git.scope(() => this.project()?.id ?? null);
+  protected readonly status = this.gitState.status;
+  protected readonly busy = this.gitState.busy;
+  protected readonly message = this.gitState.message;
+  protected readonly error = this.gitState.error;
+  protected readonly diff = this.gitState.diff;
+  protected readonly view = this.gitState.view;
+  protected readonly selectedBranch = this.gitState.selectedBranch;
+  protected readonly commits = this.gitState.commits;
+  protected readonly commitsLoading = this.gitState.commitsLoading;
+  protected readonly selectedCommit = this.gitState.selectedCommit;
+  protected readonly commitDetail = this.gitState.commitDetail;
+  protected readonly commitFileDiff = this.gitState.commitFileDiff;
+  protected readonly commitPath = this.gitState.commitPath;
+  protected readonly operationLabels: Record<GitOperation, string> = {
+    merge: 'git.operation.merge',
+    rebase: 'git.operation.rebase',
+    'cherry-pick': 'git.operation.cherryPick',
+    revert: 'git.operation.revert',
+  };
 
   protected readonly subject = signal('');
   protected readonly description = signal('');
@@ -842,17 +863,23 @@ export class GitView {
     y: number;
   } | null>(null);
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private dateFormat: { lang: string; format: Intl.DateTimeFormat } | null = null;
 
   constructor() {
     effect(() => {
       const project = this.project();
       if (project) {
         void this.git.loadStatus(project.id);
+        void this.git.loadRefs(project.id);
       }
     });
     effect(() => {
-      const project = this.project();
-      this.searchTerm.set(project ? this.git.commitSearchFor(project.id) : '');
+      this.searchTerm.set(this.gitState.commitSearch());
+    });
+    inject(DestroyRef).onDestroy(() => {
+      if (this.searchTimer) {
+        clearTimeout(this.searchTimer);
+      }
     });
     effect(() => {
       const diff = this.commitFileDiff();
@@ -900,17 +927,14 @@ export class GitView {
   protected readonly markedStaged = computed(() =>
     this.staged().filter((change) => this.isMarked(change.path, true)),
   );
-  protected readonly commitPath = computed(() => {
-    const project = this.project();
-    return project ? this.git.commitPathFor(project.id) : null;
-  });
   protected readonly ahead = computed(() => this.status()?.ahead ?? 0);
   protected readonly behind = computed(() => this.status()?.behind ?? 0);
-  private readonly branches = this.workspace.activeGitBranches;
   protected readonly branchTips = computed(() => {
     const seen = new Set<string>();
     const tips: string[] = [];
-    const sorted = [...this.branches()].sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+    const sorted = [...this.gitState.refs().branches].sort(
+      (a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0),
+    );
     for (const branch of sorted) {
       if (branch.hash && !seen.has(branch.hash)) {
         seen.add(branch.hash);
@@ -919,14 +943,22 @@ export class GitView {
     }
     return tips;
   });
-  protected readonly graph = computed(() => buildGitGraph(this.commits(), this.branchTips()));
+  /** Search results and file history are not connected histories; draw them flat. */
+  protected readonly graph = computed(() =>
+    this.gitState.commitSearch().trim() || this.commitPath()
+      ? linearGitGraph(this.commits())
+      : buildGitGraph(this.commits(), this.branchTips()),
+  );
   protected readonly rowHeight = GIT_GRAPH_ROW_HEIGHT;
   protected readonly radius = GIT_GRAPH_RADIUS;
+  protected readonly operation = computed(() => this.status()?.operation ?? null);
+  /** A merge can be concluded with nothing new staged; everything else needs staged changes. */
   protected readonly canCommit = computed(
     () =>
-      (this.staged().length > 0 || this.amend()) && this.subject().trim().length > 0,
+      !this.busy() &&
+      (this.staged().length > 0 || this.amend() || this.operation() === 'merge') &&
+      this.subject().trim().length > 0,
   );
-  protected readonly operation = computed(() => this.status()?.operation ?? null);
   protected readonly conflicted = computed(() => this.status()?.conflicted ?? []);
   protected readonly pullStrategy = this.workspace.gitPullStrategy;
 
@@ -978,6 +1010,13 @@ export class GitView {
   protected onFileKeydown(event: KeyboardEvent, staged: boolean): void {
     const list = staged ? this.staged() : this.unstaged();
     if (list.length === 0) {
+      return;
+    }
+    // Enter and Space on a focused row button activate that button, not the
+    // list shortcut for the marked files.
+    const onButton =
+      event.target !== event.currentTarget && event.target instanceof HTMLButtonElement;
+    if (onButton && (event.key === 'Enter' || event.key === ' ')) {
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
@@ -1055,11 +1094,10 @@ export class GitView {
     if (!projectId || paths.length === 0) {
       return;
     }
-    const confirmed = await confirm(
+    const confirmed = await confirmWarning(
       paths.length > 1
         ? this.transloco.translate('git.discardSelectedConfirm', { count: paths.length })
         : this.transloco.translate('git.discardConfirm', { path: paths[0] }),
-      { title: 'pumr', kind: 'warning' },
     );
     if (!confirmed) {
       return;
@@ -1297,20 +1335,8 @@ export class GitView {
     if (!projectId) {
       return;
     }
-    const confirmed = await confirm(
-      this.transloco.translate('git.discardConfirm', { path }),
-      {
-        title: 'pumr',
-        kind: 'warning',
-      },
-    );
-    if (!confirmed) {
-      return;
-    }
-    try {
-      await this.git.discardPath(projectId, path);
-    } catch (error) {
-      console.error(error);
+    if (await confirmWarning(this.transloco.translate('git.discardConfirm', { path }))) {
+      await this.git.discardPaths(projectId, [path]);
     }
   }
 
@@ -1346,7 +1372,8 @@ export class GitView {
       return;
     }
     const head = await this.git.headMessage(projectId);
-    if (head) {
+    // The user may have unticked amend or started typing meanwhile.
+    if (head && this.amend() && this.subject().trim().length === 0) {
       this.subject.set(head.subject);
       this.description.set(head.body);
     }
@@ -1371,11 +1398,12 @@ export class GitView {
 
   protected async continueOperation(): Promise<void> {
     const projectId = this.project()?.id;
-    if (!projectId) {
+    const operation = this.operation();
+    if (!projectId || !operation) {
       return;
     }
     try {
-      await this.git.continueOperation(projectId);
+      await this.git.continueOperation(projectId, operation);
     } catch (error) {
       console.error(error);
     }
@@ -1405,10 +1433,15 @@ export class GitView {
     }
   }
 
+  /** Formats a timestamp; the formatter is built once per language, not per row. */
   protected absoluteTime(timestamp: number): string {
-    return new Intl.DateTimeFormat(this.transloco.getActiveLang(), {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(timestamp));
+    const lang = this.transloco.getActiveLang();
+    if (this.dateFormat?.lang !== lang) {
+      this.dateFormat = {
+        lang,
+        format: new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
+      };
+    }
+    return this.dateFormat.format.format(new Date(timestamp));
   }
 }

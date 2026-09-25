@@ -1,12 +1,13 @@
 use crate::models::{
-    EventSink, PermissionDecision, QuestionAnswer, QuestionItem, RoutedEvent, StreamEvent,
+    EventSink, PermissionAuditEntry, PermissionDecision, QuestionAnswer, QuestionItem,
+    RoutedEvent, StreamEvent,
 };
 use crate::permissions::{
     CommandRisk, CommandScopeOption, CommandSegment, LivePermissions,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
@@ -48,6 +49,8 @@ pub struct PermissionPrompt {
     pub scope_options: Vec<CommandScopeOption>,
     /// Outside-project directories the user can whitelist from a command prompt.
     pub folders: Vec<String>,
+    /// Websites a command contacts that the user can allow from its prompt.
+    pub hosts: Vec<String>,
     /// The conversation (root session) an "allow in this chat" grant belongs to.
     /// Distinct from the routing `session_id`, which may be a subagent.
     pub grant_session_id: String,
@@ -92,6 +95,7 @@ struct PendingPermission {
     suggested_rule: Option<String>,
     scope_options: Vec<CommandScopeOption>,
     folders: Vec<String>,
+    hosts: Vec<String>,
     session_id: String,
     grant_session_id: String,
     project_root: PathBuf,
@@ -108,6 +112,11 @@ pub struct PendingPrompt {
     pub scope_options: Vec<CommandScopeOption>,
     /// Outside-project directories the backend proposed for whitelisting.
     pub folders: Vec<String>,
+    /// Websites the backend proposed for allowing from a command prompt.
+    pub hosts: Vec<String>,
+    /// The URL a website prompt asked about, so an edited website rule can be
+    /// checked against the host it must still cover.
+    pub url: Option<String>,
     /// Routing session id of the prompt (may be a subagent); kept for callers
     /// and tests that distinguish the asking session from the chat.
     #[allow(dead_code)]
@@ -116,21 +125,29 @@ pub struct PendingPrompt {
     pub grant_session_id: String,
 }
 
-fn deny() -> PermissionDecision {
+/// A denial the user did not make; `by` says what decided it.
+fn deny_by(by: &str) -> PermissionDecision {
     PermissionDecision {
         allowed: false,
         rule: None,
         folder: None,
+        decided_by: by.to_string(),
+        decision: None,
     }
 }
 
-fn allow() -> PermissionDecision {
+fn allow_by(by: &str) -> PermissionDecision {
     PermissionDecision {
         allowed: true,
         rule: None,
         folder: None,
+        decided_by: by.to_string(),
+        decision: None,
     }
 }
+
+/// Receives every permission decision for the audit log.
+pub type AuditSink = Arc<dyn Fn(PermissionAuditEntry) + Send + Sync>;
 
 /// A queued prompt's backend-owned state, snapshotted so it can be
 /// re-evaluated against the live permissions without holding the broker lock.
@@ -162,16 +179,12 @@ impl PendingSnapshot {
                     return None;
                 }
                 let cwd = self.cwd.clone()?;
-                let mut rules = permissions.command_rules();
-                rules.extend(permissions.session_command_rules(&self.grant_session_id));
-                match crate::permissions::evaluate_command_with(
+                match permissions.evaluate_command(
                     &command,
                     &self.project_root,
                     &cwd,
-                    &permissions.extra_folders(),
-                    &rules,
-                    &permissions.denied_command_rules(),
-                    &permissions.auto_approve(),
+                    &self.grant_session_id,
+                    &mut Vec::new(),
                 ) {
                     crate::permissions::CommandDecision::Allow => Some(true),
                     crate::permissions::CommandDecision::Deny { .. } => Some(false),
@@ -218,6 +231,7 @@ impl PendingSnapshot {
 
 pub struct PermissionBroker {
     inner: Mutex<BrokerInner>,
+    audit: Mutex<Option<AuditSink>>,
 }
 
 #[derive(Default)]
@@ -230,6 +244,22 @@ impl PermissionBroker {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(BrokerInner::default()),
+            audit: Mutex::new(None),
+        }
+    }
+
+    /// Where decisions are recorded; without a sink nothing is logged.
+    pub fn set_audit_sink(&self, sink: AuditSink) {
+        *self.audit.lock().unwrap() = Some(sink);
+    }
+
+    /// Records a permission decision in the audit log. Prompted decisions are
+    /// recorded by [`Self::ask`]; tools call this for decisions made without a
+    /// prompt (allowed by a rule or an automatic approval, denied by a rule).
+    pub fn audit(&self, entry: PermissionAuditEntry) {
+        let sink = self.audit.lock().unwrap().clone();
+        if let Some(sink) = sink {
+            sink(entry);
         }
     }
 
@@ -257,15 +287,22 @@ impl PermissionBroker {
                 suggested_rule: entry.suggested_rule.clone(),
                 scope_options: entry.scope_options.clone(),
                 folders: entry.folders.clone(),
+                hosts: entry.hosts.clone(),
+                url: entry.signature.url.clone(),
                 session_id: entry.session_id.clone(),
                 grant_session_id: entry.grant_session_id.clone(),
             })
     }
 
-    pub fn deny_all(&self) {
+    /// Denies the queued prompts of a stopped chat: its own and its subagents'
+    /// (which carry the chat as their grant session). Prompts of other chats
+    /// stay pending; stopping one chat must not answer another chat's prompts.
+    pub fn deny_session(&self, session_id: &str) {
         let inner = self.inner.lock().unwrap();
         for entry in inner.pending.values() {
-            entry.sender.send_replace(Some(deny()));
+            if entry.grant_session_id == session_id || entry.session_id == session_id {
+                entry.sender.send_replace(Some(deny_by("stopped")));
+            }
         }
     }
 
@@ -300,11 +337,11 @@ impl PermissionBroker {
         for snapshot in snapshots {
             match snapshot.evaluate(permissions) {
                 Some(true) => {
-                    self.resolve(&snapshot.request_id, allow());
+                    self.resolve(&snapshot.request_id, allow_by("grant"));
                     resolved.push(snapshot.request_id);
                 }
                 Some(false) => {
-                    self.resolve(&snapshot.request_id, deny());
+                    self.resolve(&snapshot.request_id, deny_by("grant"));
                     resolved.push(snapshot.request_id);
                 }
                 None => {}
@@ -330,7 +367,7 @@ impl PermissionBroker {
                 .collect()
         };
         for request_id in request_ids {
-            self.resolve(&request_id, deny());
+            self.resolve(&request_id, deny_by("cascade"));
         }
     }
 
@@ -369,6 +406,7 @@ impl PermissionBroker {
                             suggested_rule: prompt.suggested_rule.clone(),
                             scope_options: prompt.scope_options.clone(),
                             folders: prompt.folders.clone(),
+                            hosts: prompt.hosts.clone(),
                             session_id: session_id.to_string(),
                             grant_session_id: prompt.grant_session_id.clone(),
                             project_root: prompt.project_root.clone(),
@@ -396,6 +434,7 @@ impl PermissionBroker {
                     risk: prompt.risk.clone(),
                     scope_options: prompt.scope_options.clone(),
                     folders: prompt.folders.clone(),
+                    hosts: prompt.hosts.clone(),
                 },
             });
         }
@@ -407,15 +446,38 @@ impl PermissionBroker {
             tokio::select! {
                 result = receiver.changed() => {
                     if result.is_err() {
-                        break deny();
+                        break deny_by("cancelled");
                     }
                 }
-                _ = cancel.cancelled() => break deny(),
-                _ = tokio::time::sleep(Duration::from_secs(600)) => break deny(),
+                _ = cancel.cancelled() => break deny_by("cancelled"),
+                _ = tokio::time::sleep(Duration::from_secs(600)) => break deny_by("timeout"),
             }
         };
 
         if is_new {
+            self.audit(PermissionAuditEntry {
+                id: 0,
+                created_at: 0,
+                session_id: session_id.to_string(),
+                conversation_id: prompt.grant_session_id.clone(),
+                kind: prompt.kind.clone(),
+                subject: prompt
+                    .command
+                    .clone()
+                    .or_else(|| prompt.url.clone())
+                    .or_else(|| prompt.path.clone())
+                    .or_else(|| prompt.folder.clone())
+                    .unwrap_or_else(|| prompt.title.clone()),
+                allowed: decision.allowed,
+                decided_by: if decision.decided_by.is_empty() {
+                    "user".to_string()
+                } else {
+                    decision.decided_by.clone()
+                },
+                decision: decision.decision.clone(),
+                reason: prompt.detail.clone(),
+                rule: decision.rule.clone(),
+            });
             (emit)(RoutedEvent {
                 session_id: session_id.to_string(),
                 event: StreamEvent::PermissionResolved {
@@ -442,8 +504,12 @@ impl Default for PermissionBroker {
 /// here until the user submits answers (or skips), the turn is cancelled, or the
 /// prompt times out.
 pub struct QuestionBroker {
-    pending: Mutex<HashMap<String, oneshot::Sender<Option<Vec<QuestionAnswer>>>>>,
+    /// Open questions by request id, with the session that asked them.
+    pending: Mutex<HashMap<String, (String, AnswerSender)>>,
 }
+
+/// Delivers a question's answers; `None` skips it.
+type AnswerSender = oneshot::Sender<Option<Vec<QuestionAnswer>>>;
 
 impl QuestionBroker {
     pub fn new() -> Self {
@@ -453,15 +519,25 @@ impl QuestionBroker {
     }
 
     pub fn resolve(&self, request_id: &str, answers: Option<Vec<QuestionAnswer>>) {
-        if let Some(sender) = self.pending.lock().unwrap().remove(request_id) {
+        if let Some((_, sender)) = self.pending.lock().unwrap().remove(request_id) {
             let _ = sender.send(answers);
         }
     }
 
-    pub fn skip_all(&self) {
+    /// Skips the open questions of a stopped session. Other chats keep theirs;
+    /// a subagent's questions end through the cancel token it shares with its
+    /// chat.
+    pub fn skip_session(&self, session_id: &str) {
         let mut pending = self.pending.lock().unwrap();
-        for (_, sender) in pending.drain() {
-            let _ = sender.send(None);
+        let asked: Vec<String> = pending
+            .iter()
+            .filter(|(_, (asker, _))| asker == session_id)
+            .map(|(request_id, _)| request_id.clone())
+            .collect();
+        for request_id in asked {
+            if let Some((_, sender)) = pending.remove(&request_id) {
+                let _ = sender.send(None);
+            }
         }
     }
 
@@ -477,7 +553,7 @@ impl QuestionBroker {
         self.pending
             .lock()
             .unwrap()
-            .insert(request_id.clone(), sender);
+            .insert(request_id.clone(), (session_id.to_string(), sender));
 
         (emit)(RoutedEvent {
             session_id: session_id.to_string(),
@@ -536,6 +612,7 @@ mod tests {
             risk: None,
             scope_options: Vec::new(),
             folders: Vec::new(),
+            hosts: Vec::new(),
             grant_session_id: "chat".to_string(),
         }
     }
@@ -593,18 +670,11 @@ mod tests {
             );
         }
 
-        broker.resolve(
-            &requests[0].0,
-            PermissionDecision {
-                allowed: true,
-                rule: None,
-                folder: None,
-            },
-        );
+        broker.resolve(&requests[0].0, allow_by("user"));
         assert!(first.await.allowed);
         if !shared {
             assert!(futures_util::poll!(second.as_mut()).is_pending());
-            broker.resolve(&requests[1].0, deny());
+            broker.resolve(&requests[1].0, deny_by("user"));
         }
         assert_eq!(second.await.allowed, shared);
         let resolved = events
@@ -695,7 +765,7 @@ mod tests {
         assert_eq!(pending.session_id, "subagent");
         assert_eq!(pending.grant_session_id, "root-chat");
 
-        broker.resolve(&request_id, deny());
+        broker.resolve(&request_id, deny_by("user"));
         future.await;
     }
 
@@ -750,6 +820,7 @@ mod tests {
             risk: None,
             scope_options: Vec::new(),
             folders: Vec::new(),
+            hosts: Vec::new(),
             grant_session_id: grant_session_id.to_string(),
         }
     }
@@ -845,7 +916,7 @@ mod tests {
         assert!(first.await.allowed);
         assert!(futures_util::poll!(second.as_mut()).is_pending());
 
-        broker.deny_all();
+        broker.deny_session("chat-b");
         assert!(!second.await.allowed);
         std::fs::remove_dir_all(&outside).ok();
     }
@@ -915,7 +986,7 @@ mod tests {
         assert!(broker.auto_resolve("chat", &permissions).is_empty());
         assert!(futures_util::poll!(future.as_mut()).is_pending());
 
-        broker.deny_all();
+        broker.deny_session("chat");
         assert!(!future.await.allowed);
     }
 
@@ -949,7 +1020,92 @@ mod tests {
         assert!(futures_util::poll!(first.as_mut()).is_pending());
         assert!(!second.await.allowed);
 
-        broker.resolve(&first_id, deny());
+        broker.resolve(&first_id, deny_by("user"));
         assert!(!first.await.allowed);
+    }
+
+    #[tokio::test]
+    async fn stopping_a_chat_leaves_other_chats_prompts_pending() {
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let mut other_prompt = command_prompt();
+        other_prompt.grant_session_id = "other".to_string();
+        let stopped = broker.ask(command_prompt(), &cancel, "sub", &emit);
+        let other = broker.ask(other_prompt, &cancel, "other", &emit);
+        tokio::pin!(stopped, other);
+        assert!(futures_util::poll!(stopped.as_mut()).is_pending());
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
+
+        broker.deny_session("chat");
+        let decision = stopped.await;
+        assert!(!decision.allowed);
+        assert_eq!(decision.decided_by, "stopped");
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
+    }
+
+    #[tokio::test]
+    async fn stopping_a_session_leaves_other_sessions_questions_open() {
+        let questions = QuestionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let stopped = questions.ask(Vec::new(), &cancel, "chat", &emit);
+        let other = questions.ask(Vec::new(), &cancel, "other", &emit);
+        tokio::pin!(stopped, other);
+        assert!(futures_util::poll!(stopped.as_mut()).is_pending());
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
+
+        questions.skip_session("chat");
+        assert!(stopped.await.is_none());
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
+    }
+
+    #[tokio::test]
+    async fn every_prompt_outcome_is_recorded_with_who_decided() {
+        let broker = PermissionBroker::new();
+        let recorded: Arc<Mutex<Vec<PermissionAuditEntry>>> = Arc::default();
+        let sink = recorded.clone();
+        broker.set_audit_sink(Arc::new(move |entry| sink.lock().unwrap().push(entry)));
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+
+        let first = broker.ask(command_prompt(), &cancel, "sub", &emit);
+        tokio::pin!(first);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        let first_id = broker.inner.lock().unwrap().by_signature.values().next().cloned().unwrap();
+        broker.resolve(
+            &first_id,
+            PermissionDecision {
+                allowed: true,
+                rule: Some("npm *".into()),
+                folder: None,
+                decided_by: "user".into(),
+                decision: Some("allow_always".into()),
+            },
+        );
+        assert!(first.await.allowed);
+
+        let mut second_prompt = command_prompt();
+        second_prompt.command = Some("npm publish".into());
+        let second = broker.ask(second_prompt, &cancel, "sub", &emit);
+        tokio::pin!(second);
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+        // Stopping the chat also denies its subagent's prompt.
+        broker.deny_session("chat");
+        assert!(!second.await.allowed);
+
+        let entries = recorded.lock().unwrap().clone();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].subject, "npm install");
+        assert_eq!(entries[0].session_id, "sub");
+        assert_eq!(entries[0].conversation_id, "chat");
+        assert!(entries[0].allowed);
+        assert_eq!(entries[0].decided_by, "user");
+        assert_eq!(entries[0].decision.as_deref(), Some("allow_always"));
+        assert_eq!(entries[0].rule.as_deref(), Some("npm *"));
+        assert_eq!(entries[0].reason, "Approval required");
+        assert_eq!(entries[1].subject, "npm publish");
+        assert!(!entries[1].allowed);
+        assert_eq!(entries[1].decided_by, "stopped");
     }
 }

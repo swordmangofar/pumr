@@ -128,7 +128,14 @@
       "banner": "{{ operation }} ar siúl",
       "files": "{{ count }} comhad in achrann",
       "continue": "Lean ar aghaidh",
-      "abort": "Tobscoir"
+      "abort": "Tobscoir",
+      "resolveFirst": "Réitigh gach coimhlint ar dtús agus cuir na comhaid ar stáitse."
+    },
+    "operation": {
+      "merge": "Cumasc",
+      "rebase": "Athbhunú",
+      "cherryPick": "Cherry-pick",
+      "revert": "Aisiompú"
     },
     "errors": {
       "auth": "Theip ar an bhfíordheimhniú. Seiceáil do dhintiúir Git.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Aistrigh chuig an mbrainse nua",
       "confirm": "Deimhnigh",
       "mergeConfirm": "Cumaisc '{{branch}}' isteach i '{{current}}'?",
+      "rebaseConfirm": "Athbhunaigh '{{current}}' ar '{{branch}}'? Athscríobhfar tiomantais '{{current}}'.",
       "deleteConfirm": "Scrios an brainse '{{branch}}'? Ní féidir é seo a chealú.",
       "deleteRemoteConfirm": "Scrios an brainse cianda '{{branch}}'? Bíonn tionchar aige seo ar an stór cianda.",
+      "forceDeleteConfirm": "Níl an brainse '{{branch}}' cumaiscthe go hiomlán. É a scriosadh mar sin féin? Caillfear a thiomantais neamhchumaiscthe.",
       "rebaseHint": "Athordaigh na commits agus roghnaigh gníomh do gach ceann. Ritheann an rebase ón gceann is sine go dtí an ceann is nuaí.",
-      "nothingToRebase": "Níl aon commit le rebase."
+      "nothingToRebase": "Níl aon commit le rebase.",
+      "rebaseActions": {
+        "pick": "Coinnigh (pick)",
+        "squash": "Comhbhrúigh (squash)",
+        "fixup": "Ionchorpraigh (fixup)",
+        "drop": "Caith amach (drop)"
+      },
+      "rebaseSquashFirst": "Ní féidir an chéad tiomantas a chomhbhrú (squash nó fixup): níl tiomantas níos luaithe ann lena chomhcheangal.",
+      "moveUp": "Bog suas",
+      "moveDown": "Bog síos"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Níl aon chéimeanna ag teacht leis na scagairí reatha.",
     "view": {
       "timeline": "Amlíne",
-      "branches": "Craobhacha"
+      "branches": "Craobhacha",
+      "permissions": "Ceadanna"
     },
     "filters": {
       "type": "Cineál",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Sárú seisiún",
       "default": "Socruithe réamhshocraithe"
+    },
+    "permissions": {
+      "empty": "Níl aon chinntí ceada taifeadta don chomhrá seo fós.",
+      "clear": "Glan an loga",
+      "clearConfirm": "Cliceáil arís chun glanadh",
+      "allowed": "Ceadaithe",
+      "denied": "Séanta",
+      "why": "Cén fáth:",
+      "rule": "Riail:",
+      "filters": {
+        "auto": "Ceadaithe gan fiafraí",
+        "asked": "Fiafraithe",
+        "denied": "Séanta"
+      },
+      "by": {
+        "auto": "Uathoibríoch",
+        "rule": "Riail shéanta",
+        "user": "Tusa",
+        "grant": "Clúdaithe ag cead nua",
+        "cascade": "Séanta le hiarratas eile",
+        "stopped": "Stoptha",
+        "timeout": "Imithe thar am",
+        "cancelled": "Cealaithe"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Níl aon ordú blocáilte.",
     "scope": {
       "program": "Clár",
+      "subcommand": "Ríomhchlár + fo-ordú",
       "programFlags": "Clár + roghanna",
       "exact": "Cruinn"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Níl aon rialacha orduithe fós. Úsáid \"ceadaigh i gcónaí\" i leid ceada chun ceann a chruthú.",
     "websiteRules": "Suíomhanna gréasáin",
-    "websiteRulesHint": "Suíomhanna gréasáin a bhféadfaidh an cúntóir cuairt a thabhairt orthu. Buaann rialacha séanta ar rialacha ceada; clúdaíonn fearann lom a fhofhearainn freisin. Úsáid \"ceadaigh i gcónaí\" nó \"séan i gcónaí\" i leid ceada chun ceann a chruthú.",
+    "websiteRulesHint": "Suíomhanna gréasáin a bhféadfaidh an cúntóir cuairt a thabhairt orthu lena uirlisí gréasáin nó le horduithe amhail curl, git agus ssh. Buaann rialacha séanta ar rialacha ceada; clúdaíonn fearann lom a fhofhearainn freisin. Úsáid \"ceadaigh i gcónaí\" nó \"séan i gcónaí\" i leid ceada chun ceann a chruthú.",
     "permissionPrompts": "Leideanna ceada",
     "permissionPromptsHint": "Roghnaigh cad a dhéanann an príomhchnaipe ceada de réir réamhshocraithe. Ceadaigh uair amháin formheasann sé aon iarratas amháin; ceadaigh don seisiún seo cuimhníonn sé ar rochtain fillteáin go dtí go n-atosaítear an aip.",
     "autoApprove": "Formheas uathoibríoch",
-    "autoApproveHint": "Scipeáil leideanna d'obair ar féidir leis an gcúntóir a chruthú go bhfuil sí sábháilte. Iarrann orduithe contúirteacha, cosáin lasmuigh den tionscadal agus comhaid íogaire i gcónaí.",
+    "autoApproveHint": "Scipeáil leideanna d'obair ar féidir leis an gcúntóir a chruthú go bhfuil sí sábháilte. Iarrann orduithe contúirteacha, cód inlíne, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, cosáin lasmuigh den tionscadal agus comhaid íogaire i gcónaí.",
     "autoApproveReadOnly": "Orduithe inléite amháin",
     "autoApproveReadOnlyHint": "Ceadaigh orduithe cigireachta amhail ls, grep agus git status gan iarraidh.",
     "autoApprovePackageScripts": "Bainisteoirí pacáiste agus uirlisí tógála",
-    "autoApprovePackageScriptsHint": "Ceadaigh pnpm, npm, yarn, bun, ng, npx, make agus uirlisí comhchosúla nuair nach bhfuil aon rud ag díriú lasmuigh den tionscadal.",
+    "autoApprovePackageScriptsHint": "Ceadaigh pnpm, npm, yarn, bun, ng, make agus uirlisí comhchosúla nuair nach bhfuil aon rud ag díriú lasmuigh den tionscadal.",
     "autoApproveProjectExecutables": "Inrite tionscadail",
     "autoApproveProjectExecutablesHint": "Ceadaigh inrite laistigh den tionscadal, ar nós ./node_modules/.bin/ng, gan iarraidh gach uair.",
     "autoApproveProjectCommands": "Gach ordú laistigh den tionscadal",
-    "autoApproveProjectCommandsHint": "Ceadaigh aon ordú neamhchontúirteach a bhfanann a chosáin laistigh den tionscadal. Iarrann orduithe contúirteacha, comhaid íogaire agus aon rud lasmuigh fós.",
+    "autoApproveProjectCommandsHint": "Ceadaigh aon ordú neamhchontúirteach a bhfanann a chosáin laistigh den tionscadal. Fiafraíonn orduithe contúirteacha, cód inlíne, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, comhaid íogaire agus aon rud lasmuigh i gcónaí.",
+    "permissionPreset": {
+      "strict": "Dian",
+      "strictHint": "Ní ritheann ach orduithe léite amháin gan fiafraí.",
+      "balanced": "Cothrom",
+      "balancedHint": "Ritheann orduithe léite amháin, bainisteoirí pacáistí, uirlisí tógála agus comhaid inrite an tionscadail gan fiafraí.",
+      "autonomous": "Neamhspleách",
+      "autonomousHint": "Ritheann gach ordú neamhchontúirteach laistigh den tionscadal gan fiafraí.",
+      "custom": "Saincheaptha",
+      "autonomousWarning": "Tá muinín ag an mód neamhspleách as an tionscadal seo: is féidir lena scripteanna, a chomhaid Makefile agus a chomhaid inrite aon rud a dhéanamh gan fiafraí. Fiafraíonn cód inlíne, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, orduithe contúirteacha agus aon rud lasmuigh den tionscadal i gcónaí.",
+      "confirm": "Úsáid an mód neamhspleách"
+    },
     "noAllowedWebsites": "Níl aon suíomhanna gréasáin a cheadaítear i gcónaí fós.",
     "noDeniedWebsites": "Níl aon suíomhanna gréasáin a shéantar i gcónaí fós.",
     "websitePlaceholder": "m.sh. docs.rs nó *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Fillteán"
     },
     "allowAlways": "Ceadaigh i gcónaí",
-    "addFolder": "Cuir fillteán leis go buan",
     "siteRuleLabel": "Riail suímh ghréasáin (fearann nó glob)",
     "siteRuleHint": "Mar shampla: ceadaíonn docs.rs an suíomh sin, ceadaíonn *.github.com a fhofhearainn uile.",
-    "segment": {
-      "allowed": "Ceadaithe",
-      "needsApproval": "Teastaíonn ceadú",
-      "title": "Cad is gá a cheadú",
-      "summary": "Is gá {{ count }} as {{ total }} cuid a cheadú",
-      "folderOnly": "Ní féidir le rialacha ordaithe cosáin lasmuigh den tionscadal a cheadú. Ceadaigh fillteán thíos ina ionad."
-    },
+    "siteRuleInvalid": "Ní chlúdaíonn an riail seo {{ host }} nó tá sí róleathan, mar sin sábhálfar {{ host }} ina hionad.",
     "risk": {
       "low": "Íseal",
       "medium": "Meánach",
+      "network": "Líonra",
       "high": "Ard",
       "danger": "Contúirt"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Cuireann sé an fillteán agus gach rud faoina bhun leis na fillteáin a cheadaítear i gcónaí.",
       "option": "Fillteán + fofhillteáin"
     },
-    "allowChat": "Ceadaigh sa chomhrá seo"
+    "hostScope": {
+      "title": "Ceadaigh suíomh gréasáin",
+      "hint": "Cuireann sé an suíomh gréasáin agus a fhofhearainn leis na suíomhanna gréasáin ceadaithe.",
+      "option": "Suíomh gréasáin + fofhearainn"
+    },
+    "allowChat": "Ceadaigh sa chomhrá seo",
+    "option": {
+      "yes": "Tá",
+      "chat": "Tá, agus ná fiafraigh arís sa chomhrá seo faoi",
+      "session": "Tá, agus ná fiafraigh arís go dtí atosú faoi",
+      "always": "Tá, agus ceadaigh i gcónaí",
+      "no": "Níl",
+      "denyAlways": "Níl, agus séan i gcónaí"
+    },
+    "customize": "Saincheap",
+    "keyboardHint": "Brúigh 1–{{ count }} nó úsáid ↑ ↓ agus Enter · Séanann Esc",
+    "url": {
+      "queryWarning": "Iompraíonn an seoladh seo go leor sonraí ina theaghrán iarratais. Déan cinnte nach bhfuil aon rud príobháideach ann sula gceadaíonn tú é."
+    },
+    "tooltip": {
+      "deny": "Séan an t-iarratas seo agus gach iarratas eile atá ag fanacht sa chomhrá seo.",
+      "denyAlways": "Séan agus sábháil riail shéanta i do shocruithe. Séantar iarratais eile atá ag fanacht sa chomhrá seo freisin.",
+      "allowOnce": "Ceadaigh an t-iarratas seo amháin.",
+      "allowSession": "Cuimhnítear air i ngach comhrá go dtí go n-atosaítear an aip.",
+      "allowChat": "Cuimhnítear rialacha ordaithe don chomhrá seo agus dá fho-ghníomhairí; fillteáin agus suíomhanna gréasáin go dtí go n-atosaítear an aip.",
+      "allowAlways": "Sábháiltear i do shocruithe é agus baineann sé le gach comhrá."
+    }
   },
   "question": {
     "title": "Ceist",
@@ -1072,6 +1147,8 @@
     "installing": "Ag suiteáil…",
     "uninstall": "Díshuiteáil",
     "addFolder": "Cuir fillteán leis",
-    "noFolders": "Níor cuireadh aon fhillteán leis fós."
+    "noFolders": "Níor cuireadh aon fhillteán leis fós.",
+    "binaryFile": "Comhad dénártha – níl réamhamharc ar fáil.",
+    "fileTooLarge": "Tá an comhad seo rómhór le réamhamharc a thaispeáint."
   }
 }

@@ -128,7 +128,14 @@
       "banner": "{{ operation }} în curs",
       "files": "{{ count }} fișiere cu conflicte",
       "continue": "Continuă",
-      "abort": "Anulează"
+      "abort": "Anulează",
+      "resolveFirst": "Rezolvă mai întâi toate conflictele și adaugă fișierele în stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autentificarea a eșuat. Verificați acreditările Git.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Comută pe noua ramură",
       "confirm": "Confirmă",
       "mergeConfirm": "Îmbinăm '{{branch}}' în '{{current}}'?",
+      "rebaseConfirm": "Faci rebase pentru '{{current}}' pe '{{branch}}'? Commit-urile din '{{current}}' vor fi rescrise.",
       "deleteConfirm": "Ștergi ramura '{{branch}}'? Această acțiune nu poate fi anulată.",
       "deleteRemoteConfirm": "Ștergi ramura remote '{{branch}}'? Aceasta afectează depozitul remote.",
+      "forceDeleteConfirm": "Ramura '{{branch}}' nu este îmbinată complet. O ștergi oricum? Commit-urile ei neîmbinate se vor pierde.",
       "rebaseHint": "Reordonează commiturile și alege o acțiune pentru fiecare. Rebase-ul rulează de la cel mai vechi la cel mai nou.",
-      "nothingToRebase": "Niciun commit de rebase."
+      "nothingToRebase": "Niciun commit de rebase.",
+      "rebaseActions": {
+        "pick": "Păstrează (pick)",
+        "squash": "Combină (squash)",
+        "fixup": "Încorporează (fixup)",
+        "drop": "Elimină (drop)"
+      },
+      "rebaseSquashFirst": "Primul commit nu poate fi combinat (squash sau fixup): nu există un commit anterior cu care să fie unit.",
+      "moveUp": "Mută în sus",
+      "moveDown": "Mută în jos"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Niciun pas nu se potrivește cu filtrele actuale.",
     "view": {
       "timeline": "Cronologie",
-      "branches": "Ramuri"
+      "branches": "Ramuri",
+      "permissions": "Permisiuni"
     },
     "filters": {
       "type": "Tip",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Anularea sesiunii",
       "default": "Setări implicite"
+    },
+    "permissions": {
+      "empty": "Nu există încă decizii de permisiune înregistrate pentru acest chat.",
+      "clear": "Golește jurnalul",
+      "clearConfirm": "Fă clic din nou pentru a goli",
+      "allowed": "Permis",
+      "denied": "Refuzat",
+      "why": "Motiv:",
+      "rule": "Regulă:",
+      "filters": {
+        "auto": "Permis fără a întreba",
+        "asked": "Întrebat",
+        "denied": "Refuzat"
+      },
+      "by": {
+        "auto": "Automat",
+        "rule": "Regulă de interdicție",
+        "user": "Tu",
+        "grant": "Acoperit de o nouă permisiune",
+        "cascade": "Refuzat împreună cu altă cerere",
+        "stopped": "Oprit",
+        "timeout": "Timp expirat",
+        "cancelled": "Anulat"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Nicio comandă blocată.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + subcomandă",
       "programFlags": "Program + opțiuni",
       "exact": "Exact"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Nicio regulă de comenzi încă. Folosește \"permite mereu\" într-o cerere de permisiune pentru a crea una.",
     "websiteRules": "Site-uri web",
-    "websiteRulesHint": "Site-uri pe care asistentul le poate vizita. Regulile de interdicție prevalează asupra celor de permisiune; un domeniu simplu acoperă și subdomeniile sale. Folosește \"permite mereu\" sau \"interzice mereu\" într-o cerere de permisiune pentru a crea una.",
+    "websiteRulesHint": "Site-uri pe care asistentul le poate vizita cu instrumentele sale web sau cu comenzi precum curl, git și ssh. Regulile de interdicție prevalează asupra celor de permisiune; un domeniu simplu acoperă și subdomeniile sale. Folosește \"permite mereu\" sau \"interzice mereu\" într-o cerere de permisiune pentru a crea una.",
     "permissionPrompts": "Cereri de permisiune",
     "permissionPromptsHint": "Alege ce face implicit butonul principal de permitere. Permite o dată aprobă o singură cerere; permite pentru această sesiune reține accesul la folder până la repornirea aplicației.",
     "autoApprove": "Aprobare automată",
-    "autoApproveHint": "Omite solicitările pentru munca pe care asistentul poate dovedi că este sigură. Comenzile periculoase, căile din afara proiectului și fișierele sensibile întreabă întotdeauna.",
+    "autoApproveHint": "Omite solicitările pentru munca pe care asistentul poate dovedi că este sigură. Comenzile periculoase, codul inline, descărcările de pachete, site-urile web încă nepermise, căile din afara proiectului și fișierele sensibile întreabă întotdeauna.",
     "autoApproveReadOnly": "Comenzi doar pentru citire",
     "autoApproveReadOnlyHint": "Permite comenzi de inspecție precum ls, grep și git status fără să întrebe.",
     "autoApprovePackageScripts": "Manageri de pachete și instrumente de build",
-    "autoApprovePackageScriptsHint": "Permite pnpm, npm, yarn, bun, ng, npx, make și instrumente similare când nimic nu indică în afara proiectului.",
+    "autoApprovePackageScriptsHint": "Permite pnpm, npm, yarn, bun, ng, make și instrumente similare când nimic nu indică în afara proiectului.",
     "autoApproveProjectExecutables": "Executabilele proiectului",
     "autoApproveProjectExecutablesHint": "Permite executabile din interiorul proiectului, precum ./node_modules/.bin/ng, fără să întrebe de fiecare dată.",
     "autoApproveProjectCommands": "Toate comenzile din proiect",
-    "autoApproveProjectCommandsHint": "Permite orice comandă nepericuloasă ale cărei căi rămân în proiect. Comenzile periculoase, fișierele sensibile și tot ce este în afara proiectului întreabă în continuare.",
+    "autoApproveProjectCommandsHint": "Permite orice comandă nepericuloasă ale cărei căi rămân în proiect. Comenzile periculoase, codul inline, descărcările de pachete, site-urile web încă nepermise, fișierele sensibile și orice din exterior întreabă în continuare.",
+    "permissionPreset": {
+      "strict": "Strict",
+      "strictHint": "Doar comenzile care doar citesc rulează fără a întreba.",
+      "balanced": "Echilibrat",
+      "balancedHint": "Comenzile doar pentru citire, managerii de pachete, instrumentele de build și executabilele proiectului rulează fără a întreba.",
+      "autonomous": "Autonom",
+      "autonomousHint": "Orice comandă nepericuloasă din proiect rulează fără a întreba.",
+      "custom": "Personalizat",
+      "autonomousWarning": "Modul autonom are încredere în acest proiect: scripturile, fișierele Makefile și executabilele sale pot face orice fără a întreba. Codul inline, descărcările de pachete, site-urile web încă nepermise, comenzile periculoase și orice din afara proiectului întreabă în continuare.",
+      "confirm": "Folosește modul autonom"
+    },
     "noAllowedWebsites": "Niciun site permis mereu încă.",
     "noDeniedWebsites": "Niciun site interzis mereu încă.",
     "websitePlaceholder": "de ex. docs.rs sau *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Folder"
     },
     "allowAlways": "Permite mereu",
-    "addFolder": "Adaugă folder permanent",
     "siteRuleLabel": "Regulă de site (domeniu sau glob)",
     "siteRuleHint": "De exemplu: docs.rs permite acel site, *.github.com permite toate subdomeniile sale.",
-    "segment": {
-      "allowed": "Permis",
-      "needsApproval": "Necesită aprobare",
-      "title": "Ce necesită aprobare",
-      "summary": "{{ count }} din {{ total }} părți necesită aprobare",
-      "folderOnly": "Regulile de comenzi nu pot permite căi din afara proiectului. Permite în schimb un dosar mai jos."
-    },
+    "siteRuleInvalid": "Această regulă nu acoperă {{ host }} sau este prea largă, așa că în locul ei va fi salvat {{ host }}.",
     "risk": {
       "low": "Scăzut",
       "medium": "Mediu",
+      "network": "Rețea",
       "high": "Ridicat",
       "danger": "Pericol"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Adaugă folderul și tot ce se află în el la folderele permise mereu.",
       "option": "Folder + subfoldere"
     },
-    "allowChat": "Permite în acest chat"
+    "hostScope": {
+      "title": "Permite site-ul web",
+      "hint": "Adaugă site-ul web și subdomeniile sale la site-urile web permise.",
+      "option": "Site web + subdomenii"
+    },
+    "allowChat": "Permite în acest chat",
+    "option": {
+      "yes": "Da",
+      "chat": "Da, și nu mai întreba în acest chat pentru",
+      "session": "Da, și nu mai întreba până la repornire pentru",
+      "always": "Da, și permite mereu",
+      "no": "Nu",
+      "denyAlways": "Nu, și interzice mereu"
+    },
+    "customize": "Personalizează",
+    "keyboardHint": "Apasă 1–{{ count }} sau folosește ↑ ↓ și Enter · Esc refuză",
+    "url": {
+      "queryWarning": "Această adresă transportă multe date în șirul de interogare. Asigură-te că nu conține nimic privat înainte de a o permite."
+    },
+    "tooltip": {
+      "deny": "Refuză această cerere și toate celelalte cereri în așteptare din acest chat.",
+      "denyAlways": "Refuză și salvează o regulă de interdicție în setări. Celelalte cereri în așteptare din acest chat sunt refuzate de asemenea.",
+      "allowOnce": "Permite doar această cerere.",
+      "allowSession": "Reținut în toate chaturile până la repornirea aplicației.",
+      "allowChat": "Regulile de comenzi sunt reținute pentru acest chat și subagenții săi; folderele și site-urile web până la repornirea aplicației.",
+      "allowAlways": "Salvat în setări și se aplică tuturor chaturilor."
+    }
   },
   "question": {
     "title": "Întrebare",
@@ -1072,6 +1147,8 @@
     "installing": "Se instalează…",
     "uninstall": "Dezinstalează",
     "addFolder": "Adaugă folder",
-    "noFolders": "Niciun folder adăugat încă."
+    "noFolders": "Niciun folder adăugat încă.",
+    "binaryFile": "Fișier binar – previzualizarea nu este disponibilă.",
+    "fileTooLarge": "Acest fișier este prea mare pentru previzualizare."
   }
 }

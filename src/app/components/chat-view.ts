@@ -17,11 +17,12 @@ import { AttachmentPreview } from './attachment-preview';
 import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
 import { CopyButton } from './copy-button';
+import { MarkdownView } from './markdown-view';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
 import { ProjectIcon } from './project-icon';
 import { QuestionOverlay } from './question-overlay';
-import { StreamText } from './stream-text';
+import { StickToBottom } from './stick-to-bottom';
 import { ToolCard } from './tool-card';
 import { ToolGroup, ToolGroupItem } from './tool-group';
 
@@ -88,7 +89,8 @@ import { TypedInput } from './typed-input';
     ToolGroup,
     AgentStatus,
     PumaLoader,
-    StreamText,
+    MarkdownView,
+    StickToBottom,
     ProjectIcon,
     CopyButton,
   ],
@@ -377,11 +379,14 @@ import { TypedInput } from './typed-input';
                                 }
                               </summary>
                               <div
-                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed break-words whitespace-pre-wrap text-mist/60"
+                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed break-words text-mist/60"
+                                [appStickToBottom]="entry.message.reasoning"
                               >
-                                <app-stream-text
+                                <app-markdown
+                                  class="markdown-muted"
                                   [content]="entry.message.reasoning"
-                                  [follow]="true"
+                                  [streaming]="isThinking(entry.message)"
+                                  [caret]="false"
                                 />
                               </div>
                             </details>
@@ -395,16 +400,11 @@ import { TypedInput } from './typed-input';
                           }
 
                           @if (entry.message.content) {
-                            <div
-                              class="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-mist"
-                            >
-                              <app-stream-text [content]="entry.message.content" />
-                              @if (streaming() && isLast(entry.message)) {
-                                <span
-                                  class="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-accent align-text-bottom"
-                                ></span>
-                              }
-                            </div>
+                            <app-markdown
+                              class="text-[15px] leading-relaxed break-words text-mist"
+                              [content]="entry.message.content"
+                              [streaming]="streaming() && isLast(entry.message)"
+                            />
                           }
 
                           @if (entry.message.content || entry.message.cost > 0) {

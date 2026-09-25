@@ -148,4 +148,44 @@ describe('AgentRulesSettings command rules', () => {
     expect(patch).toHaveBeenCalledWith('autoApproveProjectCommands', false);
     expect(instance.isAuto('autoApproveProjectCommands')).toBe(false);
   });
+
+  function presetButton(preset: string): HTMLButtonElement {
+    return fixture.nativeElement.querySelector(`[data-preset="${preset}"]`) as HTMLButtonElement;
+  }
+
+  it('applies presets and shows custom mixes', () => {
+    expect(presetButton('autonomous').className).toContain('border-accent/60');
+    presetButton('strict').click();
+    fixture.detectChanges();
+    expect(settings().autoApproveReadOnly).toBe(true);
+    expect(settings().autoApprovePackageScripts).toBe(false);
+    expect(settings().autoApproveProjectExecutables).toBe(false);
+    expect(settings().autoApproveProjectCommands).toBe(false);
+    expect(presetButton('strict').className).toContain('border-accent/60');
+
+    presetButton('balanced').click();
+    fixture.detectChanges();
+    expect(settings().autoApprovePackageScripts).toBe(true);
+    expect(settings().autoApproveProjectExecutables).toBe(true);
+    expect(settings().autoApproveProjectCommands).toBe(false);
+
+    const instance = fixture.componentInstance as unknown as { toggleAuto: (key: string) => void };
+    instance.toggleAuto('autoApproveReadOnly');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="custom-preset"]')).not.toBeNull();
+  });
+
+  it('asks for confirmation before switching to autonomous', () => {
+    presetButton('strict').click();
+    fixture.detectChanges();
+    presetButton('autonomous').click();
+    fixture.detectChanges();
+    expect(settings().autoApproveProjectCommands).toBe(false);
+    const warning = fixture.nativeElement.querySelector('[data-testid="autonomous-warning"]');
+    expect(warning).not.toBeNull();
+    (warning.querySelector('[data-testid="confirm-autonomous"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(settings().autoApproveProjectCommands).toBe(true);
+    expect(fixture.nativeElement.querySelector('[data-testid="autonomous-warning"]')).toBeNull();
+  });
 });

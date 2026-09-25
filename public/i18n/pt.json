@@ -128,7 +128,14 @@
       "banner": "{{ operation }} em andamento",
       "files": "{{ count }} arquivos em conflito",
       "continue": "Continuar",
-      "abort": "Abortar"
+      "abort": "Abortar",
+      "resolveFirst": "Resolva primeiro todos os conflitos e adicione os ficheiros ao stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Falha na autenticação. Verifique as credenciais do Git.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Mudar para o novo ramo",
       "confirm": "Confirmar",
       "mergeConfirm": "Fundir '{{branch}}' em '{{current}}'?",
+      "rebaseConfirm": "Fazer rebase de '{{current}}' sobre '{{branch}}'? Isto reescreve os commits de '{{current}}'.",
       "deleteConfirm": "Eliminar o ramo '{{branch}}'? Isto não pode ser anulado.",
       "deleteRemoteConfirm": "Eliminar o ramo remoto '{{branch}}'? Isto afeta o repositório remoto.",
+      "forceDeleteConfirm": "O ramo '{{branch}}' não está totalmente fundido. Eliminá-lo mesmo assim? Os seus commits não fundidos serão perdidos.",
       "rebaseHint": "Reordena os commits e escolhe uma ação para cada um. O rebase decorre do mais antigo para o mais recente.",
-      "nothingToRebase": "Sem commits para rebase."
+      "nothingToRebase": "Sem commits para rebase.",
+      "rebaseActions": {
+        "pick": "Manter (pick)",
+        "squash": "Combinar (squash)",
+        "fixup": "Incorporar (fixup)",
+        "drop": "Descartar (drop)"
+      },
+      "rebaseSquashFirst": "O primeiro commit não pode ser combinado (squash ou fixup): não há um commit anterior com o qual o juntar.",
+      "moveUp": "Mover para cima",
+      "moveDown": "Mover para baixo"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Nenhuma etapa corresponde aos filtros atuais.",
     "view": {
       "timeline": "Linha do tempo",
-      "branches": "Ramos"
+      "branches": "Ramos",
+      "permissions": "Permissões"
     },
     "filters": {
       "type": "Tipo",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Substituição de sessão",
       "default": "Configurações padrão"
+    },
+    "permissions": {
+      "empty": "Ainda não há decisões de permissão registadas para este chat.",
+      "clear": "Limpar registo",
+      "clearConfirm": "Clique novamente para limpar",
+      "allowed": "Permitido",
+      "denied": "Negado",
+      "why": "Porquê:",
+      "rule": "Regra:",
+      "filters": {
+        "auto": "Permitido sem perguntar",
+        "asked": "Perguntado",
+        "denied": "Negado"
+      },
+      "by": {
+        "auto": "Automático",
+        "rule": "Regra de negação",
+        "user": "Você",
+        "grant": "Abrangido por uma nova permissão",
+        "cascade": "Negado com outro pedido",
+        "stopped": "Parado",
+        "timeout": "Tempo esgotado",
+        "cancelled": "Cancelado"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Nenhum comando bloqueado.",
     "scope": {
       "program": "Programa",
+      "subcommand": "Programa + subcomando",
       "programFlags": "Programa + opções",
       "exact": "Exato"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Ainda não há regras de comandos. Use «permitir sempre» em uma solicitação de permissão para criar uma.",
     "websiteRules": "Sites",
-    "websiteRulesHint": "Sites que o assistente pode visitar. As regras de negação prevalecem sobre as de permissão; um domínio simples também cobre seus subdomínios. Use «permitir sempre» ou «negar sempre» em uma solicitação de permissão para criar uma.",
+    "websiteRulesHint": "Sites que o assistente pode visitar com as suas ferramentas web ou com comandos como curl, git e ssh. As regras de negação prevalecem sobre as de permissão; um domínio simples também cobre seus subdomínios. Use «permitir sempre» ou «negar sempre» em uma solicitação de permissão para criar uma.",
     "permissionPrompts": "Pedidos de permissão",
     "permissionPromptsHint": "Escolhe o que o botão principal de permissão faz por predefinição. Permitir uma vez aprova um único pedido; permitir nesta sessão memoriza o acesso à pasta até a aplicação reiniciar.",
     "autoApprove": "Aprovação automática",
-    "autoApproveHint": "Ignora os pedidos de trabalho que o assistente consegue provar ser seguro. Comandos perigosos, caminhos fora do projeto e ficheiros sensíveis perguntam sempre.",
+    "autoApproveHint": "Ignora os pedidos de trabalho que o assistente consegue provar ser seguro. Comandos perigosos, código inline, transferências de pacotes, sites ainda não permitidos, caminhos fora do projeto e ficheiros sensíveis perguntam sempre.",
     "autoApproveReadOnly": "Comandos apenas de leitura",
     "autoApproveReadOnlyHint": "Permite comandos de inspeção como ls, grep e git status sem perguntar.",
     "autoApprovePackageScripts": "Gestores de pacotes e ferramentas de build",
-    "autoApprovePackageScriptsHint": "Permite pnpm, npm, yarn, bun, ng, npx, make e ferramentas semelhantes quando nada aponta para fora do projeto.",
+    "autoApprovePackageScriptsHint": "Permite pnpm, npm, yarn, bun, ng, make e ferramentas semelhantes quando nada aponta para fora do projeto.",
     "autoApproveProjectExecutables": "Executáveis do projeto",
     "autoApproveProjectExecutablesHint": "Permite executáveis dentro do projeto, como ./node_modules/.bin/ng, sem perguntar todas as vezes.",
     "autoApproveProjectCommands": "Todos os comandos dentro do projeto",
-    "autoApproveProjectCommandsHint": "Permite qualquer comando não perigoso cujos caminhos fiquem dentro do projeto. Comandos perigosos, ficheiros sensíveis e tudo o que está fora continuam a perguntar.",
+    "autoApproveProjectCommandsHint": "Permite qualquer comando não perigoso cujos caminhos fiquem dentro do projeto. Comandos perigosos, código inline, transferências de pacotes, sites ainda não permitidos, ficheiros sensíveis e tudo o que é externo continuam a perguntar.",
+    "permissionPreset": {
+      "strict": "Rigoroso",
+      "strictHint": "Apenas os comandos que só leem são executados sem perguntar.",
+      "balanced": "Equilibrado",
+      "balancedHint": "Comandos só de leitura, gestores de pacotes, ferramentas de compilação e executáveis do projeto são executados sem perguntar.",
+      "autonomous": "Autónomo",
+      "autonomousHint": "Todos os comandos não perigosos dentro do projeto são executados sem perguntar.",
+      "custom": "Personalizado",
+      "autonomousWarning": "O modo autónomo confia neste projeto: os seus scripts, Makefiles e executáveis podem fazer qualquer coisa sem perguntar. Código inline, transferências de pacotes, sites ainda não permitidos, comandos perigosos e tudo o que está fora do projeto continuam a perguntar.",
+      "confirm": "Usar modo autónomo"
+    },
     "noAllowedWebsites": "Ainda não há sites sempre permitidos.",
     "noDeniedWebsites": "Ainda não há sites sempre negados.",
     "websitePlaceholder": "ex. docs.rs ou *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Pasta"
     },
     "allowAlways": "Permitir sempre",
-    "addFolder": "Adicionar pasta permanentemente",
     "siteRuleLabel": "Regra de site (domínio ou glob)",
     "siteRuleHint": "Por exemplo: docs.rs permite esse site, *.github.com permite todos os seus subdomínios.",
-    "segment": {
-      "allowed": "Permitido",
-      "needsApproval": "Requer aprovação",
-      "title": "O que precisa de aprovação",
-      "summary": "{{ count }} de {{ total }} partes precisam de aprovação",
-      "folderOnly": "As regras de comandos não podem permitir caminhos fora do projeto. Em vez disso, autorize uma pasta abaixo."
-    },
+    "siteRuleInvalid": "Esta regra não abrange {{ host }} ou é demasiado ampla, por isso será guardado {{ host }}.",
     "risk": {
       "low": "Baixo",
       "medium": "Médio",
+      "network": "Rede",
       "high": "Alto",
       "danger": "Perigo"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Adiciona a pasta e tudo dentro dela às pastas sempre permitidas.",
       "option": "Pasta + subpastas"
     },
-    "allowChat": "Permitir neste chat"
+    "hostScope": {
+      "title": "Permitir site",
+      "hint": "Adiciona o site e os seus subdomínios aos sites permitidos.",
+      "option": "Site + subdomínios"
+    },
+    "allowChat": "Permitir neste chat",
+    "option": {
+      "yes": "Sim",
+      "chat": "Sim, e não perguntar novamente neste chat para",
+      "session": "Sim, e não perguntar novamente até reiniciar para",
+      "always": "Sim, e permitir sempre",
+      "no": "Não",
+      "denyAlways": "Não, e negar sempre"
+    },
+    "customize": "Personalizar",
+    "keyboardHint": "Prima 1–{{ count }} ou use ↑ ↓ e Enter · Esc nega",
+    "url": {
+      "queryWarning": "Este endereço transporta muitos dados na sua cadeia de consulta. Confirme que não contém nada privado antes de o permitir."
+    },
+    "tooltip": {
+      "deny": "Negar este pedido e todos os outros pedidos em espera neste chat.",
+      "denyAlways": "Negar e guardar uma regra de negação nas definições. Os outros pedidos em espera neste chat também são negados.",
+      "allowOnce": "Permitir apenas este pedido.",
+      "allowSession": "Lembrado em todos os chats até a aplicação reiniciar.",
+      "allowChat": "As regras de comandos são lembradas neste chat e nos seus subagentes; pastas e sites até a aplicação reiniciar.",
+      "allowAlways": "Guardado nas definições e aplica-se a todos os chats."
+    }
   },
   "question": {
     "title": "Pergunta",
@@ -1072,6 +1147,8 @@
     "installing": "Instalando…",
     "uninstall": "Desinstalar",
     "addFolder": "Adicionar pasta",
-    "noFolders": "Nenhuma pasta adicionada ainda."
+    "noFolders": "Nenhuma pasta adicionada ainda.",
+    "binaryFile": "Ficheiro binário – pré-visualização indisponível.",
+    "fileTooLarge": "Este ficheiro é demasiado grande para pré-visualizar."
   }
 }

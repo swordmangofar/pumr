@@ -488,6 +488,10 @@ export interface GitBranch {
   current: boolean;
   remote: boolean;
   upstream: string | null;
+  /** Remote of a remote branch, or of a local branch's upstream. */
+  remoteName: string | null;
+  /** Branch name on that remote, without the remote prefix. */
+  remoteBranch: string | null;
   hash: string | null;
   subject: string | null;
   timestamp: number | null;
@@ -530,11 +534,23 @@ export interface GitTag {
   hash: string;
 }
 
+export interface GitStash {
+  /** `stash@{N}`; shifts when stashes are added or dropped. */
+  name: string;
+  /** The stash commit; the backend checks `name` still points at it. */
+  hash: string;
+  message: string;
+}
+
+export const GIT_REBASE_ACTIONS = ['pick', 'squash', 'fixup', 'drop'] as const;
+export type GitRebaseAction = (typeof GIT_REBASE_ACTIONS)[number];
+
 export interface GitRebaseEntry {
-  action: string;
+  action: GitRebaseAction;
   hash: string;
 }
 
+/** Working-tree status; refs are loaded separately as {@link GitRefs}. */
 export interface GitStatus {
   isRepo: boolean;
   branch: string | null;
@@ -544,12 +560,18 @@ export interface GitStatus {
   behind: number;
   staged: FileChange[];
   unstaged: FileChange[];
+  operation: GitOperation | null;
+  conflicted: string[];
+}
+
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
+export interface GitRefs {
   branches: GitBranch[];
   tags: GitTag[];
-  stashes: string[];
+  stashes: GitStash[];
   submodules: string[];
-  operation: string | null;
-  conflicted: string[];
+  remotes: string[];
 }
 
 export type GitPullStrategy = 'ff-only' | 'merge' | 'rebase';
@@ -568,6 +590,10 @@ export interface FileDiff {
   additions: number;
   deletions: number;
   status: string;
+  /** Binary files come without content. */
+  binary?: boolean;
+  /** Files too large to preview come without content. */
+  tooLarge?: boolean;
 }
 
 export interface ProcessInfo {
@@ -627,16 +653,21 @@ export interface CommandSegment {
    * folder grant is the only way to stop the segment from asking.
    */
   folders?: string[];
+  /**
+   * Websites this segment contacts that are not allowed yet. Like `folders`,
+   * only a website grant can stop such a segment from asking.
+   */
+  hosts?: string[];
 }
 
-export type CommandRiskLevel = 'low' | 'medium' | 'high' | 'danger';
+export type CommandRiskLevel = 'low' | 'medium' | 'network' | 'high' | 'danger';
 
 export interface CommandRisk {
   level: CommandRiskLevel;
   detail: string;
 }
 
-export type CommandScopeKind = 'program' | 'programFlags' | 'exact';
+export type CommandScopeKind = 'program' | 'subcommand' | 'programFlags' | 'exact';
 
 export type CommandRule = { kind: 'exact'; value: string } | { kind: 'glob'; value: string };
 
@@ -646,6 +677,28 @@ export interface CommandScopeOption {
 }
 
 export type PermissionRequestEvent = Extract<StreamEvent, { kind: 'permissionRequest' }>;
+
+/** One recorded permission decision, for the debug view's permission log. */
+export interface PermissionAuditEntry {
+  id: number;
+  createdAt: number;
+  /** The session that asked (may be a subagent). */
+  sessionId: string;
+  /** The chat (root session) the decision belongs to. */
+  conversationId: string;
+  kind: string;
+  /** The command line, URL or path. */
+  subject: string;
+  allowed: boolean;
+  /**
+   * `auto` (allowed without asking), `rule` (a deny rule), or who resolved a
+   * prompt: `user`, `grant`, `cascade`, `stopped`, `timeout`, `cancelled`.
+   */
+  decidedBy: string;
+  decision: string | null;
+  reason: string;
+  rule: string | null;
+}
 
 export type QuestionRequestEvent = Extract<StreamEvent, { kind: 'questionRequest' }>;
 
@@ -705,6 +758,8 @@ export type StreamEvent =
       risk: CommandRisk | null;
       scopeOptions: CommandScopeOption[];
       folders: string[];
+      /** Websites a command contacts that the user can allow. */
+      hosts: string[];
     }
   | { kind: 'permissionResolved'; requestId: string; allowed: boolean }
   | { kind: 'questionRequest'; requestId: string; questions: QuestionItem[] }

@@ -1,22 +1,66 @@
-import { Injectable, WritableSignal, signal } from '@angular/core';
+import { Injectable, Signal, WritableSignal, computed, signal } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
   FileDiff,
   GitBlameLine,
-  GitBranch,
   GitCommit,
   GitCommitDetail,
   GitInfo,
+  GitOperation,
   GitPullStrategy,
   GitRebaseEntry,
+  GitRefs,
+  GitStash,
   GitStatus,
   GitTag,
 } from './models';
 
 const GIT_COMMIT_PAGE_SIZE = 50;
+/** Pages loaded at most while looking for a branch tip or tag in the history. */
+const GIT_REVEAL_MAX_PAGES = 20;
 
-type ChangeDiff = { path: string; staged: boolean; diff: FileDiff };
+export type GitChangeDiff = { path: string; staged: boolean; diff: FileDiff };
+export type GitViewMode = 'changes' | 'commits';
+
+const EMPTY_REFS: GitRefs = { branches: [], tags: [], stashes: [], submodules: [], remotes: [] };
+
+/** The git state of one project, as signals that follow the project. */
+export interface GitScope {
+  status: Signal<GitStatus | null>;
+  refs: Signal<GitRefs>;
+  busy: Signal<boolean>;
+  message: Signal<string | null>;
+  error: Signal<string | null>;
+  diff: Signal<GitChangeDiff | null>;
+  view: Signal<GitViewMode>;
+  selectedBranch: Signal<string | null>;
+  commits: Signal<GitCommit[]>;
+  commitsLoading: Signal<boolean>;
+  commitSearch: Signal<string>;
+  commitPath: Signal<string | null>;
+  selectedCommit: Signal<string | null>;
+  commitDetail: Signal<GitCommitDetail | null>;
+  commitFileDiff: Signal<FileDiff | null>;
+}
+
+/**
+ * Hands out increasing tokens per key so that, of several overlapping
+ * requests, only the newest one applies its result.
+ */
+class RequestTokens {
+  private readonly tokens = new Map<string, number>();
+
+  next(key: string): number {
+    const token = (this.tokens.get(key) ?? 0) + 1;
+    this.tokens.set(key, token);
+    return token;
+  }
+
+  isLatest(key: string, token: number): boolean {
+    return this.tokens.get(key) === token;
+  }
+}
 
 /**
  * Owns all git state and operations for the workspace. Every method takes an
@@ -27,8 +71,7 @@ type ChangeDiff = { path: string; staged: boolean; diff: FileDiff };
 export class GitService {
   private readonly infoState = signal<Record<string, GitInfo>>({});
   private readonly statusState = signal<Record<string, GitStatus>>({});
-  private readonly branchesState = signal<Record<string, GitBranch[]>>({});
-  private readonly remotesState = signal<Record<string, string[]>>({});
+  private readonly refsState = signal<Record<string, GitRefs>>({});
   private readonly commitsState = signal<Record<string, GitCommit[]>>({});
   private readonly commitsLoadingState = signal<Record<string, boolean>>({});
   private readonly commitsHasMoreState = signal<Record<string, boolean>>({});
@@ -37,23 +80,46 @@ export class GitService {
   private readonly commitDetailState = signal<Record<string, GitCommitDetail | null>>({});
   private readonly commitFileDiffState = signal<Record<string, FileDiff | null>>({});
   private readonly selectedCommitState = signal<Record<string, string | null>>({});
-  private readonly viewState = signal<Record<string, 'changes' | 'commits'>>({});
+  private readonly viewState = signal<Record<string, GitViewMode>>({});
   private readonly selectedBranchState = signal<Record<string, string | null>>({});
-  private readonly diffState = signal<Record<string, ChangeDiff | null>>({});
+  private readonly diffState = signal<Record<string, GitChangeDiff | null>>({});
   private readonly busyState = signal<Record<string, boolean>>({});
   private readonly messageState = signal<Record<string, string | null>>({});
   private readonly errorState = signal<Record<string, string | null>>({});
-  private readonly commitsRequest = new Map<string, number>();
+  private readonly tokens = new RequestTokens();
   private readonly statusRequests = new Map<string, Promise<void>>();
 
   readonly infoByProject = this.infoState.asReadonly();
-  readonly statusByProject = this.statusState.asReadonly();
-  readonly branchesByProject = this.branchesState.asReadonly();
-  readonly remotesByProject = this.remotesState.asReadonly();
 
   constructor(private readonly transloco: TranslocoService) {}
 
-  viewFor(projectId: string): 'changes' | 'commits' {
+  /** Signals for the project `projectId` currently names (none: empty state). */
+  scope(projectId: () => string | null): GitScope {
+    const of = <T>(read: (id: string) => T, fallback: T): Signal<T> =>
+      computed(() => {
+        const id = projectId();
+        return id ? read(id) : fallback;
+      });
+    return {
+      status: of((id) => this.statusFor(id), null),
+      refs: of((id) => this.refsFor(id), EMPTY_REFS),
+      busy: of((id) => this.busyFor(id), false),
+      message: of((id) => this.messageFor(id), null),
+      error: of((id) => this.errorFor(id), null),
+      diff: of((id) => this.diffFor(id), null),
+      view: of((id) => this.viewFor(id), 'changes'),
+      selectedBranch: of((id) => this.selectedBranchFor(id), null),
+      commits: of((id) => this.commitsFor(id), []),
+      commitsLoading: of((id) => this.commitsLoadingFor(id), false),
+      commitSearch: of((id) => this.commitSearchFor(id), ''),
+      commitPath: of((id) => this.commitPathFor(id), null),
+      selectedCommit: of((id) => this.selectedCommitFor(id), null),
+      commitDetail: of((id) => this.commitDetailFor(id), null),
+      commitFileDiff: of((id) => this.commitFileDiffFor(id), null),
+    };
+  }
+
+  viewFor(projectId: string): GitViewMode {
     return this.viewState()[projectId] ?? 'changes';
   }
 
@@ -93,7 +159,7 @@ export class GitService {
     return this.selectedCommitState()[projectId] ?? null;
   }
 
-  diffFor(projectId: string): ChangeDiff | null {
+  diffFor(projectId: string): GitChangeDiff | null {
     return this.diffState()[projectId] ?? null;
   }
 
@@ -113,6 +179,14 @@ export class GitService {
     return this.statusState()[projectId] ?? null;
   }
 
+  refsFor(projectId: string): GitRefs {
+    return this.refsState()[projectId] ?? EMPTY_REFS;
+  }
+
+  infoFor(projectId: string): GitInfo | null {
+    return this.infoState()[projectId] ?? null;
+  }
+
   /** Clears the transient git view for one project. */
   resetView(projectId: string): void {
     this.set(this.viewState, projectId, 'changes');
@@ -125,22 +199,26 @@ export class GitService {
     this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
     this.set(this.commitPathState, projectId, null);
+    this.set(this.messageState, projectId, null);
     this.set(this.errorState, projectId, null);
   }
 
   async loadInfo(projectId: string): Promise<void> {
-    return this.loadInto(this.infoState, projectId, () => api.getGitInfo(projectId));
+    return this.loadLatest('info', this.infoState, projectId, () => api.getGitInfo(projectId));
   }
 
-  async loadStatus(projectId: string): Promise<void> {
-    // The git sidebar and the git view both load status when they mount, and
-    // mounting happens together when the user switches to the git tab. Sharing
-    // the in-flight request keeps that from scanning the worktree twice.
-    const existing = this.statusRequests.get(projectId);
-    if (existing) {
-      return existing;
+  /**
+   * Loads the working-tree status. A caller that just changed the repository
+   * passes `fresh`, so the result reflects that change; others (views that
+   * mount together) share a request that is already running. Only the newest
+   * request applies its result, so an older one never overwrites it.
+   */
+  loadStatus(projectId: string, fresh = false): Promise<void> {
+    const running = this.statusRequests.get(projectId);
+    if (running && !fresh) {
+      return running;
     }
-    const request = this.loadInto(this.statusState, projectId, () =>
+    const request = this.loadLatest('status', this.statusState, projectId, () =>
       api.getGitStatus(projectId),
     ).finally(() => {
       if (this.statusRequests.get(projectId) === request) {
@@ -151,35 +229,32 @@ export class GitService {
     return request;
   }
 
-  async loadBranches(projectId: string): Promise<void> {
-    return this.loadInto(this.branchesState, projectId, () => api.getGitBranches(projectId));
-  }
-
-  async loadRemotes(projectId: string): Promise<void> {
-    return this.loadInto(this.remotesState, projectId, () => api.getGitRemotes(projectId));
+  /** Branches, tags, stashes, submodules and remotes; they change only on ref operations. */
+  async loadRefs(projectId: string): Promise<void> {
+    return this.loadLatest('refs', this.refsState, projectId, () => api.getGitRefs(projectId));
   }
 
   async refresh(projectId: string): Promise<void> {
+    this.clearError(projectId);
     await Promise.all([
-      this.loadStatus(projectId),
+      this.loadStatus(projectId, true),
       this.loadInfo(projectId),
-      this.loadBranches(projectId),
-      this.loadRemotes(projectId),
+      this.loadRefs(projectId),
     ]);
   }
 
   async loadCommits(projectId: string, reset = true): Promise<void> {
-    const request = this.nextRequest(projectId);
+    const key = `commits:${projectId}`;
+    const token = this.tokens.next(key);
     this.set(this.commitsLoadingState, projectId, true);
     try {
       const query = this.commitSearchFor(projectId).trim() || null;
       const path = this.commitPathFor(projectId);
       const skip = reset ? 0 : this.commitsFor(projectId).length;
       const commits = await api.getGitCommits(projectId, query, skip, GIT_COMMIT_PAGE_SIZE, path);
-      if (request !== this.commitsRequest.get(projectId)) {
+      if (!this.tokens.isLatest(key, token)) {
         return;
       }
-      this.errorState.update((state) => ({ ...state, [projectId]: null }));
       this.set(
         this.commitsState,
         projectId,
@@ -187,7 +262,7 @@ export class GitService {
       );
       this.set(this.commitsHasMoreState, projectId, commits.length === GIT_COMMIT_PAGE_SIZE);
     } catch (error) {
-      if (request === this.commitsRequest.get(projectId)) {
+      if (this.tokens.isLatest(key, token)) {
         if (reset) {
           this.set(this.commitsState, projectId, []);
         }
@@ -195,7 +270,7 @@ export class GitService {
         this.setError(projectId, error);
       }
     } finally {
-      if (request === this.commitsRequest.get(projectId)) {
+      if (this.tokens.isLatest(key, token)) {
         this.set(this.commitsLoadingState, projectId, false);
       }
     }
@@ -209,75 +284,93 @@ export class GitService {
   }
 
   async searchCommits(projectId: string, query: string): Promise<void> {
+    const navigation = this.startNavigation(projectId);
+    this.clearError(projectId);
     this.set(this.commitSearchState, projectId, query);
-    this.set(this.selectedCommitState, projectId, null);
-    this.set(this.commitDetailState, projectId, null);
-    this.set(this.commitFileDiffState, projectId, null);
+    this.clearCommitSelection(projectId);
     await this.loadCommits(projectId, true);
     const first = this.commitsFor(projectId)[0];
-    if (first) {
+    if (first && navigation()) {
       await this.selectCommit(projectId, first.hash);
     }
   }
 
-  async openHistory(projectId: string, branch: string | null): Promise<void> {
+  /**
+   * Shows the history and selects `reveal` (a commit hash), the tip of
+   * `branch`, or else the newest commit. The commit is paged into the list
+   * when it is older than the first page.
+   */
+  async openHistory(
+    projectId: string,
+    branch: string | null,
+    reveal: string | null = null,
+  ): Promise<void> {
+    const navigation = this.startNavigation(projectId);
+    this.clearError(projectId);
     this.set(this.viewState, projectId, 'commits');
     this.set(this.selectedBranchState, projectId, branch);
-    this.set(this.selectedCommitState, projectId, null);
-    this.set(this.commitDetailState, projectId, null);
-    this.set(this.commitFileDiffState, projectId, null);
-    this.set(this.commitsState, projectId, []);
-    this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
     this.set(this.commitPathState, projectId, null);
-    await this.loadBranches(projectId);
+    this.set(this.commitsState, projectId, []);
+    this.set(this.commitsHasMoreState, projectId, false);
+    this.clearCommitSelection(projectId);
+    if (branch && !this.refsState()[projectId]) {
+      await this.loadRefs(projectId);
+    }
     await this.loadCommits(projectId, true);
     const tip = branch
-      ? (this.branchesState()[projectId] ?? []).find((entry) => entry.name === branch)
+      ? (this.refsFor(projectId).branches.find((entry) => entry.name === branch)?.hash ?? null)
       : null;
-    const target =
-      (tip ? this.commitsFor(projectId).find((commit) => commit.hash === tip.hash) : null) ??
-      this.commitsFor(projectId)[0];
+    const target = reveal ?? tip;
     if (target) {
-      await this.selectCommit(projectId, target.hash);
+      await this.revealCommit(projectId, target, navigation);
+      return;
+    }
+    const first = this.commitsFor(projectId)[0];
+    if (first && navigation()) {
+      await this.selectCommit(projectId, first.hash);
     }
   }
 
   /** Opens the commit history filtered to a single path. */
   async openFileHistory(projectId: string, path: string): Promise<void> {
+    const navigation = this.startNavigation(projectId);
+    this.clearError(projectId);
     this.set(this.viewState, projectId, 'commits');
     this.set(this.selectedBranchState, projectId, null);
     this.set(this.commitPathState, projectId, path);
-    this.set(this.selectedCommitState, projectId, null);
-    this.set(this.commitDetailState, projectId, null);
-    this.set(this.commitFileDiffState, projectId, null);
     this.set(this.commitsState, projectId, []);
     this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
+    this.clearCommitSelection(projectId);
     await this.loadCommits(projectId, true);
     const first = this.commitsFor(projectId)[0];
-    if (first) {
+    if (first && navigation()) {
       await this.selectCommit(projectId, first.hash);
     }
   }
 
-  /** Tag hashes are peeled to commits by the backend, so no paging is needed. */
+  /** Tag hashes are peeled to full commit hashes by the backend. */
   async openTag(projectId: string, tag: GitTag): Promise<void> {
-    await this.openHistory(projectId, null);
-    const match = this.commitsFor(projectId).find(
-      (commit) => commit.hash === tag.hash || commit.hash.startsWith(tag.hash),
-    );
-    await this.selectCommit(projectId, match?.hash ?? tag.hash);
+    await this.openHistory(projectId, null, tag.hash);
   }
 
   async selectCommit(projectId: string, hash: string): Promise<void> {
+    const key = `detail:${projectId}`;
+    const token = this.tokens.next(key);
+    this.tokens.next(`commit-file:${projectId}`);
     this.set(this.selectedCommitState, projectId, hash);
     this.set(this.commitFileDiffState, projectId, null);
     try {
-      this.set(this.commitDetailState, projectId, await api.getGitCommit(projectId, hash));
+      const detail = await api.getGitCommit(projectId, hash);
+      if (this.tokens.isLatest(key, token)) {
+        this.set(this.commitDetailState, projectId, detail);
+      }
     } catch (error) {
-      this.set(this.commitDetailState, projectId, null);
-      this.setError(projectId, error);
+      if (this.tokens.isLatest(key, token)) {
+        this.set(this.commitDetailState, projectId, null);
+        this.setError(projectId, error);
+      }
     }
   }
 
@@ -286,98 +379,78 @@ export class GitService {
     if (!hash) {
       return;
     }
+    const key = `commit-file:${projectId}`;
+    const token = this.tokens.next(key);
     try {
-      this.set(
-        this.commitFileDiffState,
-        projectId,
-        await api.getGitCommitFileDiff(projectId, hash, path),
-      );
+      const diff = await api.getGitCommitFileDiff(projectId, hash, path);
+      if (this.tokens.isLatest(key, token)) {
+        this.set(this.commitFileDiffState, projectId, diff);
+      }
     } catch (error) {
-      this.set(this.commitFileDiffState, projectId, null);
-      this.setError(projectId, error);
+      if (this.tokens.isLatest(key, token)) {
+        this.set(this.commitFileDiffState, projectId, null);
+        this.setError(projectId, error);
+      }
     }
   }
 
   showChanges(projectId: string): void {
+    this.startNavigation(projectId);
     this.set(this.viewState, projectId, 'changes');
     this.set(this.selectedBranchState, projectId, null);
-    this.set(this.selectedCommitState, projectId, null);
-    this.set(this.commitDetailState, projectId, null);
-    this.set(this.commitFileDiffState, projectId, null);
     this.set(this.commitsState, projectId, []);
     this.set(this.commitsHasMoreState, projectId, false);
     this.set(this.commitSearchState, projectId, '');
     this.set(this.commitPathState, projectId, null);
+    this.clearCommitSelection(projectId);
   }
 
   async selectChange(projectId: string, path: string, staged: boolean): Promise<void> {
+    const key = `change:${projectId}`;
+    const token = this.tokens.next(key);
     try {
       const diff = await api.getGitFileDiff(projectId, path, staged);
-      this.set(this.diffState, projectId, { path, staged, diff });
+      if (this.tokens.isLatest(key, token)) {
+        this.set(this.diffState, projectId, { path, staged, diff });
+      }
     } catch (error) {
-      this.set(this.diffState, projectId, null);
-      this.setError(projectId, error);
+      if (this.tokens.isLatest(key, token)) {
+        this.set(this.diffState, projectId, null);
+        this.setError(projectId, error);
+      }
     }
   }
 
   async stagePath(projectId: string, path: string | null): Promise<void> {
-    try {
-      await api.gitStage(projectId, path);
-      await this.afterMutation(projectId, path, true);
-    } catch (error) {
-      this.setError(projectId, error);
-    }
+    await this.mutatePaths(projectId, path ? [path] : null, true, () =>
+      api.gitStage(projectId, path),
+    );
   }
 
   async unstagePath(projectId: string, path: string | null): Promise<void> {
-    try {
-      await api.gitUnstage(projectId, path);
-      await this.afterMutation(projectId, path, false);
-    } catch (error) {
-      this.setError(projectId, error);
-    }
+    await this.mutatePaths(projectId, path ? [path] : null, false, () =>
+      api.gitUnstage(projectId, path),
+    );
   }
 
   async stagePaths(projectId: string, paths: string[]): Promise<void> {
-    if (paths.length === 0) {
-      return;
+    if (paths.length > 0) {
+      await this.mutatePaths(projectId, paths, true, () => api.gitStagePaths(projectId, paths));
     }
-    try {
-      await api.gitStagePaths(projectId, paths);
-    } catch (error) {
-      this.setError(projectId, error);
-    }
-    await this.afterBatchMutation(projectId, paths, true);
   }
 
   async unstagePaths(projectId: string, paths: string[]): Promise<void> {
-    if (paths.length === 0) {
-      return;
-    }
-    try {
-      await api.gitUnstagePaths(projectId, paths);
-    } catch (error) {
-      this.setError(projectId, error);
-    }
-    await this.afterBatchMutation(projectId, paths, false);
-  }
-
-  async discardPath(projectId: string, path: string): Promise<void> {
-    try {
-      await api.gitDiscard(projectId, path);
-      if (this.diffFor(projectId)?.path === path) {
-        this.set(this.diffState, projectId, null);
-      }
-      await this.loadStatus(projectId);
-    } catch (error) {
-      this.setError(projectId, error);
+    if (paths.length > 0) {
+      await this.mutatePaths(projectId, paths, false, () => api.gitUnstagePaths(projectId, paths));
     }
   }
 
+  /** Discards unstaged changes; single files and selections take the same path. */
   async discardPaths(projectId: string, paths: string[]): Promise<void> {
     if (paths.length === 0) {
       return;
     }
+    this.clearError(projectId);
     try {
       await api.gitDiscardPaths(projectId, paths);
     } catch (error) {
@@ -387,7 +460,7 @@ export class GitService {
     if (selected && paths.includes(selected.path)) {
       this.set(this.diffState, projectId, null);
     }
-    await this.loadStatus(projectId);
+    await this.loadStatus(projectId, true);
   }
 
   async blame(projectId: string, path: string): Promise<GitBlameLine[]> {
@@ -395,40 +468,35 @@ export class GitService {
   }
 
   async ignorePath(projectId: string, path: string): Promise<void> {
+    this.clearError(projectId);
     try {
       await api.gitIgnore(projectId, path);
       this.set(this.messageState, projectId, this.transloco.translate('git.ignored', { path }));
-      await this.loadStatus(projectId);
     } catch (error) {
       this.setError(projectId, error);
     }
+    await this.loadStatus(projectId, true);
   }
 
   async revealPath(projectId: string, path: string): Promise<void> {
     try {
       await api.revealPath(projectId, path);
     } catch (error) {
-      console.error(error);
+      this.setError(projectId, error);
     }
   }
 
+  /** Commits through `runAction`, so the commit buttons stay disabled until it is done. */
   async commit(projectId: string, message: string, amend: boolean): Promise<string> {
-    try {
+    return this.runAction(projectId, async () => {
       const output = await api.gitCommit(projectId, message, amend);
-      this.set(this.messageState, projectId, output || null);
       this.set(this.diffState, projectId, null);
-      await this.loadStatus(projectId);
       return output;
-    } catch (error) {
-      this.setError(projectId, error);
-      throw error;
-    }
+    });
   }
 
   /** Loads the current HEAD commit so the amend form can prefill it. */
-  async headMessage(
-    projectId: string,
-  ): Promise<{ subject: string; body: string } | null> {
+  async headMessage(projectId: string): Promise<{ subject: string; body: string } | null> {
     try {
       const commit = await api.getGitCommit(projectId, 'HEAD');
       return { subject: commit.subject, body: commit.body };
@@ -443,22 +511,11 @@ export class GitService {
     track = false,
     localBranch?: string,
   ): Promise<string> {
-    try {
+    return this.runAction(projectId, async () => {
       const output = await api.gitCheckout(projectId, branch, track, localBranch);
       this.set(this.diffState, projectId, null);
-      await Promise.all([
-        this.loadStatus(projectId),
-        this.loadInfo(projectId),
-        this.loadBranches(projectId),
-      ]);
-      if (this.viewFor(projectId) === 'commits') {
-        await this.loadCommits(projectId, true);
-      }
       return output;
-    } catch (error) {
-      this.setError(projectId, error);
-      throw error;
-    }
+    });
   }
 
   async runOperation(
@@ -475,8 +532,9 @@ export class GitService {
     );
   }
 
-  async fastForward(projectId: string, branch: string, upstream: string): Promise<string> {
-    return this.runAction(projectId, () => api.gitFastForward(projectId, branch, upstream));
+  /** Fast-forwards `branch` to its configured upstream. */
+  async fastForward(projectId: string, branch: string): Promise<string> {
+    return this.runAction(projectId, () => api.gitFastForward(projectId, branch));
   }
 
   async merge(projectId: string, branch: string): Promise<string> {
@@ -495,12 +553,9 @@ export class GitService {
     return this.runAction(projectId, () => api.gitRebaseInteractive(projectId, onto, todo));
   }
 
+  /** The commits an interactive rebase onto `onto` works on; errors reach the caller. */
   async getRebaseCommits(projectId: string, onto: string): Promise<GitCommit[]> {
-    try {
-      return await api.getGitRebaseCommits(projectId, onto);
-    } catch {
-      return [];
-    }
+    return api.getGitRebaseCommits(projectId, onto);
   }
 
   async branchCreate(
@@ -535,8 +590,22 @@ export class GitService {
     return this.runAction(projectId, () => api.gitBranchRename(projectId, from, to));
   }
 
-  async branchDelete(projectId: string, branch: string, remote: boolean): Promise<string> {
-    return this.runAction(projectId, () => api.gitBranchDelete(projectId, branch, remote));
+  /**
+   * Deletes a branch. Without `force`, git refuses to delete a local branch
+   * with unmerged commits; see {@link isUnmergedBranchError}.
+   */
+  async branchDelete(
+    projectId: string,
+    branch: string,
+    remote: boolean,
+    force = false,
+  ): Promise<string> {
+    return this.runAction(projectId, () => api.gitBranchDelete(projectId, branch, remote, force));
+  }
+
+  /** Whether a failed delete was refused because the branch has unmerged work. */
+  isUnmergedBranchError(error: unknown): boolean {
+    return String(error).toLowerCase().includes('not fully merged');
   }
 
   async setUpstream(projectId: string, branch: string, upstream: string): Promise<string> {
@@ -554,12 +623,12 @@ export class GitService {
     );
   }
 
-  async abortOperation(projectId: string, operation: string): Promise<string> {
+  async abortOperation(projectId: string, operation: GitOperation): Promise<string> {
     return this.runAction(projectId, () => api.gitOperationAbort(projectId, operation));
   }
 
-  async continueOperation(projectId: string): Promise<string> {
-    return this.runAction(projectId, () => api.gitOperationContinue(projectId));
+  async continueOperation(projectId: string, operation: GitOperation): Promise<string> {
+    return this.runAction(projectId, () => api.gitOperationContinue(projectId, operation));
   }
 
   async stashPush(
@@ -570,15 +639,15 @@ export class GitService {
     return this.runAction(projectId, () => api.gitStashPush(projectId, message, includeUntracked));
   }
 
-  async stashApply(projectId: string, stash: string): Promise<string> {
+  async stashApply(projectId: string, stash: GitStash): Promise<string> {
     return this.runAction(projectId, () => api.gitStashApply(projectId, stash));
   }
 
-  async stashPop(projectId: string, stash: string): Promise<string> {
+  async stashPop(projectId: string, stash: GitStash): Promise<string> {
     return this.runAction(projectId, () => api.gitStashPop(projectId, stash));
   }
 
-  async stashDrop(projectId: string, stash: string): Promise<string> {
+  async stashDrop(projectId: string, stash: GitStash): Promise<string> {
     return this.runAction(projectId, () => api.gitStashDrop(projectId, stash));
   }
 
@@ -594,22 +663,22 @@ export class GitService {
     return api.gitPullRequestUrl(projectId, remote, branch);
   }
 
-  async openExternalUrl(url: string): Promise<void> {
+  async openExternalUrl(url: string, projectId: string | null = null): Promise<void> {
     try {
       await api.openExternalUrl(url);
     } catch (error) {
-      // No project context here; surface through the console only.
-      console.error(error);
+      if (projectId) {
+        this.setError(projectId, error);
+      } else {
+        console.error(error);
+      }
     }
   }
 
-  private async runAction(
-    projectId: string,
-    operation: () => Promise<string>,
-  ): Promise<string> {
+  private async runAction(projectId: string, operation: () => Promise<string>): Promise<string> {
     this.set(this.busyState, projectId, true);
     this.set(this.messageState, projectId, null);
-    this.set(this.errorState, projectId, null);
+    this.clearError(projectId);
     try {
       const output = await operation();
       this.set(this.messageState, projectId, output || null);
@@ -617,6 +686,9 @@ export class GitService {
       return output;
     } catch (error) {
       this.setError(projectId, error);
+      // A failed operation (conflicts, a rejected push) can still have
+      // changed the work tree or started a merge or rebase.
+      await this.reloadState(projectId);
       throw error;
     } finally {
       this.set(this.busyState, projectId, false);
@@ -625,86 +697,135 @@ export class GitService {
 
   private async reloadState(projectId: string): Promise<void> {
     await Promise.all([
-      this.loadStatus(projectId),
+      this.loadStatus(projectId, true),
       this.loadInfo(projectId),
-      this.loadBranches(projectId),
-      this.loadRemotes(projectId),
+      this.loadRefs(projectId),
     ]);
     if (this.viewFor(projectId) === 'commits') {
       await this.loadCommits(projectId, true);
     }
   }
 
-  private async afterMutation(
+  /**
+   * Runs a stage or unstage, then shows fresh status. When the change being
+   * viewed was affected, its diff follows it to the other side.
+   */
+  private async mutatePaths(
     projectId: string,
-    path: string | null,
+    paths: string[] | null,
     staged: boolean,
+    operation: () => Promise<void>,
   ): Promise<void> {
-    await this.loadStatus(projectId);
-    const selected = this.diffFor(projectId);
-    if (path && selected?.path === path) {
-      await this.selectChange(projectId, path, staged);
+    this.clearError(projectId);
+    try {
+      await operation();
+    } catch (error) {
+      this.setError(projectId, error);
     }
-  }
-
-  private async afterBatchMutation(
-    projectId: string,
-    paths: string[],
-    staged: boolean,
-  ): Promise<void> {
-    await this.loadStatus(projectId);
+    await this.loadStatus(projectId, true);
     const selected = this.diffFor(projectId);
-    if (selected && paths.includes(selected.path)) {
+    if (selected && (paths === null || paths.includes(selected.path))) {
       await this.selectChange(projectId, selected.path, staged);
     }
   }
 
-  private async loadInto<T>(
+  /**
+   * Starts a history navigation and returns a check that is false once a
+   * newer navigation started, so a slow one cannot select its commit late.
+   */
+  private startNavigation(projectId: string): () => boolean {
+    const key = `navigation:${projectId}`;
+    const token = this.tokens.next(key);
+    return () => this.tokens.isLatest(key, token);
+  }
+
+  /** Pages through the history until `hash` is listed, then selects it. */
+  private async revealCommit(
+    projectId: string,
+    hash: string,
+    navigation: () => boolean,
+  ): Promise<void> {
+    const listed = () => this.commitsFor(projectId).some((commit) => commit.hash === hash);
+    for (
+      let page = 0;
+      page < GIT_REVEAL_MAX_PAGES && !listed() && this.commitsHasMoreFor(projectId) && navigation();
+      page += 1
+    ) {
+      await this.loadCommits(projectId, false);
+    }
+    if (navigation()) {
+      await this.selectCommit(projectId, hash);
+    }
+  }
+
+  private clearCommitSelection(projectId: string): void {
+    this.tokens.next(`detail:${projectId}`);
+    this.tokens.next(`commit-file:${projectId}`);
+    this.set(this.selectedCommitState, projectId, null);
+    this.set(this.commitDetailState, projectId, null);
+    this.set(this.commitFileDiffState, projectId, null);
+  }
+
+  private async loadLatest<T>(
+    kind: string,
     state: WritableSignal<Record<string, T>>,
     projectId: string,
     load: () => Promise<T>,
   ): Promise<void> {
+    const key = `${kind}:${projectId}`;
+    const token = this.tokens.next(key);
     try {
       const value = await load();
-      state.update((current) => ({ ...current, [projectId]: value }));
+      if (this.tokens.isLatest(key, token)) {
+        this.set(state, projectId, value);
+      }
     } catch (error) {
-      this.setError(projectId, error);
+      if (this.tokens.isLatest(key, token)) {
+        this.setError(projectId, error);
+      }
     }
-  }
-
-  private nextRequest(projectId: string): number {
-    const next = (this.commitsRequest.get(projectId) ?? 0) + 1;
-    this.commitsRequest.set(projectId, next);
-    return next;
   }
 
   private set<T>(state: WritableSignal<Record<string, T>>, projectId: string, value: T): void {
     state.update((current) => ({ ...current, [projectId]: value }));
   }
 
-  private setError(projectId: string, error: unknown): void {
-    this.errorState.update((state) => ({ ...state, [projectId]: this.describeError(error) }));
+  private clearError(projectId: string): void {
+    this.set(this.errorState, projectId, null);
   }
 
+  private setError(projectId: string, error: unknown): void {
+    this.set(this.errorState, projectId, this.describeError(error));
+  }
+
+  /**
+   * Maps common failures to a translated hint. The backend runs git with
+   * English messages, so matching them here is reliable.
+   */
   private describeError(error: unknown): string {
     const text = String(error);
     const lower = text.toLowerCase();
-    const auth =
-      lower.includes('authentication failed') ||
-      lower.includes('could not read username') ||
-      lower.includes('could not read password') ||
-      lower.includes('permission denied') ||
-      lower.includes('terminal prompts disabled') ||
-      lower.includes('invalid username or password');
+    const auth = [
+      'authentication failed',
+      'could not read username',
+      'could not read password',
+      'terminal prompts disabled',
+      'invalid username or password',
+      'permission denied (publickey',
+      'returned error: 401',
+      'returned error: 403',
+    ].some((pattern) => lower.includes(pattern));
     if (auth) {
       return this.transloco.translate('git.errors.auth');
     }
-    if (
-      lower.includes('could not resolve host') ||
-      lower.includes('unable to access') ||
-      lower.includes('network is unreachable') ||
-      lower.includes('connection timed out')
-    ) {
+    const network = [
+      'could not resolve host',
+      'network is unreachable',
+      'connection timed out',
+      'connection refused',
+      'operation timed out',
+    ].some((pattern) => lower.includes(pattern));
+    if (network) {
       return this.transloco.translate('git.errors.network');
     }
     return text;

@@ -11,8 +11,45 @@ interface MonacoEditorApi {
   setTheme?(name: string): void;
 }
 
+/** A registered language, as listed by `monaco.languages.getLanguages()`. */
+export interface MonacoLanguage {
+  id: string;
+  aliases?: string[];
+  extensions?: string[];
+}
+
 export interface MonacoApi {
   editor: MonacoEditorApi;
+  languages: { getLanguages(): MonacoLanguage[] };
+}
+
+/**
+ * Fence names colorized as another language. Monaco only sets up its JSON
+ * tokenizer for editor models, so `colorize` would leave JSON plain; the
+ * JavaScript tokenizer covers JSON syntax.
+ */
+const FENCE_ALIASES = new Map([
+  ['console', 'shell'],
+  ['zsh', 'shell'],
+  ['json', 'javascript'],
+  ['jsonc', 'javascript'],
+]);
+
+/**
+ * Resolves a markdown code fence name (`ts`, `bash`, `py`, …) to the registered
+ * Monaco language that colorizes it, by id, alias or file extension. Plain text
+ * resolves to null, as there is nothing to colorize.
+ */
+export function fenceLanguage(languages: MonacoLanguage[], fence: string): string | null {
+  const name = fence.toLowerCase();
+  const wanted = FENCE_ALIASES.get(name) ?? name;
+  const match =
+    languages.find((language) => language.id === wanted) ??
+    languages.find((language) =>
+      language.aliases?.some((alias) => alias.toLowerCase() === wanted),
+    ) ??
+    languages.find((language) => language.extensions?.includes(`.${wanted}`));
+  return match && match.id !== 'plaintext' ? match.id : null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -36,6 +73,13 @@ export class MonacoService {
     const monaco = (await this.load()) as MonacoApi;
     this.applyTheme(monaco);
     return monaco.editor.colorize(text, languageId, { tabSize: 2 });
+  }
+
+  /** Colorizes a markdown code block, or resolves to null for a language Monaco cannot tokenize. */
+  async colorizeFence(text: string, fence: string): Promise<string | null> {
+    const monaco = (await this.load()) as MonacoApi;
+    const language = fenceLanguage(monaco.languages.getLanguages(), fence);
+    return language ? this.colorize(text, language) : null;
   }
 
   applyTheme(monaco: MonacoApi): void {

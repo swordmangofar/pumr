@@ -3,7 +3,8 @@ use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, ignored_paths, GitProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
-    EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, SkillEntry, StreamEvent,
+    EventSink, FileChange, PermissionAuditEntry, PermissionDecision, QuestionItem, QuestionOption,
+    RoutedEvent, SkillEntry, StreamEvent,
 };
 use crate::permissions::{
     self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
@@ -91,10 +92,33 @@ impl ToolOutcome {
         }
     }
 
-    fn denied() -> Self {
+    /// Outcome of a permission prompt that did not end in an allow. Only the
+    /// user's own denial is reported as one: a prompt that was cancelled,
+    /// stopped or timed out says so, otherwise the transcript and the model
+    /// (which is told not to retry denied actions) blame the user for it.
+    fn refused(decision: &PermissionDecision) -> Self {
+        let (status, result) = match decision.decided_by.as_str() {
+            "" | "user" => ("denied", "The user denied this action."),
+            "cascade" => (
+                "denied",
+                "Denied because the user denied another permission request from this chat.",
+            ),
+            "grant" => (
+                "denied",
+                "Denied by a deny rule the user added while this request was waiting.",
+            ),
+            "timeout" => (
+                "canceled",
+                "The permission request timed out before the user answered it.",
+            ),
+            _ => (
+                "canceled",
+                "Cancelled before the user answered the permission request.",
+            ),
+        };
         Self {
-            result: "The user denied this action.".to_string(),
-            status: "denied".to_string(),
+            result: result.to_string(),
+            status: status.to_string(),
             changes: Vec::new(),
         }
     }
@@ -504,7 +528,7 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
     // MCP tools run server-side and bypass the built-in command gate, so require
     // an explicit user decision before every invocation.
     let preview = serde_json::json!({ "tool": name, "arguments": arguments }).to_string();
-    let allowed = runtime
+    let decision = runtime
         .broker
         .ask(
             PermissionPrompt {
@@ -524,16 +548,16 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 risk: None,
                 scope_options: Vec::new(),
                 folders: Vec::new(),
+                hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
             &runtime.emit,
         )
-        .await
-        .allowed;
-    if !allowed {
-        return ToolOutcome::denied();
+        .await;
+    if !decision.allowed {
+        return ToolOutcome::refused(&decision);
     }
     match manager.call(name, arguments.clone()).await {
         Ok((text, is_error)) => {
@@ -680,12 +704,12 @@ async fn ensure_path_access(
     absolute: &Path,
     label: &str,
     operation: PermissionOperation,
-) -> bool {
+) -> std::result::Result<(), ToolOutcome> {
     let extra = runtime.permissions.extra_folders();
     if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
         && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
     {
-        return true;
+        return Ok(());
     }
     let folder = if absolute.is_dir() {
         absolute.to_path_buf()
@@ -695,7 +719,7 @@ async fn ensure_path_access(
             .map(Path::to_path_buf)
             .unwrap_or_else(|| absolute.to_path_buf())
     };
-    runtime
+    let decision = runtime
         .broker
         .ask(
             PermissionPrompt {
@@ -704,10 +728,7 @@ async fn ensure_path_access(
                 cwd: Some(permission_path(&runtime.project_root)),
                 project_root: runtime.project_root.clone(),
                 title: format!("Access {label} outside the project?"),
-                detail: format!(
-                    "The assistant wants to access {}. Allow once, or add the folder permanently so it never asks again.",
-                    absolute.display()
-                ),
+                detail: format!("The assistant wants to access {}.", absolute.display()),
                 command: None,
                 path: Some(permission_path(absolute).display().to_string()),
                 folder: Some(folder.display().to_string()),
@@ -717,26 +738,32 @@ async fn ensure_path_access(
                 risk: None,
                 scope_options: Vec::new(),
                 folders: Vec::new(),
+                hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
             &runtime.emit,
         )
-        .await
-        .allowed
+        .await;
+    if decision.allowed {
+        Ok(())
+    } else {
+        Err(ToolOutcome::refused(&decision))
+    }
 }
 
-async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool {
-    if !ensure_path_access(runtime, absolute, "file", PermissionOperation::Write).await {
-        return false;
-    }
+async fn ensure_write_access(
+    runtime: &mut ToolRuntime,
+    absolute: &Path,
+) -> std::result::Result<(), ToolOutcome> {
+    ensure_path_access(runtime, absolute, "file", PermissionOperation::Write).await?;
     let relative = relative_display(runtime, absolute);
     if runtime.file_ignore.sensitive_reason(absolute).is_none() {
-        return true;
+        return Ok(());
     }
     let reason = "this is a sensitive file (env, key, database, credentials)".to_string();
-    runtime
+    let decision = runtime
         .broker
         .ask(
             PermissionPrompt {
@@ -755,14 +782,19 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
                 risk: None,
                 scope_options: Vec::new(),
                 folders: Vec::new(),
+                hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
             &runtime.emit,
         )
-        .await
-        .allowed
+        .await;
+    if decision.allowed {
+        Ok(())
+    } else {
+        Err(ToolOutcome::refused(&decision))
+    }
 }
 
 async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -771,8 +803,10 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_path_access(runtime, &absolute, "file", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &absolute, "file", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     if let Some(reason) = file_ignore_reason(runtime, &absolute) {
         let relative = relative_display(runtime, &absolute);
@@ -782,7 +816,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     }
     if let Some(sensitive) = runtime.file_ignore.sensitive_reason(&absolute) {
         let relative = relative_display(runtime, &absolute);
-        let allowed = runtime
+        let decision = runtime
             .broker
             .ask(
                 PermissionPrompt {
@@ -801,16 +835,16 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     risk: None,
                     scope_options: Vec::new(),
                     folders: Vec::new(),
+                    hosts: Vec::new(),
                     grant_session_id: runtime.conversation_id.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
                 &runtime.emit,
             )
-            .await
-            .allowed;
-        if !allowed {
-            return ToolOutcome::denied();
+            .await;
+        if !decision.allowed {
+            return ToolOutcome::refused(&decision);
         }
     }
     let content = match tokio::fs::read_to_string(&absolute).await {
@@ -857,8 +891,8 @@ async fn write_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_write_access(runtime, &absolute).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) = ensure_write_access(runtime, &absolute).await {
+        return outcome;
     }
     if let Some(parent) = absolute.parent() {
         if let Err(error) = tokio::fs::create_dir_all(parent).await {
@@ -907,8 +941,8 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_write_access(runtime, &absolute).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) = ensure_write_access(runtime, &absolute).await {
+        return outcome;
     }
     let current = match tokio::fs::read_to_string(&absolute).await {
         Ok(content) => content,
@@ -1252,8 +1286,10 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     let matcher = match Glob::new(&pattern) {
         Ok(glob) => glob.compile_matcher(),
@@ -1324,8 +1360,10 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
@@ -1407,8 +1445,10 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     let mut entries = match tokio::fs::read_dir(&base).await {
         Ok(entries) => entries,
@@ -1452,10 +1492,30 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     ToolOutcome::ok(output)
 }
 
+/// Records a decision made without a prompt in the permission audit log:
+/// allowed by a rule, an automatic approval or a read-only check, or denied
+/// by a deny rule. Prompted decisions are recorded by the broker.
+fn audit_unprompted(runtime: &ToolRuntime, kind: &str, subject: &str, allowed: bool, reason: String) {
+    runtime.broker.audit(PermissionAuditEntry {
+        id: 0,
+        created_at: 0,
+        session_id: runtime.session_id.clone(),
+        conversation_id: runtime.conversation_id.clone(),
+        kind: kind.to_string(),
+        subject: subject.to_string(),
+        allowed,
+        decided_by: if allowed { "auto" } else { "rule" }.to_string(),
+        decision: None,
+        reason,
+        rule: None,
+    });
+}
+
 enum WebsiteAccess {
     Allowed,
     DeniedByRule(String),
-    DeniedByUser,
+    /// The prompt ended without an allow; `decided_by` says who ended it.
+    Refused(PermissionDecision),
 }
 
 /// Ask the user for permission before the agent reaches a website. Rules are
@@ -1472,13 +1532,25 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
         &runtime.permissions.allowed_websites(),
         &runtime.permissions.denied_websites(),
     ) {
-        WebsiteDecision::Allow => WebsiteAccess::Allowed,
-        WebsiteDecision::Deny { reason } => WebsiteAccess::DeniedByRule(reason),
+        WebsiteDecision::Allow => {
+            audit_unprompted(
+                runtime,
+                kind,
+                url,
+                true,
+                format!("{host} is on the allowed websites list"),
+            );
+            WebsiteAccess::Allowed
+        }
+        WebsiteDecision::Deny { reason } => {
+            audit_unprompted(runtime, kind, url, false, reason.clone());
+            WebsiteAccess::DeniedByRule(reason)
+        }
         WebsiteDecision::Ask {
             reason,
             suggested_rule,
         } => {
-            let allowed = runtime
+            let decision = runtime
                 .broker
                 .ask(
                     PermissionPrompt {
@@ -1487,9 +1559,7 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         cwd: Some(permission_path(&runtime.project_root)),
                         project_root: runtime.project_root.clone(),
                         title: format!("Visit {host}?"),
-                        detail: format!(
-                            "{reason} The assistant wants to access this website. Allow once, always allow it, or deny it."
-                        ),
+                        detail: reason,
                         command: None,
                         path: None,
                         folder: None,
@@ -1499,18 +1569,18 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         risk: None,
                         scope_options: Vec::new(),
                         folders: Vec::new(),
+                        hosts: Vec::new(),
                         grant_session_id: runtime.conversation_id.clone(),
                     },
                     &runtime.cancel,
                     &runtime.session_id,
                     &runtime.emit,
                 )
-                .await
-                .allowed;
-            if allowed {
+                .await;
+            if decision.allowed {
                 WebsiteAccess::Allowed
             } else {
-                WebsiteAccess::DeniedByUser
+                WebsiteAccess::Refused(decision)
             }
         }
     }
@@ -1537,52 +1607,107 @@ async fn read_web_body(response: reqwest::Response) -> std::result::Result<Vec<u
 }
 
 /// True for addresses the agent must never reach: loopback, private, link-local,
-/// unique-local, unspecified, multicast and similar (SSRF protection).
+/// unique-local, carrier-grade NAT, benchmarking, reserved, unspecified,
+/// multicast and similar (SSRF protection). IPv6 forms that embed an IPv4
+/// address (mapped `::ffff:a.b.c.d`, compatible, NAT64 `64:ff9b::/96` and
+/// 6to4 `2002::/16`) are judged by that IPv4 address.
 fn blocked_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
+            let [first, second, ..] = v4.octets();
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
                 || v4.is_broadcast()
                 || v4.is_documentation()
-                || v4.octets()[0] == 0
+                || v4.is_multicast()
+                || first == 0
+                // 100.64.0.0/10 carrier-grade NAT.
+                || (first == 100 && (second & 0xc0) == 64)
+                // 198.18.0.0/15 benchmarking.
+                || (first == 198 && (second & 0xfe) == 18)
+                // 192.0.0.0/24 IETF protocol assignments.
+                || (first == 192 && second == 0 && v4.octets()[2] == 0)
+                // 240.0.0.0/4 reserved.
+                || first >= 240
         }
         std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4() {
+                // `::1` is also "compatible" with 0.0.0.1, which is blocked.
+                return blocked_ip(std::net::IpAddr::V4(v4));
+            }
+            let segments = v6.segments();
+            if segments[0] == 0x0064 && segments[1] == 0xff9b {
+                let [a, b] = segments[6].to_be_bytes();
+                let [c, d] = segments[7].to_be_bytes();
+                return blocked_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
+            if segments[0] == 0x2002 {
+                let [a, b] = segments[1].to_be_bytes();
+                let [c, d] = segments[2].to_be_bytes();
+                return blocked_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                // fec0::/10 deprecated site-local.
+                || (segments[0] & 0xffc0) == 0xfec0
+                // 2001:db8::/32 documentation.
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8)
         }
     }
 }
 
 /// Resolves the URL host and rejects it when any resolved address is non-public.
-/// This runs on every hop so a redirect or DNS rebind cannot reach internal
-/// services after the initial allowlist check.
-async fn ensure_host_public(url: &reqwest::Url) -> std::result::Result<(), String> {
+/// This runs on every hop so a redirect cannot reach internal services after
+/// the initial allowlist check. The checked addresses are returned so the
+/// request connects to exactly those: resolving the name a second time would
+/// let a DNS rebind swap in a private address after the check.
+async fn ensure_host_public(
+    url: &reqwest::Url,
+) -> std::result::Result<Vec<std::net::SocketAddr>, String> {
     let host = url
         .host_str()
         .ok_or_else(|| "The URL does not contain a valid host.".to_string())?;
     let port = url.port_or_known_default().unwrap_or(443);
-    let addresses = tokio::net::lookup_host((host, port))
+    let lookup = host.trim_start_matches('[').trim_end_matches(']');
+    let addresses: Vec<std::net::SocketAddr> = tokio::net::lookup_host((lookup, port))
         .await
-        .map_err(|error| format!("Could not resolve {host}: {error}"))?;
-    let mut resolved = false;
-    for address in addresses {
-        resolved = true;
-        if blocked_ip(address.ip()) {
-            return Err(format!(
-                "{host} resolves to a non-public address and was blocked."
-            ));
-        }
-    }
-    if !resolved {
+        .map_err(|error| format!("Could not resolve {host}: {error}"))?
+        .collect();
+    if addresses.is_empty() {
         return Err(format!("Could not resolve {host}."));
     }
-    Ok(())
+    if addresses.iter().any(|address| blocked_ip(address.ip())) {
+        return Err(format!(
+            "{host} resolves to a non-public address and was blocked."
+        ));
+    }
+    Ok(addresses)
+}
+
+/// An HTTP client for one hop of `web_fetch`: it never follows redirects on
+/// its own and connects to `host` only at the pre-checked `addresses`.
+fn pinned_client(
+    host: &str,
+    addresses: &[std::net::SocketAddr],
+) -> std::result::Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent("pumr/0.1")
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(WEB_TIMEOUT_SECONDS))
+        // A proxy would resolve the name itself and bypass the pinned address.
+        .no_proxy();
+    // An IP literal needs no resolution; a name is pinned to what was checked.
+    if host.parse::<std::net::IpAddr>().is_err() {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    builder
+        .build()
+        .map_err(|error| format!("HTTP client error: {error}"))
 }
 
 pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -1602,26 +1727,23 @@ pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> T
         WebsiteAccess::DeniedByRule(reason) => {
             return ToolOutcome::error(format!("Blocked: {reason}"))
         }
-        WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+        WebsiteAccess::Refused(decision) => return ToolOutcome::refused(&decision),
     }
 
     // Follow redirects manually so every hop is re-checked against the website
-    // rules and the private-address block, then fetch the final URL.
-    let client = match reqwest::Client::builder()
-        .user_agent("pumr/0.1")
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(WEB_TIMEOUT_SECONDS))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => return ToolOutcome::error(format!("HTTP client error: {error}")),
-    };
+    // rules and the private-address block, then fetch the final URL. Each hop
+    // connects only to the addresses that passed the block.
     let mut current = parsed.clone();
     let mut redirects = 0;
     let response = loop {
-        if let Err(reason) = ensure_host_public(&current).await {
-            return ToolOutcome::error(reason);
-        }
+        let addresses = match ensure_host_public(&current).await {
+            Ok(addresses) => addresses,
+            Err(reason) => return ToolOutcome::error(reason),
+        };
+        let client = match pinned_client(current.host_str().unwrap_or_default(), &addresses) {
+            Ok(client) => client,
+            Err(error) => return ToolOutcome::error(error),
+        };
         let response = match client
             .get(current.clone())
             .header(
@@ -1660,7 +1782,7 @@ pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> T
                 WebsiteAccess::DeniedByRule(reason) => {
                     return ToolOutcome::error(format!("Blocked: {reason}"))
                 }
-                WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+                WebsiteAccess::Refused(decision) => return ToolOutcome::refused(&decision),
             }
         }
         current = next;
@@ -1723,7 +1845,7 @@ async fn web_search(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         WebsiteAccess::DeniedByRule(reason) => {
             return ToolOutcome::error(format!("Blocked: {reason}"))
         }
-        WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+        WebsiteAccess::Refused(decision) => return ToolOutcome::refused(&decision),
     }
 
     let response = match runtime
@@ -1995,28 +2117,34 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &cwd, "directory", PermissionOperation::Access).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &cwd, "directory", PermissionOperation::Access).await
+    {
+        return outcome;
     }
 
-    let mut allowed_rules = runtime.permissions.command_rules();
-    allowed_rules.extend(
-        runtime
-            .permissions
-            .session_command_rules(&runtime.conversation_id),
-    );
-    let denied_rules = runtime.permissions.denied_command_rules();
-    let decision = permissions::evaluate_command_with(
+    let mut trace: Vec<String> = Vec::new();
+    let decision = runtime.permissions.evaluate_command(
         &command,
         &runtime.project_root,
         &cwd,
-        &runtime.permissions.extra_folders(),
-        &allowed_rules,
-        &denied_rules,
-        &runtime.permissions.auto_approve(),
+        &runtime.conversation_id,
+        &mut trace,
     );
-    if let CommandDecision::Deny { reason } = decision {
-        return ToolOutcome::denied_with_reason(reason);
+    match &decision {
+        CommandDecision::Deny { reason } => {
+            audit_unprompted(runtime, "command", &command, false, reason.clone());
+            return ToolOutcome::denied_with_reason(reason.clone());
+        }
+        CommandDecision::Allow => {
+            let reason = if trace.is_empty() {
+                "allowed".to_string()
+            } else {
+                trace.join("; ")
+            };
+            audit_unprompted(runtime, "command", &command, true, reason);
+        }
+        CommandDecision::Ask { .. } => {}
     }
     if let CommandDecision::Ask {
         reason,
@@ -2025,9 +2153,10 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         risk,
         scope_options,
         outside_folders,
+        hosts,
     } = decision
     {
-        let allowed = runtime
+        let answer = runtime
             .broker
             .ask(
                 PermissionPrompt {
@@ -2046,16 +2175,16 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     risk: Some(risk),
                     scope_options,
                     folders: outside_folders,
+                    hosts,
                     grant_session_id: runtime.conversation_id.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
                 &runtime.emit,
             )
-            .await
-            .allowed;
-        if !allowed {
-            return ToolOutcome::denied();
+            .await;
+        if !answer.allowed {
+            return ToolOutcome::refused(&answer);
         }
     }
 
@@ -2280,6 +2409,26 @@ fn ceil_char_boundary(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_public_addresses_are_blocked_in_every_form() {
+        for address in [
+            "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
+            "100.64.0.1", "100.127.255.254", "198.18.0.1", "198.19.255.255", "224.0.0.1",
+            "240.0.0.1", "255.255.255.255", "0.0.0.0", "192.0.0.8",
+            "::1", "::", "fc00::1", "fe80::1", "fec0::1", "ff02::1", "2001:db8::1",
+            "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254",
+            "64:ff9b::a00:1", "2002:c0a8:0101::1",
+        ] {
+            assert!(blocked_ip(address.parse().unwrap()), "{address}");
+        }
+        for address in [
+            "93.184.216.34", "1.1.1.1", "100.128.0.1", "198.20.0.1",
+            "2606:4700:4700::1111", "::ffff:93.184.216.34", "64:ff9b::5db8:d822",
+        ] {
+            assert!(!blocked_ip(address.parse().unwrap()), "{address}");
+        }
+    }
 
     #[test]
     fn permission_paths_are_absolute_and_canonical_when_existing() {
@@ -2520,5 +2669,32 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(updated, "c = 3\r\n");
+    }
+
+    #[test]
+    fn only_the_users_own_denial_is_reported_as_one() {
+        let refused = |decided_by: &str| {
+            ToolOutcome::refused(&PermissionDecision {
+                allowed: false,
+                rule: None,
+                folder: None,
+                decided_by: decided_by.to_string(),
+                decision: None,
+            })
+        };
+        let user = refused("user");
+        assert_eq!(user.status, "denied");
+        assert_eq!(user.result, "The user denied this action.");
+        assert_eq!(refused("").result, user.result);
+        for decided_by in ["cascade", "grant"] {
+            let outcome = refused(decided_by);
+            assert_eq!(outcome.status, "denied", "{decided_by}");
+            assert_ne!(outcome.result, user.result, "{decided_by}");
+        }
+        for decided_by in ["cancelled", "stopped", "timeout"] {
+            let outcome = refused(decided_by);
+            assert_eq!(outcome.status, "canceled", "{decided_by}");
+            assert_ne!(outcome.result, user.result, "{decided_by}");
+        }
     }
 }

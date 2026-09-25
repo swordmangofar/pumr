@@ -15,14 +15,42 @@ import {
   AgentGraphSession,
   buildAgentGraph,
 } from '../core/agent-graph';
-import { FileChange, LiveToolCall, Message, Mode, Session } from '../core/models';
+import { api } from '../core/api';
+import {
+  FileChange,
+  LiveToolCall,
+  Message,
+  Mode,
+  PermissionAuditEntry,
+  Session,
+} from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 
 type DebugKind =
   'context' | 'user' | 'assistant' | 'tool' | 'subagent' | 'question' | 'mcp' | 'skill' | 'error';
 type DebugStatus = 'ok' | 'error' | 'running';
-type DebugViewMode = 'timeline' | 'branches';
+type DebugViewMode = 'timeline' | 'branches' | 'permissions';
+
+/** Permission log filters: allowed without a prompt, prompted, denied. */
+type AuditFilter = 'auto' | 'asked' | 'denied';
+
+const AUDIT_FILTERS: readonly AuditFilter[] = ['auto', 'asked', 'denied'];
+
+/** Prompt kinds with a translated label. */
+const AUDIT_KINDS = ['command', 'file', 'web', 'websearch', 'folder'];
+
+/** Who decided, with a translated label. */
+const AUDIT_DECIDERS = [
+  'auto',
+  'rule',
+  'user',
+  'grant',
+  'cascade',
+  'stopped',
+  'timeout',
+  'cancelled',
+];
 
 interface DebugField {
   labelKey: string;
@@ -171,6 +199,45 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
               }
             </div>
 
+            @if (view() === 'permissions') {
+              <span class="mx-1.5 h-4 w-px bg-white/10"></span>
+              @for (filter of auditFilters; track filter) {
+                <button
+                  type="button"
+                  class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                  [class]="
+                    auditFilter().has(filter)
+                      ? 'bg-accent/20 text-white ring-1 ring-accent/40 ring-inset'
+                      : 'bg-white/5 text-mist/50 hover:text-mist'
+                  "
+                  (click)="toggleAuditFilter(filter)"
+                >
+                  {{ 'debug.permissions.filters.' + filter | transloco }}
+                </button>
+              }
+              <span class="ml-auto text-[10px] tabular-nums text-mist/30">
+                {{ filteredAudit().length }} / {{ audit().length }}
+              </span>
+              <button
+                type="button"
+                class="rounded-full px-2.5 py-0.5 text-xs text-mist/40 transition-colors hover:text-mist"
+                (click)="loadAudit()"
+              >
+                {{ 'common.refresh' | transloco }}
+              </button>
+              <button
+                type="button"
+                class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                [class]="clearArmed() ? 'bg-rose-500/15 text-rose-300' : 'text-mist/40 hover:text-mist'"
+                data-testid="clear-audit"
+                (click)="clearAudit()"
+              >
+                {{
+                  (clearArmed() ? 'debug.permissions.clearConfirm' : 'debug.permissions.clear')
+                    | transloco
+                }}
+              </button>
+            } @else {
             <span class="mx-1.5 h-4 w-px bg-white/10"></span>
 
             <span class="mr-1 text-[10px] font-semibold tracking-wider uppercase text-mist/30">
@@ -227,9 +294,93 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
                 {{ 'debug.filters.clear' | transloco }}
               </button>
             }
+            }
           </div>
 
           <div class="flex min-h-0 flex-1 flex-col">
+            @if (view() === 'permissions') {
+              <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3" data-testid="permission-log">
+                @if (filteredAudit().length === 0) {
+                  <div class="flex h-full items-center justify-center text-sm text-mist/40">
+                    {{
+                      (audit().length === 0 ? 'debug.permissions.empty' : 'debug.noMatches')
+                        | transloco
+                    }}
+                  </div>
+                } @else {
+                  <ul class="mx-auto max-w-4xl space-y-1.5">
+                    @for (entry of filteredAudit(); track entry.id) {
+                      <li
+                        class="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2"
+                        data-testid="audit-entry"
+                      >
+                        <div class="flex items-center gap-2">
+                          <span
+                            class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase"
+                            [class]="
+                              entry.allowed
+                                ? 'bg-emerald-500/15 text-emerald-300'
+                                : 'bg-rose-500/15 text-rose-300'
+                            "
+                          >
+                            {{
+                              (entry.allowed ? 'debug.permissions.allowed' : 'debug.permissions.denied')
+                                | transloco
+                            }}
+                          </span>
+                          <span
+                            class="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider uppercase text-mist/60"
+                          >
+                            @if (knownKind(entry.kind)) {
+                              {{ 'permission.kind.' + entry.kind | transloco }}
+                            } @else {
+                              {{ entry.kind }}
+                            }
+                          </span>
+                          <code
+                            class="min-w-0 flex-1 truncate font-mono text-xs text-mist"
+                            [attr.title]="entry.subject"
+                            >{{ entry.subject }}</code
+                          >
+                          <span class="shrink-0 text-[10px] text-mist/50">
+                            @if (knownDecider(entry.decidedBy)) {
+                              {{ 'debug.permissions.by.' + entry.decidedBy | transloco }}
+                            } @else {
+                              {{ entry.decidedBy }}
+                            }
+                          </span>
+                          @if (decisionKey(entry); as key) {
+                            <span class="shrink-0 text-[10px] text-accent/70">{{
+                              key | transloco
+                            }}</span>
+                          }
+                          <span class="shrink-0 text-[10px] tabular-nums text-mist/30">
+                            {{ formatTime(entry.createdAt) }}
+                          </span>
+                        </div>
+                        @if (entry.sessionId !== entry.conversationId) {
+                          <p class="mt-1 text-[10px] text-mist/40">
+                            {{ agentTitle(entry.sessionId) }}
+                          </p>
+                        }
+                        @if (entry.reason) {
+                          <p class="mt-1 text-xs break-words text-mist/60">
+                            <span class="text-mist/30">{{ 'debug.permissions.why' | transloco }}</span>
+                            {{ entry.reason }}
+                          </p>
+                        }
+                        @if (entry.rule) {
+                          <p class="mt-0.5 text-xs text-mist/40">
+                            <span class="text-mist/30">{{ 'debug.permissions.rule' | transloco }}</span>
+                            <code class="font-mono">{{ entry.rule }}</code>
+                          </p>
+                        }
+                      </li>
+                    }
+                  </ul>
+                }
+              </div>
+            } @else {
             @if (view() === 'branches') {
               <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
                 @if (branches().length === 0) {
@@ -472,6 +623,7 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
                 </div>
               }
             </div>
+            }
           </div>
         } @else {
           <div class="flex flex-1 items-center justify-center text-sm text-mist/40">
@@ -722,7 +874,109 @@ export class DebugView {
     return steps;
   }
 
-  protected readonly views: readonly DebugViewMode[] = ['timeline', 'branches'];
+  protected readonly views: readonly DebugViewMode[] = ['timeline', 'branches', 'permissions'];
+  protected readonly auditFilters = AUDIT_FILTERS;
+  protected readonly audit = signal<PermissionAuditEntry[]>([]);
+  protected readonly auditFilter = signal<ReadonlySet<AuditFilter>>(new Set());
+  protected readonly clearArmed = signal(false);
+
+  /** The chat (root session) whose permission decisions are shown. */
+  protected readonly conversationId = computed(() => {
+    let session = this.session();
+    while (session?.parentSessionId) {
+      const parent = this.workspace.session(session.parentSessionId);
+      if (!parent) {
+        break;
+      }
+      session = parent;
+    }
+    return session?.id ?? null;
+  });
+
+  protected readonly filteredAudit = computed(() => {
+    const filters = this.auditFilter();
+    if (filters.size === 0) {
+      return this.audit();
+    }
+    return this.audit().filter((entry) => {
+      const category: AuditFilter = !entry.allowed
+        ? 'denied'
+        : entry.decidedBy === 'auto'
+          ? 'auto'
+          : 'asked';
+      return filters.has(category);
+    });
+  });
+
+  protected toggleAuditFilter(filter: AuditFilter): void {
+    this.auditFilter.update((current) => {
+      const next = new Set(current);
+      if (next.has(filter)) {
+        next.delete(filter);
+      } else {
+        next.add(filter);
+      }
+      return next;
+    });
+  }
+
+  protected async loadAudit(): Promise<void> {
+    const conversationId = this.conversationId();
+    if (!conversationId) {
+      this.audit.set([]);
+      return;
+    }
+    try {
+      this.audit.set(await api.listPermissionAudit(conversationId, 1000));
+    } catch {
+      this.audit.set([]);
+    }
+  }
+
+  /** Two clicks clear the chat's permission history: the first arms it. */
+  protected async clearAudit(): Promise<void> {
+    if (!this.clearArmed()) {
+      this.clearArmed.set(true);
+      return;
+    }
+    this.clearArmed.set(false);
+    const conversationId = this.conversationId();
+    if (!conversationId) {
+      return;
+    }
+    try {
+      await api.clearPermissionAudit(conversationId);
+    } catch {
+      // Keep showing what is there.
+    }
+    await this.loadAudit();
+  }
+
+  protected knownKind(kind: string): boolean {
+    return AUDIT_KINDS.includes(kind);
+  }
+
+  protected knownDecider(decidedBy: string): boolean {
+    return AUDIT_DECIDERS.includes(decidedBy);
+  }
+
+  /** The label of the button the user picked, when a person decided. */
+  protected decisionKey(entry: PermissionAuditEntry): string | null {
+    switch (entry.decision) {
+      case 'allow_once':
+        return 'permission.allowOnce';
+      case 'allow_session':
+        return entry.kind === 'command' ? 'permission.allowChat' : 'permission.allowSession';
+      case 'allow_always':
+        return 'permission.allowAlways';
+      case 'deny':
+        return 'permission.deny';
+      case 'deny_always':
+        return 'permission.denyAlways';
+      default:
+        return null;
+    }
+  }
   protected readonly view = signal<DebugViewMode>('timeline');
   protected readonly rowHeight = AGENT_GRAPH_ROW_HEIGHT;
   protected readonly laneWidth = AGENT_GRAPH_LANE_WIDTH;
@@ -838,6 +1092,20 @@ export class DebugView {
   });
 
   constructor() {
+    // Reload the permission log when it is shown, for another chat, and
+    // whenever a prompt is resolved or a turn starts or ends.
+    effect(() => {
+      if (this.view() !== 'permissions') {
+        return;
+      }
+      this.conversationId();
+      this.workspace.permission();
+      this.streaming();
+      untracked(() => {
+        this.clearArmed.set(false);
+        void this.loadAudit();
+      });
+    });
     // Discover the full subagent tree lazily so the branch view stays complete
     // even for subagents spawned after the debugger was opened.
     effect(() => {

@@ -128,7 +128,14 @@
       "banner": "{{ operation }} in corso",
       "files": "{{ count }} file in conflitto",
       "continue": "Continua",
-      "abort": "Annulla"
+      "abort": "Annulla",
+      "resolveFirst": "Risolvi prima tutti i conflitti e aggiungi i file all'area di stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autenticazione non riuscita. Controlla le credenziali Git.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Esegui checkout del nuovo ramo",
       "confirm": "Conferma",
       "mergeConfirm": "Unire '{{branch}}' in '{{current}}'?",
+      "rebaseConfirm": "Eseguire il rebase di '{{current}}' su '{{branch}}'? I commit di '{{current}}' verranno riscritti.",
       "deleteConfirm": "Eliminare il ramo '{{branch}}'? L'operazione non può essere annullata.",
       "deleteRemoteConfirm": "Eliminare il ramo remoto '{{branch}}'? L'operazione influisce sul repository remoto.",
+      "forceDeleteConfirm": "Il ramo '{{branch}}' non è stato unito completamente. Eliminarlo comunque? I suoi commit non uniti andranno persi.",
       "rebaseHint": "Riordina i commit e scegli un'azione per ciascuno. Il rebase procede dal più vecchio al più recente.",
-      "nothingToRebase": "Nessun commit da riordinare."
+      "nothingToRebase": "Nessun commit da riordinare.",
+      "rebaseActions": {
+        "pick": "Mantieni (pick)",
+        "squash": "Unisci (squash)",
+        "fixup": "Incorpora (fixup)",
+        "drop": "Scarta (drop)"
+      },
+      "rebaseSquashFirst": "Il primo commit non può essere unito (squash o fixup): non esiste un commit precedente con cui combinarlo.",
+      "moveUp": "Sposta su",
+      "moveDown": "Sposta giù"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Nessun passaggio corrisponde ai filtri attuali.",
     "view": {
       "timeline": "Cronologia",
-      "branches": "Rami"
+      "branches": "Rami",
+      "permissions": "Autorizzazioni"
     },
     "filters": {
       "type": "Tipo",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Override della sessione",
       "default": "Impostazioni predefinite"
+    },
+    "permissions": {
+      "empty": "Nessuna decisione sulle autorizzazioni è ancora registrata per questa chat.",
+      "clear": "Svuota registro",
+      "clearConfirm": "Fai clic di nuovo per svuotare",
+      "allowed": "Consentito",
+      "denied": "Rifiutato",
+      "why": "Motivo:",
+      "rule": "Regola:",
+      "filters": {
+        "auto": "Consentito senza chiedere",
+        "asked": "Chiesto",
+        "denied": "Rifiutato"
+      },
+      "by": {
+        "auto": "Automatico",
+        "rule": "Regola di rifiuto",
+        "user": "Tu",
+        "grant": "Coperto da una nuova autorizzazione",
+        "cascade": "Rifiutato insieme a un'altra richiesta",
+        "stopped": "Interrotto",
+        "timeout": "Tempo scaduto",
+        "cancelled": "Annullato"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Nessun comando bloccato.",
     "scope": {
       "program": "Programma",
+      "subcommand": "Programma + sottocomando",
       "programFlags": "Programma + opzioni",
       "exact": "Esatto"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Ancora nessuna regola sui comandi. Usa «consenti sempre» in una richiesta di autorizzazione per crearne una.",
     "websiteRules": "Siti web",
-    "websiteRulesHint": "Siti web che l'assistente può visitare. Le regole di rifiuto prevalgono su quelle di autorizzazione; un semplice dominio copre anche i suoi sottodomini. Usa «consenti sempre» o «rifiuta sempre» in una richiesta di autorizzazione per crearne una.",
+    "websiteRulesHint": "Siti web che l'assistente può visitare con i suoi strumenti web o con comandi come curl, git e ssh. Le regole di rifiuto prevalgono su quelle di autorizzazione; un semplice dominio copre anche i suoi sottodomini. Usa «consenti sempre» o «rifiuta sempre» in una richiesta di autorizzazione per crearne una.",
     "permissionPrompts": "Richieste di autorizzazione",
     "permissionPromptsHint": "Scegli cosa fa per impostazione predefinita il pulsante principale di autorizzazione. Consenti una volta approva una singola richiesta; consenti per questa sessione ricorda l'accesso alla cartella fino al riavvio dell'app.",
     "autoApprove": "Approvazione automatica",
-    "autoApproveHint": "Salta le richieste per il lavoro che l'assistente può dimostrare sicuro. I comandi pericolosi, i percorsi fuori dal progetto e i file sensibili chiedono sempre.",
+    "autoApproveHint": "Salta le richieste per il lavoro che l'assistente può dimostrare sicuro. I comandi pericolosi, il codice inline, i download di pacchetti, i siti web non ancora consentiti, i percorsi fuori dal progetto e i file sensibili chiedono sempre.",
     "autoApproveReadOnly": "Comandi di sola lettura",
     "autoApproveReadOnlyHint": "Consente comandi di ispezione come ls, grep e git status senza chiedere.",
     "autoApprovePackageScripts": "Gestori di pacchetti e strumenti di build",
-    "autoApprovePackageScriptsHint": "Consente pnpm, npm, yarn, bun, ng, npx, make e strumenti simili quando nulla punta fuori dal progetto.",
+    "autoApprovePackageScriptsHint": "Consente pnpm, npm, yarn, bun, ng, make e strumenti simili quando nulla punta fuori dal progetto.",
     "autoApproveProjectExecutables": "Eseguibili del progetto",
     "autoApproveProjectExecutablesHint": "Consente eseguibili all'interno del progetto, come ./node_modules/.bin/ng, senza chiedere ogni volta.",
     "autoApproveProjectCommands": "Tutti i comandi all'interno del progetto",
-    "autoApproveProjectCommandsHint": "Consente qualsiasi comando non pericoloso i cui percorsi restano nel progetto. I comandi pericolosi, i file sensibili e tutto ciò che è fuori chiedono ancora.",
+    "autoApproveProjectCommandsHint": "Consente qualsiasi comando non pericoloso i cui percorsi restano nel progetto. I comandi pericolosi, il codice inline, i download di pacchetti, i siti web non ancora consentiti, i file sensibili e tutto ciò che è esterno chiedono comunque.",
+    "permissionPreset": {
+      "strict": "Rigoroso",
+      "strictHint": "Solo i comandi che leggono soltanto vengono eseguiti senza chiedere.",
+      "balanced": "Bilanciato",
+      "balancedHint": "I comandi di sola lettura, i gestori di pacchetti, gli strumenti di build e gli eseguibili del progetto vengono eseguiti senza chiedere.",
+      "autonomous": "Autonomo",
+      "autonomousHint": "Ogni comando non pericoloso all'interno del progetto viene eseguito senza chiedere.",
+      "custom": "Personalizzato",
+      "autonomousWarning": "La modalità autonoma si fida di questo progetto: i suoi script, Makefile ed eseguibili possono fare qualsiasi cosa senza chiedere. Il codice inline, i download di pacchetti, i siti web non ancora consentiti, i comandi pericolosi e tutto ciò che è fuori dal progetto chiedono comunque.",
+      "confirm": "Usa la modalità autonoma"
+    },
     "noAllowedWebsites": "Ancora nessun sito web sempre consentito.",
     "noDeniedWebsites": "Ancora nessun sito web sempre rifiutato.",
     "websitePlaceholder": "es. docs.rs o *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Cartella"
     },
     "allowAlways": "Consenti sempre",
-    "addFolder": "Aggiungi cartella in modo permanente",
     "siteRuleLabel": "Regola sito web (dominio o glob)",
     "siteRuleHint": "Per esempio: docs.rs consente quel sito, *.github.com consente tutti i suoi sottodomini.",
-    "segment": {
-      "allowed": "Consentito",
-      "needsApproval": "Richiede approvazione",
-      "title": "Cosa richiede approvazione",
-      "summary": "{{ count }} parti su {{ total }} richiedono approvazione",
-      "folderOnly": "Le regole dei comandi non possono consentire percorsi fuori dal progetto. Autorizza invece una cartella qui sotto."
-    },
+    "siteRuleInvalid": "Questa regola non copre {{ host }} o è troppo ampia, quindi verrà salvato {{ host }}.",
     "risk": {
       "low": "Basso",
       "medium": "Medio",
+      "network": "Rete",
       "high": "Alto",
       "danger": "Pericolo"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Aggiunge la cartella e tutto il suo contenuto alle cartelle sempre consentite.",
       "option": "Cartella + sottocartelle"
     },
-    "allowChat": "Consenti in questa chat"
+    "hostScope": {
+      "title": "Consenti sito web",
+      "hint": "Aggiunge il sito web e i suoi sottodomini ai siti web consentiti.",
+      "option": "Sito web + sottodomini"
+    },
+    "allowChat": "Consenti in questa chat",
+    "option": {
+      "yes": "Sì",
+      "chat": "Sì, e non chiedere più in questa chat per",
+      "session": "Sì, e non chiedere più fino al riavvio per",
+      "always": "Sì, e consenti sempre",
+      "no": "No",
+      "denyAlways": "No, e rifiuta sempre"
+    },
+    "customize": "Personalizza",
+    "keyboardHint": "Premi 1–{{ count }} o usa ↑ ↓ e Invio · Esc rifiuta",
+    "url": {
+      "queryWarning": "Questo indirizzo contiene molti dati nella stringa di query. Assicurati che non contenga nulla di privato prima di consentirlo."
+    },
+    "tooltip": {
+      "deny": "Rifiuta questa richiesta e tutte le altre richieste in attesa in questa chat.",
+      "denyAlways": "Rifiuta e salva una regola di rifiuto nelle impostazioni. Anche le altre richieste in attesa in questa chat vengono rifiutate.",
+      "allowOnce": "Consenti solo questa richiesta.",
+      "allowSession": "Ricordato in tutte le chat fino al riavvio dell'app.",
+      "allowChat": "Le regole dei comandi sono ricordate per questa chat e i suoi sottoagenti; cartelle e siti web fino al riavvio dell'app.",
+      "allowAlways": "Salvato nelle impostazioni e valido per tutte le chat."
+    }
   },
   "question": {
     "title": "Domanda",
@@ -1072,6 +1147,8 @@
     "installing": "Installazione…",
     "uninstall": "Disinstallare",
     "addFolder": "Aggiungi cartella",
-    "noFolders": "Nessuna cartella aggiunta finora."
+    "noFolders": "Nessuna cartella aggiunta finora.",
+    "binaryFile": "File binario: anteprima non disponibile.",
+    "fileTooLarge": "Questo file è troppo grande per l'anteprima."
   }
 }

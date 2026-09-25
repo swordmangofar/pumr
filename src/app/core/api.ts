@@ -8,12 +8,14 @@ import {
   FileChange,
   FileDiff,
   GitBlameLine,
-  GitBranch,
   GitCommit,
   GitCommitDetail,
   GitInfo,
+  GitOperation,
   GitPullStrategy,
   GitRebaseEntry,
+  GitRefs,
+  GitStash,
   GitStatus,
   IgnoreCatalogEntry,
   InstalledSkill,
@@ -23,6 +25,7 @@ import {
   Message,
   Mode,
   ModelInfo,
+  PermissionAuditEntry,
   ProcessInfo,
   Project,
   ProjectRule,
@@ -47,6 +50,18 @@ export const OPENROUTER_PROVIDER = 'openrouter';
 
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+/**
+ * Identifies one `send_message` call. Tauri re-delivers an invoke whose IPC
+ * request failed (a webview reload mid-turn does that) with the same payload,
+ * and the backend uses this id to ignore the repeat instead of starting a
+ * second turn that would cancel the running one.
+ */
+function newRequestId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `send-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export const api = {
@@ -97,6 +112,7 @@ export const api = {
     promptKind: string | null = null,
     commandRules: CommandRule[] | null = null,
     folders: string[] | null = null,
+    hosts: string[] | null = null,
   ) =>
     invoke<void>('resolve_permission', {
       requestId,
@@ -106,7 +122,12 @@ export const api = {
       promptKind,
       commandRules,
       folders,
+      hosts,
     }),
+  listPermissionAudit: (conversationId: string | null, limit: number | null = null) =>
+    invoke<PermissionAuditEntry[]>('list_permission_audit', { conversationId, limit }),
+  clearPermissionAudit: (conversationId: string | null) =>
+    invoke<void>('clear_permission_audit', { conversationId }),
   resolveQuestion: (requestId: string, answers: QuestionAnswer[] | null) =>
     invoke<void>('resolve_question', { requestId, answers }),
   addCommandRule: (rule: CommandRule, allow: boolean) =>
@@ -122,7 +143,7 @@ export const api = {
   stopProcess: (processId: string) => invoke<void>('stop_process', { processId }),
   getGitInfo: (projectId: string) => invoke<GitInfo>('get_git_info', { projectId }),
   getGitStatus: (projectId: string) => invoke<GitStatus>('get_git_status', { projectId }),
-  getGitBranches: (projectId: string) => invoke<GitBranch[]>('get_git_branches', { projectId }),
+  getGitRefs: (projectId: string) => invoke<GitRefs>('get_git_refs', { projectId }),
   getGitCommits: (
     projectId: string,
     query: string | null,
@@ -144,7 +165,6 @@ export const api = {
     invoke<void>('git_unstage', { projectId, path }),
   gitUnstagePaths: (projectId: string, paths: string[]) =>
     invoke<void>('git_unstage_paths', { projectId, paths }),
-  gitDiscard: (projectId: string, path: string) => invoke<void>('git_discard', { projectId, path }),
   gitDiscardPaths: (projectId: string, paths: string[]) =>
     invoke<void>('git_discard_paths', { projectId, paths }),
   getGitBlame: (projectId: string, path: string) =>
@@ -159,9 +179,8 @@ export const api = {
   gitPull: (projectId: string, strategy: GitPullStrategy) =>
     invoke<string>('git_pull', { projectId, strategy }),
   gitPush: (projectId: string) => invoke<string>('git_push', { projectId }),
-  getGitRemotes: (projectId: string) => invoke<string[]>('get_git_remotes', { projectId }),
-  gitFastForward: (projectId: string, branch: string, upstream: string) =>
-    invoke<string>('git_fast_forward', { projectId, branch, upstream }),
+  gitFastForward: (projectId: string, branch: string) =>
+    invoke<string>('git_fast_forward', { projectId, branch }),
   gitMerge: (projectId: string, branch: string) =>
     invoke<string>('git_merge', { projectId, branch }),
   gitRebase: (projectId: string, onto: string) => invoke<string>('git_rebase', { projectId, onto }),
@@ -179,8 +198,8 @@ export const api = {
     invoke<string>('git_tag_create', { projectId, name, target, message }),
   gitBranchRename: (projectId: string, from: string, to: string) =>
     invoke<string>('git_branch_rename', { projectId, from, to }),
-  gitBranchDelete: (projectId: string, branch: string, remote: boolean) =>
-    invoke<string>('git_branch_delete', { projectId, branch, remote }),
+  gitBranchDelete: (projectId: string, branch: string, remote: boolean, force = false) =>
+    invoke<string>('git_branch_delete', { projectId, branch, remote, force }),
   gitSetUpstream: (projectId: string, branch: string, upstream: string) =>
     invoke<string>('git_set_upstream', { projectId, branch, upstream }),
   gitPushBranch: (projectId: string, branch: string, remote: string, setUpstream: boolean) =>
@@ -190,18 +209,18 @@ export const api = {
   openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
   pickAssetFile: (kind: 'image' | 'sound') =>
     invoke<string | null>('pick_asset_file', { kind }),
-  gitOperationAbort: (projectId: string, operation: string) =>
+  gitOperationAbort: (projectId: string, operation: GitOperation) =>
     invoke<string>('git_operation_abort', { projectId, operation }),
-  gitOperationContinue: (projectId: string) =>
-    invoke<string>('git_operation_continue', { projectId }),
+  gitOperationContinue: (projectId: string, operation: GitOperation) =>
+    invoke<string>('git_operation_continue', { projectId, operation }),
   gitStashPush: (projectId: string, message: string | null, includeUntracked: boolean) =>
     invoke<string>('git_stash_push', { projectId, message, includeUntracked }),
-  gitStashApply: (projectId: string, stash: string) =>
-    invoke<string>('git_stash_apply', { projectId, stash }),
-  gitStashPop: (projectId: string, stash: string) =>
-    invoke<string>('git_stash_pop', { projectId, stash }),
-  gitStashDrop: (projectId: string, stash: string) =>
-    invoke<string>('git_stash_drop', { projectId, stash }),
+  gitStashApply: (projectId: string, stash: GitStash) =>
+    invoke<string>('git_stash_apply', { projectId, stash: stash.name, hash: stash.hash }),
+  gitStashPop: (projectId: string, stash: GitStash) =>
+    invoke<string>('git_stash_pop', { projectId, stash: stash.name, hash: stash.hash }),
+  gitStashDrop: (projectId: string, stash: GitStash) =>
+    invoke<string>('git_stash_drop', { projectId, stash: stash.name, hash: stash.hash }),
   gitInit: (projectId: string) => invoke<string>('git_init', { projectId }),
   gitClone: (url: string, path: string) => invoke<Project>('git_clone', { url, path }),
   gitTagDelete: (projectId: string, name: string) =>
@@ -272,5 +291,5 @@ export const api = {
     invoke<RevertResult>('revert_to_message', { messageId, restoreFiles }),
   summarizeSession: (sessionId: string) => invoke<string>('summarize_session', { sessionId }),
   sendMessage: (args: SendMessageArgs, channel: Channel<RoutedEvent>) =>
-    invoke<Message>('send_message', { ...args, channel }),
+    invoke<Message>('send_message', { ...args, requestId: newRequestId(), channel }),
 };

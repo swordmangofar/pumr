@@ -128,7 +128,14 @@
       "banner": "{{ operation }} en cours",
       "files": "{{ count }} fichiers en conflit",
       "continue": "Continuer",
-      "abort": "Abandonner"
+      "abort": "Abandonner",
+      "resolveFirst": "Résolvez d'abord tous les conflits et indexez les fichiers."
+    },
+    "operation": {
+      "merge": "Fusion",
+      "rebase": "Rebasage",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Échec de l'authentification. Vérifiez vos identifiants Git.",
@@ -171,10 +178,21 @@
       "checkoutAfterCreate": "Basculer sur la nouvelle branche",
       "confirm": "Confirmer",
       "mergeConfirm": "Fusionner '{{branch}}' dans '{{current}}' ?",
+      "rebaseConfirm": "Rebaser '{{current}}' sur '{{branch}}' ? Les commits de '{{current}}' seront réécrits.",
       "deleteConfirm": "Supprimer la branche '{{branch}}' ? Cette action est irréversible.",
       "deleteRemoteConfirm": "Supprimer la branche distante '{{branch}}' ? Cela affecte le dépôt distant.",
+      "forceDeleteConfirm": "La branche '{{branch}}' n'est pas entièrement fusionnée. La supprimer quand même ? Ses commits non fusionnés seront perdus.",
       "rebaseHint": "Réorganise les commits et choisis une action pour chacun. Le rebase va du plus ancien au plus récent.",
-      "nothingToRebase": "Aucun commit à rebaser."
+      "nothingToRebase": "Aucun commit à rebaser.",
+      "rebaseActions": {
+        "pick": "Conserver (pick)",
+        "squash": "Fusionner (squash)",
+        "fixup": "Fusionner sans message (fixup)",
+        "drop": "Supprimer (drop)"
+      },
+      "rebaseSquashFirst": "Le premier commit ne peut pas être fusionné (squash ou fixup) : aucun commit précédent avec lequel le combiner.",
+      "moveUp": "Monter",
+      "moveDown": "Descendre"
     }
   },
   "tabs": {
@@ -249,7 +267,8 @@
     "noMatches": "Aucune étape ne correspond aux filtres actuels.",
     "view": {
       "timeline": "Chronologie",
-      "branches": "Branches"
+      "branches": "Branches",
+      "permissions": "Autorisations"
     },
     "filters": {
       "type": "Taper",
@@ -337,6 +356,30 @@
     "sources": {
       "session": "Remplacement de session",
       "default": "Paramètres par défaut"
+    },
+    "permissions": {
+      "empty": "Aucune décision d'autorisation n'a encore été enregistrée pour ce chat.",
+      "clear": "Vider le journal",
+      "clearConfirm": "Cliquez à nouveau pour vider",
+      "allowed": "Autorisé",
+      "denied": "Refusé",
+      "why": "Pourquoi :",
+      "rule": "Règle :",
+      "filters": {
+        "auto": "Autorisé sans demander",
+        "asked": "Demandé",
+        "denied": "Refusé"
+      },
+      "by": {
+        "auto": "Automatique",
+        "rule": "Règle de refus",
+        "user": "Vous",
+        "grant": "Couvert par une nouvelle autorisation",
+        "cascade": "Refusé avec une autre demande",
+        "stopped": "Arrêté",
+        "timeout": "Délai dépassé",
+        "cancelled": "Annulé"
+      }
     }
   },
   "agents": {
@@ -950,6 +993,7 @@
     "noDeniedCommandRules": "Aucune commande bloquée.",
     "scope": {
       "program": "Programme",
+      "subcommand": "Programme + sous-commande",
       "programFlags": "Programme + options",
       "exact": "Exacte"
     },
@@ -961,19 +1005,30 @@
     },
     "noCommandRules": "Aucune règle de commande pour l'instant. Utilise « toujours autoriser » dans une demande d'autorisation pour en créer une.",
     "websiteRules": "Sites web",
-    "websiteRulesHint": "Sites web que l'assistant peut visiter. Les règles de refus l'emportent sur les règles d'autorisation ; un simple domaine couvre aussi ses sous-domaines. Utilise « toujours autoriser » ou « toujours refuser » dans une demande d'autorisation pour en créer une.",
+    "websiteRulesHint": "Sites web que l'assistant peut visiter avec ses outils web ou avec des commandes comme curl, git et ssh. Les règles de refus l'emportent sur les règles d'autorisation ; un simple domaine couvre aussi ses sous-domaines. Utilise « toujours autoriser » ou « toujours refuser » dans une demande d'autorisation pour en créer une.",
     "permissionPrompts": "Demandes d'autorisation",
     "permissionPromptsHint": "Choisis le comportement par défaut du bouton d'autorisation principal. Autoriser une fois approuve une seule demande ; autoriser pour cette session mémorise l'accès au dossier jusqu'au redémarrage de l'application.",
     "autoApprove": "Approbation automatique",
-    "autoApproveHint": "Ignore les demandes pour le travail que l'assistant peut prouver sûr. Les commandes dangereuses, les chemins hors du projet et les fichiers sensibles demandent toujours.",
+    "autoApproveHint": "Ignore les demandes pour le travail que l'assistant peut prouver sûr. Les commandes dangereuses, le code en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les chemins hors du projet et les fichiers sensibles demandent toujours.",
     "autoApproveReadOnly": "Commandes en lecture seule",
     "autoApproveReadOnlyHint": "Autorise les commandes d'inspection comme ls, grep et git status sans demander.",
     "autoApprovePackageScripts": "Gestionnaires de paquets et outils de build",
-    "autoApprovePackageScriptsHint": "Autorise pnpm, npm, yarn, bun, ng, npx, make et outils similaires quand rien ne pointe hors du projet.",
+    "autoApprovePackageScriptsHint": "Autorise pnpm, npm, yarn, bun, ng, make et outils similaires quand rien ne pointe hors du projet.",
     "autoApproveProjectExecutables": "Exécutables du projet",
     "autoApproveProjectExecutablesHint": "Autorise les exécutables dans le projet, comme ./node_modules/.bin/ng, sans demander à chaque fois.",
     "autoApproveProjectCommands": "Toutes les commandes dans le projet",
-    "autoApproveProjectCommandsHint": "Autorise toute commande non dangereuse dont les chemins restent dans le projet. Les commandes dangereuses, les fichiers sensibles et tout ce qui est à l'extérieur demandent encore.",
+    "autoApproveProjectCommandsHint": "Autorise toute commande non dangereuse dont les chemins restent dans le projet. Les commandes dangereuses, le code en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les fichiers sensibles et tout ce qui est à l'extérieur demandent toujours.",
+    "permissionPreset": {
+      "strict": "Strict",
+      "strictHint": "Seules les commandes en lecture seule s'exécutent sans demander.",
+      "balanced": "Équilibré",
+      "balancedHint": "Les commandes en lecture seule, les gestionnaires de paquets, les outils de build et les exécutables du projet s'exécutent sans demander.",
+      "autonomous": "Autonome",
+      "autonomousHint": "Toute commande non dangereuse à l'intérieur du projet s'exécute sans demander.",
+      "custom": "Personnalisé",
+      "autonomousWarning": "Le mode autonome fait confiance à ce projet : ses scripts, Makefiles et exécutables peuvent tout faire sans demander. Le code en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les commandes dangereuses et tout ce qui est hors du projet demandent toujours.",
+      "confirm": "Utiliser le mode autonome"
+    },
     "noAllowedWebsites": "Aucun site web toujours autorisé pour l'instant.",
     "noDeniedWebsites": "Aucun site web toujours refusé pour l'instant.",
     "websitePlaceholder": "ex. docs.rs ou *.github.com",
@@ -997,19 +1052,13 @@
       "folder": "Dossier"
     },
     "allowAlways": "Toujours autoriser",
-    "addFolder": "Ajouter le dossier définitivement",
     "siteRuleLabel": "Règle de site web (domaine ou glob)",
     "siteRuleHint": "Par exemple : docs.rs autorise ce site, *.github.com autorise tous ses sous-domaines.",
-    "segment": {
-      "allowed": "Autorisé",
-      "needsApproval": "Nécessite une approbation",
-      "title": "Ce qui nécessite une approbation",
-      "summary": "{{ count }} parties sur {{ total }} nécessitent une approbation",
-      "folderOnly": "Les règles de commande ne peuvent pas autoriser des chemins hors du projet. Autorisez plutôt un dossier ci-dessous."
-    },
+    "siteRuleInvalid": "Cette règle ne couvre pas {{ host }} ou est trop large, donc {{ host }} sera enregistré à la place.",
     "risk": {
       "low": "Faible",
       "medium": "Moyen",
+      "network": "Réseau",
       "high": "Élevé",
       "danger": "Danger"
     },
@@ -1022,7 +1071,33 @@
       "hint": "Ajoute le dossier et tout son contenu aux dossiers toujours autorisés.",
       "option": "Dossier + sous-dossiers"
     },
-    "allowChat": "Autoriser dans ce chat"
+    "hostScope": {
+      "title": "Autoriser le site web",
+      "hint": "Ajoute le site web et ses sous-domaines aux sites web autorisés.",
+      "option": "Site web + sous-domaines"
+    },
+    "allowChat": "Autoriser dans ce chat",
+    "option": {
+      "yes": "Oui",
+      "chat": "Oui, et ne plus demander dans ce chat pour",
+      "session": "Oui, et ne plus demander jusqu'au redémarrage pour",
+      "always": "Oui, et toujours autoriser",
+      "no": "Non",
+      "denyAlways": "Non, et toujours refuser"
+    },
+    "customize": "Personnaliser",
+    "keyboardHint": "Appuyez sur 1–{{ count }} ou utilisez ↑ ↓ et Entrée · Échap refuse",
+    "url": {
+      "queryWarning": "Cette adresse transporte beaucoup de données dans sa chaîne de requête. Vérifiez qu'elle ne contient rien de privé avant de l'autoriser."
+    },
+    "tooltip": {
+      "deny": "Refuser cette demande et toutes les autres demandes en attente dans ce chat.",
+      "denyAlways": "Refuser et enregistrer une règle de refus dans vos réglages. Les autres demandes en attente dans ce chat sont aussi refusées.",
+      "allowOnce": "Autoriser uniquement cette demande.",
+      "allowSession": "Mémorisé dans tous les chats jusqu'au redémarrage de l'application.",
+      "allowChat": "Les règles de commande sont mémorisées pour ce chat et ses sous-agents ; les dossiers et sites web jusqu'au redémarrage de l'application.",
+      "allowAlways": "Enregistré dans vos réglages et appliqué à tous les chats."
+    }
   },
   "question": {
     "title": "Question",
@@ -1072,6 +1147,8 @@
     "installing": "Installation…",
     "uninstall": "Désinstaller",
     "addFolder": "Ajouter un dossier",
-    "noFolders": "Aucun dossier ajouté pour l'instant."
+    "noFolders": "Aucun dossier ajouté pour l'instant.",
+    "binaryFile": "Fichier binaire – aucun aperçu disponible.",
+    "fileTooLarge": "Ce fichier est trop volumineux pour être prévisualisé."
   }
 }

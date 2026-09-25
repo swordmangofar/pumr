@@ -39,11 +39,17 @@ sessions in SQLite. No project files leave the machine except the requests you a
 
 - A real tool loop in Rust: `read`, `write`, `edit`, `glob`, `grep`, `ls`, `bash`,
   `webfetch`, `websearch`, plus MCP tools.
-- Non-dangerous commands inside the project just run. When a prompt does appear —
-  allow once, allow for this chat/session, allow always (glob rule), or deny; one
-  grant auto-approves every queued request it covers, one deny clears the queue.
+- Non-dangerous commands inside the project just run. When a prompt does appear it
+  shows the command, why it asks and numbered choices, like Claude Code: yes; yes
+  and don't ask again for `git push *` (this chat, or always); no. The scope can be
+  changed under Customize. One grant auto-approves every queued request it covers,
+  one deny clears the queue.
 - Dangerous commands and sensitive files (`.env`, keys, databases) get extra checks,
-  especially outside the project.
+  especially outside the project. Inline code (`bash -c`, `node -e`), package
+  downloads (`npx`) and hosts that `curl`, `git` or `ssh` contact always ask; network
+  commands follow the same website allow/deny list as the web tools.
+- Strict, Balanced and Autonomous presets pick what runs without asking, and the
+  debugger's Permissions view records every decision and why it was made.
 - Tools are sandboxed to the active project and the extra folders you allow.
 - Long-running commands move to the background and can be stopped from the header.
 
@@ -155,6 +161,8 @@ src-tauri/src/           Rust core
   db.rs                  SQLite schema and queries (projects, sessions, messages, costs)
   config.rs              settings.json + OS keychain
   commands.rs            Tauri IPC surface
+
+src-tauri/appimage/      AppImage GTK plugin for CI: native Wayland, no bundled libwayland
 ```
 
 Licensed under Apache-2.0.
