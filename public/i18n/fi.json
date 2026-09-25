@@ -749,8 +749,6 @@
     "testingPromptHint": "Lisää ohjeita keskittyneiden, determinististen testien kirjoittamisesta ja niiden suorittamisesta ennen lopettamista.",
     "architecturePrompt": "Ohjelmistoarkkitehtuuri",
     "architecturePromptHint": "Lisää ohjeita moduulirajoista, vastuista ja ylläpidettävästä suunnittelusta.",
-    "budget": "Budjetti (USD)",
-    "budgetHint": "0 poistaa budjetin näytön käytöstä.",
     "language": "Kieli",
     "replyLanguage": "Vastauskieli",
     "replyLanguageDefault": "Oletus (mallin kieli)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Esimerkiksi: docs.rs sallii kyseisen sivuston, *.github.com sallii kaikki sen aliverkkotunnukset.",
     "segment": {
       "allowed": "Sallittu",
-      "needsApproval": "Vaatii hyväksynnän"
+      "needsApproval": "Vaatii hyväksynnän",
+      "title": "Mikä vaatii hyväksynnän",
+      "summary": "{{ count }}/{{ total }} osaa vaatii hyväksynnän",
+      "folderOnly": "Komentosäännöt eivät voi sallia projektin ulkopuolisia polkuja. Salli sen sijaan kansio alla."
     },
     "risk": {
       "low": "Matala",

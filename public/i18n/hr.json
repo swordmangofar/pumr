@@ -749,8 +749,6 @@
     "testingPromptHint": "Dodaje smjernice o pisanju fokusiranih, determinističkih testova i njihovom pokretanju prije završetka.",
     "architecturePrompt": "Softverska arhitektura",
     "architecturePromptHint": "Dodaje smjernice o granicama modula, odgovornostima i održivom dizajnu.",
-    "budget": "Proračun (USD)",
-    "budgetHint": "0 onemogućuje prikaz proračuna.",
     "language": "Jezik",
     "replyLanguage": "Jezik odgovora",
     "replyLanguageDefault": "Zadano (jezik modela)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Na primjer: docs.rs dopušta tu lokaciju, *.github.com dopušta sve njezine poddomene.",
     "segment": {
       "allowed": "Dopušteno",
-      "needsApproval": "Zahtijeva odobrenje"
+      "needsApproval": "Zahtijeva odobrenje",
+      "title": "Što treba odobrenje",
+      "summary": "{{ count }} od {{ total }} dijelova treba odobrenje",
+      "folderOnly": "Pravila naredbi ne mogu dopustiti putanje izvan projekta. Umjesto toga dopustite mapu u nastavku."
     },
     "risk": {
       "low": "Nisko",

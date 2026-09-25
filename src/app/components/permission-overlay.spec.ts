@@ -447,4 +447,75 @@ describe('PermissionOverlay', () => {
       ['/etc'],
     );
   });
+
+  it('shows per-part reasons and no rule scope for parts only a folder can allow', async () => {
+    create(
+      request({
+        command: 'cd /other/repo; pwd; git log 2>/tmp/x',
+        detail: 'Combined backend reason',
+        folders: ['/other/repo', '/other'],
+        segments: [
+          {
+            text: 'cd /other/repo',
+            allowed: false,
+            reason: 'Command touches paths outside the project: /other/repo',
+            scopeOptions: [],
+            folders: ['/other/repo', '/other'],
+          },
+          { text: ' pwd', allowed: true },
+          {
+            text: ' git log 2>/tmp/x',
+            allowed: false,
+            reason: "Command 'git' requires approval",
+            scopeOptions: [{ kind: 'program', rule: { kind: 'glob', value: 'git *' } }],
+          },
+        ],
+      }),
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('permission.segment.summary');
+    expect(text).not.toContain('Combined backend reason');
+    expect(text).toContain('Command touches paths outside the project: /other/repo');
+    expect(text).toContain("Command 'git' requires approval");
+    expect(text).toContain('permission.segment.folderOnly');
+    const parts = fixture.nativeElement.querySelectorAll('[data-testid="asking-segment"]');
+    expect(parts.length).toBe(2);
+    // Only the git part offers a rule scope; the cd part offers none.
+    expect(parts[0].querySelectorAll('button').length).toBe(0);
+    expect(parts[1].querySelectorAll('button').length).toBe(1);
+
+    // The most specific folder is preselected, the broader parent is not.
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowAlways'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith(
+      'allow_always',
+      [{ kind: 'glob', value: 'git *' }],
+      ['/other/repo'],
+    );
+  });
+
+  it('preselects the folder for a single outside command without rule scopes', async () => {
+    create(request({ command: 'cat /etc/hosts', folders: ['/etc'], scopeOptions: [] }));
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('permission.segment.folderOnly');
+    buttons()
+      .find((button) => button.textContent?.includes('permission.allowChat'))!
+      .click();
+    expect(resolvePermission).toHaveBeenCalledWith('allow_session', [], ['/etc']);
+  });
+
+  it('shortens folders below the home directory for display only', () => {
+    create(request({ command: 'ls /Users/me/repo', folders: ['/Users/me/repo'] }));
+    fixture.componentInstance['home'].set('/Users/me');
+    fixture.detectChanges();
+    const folderButton = buttons().find((button) =>
+      button.textContent?.includes('permission.folderScope.option'),
+    )!;
+    expect(folderButton.querySelector('code')?.textContent?.trim()).toBe('~/repo');
+    expect(folderButton.getAttribute('title')).toBe('/Users/me/repo');
+  });
 });

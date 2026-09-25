@@ -72,6 +72,9 @@
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "port": 2500
+          },
           "configurations": {
             "production": {
               "buildTarget": "pumr:build:production"

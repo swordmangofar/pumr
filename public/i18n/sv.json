@@ -749,8 +749,6 @@
     "testingPromptHint": "Lägger till vägledning om att skriva fokuserade, deterministiska tester och köra dem innan du avslutar.",
     "architecturePrompt": "Mjukvaruarkitektur",
     "architecturePromptHint": "Lägger till vägledning om modulgränser, ansvar och underhållbar design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 inaktiverar budgetvisningen.",
     "language": "Språk",
     "replyLanguage": "Svarsspråk",
     "replyLanguageDefault": "Standard (modellens språk)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Till exempel: docs.rs tillåter den webbplatsen, *.github.com tillåter alla dess underdomäner.",
     "segment": {
       "allowed": "Tillåtet",
-      "needsApproval": "Kräver godkännande"
+      "needsApproval": "Kräver godkännande",
+      "title": "Vad som behöver godkännas",
+      "summary": "{{ count }} av {{ total }} delar behöver godkännas",
+      "folderOnly": "Kommandoregler kan inte tillåta sökvägar utanför projektet. Tillåt i stället en mapp nedan."
     },
     "risk": {
       "low": "Låg",

@@ -63,6 +63,9 @@ const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
 
 /** Compact token count for the context meter, e.g. 12300 -> "12.3k". */
 function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
   if (value >= 1_000) {
     return `${(value / 1_000).toFixed(1)}k`;
   }

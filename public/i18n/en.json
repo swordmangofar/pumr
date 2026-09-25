@@ -749,8 +749,6 @@
     "testingPromptHint": "Adds guidance on writing focused, deterministic tests and running them before finishing.",
     "architecturePrompt": "Software architecture",
     "architecturePromptHint": "Adds guidance on module boundaries, responsibilities and maintainable design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 disables the budget display.",
     "language": "Language",
     "replyLanguage": "Response language",
     "replyLanguageDefault": "Default (model language)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "For example: docs.rs allows that site, *.github.com allows all its subdomains.",
     "segment": {
       "allowed": "Allowed",
-      "needsApproval": "Needs approval"
+      "needsApproval": "Needs approval",
+      "title": "What needs approval",
+      "summary": "{{ count }} of {{ total }} parts need approval",
+      "folderOnly": "Command rules can't allow paths outside the project. Whitelist a folder below instead."
     },
     "risk": {
       "low": "Low",

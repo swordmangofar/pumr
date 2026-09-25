@@ -274,6 +274,13 @@ pub struct CommandSegment {
     /// Lets the overlay grant a rule per asking segment instead of forcing one
     /// rule for the whole compound line.
     pub scope_options: Vec<CommandScopeOption>,
+    /// Why this segment needs approval; `None` for auto-allowed segments. The
+    /// overlay shows it next to the segment instead of one combined reason.
+    pub reason: Option<String>,
+    /// Outside-project folders this segment touches that can be whitelisted.
+    /// When non-empty and `scope_options` is empty, only a folder grant (not a
+    /// command rule) can stop this segment from asking.
+    pub folders: Vec<String>,
 }
 
 /// How risky a command prompt is, with a human-readable impact explanation.
@@ -732,6 +739,8 @@ pub fn evaluate_command_with(
                     allowed: true,
                     suggested_rule: None,
                     scope_options: Vec::new(),
+                    reason: None,
+                    folders: Vec::new(),
                 });
             }
             CommandDecision::Ask {
@@ -747,9 +756,9 @@ pub fn evaluate_command_with(
                         all_options.push(option.clone());
                     }
                 }
-                for folder in outside_folders {
-                    if !all_folders.contains(&folder) {
-                        all_folders.push(folder);
+                for folder in &outside_folders {
+                    if !all_folders.contains(folder) {
+                        all_folders.push(folder.clone());
                     }
                 }
                 annotated.push(CommandSegment {
@@ -757,6 +766,8 @@ pub fn evaluate_command_with(
                     allowed: false,
                     suggested_rule: Some(suggested_rule.clone()),
                     scope_options: scope_options.clone(),
+                    reason: Some(reason.clone()),
+                    folders: outside_folders,
                 });
                 let worse = failing
                     .as_ref()
@@ -769,8 +780,15 @@ pub fn evaluate_command_with(
         }
     }
     if let Some((reason, suggested_rule, risk, _)) = failing {
+        // Splitting on operators is routine, not a finding: the reason names
+        // how many parts ask and the worst one. The overlay shows each
+        // segment's own reason next to it.
+        let asking = annotated.iter().filter(|segment| !segment.allowed).count();
         return ask_with_segments(
-            format!("Command uses shell control operators and needs review: {reason}"),
+            format!(
+                "{asking} of {} command parts need approval. {reason}",
+                annotated.len()
+            ),
             suggested_rule,
             annotated,
             risk,
@@ -918,12 +936,17 @@ fn evaluate_segment(
 
     for token in &path_tokens {
         let absolute = resolve_path(project_root, token);
-        if !path_is_inside(&absolute, project_root, extra_folders) {
+        if !token_is_inside(&absolute, project_root, extra_folders) {
             outside.push(token.clone());
             continue;
         }
         let relative = relative_path(&absolute, project_root, extra_folders);
-        if is_sensitive(&absolute) {
+        let expanded_sensitive = has_glob(&absolute)
+            && expand_glob(&absolute)
+                .unwrap_or_default()
+                .iter()
+                .any(|path| is_sensitive(path));
+        if is_sensitive(&absolute) || expanded_sensitive {
             sensitive.push(relative);
         }
     }
@@ -946,25 +969,40 @@ fn evaluate_segment(
                 ),
             )
         };
-        // The command rules offered below can never bypass the outside-project
-        // check, so also offer each touched directory as a folder the user can
-        // whitelist permanently (the folder and everything below it).
-        let mut outside_folders: Vec<String> = outside
-            .iter()
-            .map(|token| containing_folder(&resolve_path(project_root, token)))
-            .map(|folder| folder.display().to_string())
-            .collect();
-        outside_folders.sort();
-        outside_folders.dedup();
-        return ask_with_segments(
+        // A saved command rule can never bypass the outside-project check, so
+        // no rule scopes are offered: they would be saved yet never apply.
+        // Instead each touched directory (and its parent, when that is not
+        // too broad) is offered as a folder to whitelist.
+        let mut outside_folders: Vec<String> = Vec::new();
+        for token in &outside {
+            for folder in folder_suggestions(&resolve_path(project_root, token)) {
+                let folder = folder.display().to_string();
+                if !outside_folders.contains(&folder) {
+                    outside_folders.push(folder);
+                }
+            }
+        }
+        let wildcard_only = outside_folders.is_empty()
+            && outside
+                .iter()
+                .any(|token| has_glob(&resolve_path(project_root, token)));
+        let reason = if wildcard_only {
+            format!(
+                "Command touches paths outside the project: {} (wildcard paths without matches cannot be whitelisted)",
+                preview(&outside)
+            )
+        } else {
             format!(
                 "Command touches paths outside the project: {}",
                 preview(&outside)
-            ),
+            )
+        };
+        return ask_with_segments(
+            reason,
             suggested_rule,
             Vec::new(),
             risk,
-            scope_options,
+            Vec::new(),
             outside_folders,
         );
     }
@@ -1036,8 +1074,10 @@ fn evaluate_segment(
     }
     // A redirect turns a read-only program into a writer (`ls > out`), so it
     // never counts as read-only. The target was already path- and
-    // sensitivity-checked above, so this only decides whether to ask.
-    let reads_only = is_read_only(&program, &tokens) || is_safe_cd(&program, &tokens);
+    // sensitivity-checked above, so this only decides whether to ask. A
+    // redirect to a null device (`2>/dev/null`) writes nothing and is ignored.
+    let arguments = without_harmless_redirects(&tokens);
+    let reads_only = is_read_only(&program, &arguments) || is_safe_cd(&program, &arguments);
     if auto.read_only && known_executable && reads_only && !has_redirect_operator(trimmed) {
         return CommandDecision::Allow;
     }
@@ -1129,6 +1169,10 @@ fn is_safe_cd(program: &str, tokens: &[String]) -> bool {
 
 /// True when an unquoted `<` or `>` appears, i.e. the segment writes or reads
 /// through a redirection rather than only inspecting its input.
+///
+/// A redirect to a null device (`2>/dev/null`, `&>/dev/null`, `</dev/null`)
+/// and a file descriptor duplication (`2>&1`, `>&-`) touch no real file, so
+/// they do not count: `git log 2>/dev/null` is still read-only.
 fn has_redirect_operator(command: &str) -> bool {
     let mut chars = command.chars().peekable();
     let mut in_single = false;
@@ -1141,6 +1185,10 @@ fn has_redirect_operator(command: &str) -> bool {
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,
             '<' | '>' if !in_single && !in_double => {
+                // `>>`, `>|`, `<<` and `<>` are single operators.
+                if matches!(chars.peek(), Some('>') | Some('<') | Some('|')) {
+                    chars.next();
+                }
                 // A file descriptor duplication (`2>&1`, `0<&3`, `>&-`) does not
                 // write a file, so only `>&word` with a real target counts.
                 if chars.peek() == Some(&'&') {
@@ -1150,12 +1198,85 @@ fn has_redirect_operator(command: &str) -> bool {
                         _ => return true,
                     }
                 }
+                while chars.peek().is_some_and(|next| *next == ' ' || *next == '\t') {
+                    chars.next();
+                }
+                let mut target = String::new();
+                while let Some(next) = chars.peek() {
+                    if next.is_whitespace() || matches!(next, '<' | '>' | ';' | '|' | '&') {
+                        break;
+                    }
+                    target.push(*next);
+                    chars.next();
+                }
+                let target = target.trim_matches(|character| character == '"' || character == '\'');
+                if is_null_device(target) {
+                    continue;
+                }
                 return true;
             }
             _ => {}
         }
     }
     false
+}
+
+/// How a single token redirects: a descriptor duplication (`2>&1`), a bare
+/// operator whose target is the next token (`>`, `2>`, `&>`), or an operator
+/// with its target attached (`>out`, `2>>log`, `&>/dev/null`, `<in`).
+#[derive(Debug, PartialEq, Eq)]
+enum Redirect<'a> {
+    Duplicate,
+    Bare,
+    Target(&'a str),
+}
+
+/// Parses a redirection token, or `None` when the token is not one.
+fn parse_redirect(token: &str) -> Option<Redirect<'_>> {
+    let rest = token.trim_start_matches(|character: char| character.is_ascii_digit());
+    let rest = if rest.len() == token.len() {
+        rest.strip_prefix('&').unwrap_or(rest)
+    } else {
+        rest
+    };
+    // Heredocs and here-strings (`<<EOF`, `<<<word`) name no file.
+    if rest.starts_with("<<") {
+        return None;
+    }
+    let target = rest
+        .strip_prefix(">>")
+        .or_else(|| rest.strip_prefix(">|"))
+        .or_else(|| rest.strip_prefix('>'))
+        .or_else(|| rest.strip_prefix('<'))?;
+    if target.starts_with('&') {
+        return Some(Redirect::Duplicate);
+    }
+    if target.is_empty() {
+        return Some(Redirect::Bare);
+    }
+    Some(Redirect::Target(target))
+}
+
+/// Drops the redirections that touch no file (`2>/dev/null`, `2>&1`,
+/// `2> /dev/null`) so argument-count checks see only the real arguments.
+fn without_harmless_redirects(tokens: &[String]) -> Vec<String> {
+    let mut kept = Vec::with_capacity(tokens.len());
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        match parse_redirect(token) {
+            Some(Redirect::Duplicate) => {}
+            Some(Redirect::Target(target)) if is_null_device(target) => {}
+            Some(Redirect::Bare)
+                if tokens.get(index + 1).is_some_and(|next| is_null_device(next)) =>
+            {
+                index += 1;
+            }
+            _ => kept.push(token.clone()),
+        }
+        index += 1;
+    }
+    kept
 }
 
 /// Splits a command line into the shell segments a `sh -c` line would run.
@@ -1861,23 +1982,22 @@ fn candidate_paths(tokens: &[String], dangerous: bool) -> Vec<String> {
     let mut index = 0;
     while index < tokens.len() {
         let token = &tokens[index];
-        if token == ">" || token == ">>" || token == "<" {
-            if let Some(next) = tokens.get(index + 1) {
-                if !is_null_device(next) {
-                    paths.push(next.clone());
+        match parse_redirect(token) {
+            Some(Redirect::Bare) => {
+                if let Some(next) = tokens.get(index + 1) {
+                    if !is_null_device(next) {
+                        paths.push(next.clone());
+                    }
+                    index += 2;
+                    continue;
                 }
-                index += 2;
-                continue;
             }
-        }
-        if let Some(target) = token
-            .strip_prefix(">>")
-            .or_else(|| token.strip_prefix('>'))
-            .or_else(|| token.strip_prefix('<'))
-        {
-            if !target.is_empty() && !is_null_device(target) {
-                paths.push(target.to_string());
+            Some(Redirect::Target(target)) => {
+                if !is_null_device(target) {
+                    paths.push(target.to_string());
+                }
             }
+            Some(Redirect::Duplicate) | None => {}
         }
         index += 1;
     }
@@ -1930,6 +2050,10 @@ fn candidate_paths(tokens: &[String], dangerous: bool) -> Vec<String> {
         if program == "find" && find_pattern_flags.contains(&token.as_str()) {
             // The token that follows is a glob pattern.
             index += 1;
+            continue;
+        }
+        // Redirections and their targets were collected above.
+        if parse_redirect(token).is_some() {
             continue;
         }
         if grep_like {
@@ -2075,6 +2199,126 @@ fn containing_folder(absolute: &Path) -> PathBuf {
 
 pub fn path_is_inside(path: &Path, project_root: &Path, extra_folders: &[PathBuf]) -> bool {
     path.starts_with(project_root) || extra_folders.iter().any(|folder| path.starts_with(folder))
+}
+
+/// Most filesystem matches a wildcard path is expanded to. A pattern with more
+/// matches is too broad to reason about and stays "outside".
+const GLOB_EXPANSION_LIMIT: usize = 8;
+
+/// True when a path component holds a shell wildcard (`*`, `?`, `[...]`,
+/// `{a,b}`), so the shell would expand it rather than use it literally.
+fn has_glob(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .contains(['*', '?', '[', '{'])
+    })
+}
+
+/// Expands a wildcard path the way the shell would, against the real
+/// filesystem. Returns `None` when there are more than
+/// [`GLOB_EXPANSION_LIMIT`] matches (or the pattern is invalid), so callers
+/// can fail closed. Hidden entries only match a pattern that starts with `.`,
+/// as in the shell. Like the shell, only paths that exist in full count as
+/// matches: with none, the shell passes the pattern on literally.
+fn expand_glob(path: &Path) -> Option<Vec<PathBuf>> {
+    let mut frontier: Vec<PathBuf> = vec![PathBuf::new()];
+    for component in path.components() {
+        let name = component.as_os_str().to_string_lossy().to_string();
+        if !name.contains(['*', '?', '[', '{']) {
+            for entry in &mut frontier {
+                entry.push(component.as_os_str());
+            }
+            continue;
+        }
+        let matcher = Glob::new(&name).ok()?.compile_matcher();
+        let mut next = Vec::new();
+        for directory in &frontier {
+            let Ok(entries) = std::fs::read_dir(directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let entry_name = entry.file_name().to_string_lossy().to_string();
+                if entry_name.starts_with('.') && !name.starts_with('.') {
+                    continue;
+                }
+                if matcher.is_match(&entry_name) {
+                    next.push(directory.join(&entry_name));
+                    if next.len() > GLOB_EXPANSION_LIMIT {
+                        return None;
+                    }
+                }
+            }
+        }
+        frontier = next;
+    }
+    frontier.retain(|path| path.symlink_metadata().is_ok());
+    frontier.sort();
+    Some(frontier)
+}
+
+/// True when a folder is too broad to offer as a one-click whitelist: the
+/// filesystem root, the home directory, or anything above it (`/Users`).
+fn is_too_broad_folder(folder: &Path) -> bool {
+    if folder.parent().is_none() {
+        return true;
+    }
+    match std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        Some(home) => Path::new(&home).starts_with(folder),
+        None => false,
+    }
+}
+
+/// The folders offered for whitelisting an outside path, most specific first:
+/// the folder that holds it and, when that is not too broad, its parent too
+/// (`~/Repositories/other` and `~/Repositories`). A wildcard path is expanded
+/// first; its unexpanded form is never offered because a whitelisted `/Users/*`
+/// would only match a folder literally named `*`.
+fn folder_suggestions(absolute: &Path) -> Vec<PathBuf> {
+    let bases: Vec<PathBuf> = if has_glob(absolute) {
+        expand_glob(absolute)
+            .unwrap_or_default()
+            .iter()
+            .map(|path| containing_folder(path))
+            .filter(|folder| !has_glob(folder))
+            .collect()
+    } else {
+        vec![containing_folder(absolute)]
+    };
+    let mut folders: Vec<PathBuf> = Vec::new();
+    for base in bases {
+        // Whitelisting `/` would switch the outside check off entirely.
+        if base.parent().is_some() && !folders.contains(&base) {
+            folders.push(base.clone());
+        }
+        if let Some(parent) = base.parent() {
+            if !is_too_broad_folder(parent) && !folders.iter().any(|folder| folder == parent) {
+                folders.push(parent.to_path_buf());
+            }
+        }
+    }
+    folders
+}
+
+/// Whether a path token stays inside the project or a whitelisted folder. A
+/// wildcard can only match below its literal prefix, so a literal path that is
+/// inside is always inside. An outside wildcard path counts as inside only if
+/// it expands to at least one match and every match is inside, which lets a
+/// whitelisted `~/Repositories/other` cover `cd ~/Repo*/other`.
+fn token_is_inside(absolute: &Path, project_root: &Path, extra_folders: &[PathBuf]) -> bool {
+    if path_is_inside(absolute, project_root, extra_folders) {
+        return true;
+    }
+    if !has_glob(absolute) {
+        return false;
+    }
+    match expand_glob(absolute) {
+        Some(matches) if !matches.is_empty() => matches
+            .iter()
+            .all(|path| path_is_inside(path, project_root, extra_folders)),
+        _ => false,
+    }
 }
 
 /// Resolves `path` inside `project_root` for a project-scoped file operation.
@@ -3019,7 +3263,7 @@ mod tests {
         let CommandDecision::Ask { reason, .. } = evaluate("ls src && pnpm build", &[]) else {
             panic!("expected an ask decision");
         };
-        assert!(reason.contains("control operators"), "{reason}");
+        assert!(reason.contains("1 of 2 command parts"), "{reason}");
         assert!(reason.contains("pnpm"), "{reason}");
     }
 
@@ -3148,7 +3392,7 @@ mod tests {
 
     #[test]
     fn scope_options_offer_program_flags_and_exact() {
-        let CommandDecision::Ask { scope_options, .. } = evaluate("ls -la /test", &[]) else {
+        let CommandDecision::Ask { scope_options, .. } = evaluate("mytool -la src", &[]) else {
             panic!("expected an ask decision");
         };
         let rules: Vec<CommandRule> = scope_options
@@ -3158,14 +3402,176 @@ mod tests {
         assert_eq!(
             rules,
             vec![
-                CommandRule::Glob("ls *".into()),
-                CommandRule::Glob("ls -la *".into()),
-                CommandRule::Exact("ls -la /test".into()),
+                CommandRule::Glob("mytool *".into()),
+                CommandRule::Glob("mytool -la *".into()),
+                CommandRule::Exact("mytool -la src".into()),
             ],
         );
         assert_eq!(scope_options[0].kind, CommandScopeKind::Program);
         assert_eq!(scope_options[1].kind, CommandScopeKind::ProgramFlags);
         assert_eq!(scope_options[2].kind, CommandScopeKind::Exact);
+    }
+
+    #[test]
+    fn outside_paths_offer_folders_but_no_rule_scopes() {
+        // A saved rule can never bypass the outside check, so offering one
+        // (e.g. `cd *`) would save a rule that never applies.
+        let CommandDecision::Ask {
+            scope_options,
+            outside_folders,
+            ..
+        } = evaluate("ls -la /etc/hosts", &[])
+        else {
+            panic!("expected an ask decision");
+        };
+        assert!(scope_options.is_empty(), "{scope_options:?}");
+        assert_eq!(outside_folders, vec!["/etc".to_string()]);
+        // `/` is never offered: whitelisting it would disable the check.
+        let CommandDecision::Ask { outside_folders, .. } = evaluate("ls /no-such-dir", &[]) else {
+            panic!("expected an ask decision");
+        };
+        assert!(outside_folders.is_empty(), "{outside_folders:?}");
+    }
+
+    #[test]
+    fn null_device_redirects_keep_read_only_commands_allowed() {
+        for command in [
+            "git log --oneline -3 2>/dev/null",
+            "ls src 2> /dev/null",
+            "ls src &>/dev/null",
+            "ls src >/dev/null 2>&1",
+            "cd src 2>/dev/null",
+            "cd src 2>/dev/null && ls",
+        ] {
+            assert_eq!(evaluate(command, &[]), CommandDecision::Allow, "{command}");
+        }
+        // Real files are still writes.
+        for command in ["ls src 2>errors.log", "ls src > out.txt", "ls src 2>>/project/log"] {
+            assert!(evaluate(command, &[]).is_ask(), "{command}");
+        }
+    }
+
+    #[test]
+    fn fd_prefixed_redirect_targets_are_path_checked() {
+        let CommandDecision::Ask { reason, .. } = evaluate("ls src 2>/tmp/errors.log", &[]) else {
+            panic!("expected an ask decision");
+        };
+        assert!(reason.contains("/tmp/errors.log"), "{reason}");
+    }
+
+    #[test]
+    fn unmatched_wildcard_paths_offer_no_folder() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let pattern = format!("{}/*/missing", fixture.path().join("nothing").display());
+        let decision = evaluate_command(
+            &format!("cd {pattern}"),
+            &root,
+            &root,
+            &[],
+            &[CommandRule::Glob("cd *".into())],
+            &[],
+        );
+        let CommandDecision::Ask {
+            outside_folders,
+            scope_options,
+            ..
+        } = decision
+        else {
+            panic!("expected an ask decision");
+        };
+        assert!(outside_folders.is_empty(), "{outside_folders:?}");
+        assert!(scope_options.is_empty());
+        assert!(!outside_folders.iter().any(|folder| folder.contains('*')));
+    }
+
+    #[test]
+    fn wildcard_paths_offer_their_real_matches_and_parent() {
+        let fixture = tempfile::tempdir().unwrap();
+        let base = fixture.path().canonicalize().unwrap();
+        let root = base.join("repos/project");
+        let other = base.join("repos/other");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let command = format!("cd {}/rep*/other", base.display());
+        let CommandDecision::Ask { outside_folders, .. } =
+            evaluate_command(&command, &root, &root, &[], &[], &[])
+        else {
+            panic!("expected an ask decision");
+        };
+        assert_eq!(
+            outside_folders,
+            vec![
+                other.display().to_string(),
+                base.join("repos").display().to_string(),
+            ],
+        );
+        // Whitelisting the real folder covers the wildcard form too.
+        assert_eq!(
+            evaluate_command(&command, &root, &root, &[other.clone()], &[], &[]),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn compound_segments_carry_their_own_reason_and_folders() {
+        let CommandDecision::Ask { segments, .. } =
+            evaluate("cat /etc/hosts; pwd; mytool src", &[])
+        else {
+            panic!("expected an ask decision");
+        };
+        assert_eq!(segments.len(), 3);
+        assert!(segments[0].reason.as_deref().unwrap().contains("/etc/hosts"));
+        assert_eq!(segments[0].folders, vec!["/etc".to_string()]);
+        assert!(segments[0].scope_options.is_empty());
+        assert!(segments[1].allowed && segments[1].reason.is_none());
+        assert!(segments[2].reason.as_deref().unwrap().contains("mytool"));
+        assert!(!segments[2].scope_options.is_empty());
+    }
+
+    #[test]
+    fn probing_cd_into_the_project_itself_is_allowed() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("n4kfzscan");
+        std::fs::create_dir_all(&root).unwrap();
+        let command = "cd ../n4kfzscan 2>/dev/null; pwd; ls; git log --oneline -3 2>/dev/null";
+        assert_eq!(
+            evaluate_command(command, &root, &root, &[], &[], &[]),
+            CommandDecision::Allow,
+        );
+        // The unmatched wildcard part still asks, but offers neither a useless
+        // `cd *` rule nor a literal `…/*` folder.
+        let command = format!(
+            "cd {}/*/n4kfzscan-missing 2>/dev/null || {command}",
+            fixture.path().display()
+        );
+        let CommandDecision::Ask {
+            segments,
+            outside_folders,
+            ..
+        } = evaluate_command(&command, &root, &root, &[], &[], &[])
+        else {
+            panic!("expected an ask decision");
+        };
+        let asking: Vec<&CommandSegment> =
+            segments.iter().filter(|segment| !segment.allowed).collect();
+        assert_eq!(asking.len(), 1);
+        assert!(asking[0].scope_options.is_empty());
+        assert!(outside_folders.iter().all(|folder| !folder.contains('*')));
+    }
+
+    #[test]
+    fn home_and_its_ancestors_are_never_offered_as_parent_folders() {
+        assert!(is_too_broad_folder(Path::new("/")));
+        if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+            let home = PathBuf::from(home);
+            assert!(is_too_broad_folder(&home));
+            if let Some(parent) = home.parent() {
+                assert!(is_too_broad_folder(parent));
+            }
+            assert!(!is_too_broad_folder(&home.join("Repositories")));
+        }
     }
 
     #[test]

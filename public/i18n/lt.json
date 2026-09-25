@@ -749,8 +749,6 @@
     "testingPromptHint": "Prideda nurodymus apie kryptingų, deterministinių testų rašymą ir jų vykdymą prieš užbaigiant.",
     "architecturePrompt": "Programinės įrangos architektūra",
     "architecturePromptHint": "Prideda nurodymus apie modulių ribas, atsakomybes ir palaikomą dizainą.",
-    "budget": "Biudžetas (USD)",
-    "budgetHint": "0 išjungia biudžeto rodymą.",
     "language": "Kalba",
     "replyLanguage": "Atsakymo kalba",
     "replyLanguageDefault": "Numatytoji (modelio kalba)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Pavyzdžiui: docs.rs leidžia šią svetainę, *.github.com leidžia visus jos subdomenus.",
     "segment": {
       "allowed": "Leidžiama",
-      "needsApproval": "Reikia patvirtinimo"
+      "needsApproval": "Reikia patvirtinimo",
+      "title": "Kam reikia patvirtinimo",
+      "summary": "{{ count }} iš {{ total }} dalių reikia patvirtinimo",
+      "folderOnly": "Komandų taisyklės negali leisti kelių už projekto ribų. Vietoj to žemiau leiskite aplanką."
     },
     "risk": {
       "low": "Žema",

@@ -749,8 +749,6 @@
     "testingPromptHint": "Tilføjer vejledning om at skrive fokuserede, deterministiske tests og køre dem, før du afslutter.",
     "architecturePrompt": "Softwarearkitektur",
     "architecturePromptHint": "Tilføjer vejledning om modulgrænser, ansvar og vedligeholdeligt design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 deaktiverer visning af budget.",
     "language": "Sprog",
     "replyLanguage": "Svarssprog",
     "replyLanguageDefault": "Standard (modellens sprog)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "For eksempel: docs.rs tillader dette website, *.github.com tillader alle dets underdomæner.",
     "segment": {
       "allowed": "Tilladt",
-      "needsApproval": "Kræver godkendelse"
+      "needsApproval": "Kræver godkendelse",
+      "title": "Hvad kræver godkendelse",
+      "summary": "{{ count }} af {{ total }} dele kræver godkendelse",
+      "folderOnly": "Kommandoregler kan ikke tillade stier uden for projektet. Tillad i stedet en mappe nedenfor."
     },
     "risk": {
       "low": "Lav",

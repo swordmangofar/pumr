@@ -749,8 +749,6 @@
     "testingPromptHint": "Dodaje wskazówki dotyczące pisania skupionych, deterministycznych testów i uruchamiania ich przed zakończeniem.",
     "architecturePrompt": "Architektura oprogramowania",
     "architecturePromptHint": "Dodaje wskazówki dotyczące granic modułów, odpowiedzialności i łatwego w utrzymaniu projektu.",
-    "budget": "Budżet (USD)",
-    "budgetHint": "0 wyłącza wyświetlanie budżetu.",
     "language": "Język",
     "replyLanguage": "Język odpowiedzi",
     "replyLanguageDefault": "Domyślny (język modelu)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Na przykład: docs.rs zezwala na tę witrynę, *.github.com zezwala na wszystkie jej subdomeny.",
     "segment": {
       "allowed": "Dozwolone",
-      "needsApproval": "Wymaga zatwierdzenia"
+      "needsApproval": "Wymaga zatwierdzenia",
+      "title": "Co wymaga zatwierdzenia",
+      "summary": "{{ count }} z {{ total }} części wymaga zatwierdzenia",
+      "folderOnly": "Reguły poleceń nie mogą zezwolić na ścieżki poza projektem. Zamiast tego zezwól poniżej na folder."
     },
     "risk": {
       "low": "Niskie",

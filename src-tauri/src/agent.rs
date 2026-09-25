@@ -269,6 +269,14 @@ pub async fn run_turn(
             final_cancelled = true;
             break;
         }
+
+        // Surface edits in the changed-files panel as they happen instead of
+        // only once the whole turn has finished.
+        if tool_calls.iter().any(|call| may_mutate_workspace(&call.name)) {
+            if let Some(changes) = preview_changes(deps, &request) {
+                emit(StreamEvent::Changes { changes });
+            }
+        }
     }
 
     if final_message.is_none() {
@@ -696,6 +704,14 @@ async fn build_history(
     let messages = deps
         .db
         .list_messages_limited(&request.session_id, request.context_message_limit)?;
+    // The window above only covers the newest messages, so a long tool loop can
+    // push the user's prompt out of view. Keep the latest prompt aside and put it
+    // back if the window, trimming or compaction dropped it — otherwise the model
+    // sees no user turn at all and asks what to work on.
+    let latest_user = deps.db.latest_user_message(&request.session_id)?;
+    let latest_user_content = latest_user.as_ref().and_then(|message| {
+        user_content(&message.content, &message.attachments, &message.context)
+    });
 
     let mut history = vec![ChatMessage::text("system", request.system_prompt.clone())];
     for message in messages {
@@ -745,7 +761,25 @@ async fn build_history(
         .map(|schema| estimate_tokens(&schema.to_string()))
         .sum();
     let history = compact_history(deps, request, history, overhead, summary_cache).await;
-    Ok(sanitize(history))
+    let mut history = sanitize(history);
+    anchor_latest_user(&mut history, latest_user_content);
+    Ok(history)
+}
+
+/// Re-anchors the user's most recent prompt after trimming or compaction dropped
+/// it, so the model always has an instruction even on a resumed turn. A prompt
+/// already present (or an empty one) is left untouched; the re-anchored message
+/// goes directly after the system prompt to keep chronological order.
+fn anchor_latest_user(history: &mut Vec<ChatMessage>, latest_user: Option<Value>) {
+    let Some(content) = latest_user else {
+        return;
+    };
+    let present = history
+        .iter()
+        .any(|message| message.role == "user" && message.content == content);
+    if !present && !history.is_empty() {
+        history.insert(1, ChatMessage::parts("user", content));
+    }
 }
 
 /// Rough token estimate. ASCII text averages ~4 characters per token while
@@ -1250,6 +1284,35 @@ async fn execute_call(
     tools::execute(&mut runtime, &call.name, &arguments).await
 }
 
+/// True when a tool call may have touched the workspace, so the live change
+/// set is worth recomputing.
+fn may_mutate_workspace(name: &str) -> bool {
+    !is_read_only_tool(name) && !matches!(name, "question" | "todowrite" | "todoread")
+}
+
+/// Computes this session's change set as it stands mid-turn, without
+/// persisting it or advancing the finalize boundary. Lets the changed-files
+/// panel update while the agent is still working; `finalize_changes` still
+/// freezes the authoritative record at the end of the turn.
+fn preview_changes(deps: &TurnDeps, request: &TurnRequest) -> Option<Vec<FileChange>> {
+    let (existing, last_commit) = match deps.db.session_changes_record(&request.session_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => (Vec::new(), None),
+        Err(_) => return None,
+    };
+    let from = if request.resume {
+        last_commit.unwrap_or_else(|| request.base_commit.clone())
+    } else {
+        request.base_commit.clone()
+    };
+    let increment = deps
+        .shadow
+        .changes_since(&from)
+        .or_else(|_| deps.shadow.changes_since(&request.base_commit))
+        .ok()?;
+    Some(merge_file_changes(existing, increment))
+}
+
 fn finalize_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
     let (existing, last_commit) = match deps.db.session_changes_record(&request.session_id) {
         Ok(Some(record)) => record,
@@ -1623,5 +1686,30 @@ mod tests {
         assert_eq!(sanitized.len(), 2);
         assert!(sanitized[1].tool_calls.is_none());
         assert_eq!(content_to_text(&sanitized[1].content), "partial answer");
+    }
+
+    #[test]
+    fn anchor_latest_user_restores_a_dropped_prompt() {
+        let mut history = vec![
+            ChatMessage::text("system", "sys"),
+            ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])),
+            ChatMessage::tool_result("a", "result"),
+        ];
+        anchor_latest_user(&mut history, Some(json!("the original question")));
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[1].role, "user");
+        assert_eq!(content_to_text(&history[1].content), "the original question");
+    }
+
+    #[test]
+    fn anchor_latest_user_leaves_an_existing_prompt_untouched() {
+        let mut history = vec![
+            ChatMessage::text("system", "sys"),
+            ChatMessage::text("user", "the original question"),
+            ChatMessage::text("assistant", "answer"),
+        ];
+        anchor_latest_user(&mut history, Some(json!("the original question")));
+        assert_eq!(history.len(), 3);
+        assert_eq!(content_to_text(&history[1].content), "the original question");
     }
 }

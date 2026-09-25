@@ -26,7 +26,6 @@ export const FALLBACK_SETTINGS: Settings = {
   userSystemPrompts: [],
   modes: [],
   defaultModeId: 'coding',
-  budgetUsd: 0,
   language: 'en',
   replyLanguage: null,
   theme: DEFAULT_THEME_ID,

@@ -46,19 +46,6 @@ import { TypedInput } from '../typed-input';
 
     <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div>
-        <label class="mb-2 block text-sm text-mist/50">{{ 'settings.budget' | transloco }}</label>
-        <input
-          type="number"
-          min="0"
-          step="0.5"
-          class="field w-full rounded-xl px-4 py-2 text-sm"
-          [value]="draft.draft().budgetUsd"
-          (typedValue)="draft.patch('budgetUsd', +$event)"
-        />
-        <p class="mt-2 text-xs text-mist/30">{{ 'settings.budgetHint' | transloco }}</p>
-      </div>
-
-      <div>
         <label class="mb-2 block text-sm text-mist/50">{{
           'settings.contextLimit' | transloco
         }}</label>

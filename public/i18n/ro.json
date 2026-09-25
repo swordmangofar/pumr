@@ -749,8 +749,6 @@
     "testingPromptHint": "Adaugă îndrumări despre scrierea de teste concentrate, deterministe și rularea lor înainte de finalizare.",
     "architecturePrompt": "Arhitectură software",
     "architecturePromptHint": "Adaugă îndrumări despre limitele modulelor, responsabilități și design ușor de întreținut.",
-    "budget": "Buget (USD)",
-    "budgetHint": "0 dezactivează afișarea bugetului.",
     "language": "Limbă",
     "replyLanguage": "Limba răspunsului",
     "replyLanguageDefault": "Implicit (limba modelului)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "De exemplu: docs.rs permite acel site, *.github.com permite toate subdomeniile sale.",
     "segment": {
       "allowed": "Permis",
-      "needsApproval": "Necesită aprobare"
+      "needsApproval": "Necesită aprobare",
+      "title": "Ce necesită aprobare",
+      "summary": "{{ count }} din {{ total }} părți necesită aprobare",
+      "folderOnly": "Regulile de comenzi nu pot permite căi din afara proiectului. Permite în schimb un dosar mai jos."
     },
     "risk": {
       "low": "Scăzut",

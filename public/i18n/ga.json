@@ -749,8 +749,6 @@
     "testingPromptHint": "Cuireann sé treoir leis maidir le tástálacha dírithe, cinntitheacha a scríobh agus iad a rith sula gcríochnaítear.",
     "architecturePrompt": "Ailtireacht bogearraí",
     "architecturePromptHint": "Cuireann sé treoir leis maidir le teorainneacha modúl, freagrachtaí agus dearadh inbhuanaithe.",
-    "budget": "Buiséad (USD)",
-    "budgetHint": "Díchumasaíonn 0 an taispeáint buiséid.",
     "language": "Teanga",
     "replyLanguage": "Teanga freagartha",
     "replyLanguageDefault": "Réamhshocrú (teanga an mhúnla)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Mar shampla: ceadaíonn docs.rs an suíomh sin, ceadaíonn *.github.com a fhofhearainn uile.",
     "segment": {
       "allowed": "Ceadaithe",
-      "needsApproval": "Teastaíonn ceadú"
+      "needsApproval": "Teastaíonn ceadú",
+      "title": "Cad is gá a cheadú",
+      "summary": "Is gá {{ count }} as {{ total }} cuid a cheadú",
+      "folderOnly": "Ní féidir le rialacha ordaithe cosáin lasmuigh den tionscadal a cheadú. Ceadaigh fillteán thíos ina ionad."
     },
     "risk": {
       "low": "Íseal",

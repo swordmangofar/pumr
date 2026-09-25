@@ -336,11 +336,18 @@ pub fn list_messages(state: State<'_, AppState>, session_id: String) -> Result<V
 }
 
 #[tauri::command]
-pub fn get_spend(state: State<'_, AppState>, session_id: Option<String>) -> Result<SpendSummary> {
-    let settings = state.settings();
-    state
-        .db
-        .spend(session_id.as_deref(), settings.model.budget_usd)
+pub async fn get_spend(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+) -> Result<SpendSummary> {
+    let mut summary = state.db.spend(session_id.as_deref())?;
+    if let Some(info) = state.key_info().await {
+        if let Some(limit) = info.limit {
+            summary.budget_usd = limit;
+            summary.remaining_usd = info.limit_remaining.map(|remaining| remaining.max(0.0));
+        }
+    }
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -1969,6 +1976,7 @@ pub async fn send_message(
         &mcp_manager,
         &rules,
         &skills,
+        &setup.project_root,
     );
 
     let cached_model = state
@@ -2400,6 +2408,7 @@ fn build_system_prompt(
     mcp_manager: &McpManager,
     rules: &[ProjectRule],
     skills: &[crate::models::SkillEntry],
+    project_root: &Path,
 ) -> String {
     let mut system_prompt = session
         .system_prompt
@@ -2471,6 +2480,8 @@ fn build_system_prompt(
         system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
     }
 
+    system_prompt.push_str(&environment_section(project_root));
+
     if !rules.is_empty() {
         system_prompt.push_str("\n\n# Project rules\n");
         system_prompt.push_str(
@@ -2513,6 +2524,16 @@ fn build_system_prompt(
     }
 
     system_prompt
+}
+
+/// Tells the model where it runs, so it does not probe the filesystem with
+/// guessed paths (`cd /Users/*/project || cd ../project; pwd`) that only
+/// trigger permission prompts.
+fn environment_section(project_root: &Path) -> String {
+    format!(
+        "\n\n# Environment\n- Project root: {}\n- bash commands already run in the project root unless you pass `cwd`; do not `cd` into it or probe for it with `pwd`/`ls`.\n- Relative paths in tools resolve against the project root. Paths outside it require user approval.",
+        project_root.display()
+    )
 }
 
 const HANDOVER_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The current working session is being handed off to a fresh session. Write a self-contained handover briefing that lets the next assistant continue seamlessly. Cover, when relevant:\n- The user's overall goal and any constraints or decisions already made.\n- What has been completed so far, with concrete file paths and key changes.\n- The current state of the work: what works, what is untested, what is still in progress.\n- Important commands, findings, errors or gotchas discovered.\n- Open questions or decisions that still need the user.\n- Clear next steps.\nWrite it as a message from the user to the new assistant and begin by stating the goal. Use concise bullet points. Output only the briefing and do not call any tools.";

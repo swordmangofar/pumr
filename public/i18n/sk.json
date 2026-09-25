@@ -749,8 +749,6 @@
     "testingPromptHint": "Pridáva pokyny k písaniu zameraných, deterministických testov a ich spúšťaniu pred dokončením.",
     "architecturePrompt": "Softvérová architektúra",
     "architecturePromptHint": "Pridáva pokyny k hraniciam modulov, zodpovednostiam a udržiavateľnému návrhu.",
-    "budget": "Rozpočet (USD)",
-    "budgetHint": "0 vypne zobrazenie rozpočtu.",
     "language": "Jazyk",
     "replyLanguage": "Jazyk odpovedí",
     "replyLanguageDefault": "Predvolené (jazyk modelu)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Napríklad: docs.rs povoľuje túto lokalitu, *.github.com povoľuje všetky jej subdomény.",
     "segment": {
       "allowed": "Povolené",
-      "needsApproval": "Vyžaduje schválenie"
+      "needsApproval": "Vyžaduje schválenie",
+      "title": "Čo vyžaduje schválenie",
+      "summary": "{{ count }} z {{ total }} častí vyžaduje schválenie",
+      "folderOnly": "Pravidlá príkazov nemôžu povoliť cesty mimo projektu. Namiesto toho nižšie povoľte priečinok."
     },
     "risk": {
       "low": "Nízke",

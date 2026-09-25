@@ -749,8 +749,6 @@
     "testingPromptHint": "Ergänzt Hinweise zu fokussierten, deterministischen Tests und deren Ausführung vor Abschluss.",
     "architecturePrompt": "Softwarearchitektur",
     "architecturePromptHint": "Ergänzt Hinweise zu Modulgrenzen, Verantwortlichkeiten und wartbarem Design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 deaktiviert die Budgetanzeige.",
     "language": "Sprache",
     "replyLanguage": "Antwortsprache",
     "replyLanguageDefault": "Standard (Sprache des Modells)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Zum Beispiel: docs.rs erlaubt diese Seite, *.github.com erlaubt alle Subdomains.",
     "segment": {
       "allowed": "Erlaubt",
-      "needsApproval": "Erfordert Zustimmung"
+      "needsApproval": "Erfordert Zustimmung",
+      "title": "Was eine Freigabe braucht",
+      "summary": "{{ count }} von {{ total }} Teilen brauchen eine Freigabe",
+      "folderOnly": "Befehlsregeln können keine Pfade außerhalb des Projekts erlauben. Gib stattdessen unten einen Ordner frei."
     },
     "risk": {
       "low": "Niedrig",

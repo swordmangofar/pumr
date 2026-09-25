@@ -749,8 +749,6 @@
     "testingPromptHint": "Pievieno norādes par mērķtiecīgu, deterministisku testu rakstīšanu un to palaišanu pirms pabeigšanas.",
     "architecturePrompt": "Programmatūras arhitektūra",
     "architecturePromptHint": "Pievieno norādes par moduļu robežām, atbildībām un uzturamu dizainu.",
-    "budget": "Budžets (USD)",
-    "budgetHint": "0 atspējo budžeta attēlošanu.",
     "language": "Valoda",
     "replyLanguage": "Atbildes valoda",
     "replyLanguageDefault": "Noklusējums (modeļa valoda)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Piemēram: docs.rs atļauj šo vietni, *.github.com atļauj visus tās apakšdomēnus.",
     "segment": {
       "allowed": "Atļauts",
-      "needsApproval": "Nepieciešams apstiprinājums"
+      "needsApproval": "Nepieciešams apstiprinājums",
+      "title": "Kam nepieciešams apstiprinājums",
+      "summary": "{{ count }} no {{ total }} daļām nepieciešams apstiprinājums",
+      "folderOnly": "Komandu noteikumi nevar atļaut ceļus ārpus projekta. Tā vietā zemāk atļaujiet mapi."
     },
     "risk": {
       "low": "Zems",

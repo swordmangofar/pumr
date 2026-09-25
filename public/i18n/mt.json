@@ -749,8 +749,6 @@
     "testingPromptHint": "Iżid gwida dwar kitba ta' testijiet iffukati u deterministiċi u kif tagħmel biex taħdem qabel ma tispiċċa.",
     "architecturePrompt": "Arkitettura tas-software",
     "architecturePromptHint": "Iżid gwida dwar il-konfini tal-moduli, ir-responsabbiltajiet u disinn manutenibbli.",
-    "budget": "Baġit (USD)",
-    "budgetHint": "0 jiddiżattiva l-wiri tal-baġit.",
     "language": "Lingwa",
     "replyLanguage": "Lingwa tar-risposta",
     "replyLanguageDefault": "Default (lingwa tal-mudell)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Pereżempju: docs.rs jippermetti dak is-sit, *.github.com jippermetti s-sottdominji kollha tiegħu.",
     "segment": {
       "allowed": "Permess",
-      "needsApproval": "Jeħtieġ approvazzjoni"
+      "needsApproval": "Jeħtieġ approvazzjoni",
+      "title": "X’jeħtieġ approvazzjoni",
+      "summary": "{{ count }} minn {{ total }} partijiet jeħtieġu approvazzjoni",
+      "folderOnly": "Ir-regoli tal-kmandi ma jistgħux jippermettu mogħdijiet barra l-proġett. Minflok, ippermetti folder hawn taħt."
     },
     "risk": {
       "low": "Baxx",

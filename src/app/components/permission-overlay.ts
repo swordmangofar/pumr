@@ -11,6 +11,7 @@ import {
   viewChildren,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { homeDir } from '@tauri-apps/api/path';
 import {
   CommandRiskLevel,
   CommandRule,
@@ -42,6 +43,8 @@ interface SegmentScope {
   index: number;
   text: string;
   options: CommandScopeOption[];
+  reason: string | null;
+  folders: string[];
 }
 
 @Component({
@@ -91,7 +94,16 @@ interface SegmentScope {
         </header>
 
         <div class="space-y-3 px-5 py-3">
-          <p class="text-sm leading-relaxed text-mist/60">{{ request().detail }}</p>
+          @if (segmentScopes().length > 0) {
+            <p class="text-sm leading-relaxed text-mist/60">
+              {{
+                'permission.segment.summary'
+                  | transloco: { count: segmentScopes().length, total: request().segments.length }
+              }}
+            </p>
+          } @else {
+            <p class="text-sm leading-relaxed text-mist/60">{{ request().detail }}</p>
+          }
 
           @if (request().command; as command) {
             @if (commandParts(); as parts) {
@@ -162,45 +174,56 @@ interface SegmentScope {
           } @else if (request().promptKind === 'command' && segmentScopes().length > 0) {
             <div>
               <label class="mb-1.5 block text-sm text-mist/50">
-                {{ 'permission.scope.title' | transloco }}
+                {{ 'permission.segment.title' | transloco }}
               </label>
               <div class="space-y-3">
                 @for (group of segmentScopes(); track group.index) {
-                  <div>
-                    <code class="mb-1.5 block truncate font-mono text-xs text-mist/70">{{
+                  <div data-testid="asking-segment">
+                    <code class="block truncate font-mono text-xs text-mist/70">{{
                       group.text
                     }}</code>
-                    <div class="space-y-1.5">
-                      @for (option of group.options; track ruleKey(option.rule)) {
-                        <button
-                          type="button"
-                          class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
-                          [class]="segmentScopeClass(group.index, option.rule)"
-                          (click)="selectSegmentRule(group.index, option.rule)"
-                        >
-                          <span
-                            class="h-2.5 w-2.5 shrink-0 rounded-full"
-                            [class]="
-                              ruleKey(selectedSegmentRule(group.index)) === ruleKey(option.rule)
-                                ? 'bg-accent'
-                                : 'bg-white/20'
-                            "
-                          ></span>
-                          <span class="shrink-0 text-xs text-mist/50">
-                            {{ ('settings.scope.' + option.kind) | transloco }}
-                          </span>
-                          <code class="ml-auto truncate font-mono text-xs text-mist">{{
-                            option.rule.value
-                          }}</code>
-                        </button>
-                      }
-                    </div>
+                    @if (group.reason) {
+                      <p class="mt-0.5 text-xs text-mist/40">{{ group.reason }}</p>
+                    }
+                    @if (group.options.length > 0) {
+                      <div class="mt-1.5 space-y-1.5">
+                        @for (option of group.options; track ruleKey(option.rule)) {
+                          <button
+                            type="button"
+                            class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
+                            [class]="segmentScopeClass(group.index, option.rule)"
+                            (click)="selectSegmentRule(group.index, option.rule)"
+                          >
+                            <span
+                              class="h-2.5 w-2.5 shrink-0 rounded-full"
+                              [class]="
+                                ruleKey(selectedSegmentRule(group.index)) === ruleKey(option.rule)
+                                  ? 'bg-accent'
+                                  : 'bg-white/20'
+                              "
+                            ></span>
+                            <span class="shrink-0 text-xs text-mist/50">
+                              {{ ('settings.scope.' + option.kind) | transloco }}
+                            </span>
+                            <code class="ml-auto truncate font-mono text-xs text-mist">{{
+                              option.rule.value
+                            }}</code>
+                          </button>
+                        }
+                      </div>
+                    } @else if (group.folders.length > 0) {
+                      <p class="mt-0.5 text-xs text-accent/70">
+                        {{ 'permission.segment.folderOnly' | transloco }}
+                      </p>
+                    }
                   </div>
                 }
               </div>
-              <p class="mt-1.5 text-xs text-mist/30">
-                {{ 'permission.scope.hint' | transloco }}
-              </p>
+              @if (hasSegmentRuleOptions()) {
+                <p class="mt-1.5 text-xs text-mist/30">
+                  {{ 'permission.scope.hint' | transloco }}
+                </p>
+              }
             </div>
           } @else if (request().promptKind === 'command' && scopeOptions().length > 0) {
             <div>
@@ -243,12 +266,22 @@ interface SegmentScope {
               <label class="mb-1.5 block text-sm text-mist/50">
                 {{ 'permission.folderScope.title' | transloco }}
               </label>
+              @if (
+                request().promptKind === 'command' &&
+                segmentScopes().length === 0 &&
+                scopeOptions().length === 0
+              ) {
+                <p class="mb-1.5 text-xs text-accent/70">
+                  {{ 'permission.segment.folderOnly' | transloco }}
+                </p>
+              }
               <div class="space-y-1.5">
                 @for (folder of folderOptions(); track folder) {
                   <button
                     type="button"
                     class="flex w-full items-center gap-3 rounded-xl border px-4 py-2 text-left transition-colors"
                     [class]="folderOptionClass(folder)"
+                    [attr.title]="folder"
                     (click)="toggleFolder(folder)"
                   >
                     <span
@@ -258,7 +291,9 @@ interface SegmentScope {
                     <span class="shrink-0 text-xs text-mist/50">
                       {{ 'permission.folderScope.option' | transloco }}
                     </span>
-                    <code class="ml-auto truncate font-mono text-xs text-mist">{{ folder }}</code>
+                    <code class="ml-auto truncate font-mono text-xs text-mist">{{
+                      displayFolder(folder)
+                    }}</code>
                   </button>
                 }
               </div>
@@ -313,7 +348,9 @@ export class PermissionOverlay {
   protected readonly selectedSegmentRules = signal<Record<number, CommandRule>>({});
 
   /// One entry per part of a compound command that still needs approval, each
-  /// carrying its own allow/deny scopes so the user can grant a rule per part.
+  /// with its own reason and allow/deny scopes so the user can grant a rule per
+  /// part. A part blocked only by an outside path carries no scopes (a command
+  /// rule can never allow it) and points at the folder options instead.
   protected readonly segmentScopes = computed<SegmentScope[]>(() => {
     const segments = this.request().segments ?? [];
     if (segments.length < 2) {
@@ -321,16 +358,26 @@ export class PermissionOverlay {
     }
     const groups: SegmentScope[] = [];
     segments.forEach((segment, index) => {
-      if (!segment.allowed && (segment.scopeOptions?.length ?? 0) > 0) {
+      if (!segment.allowed) {
         groups.push({
           index,
           text: segment.text.trim(),
           options: segment.scopeOptions ?? [],
+          reason: segment.reason ?? null,
+          folders: segment.folders ?? [],
         });
       }
     });
     return groups;
   });
+
+  protected readonly hasSegmentRuleOptions = computed(() =>
+    this.segmentScopes().some((group) => group.options.length > 0),
+  );
+
+  /// The user's home directory, used only to shorten displayed folders to
+  /// `~/…`. Resolved lazily; outside Tauri it stays empty and paths show in full.
+  private readonly home = signal('');
 
   protected readonly commandParts = computed<CommandPart[] | null>(() => {
     const command = this.request().command;
@@ -458,9 +505,13 @@ export class PermissionOverlay {
   });
 
   constructor() {
+    homeDir()
+      .then((home) => this.home.set(home))
+      .catch(() => undefined);
+
     effect(() => {
       this.rule.set(this.request().suggestedRule ?? '');
-      this.selectedFolders.set([]);
+      this.selectedFolders.set(this.defaultFolders());
       const selection: Record<number, CommandRule> = {};
       for (const group of this.segmentScopes()) {
         const preferred =
@@ -537,6 +588,45 @@ export class PermissionOverlay {
     this.selectedFolders.update((folders) =>
       folders.includes(folder) ? folders.filter((entry) => entry !== folder) : [...folders, folder],
     );
+  }
+
+  /// Folders preselected for a new prompt: when a part can only be allowed by
+  /// a folder grant (it has no rule scopes), its most specific folder is picked
+  /// so "Allow always" / "Allow in this chat" actually stop the repeat prompt.
+  /// Broader parent folders are never preselected.
+  private defaultFolders(): string[] {
+    const offered = this.folderOptions();
+    if (offered.length === 0 || this.request().promptKind !== 'command') {
+      return [];
+    }
+    const groups = this.segmentScopes();
+    const picks =
+      groups.length > 0
+        ? groups
+            .filter((group) => group.options.length === 0 && group.folders.length > 0)
+            .map((group) => group.folders[0])
+        : this.scopeOptions().length === 0
+          ? [offered[0]]
+          : [];
+    return picks.filter((folder, index) => offered.includes(folder) && picks.indexOf(folder) === index);
+  }
+
+  /// Shortens a folder below the home directory to `~/…` for display. The full
+  /// path is still what gets granted and is shown as the tooltip.
+  protected displayFolder(folder: string): string {
+    const home = this.home().replace(/[\\/]+$/, '');
+    if (!home) {
+      return folder;
+    }
+    if (folder === home) {
+      return '~';
+    }
+    for (const separator of ['/', '\\']) {
+      if (folder.startsWith(home + separator)) {
+        return '~' + separator + folder.slice(home.length + 1);
+      }
+    }
+    return folder;
   }
 
   protected selectedSegmentRule(index: number): CommandRule | null {

@@ -252,7 +252,6 @@ export interface Settings {
   userSystemPrompts: UserSystemPrompt[];
   modes: Mode[];
   defaultModeId: string;
-  budgetUsd: number;
   language: string;
   replyLanguage: string | null;
   theme: string;
@@ -621,6 +620,13 @@ export interface CommandSegment {
   allowed: boolean;
   suggestedRule?: string | null;
   scopeOptions?: CommandScopeOption[];
+  /** Why this segment needs approval; absent for auto-allowed segments. */
+  reason?: string | null;
+  /**
+   * Outside-project folders this segment touches. With no `scopeOptions`, a
+   * folder grant is the only way to stop the segment from asking.
+   */
+  folders?: string[];
 }
 
 export type CommandRiskLevel = 'low' | 'medium' | 'high' | 'danger';

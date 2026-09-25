@@ -749,8 +749,6 @@
     "testingPromptHint": "Añade orientación sobre cómo escribir pruebas enfocadas y deterministas y ejecutarlas antes de terminar.",
     "architecturePrompt": "Arquitectura de software",
     "architecturePromptHint": "Añade orientación sobre límites de módulos, responsabilidades y diseño mantenible.",
-    "budget": "Presupuesto (USD)",
-    "budgetHint": "0 desactiva la visualización del presupuesto.",
     "language": "Idioma",
     "replyLanguage": "Idioma de respuesta",
     "replyLanguageDefault": "Predeterminado (idioma del modelo)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Por ejemplo: docs.rs permite ese sitio, *.github.com permite todos sus subdominios.",
     "segment": {
       "allowed": "Permitido",
-      "needsApproval": "Requiere aprobación"
+      "needsApproval": "Requiere aprobación",
+      "title": "Qué necesita aprobación",
+      "summary": "{{ count }} de {{ total }} partes necesitan aprobación",
+      "folderOnly": "Las reglas de comandos no pueden permitir rutas fuera del proyecto. Autoriza una carpeta abajo en su lugar."
     },
     "risk": {
       "low": "Bajo",

@@ -749,8 +749,6 @@
     "testingPromptHint": "Útmutatást ad célzott, determinisztikus tesztek írásához és azok befejezés előtti futtatásához.",
     "architecturePrompt": "Szoftverarchitektúra",
     "architecturePromptHint": "Útmutatást ad a modulhatárokról, a felelősségekről és a karbantartható tervezésről.",
-    "budget": "Költségvetés (USD)",
-    "budgetHint": "A 0 letiltja a költségvetés megjelenítését.",
     "language": "Nyelv",
     "replyLanguage": "Válasz nyelve",
     "replyLanguageDefault": "Alapértelmezett (a modell nyelve)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Például: a docs.rs engedélyezi azt az oldalt, a *.github.com engedélyezi annak összes aldomainjét.",
     "segment": {
       "allowed": "Engedélyezett",
-      "needsApproval": "Jóváhagyást igényel"
+      "needsApproval": "Jóváhagyást igényel",
+      "title": "Mi igényel jóváhagyást",
+      "summary": "{{ total }} részből {{ count }} jóváhagyást igényel",
+      "folderOnly": "A parancsszabályok nem engedélyezhetnek a projekten kívüli útvonalakat. Engedélyezz helyette lent egy mappát."
     },
     "risk": {
       "low": "Alacsony",

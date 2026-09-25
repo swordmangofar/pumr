@@ -420,7 +420,6 @@ impl Default for ModeSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelSettings {
-    pub budget_usd: f64,
     pub openrouter_base_url: String,
     pub default_model: Option<String>,
     pub handover_model: Option<String>,
@@ -453,7 +452,6 @@ pub struct ModelSettings {
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
-            budget_usd: 0.0,
             openrouter_base_url: crate::providers::openrouter::DEFAULT_BASE_URL.to_string(),
             default_model: None,
             handover_model: None,
@@ -1046,7 +1044,6 @@ mod tests {
             ),
         ] {
             let mut original = serde_json::to_value(Settings::default()).unwrap();
-            original["budgetUsd"] = json!(42.5);
             original["defaultSystemPrompt"] = json!("Custom prompt");
             original["language"] = json!("de");
             original["theme"] = json!("custom");

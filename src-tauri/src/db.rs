@@ -667,6 +667,28 @@ impl Db {
         })
     }
 
+    /// Returns the newest user message for a session, even when many assistant
+    /// and tool messages have been recorded since. The model history is capped
+    /// to the newest `limit` messages, so without this a long tool loop can drop
+    /// the user's instruction entirely and leave the model without a user turn.
+    pub fn latest_user_message(&self, session_id: &str) -> Result<Option<Message>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
+                          cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
+                          tool_calls, tool_call_id, tool_name, status, changes, base_commit,
+                          attachments, mentions, context, duration_ms
+                   FROM messages WHERE session_id = ?1 AND role = 'user'
+                   ORDER BY seq DESC LIMIT 1"#,
+            )?;
+            let mut rows = stmt.query_map(params![session_id], map_message)?;
+            match rows.next() {
+                Some(row) => Ok(Some(row?)),
+                None => Ok(None),
+            }
+        })
+    }
+
     pub fn get_message(&self, id: &str) -> Result<Message> {
         self.with_conn(|conn| self.message_by_id(conn, id))
     }
@@ -830,7 +852,7 @@ impl Db {
         })
     }
 
-    pub fn spend(&self, session_id: Option<&str>, budget_usd: f64) -> Result<SpendSummary> {
+    pub fn spend(&self, session_id: Option<&str>) -> Result<SpendSummary> {
         self.with_conn(|conn| {
             let (total_cost, prompt_tokens, completion_tokens, cached_tokens): (
                 f64,
@@ -865,17 +887,12 @@ impl Db {
                 params![today_start],
                 |row| row.get(0),
             )?;
-            let remaining = if budget_usd > 0.0 {
-                Some((budget_usd - total_cost).max(0.0))
-            } else {
-                None
-            };
             Ok(SpendSummary {
                 total_cost,
                 today_cost,
                 session_cost,
-                budget_usd,
-                remaining_usd: remaining,
+                budget_usd: 0.0,
+                remaining_usd: None,
                 prompt_tokens,
                 completion_tokens,
                 cached_tokens,

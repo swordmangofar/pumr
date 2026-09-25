@@ -6,11 +6,17 @@ use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
 use crate::permissions::{AutoApproveConfig, LivePermissions};
 use crate::power::PowerManager;
 use crate::processes::ProcessRegistry;
-use crate::providers::openrouter::OpenRouterClient;
+use crate::providers::openrouter::{KeyInfo, OpenRouterClient};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
+
+/// How long a fetched API-key credit limit is reused before refreshing from
+/// OpenRouter. The spend view refreshes on every turn, so this avoids a network
+/// round-trip each time while staying reasonably current.
+const KEY_INFO_TTL: Duration = Duration::from_secs(60);
 
 pub struct AppState {
     pub db: Arc<Db>,
@@ -28,6 +34,7 @@ pub struct AppState {
     models_cache: Mutex<Option<Vec<ModelInfo>>>,
     endpoints_cache: Mutex<HashMap<String, Vec<EndpointInfo>>>,
     providers_cache: Mutex<Option<Vec<ProviderInfo>>>,
+    key_info_cache: Mutex<Option<(Instant, KeyInfo)>>,
 }
 
 impl AppState {
@@ -62,6 +69,7 @@ impl AppState {
             models_cache: Mutex::new(None),
             endpoints_cache: Mutex::new(HashMap::new()),
             providers_cache: Mutex::new(None),
+            key_info_cache: Mutex::new(None),
         }
     }
 
@@ -111,6 +119,26 @@ impl AppState {
 
     pub fn cache_providers(&self, providers: Vec<ProviderInfo>) {
         *self.providers_cache.lock().unwrap() = Some(providers);
+    }
+
+    /// Credit limits for the configured OpenRouter key, cached briefly. Returns
+    /// `None` when no key is configured or the lookup fails, in which case the
+    /// spend view simply shows no budget.
+    pub async fn key_info(&self) -> Option<KeyInfo> {
+        if let Some((fetched_at, info)) = self.key_info_cache.lock().unwrap().clone() {
+            if fetched_at.elapsed() < KEY_INFO_TTL {
+                return Some(info);
+            }
+        }
+        let api_key = crate::config::get_api_key(crate::config::OPENROUTER_PROVIDER)
+            .ok()
+            .flatten()?;
+        if api_key.trim().is_empty() {
+            return None;
+        }
+        let info = self.provider().get_key_info(&api_key).await.ok()?;
+        *self.key_info_cache.lock().unwrap() = Some((Instant::now(), info.clone()));
+        Some(info)
     }
 
     pub fn register_cancel(&self, key: &str) -> CancellationToken {

@@ -749,8 +749,6 @@
     "testingPromptHint": "Doda smernice o pisanju osredotočenih, determinističnih testov in njihovem izvajanju pred zaključkom.",
     "architecturePrompt": "Programska arhitektura",
     "architecturePromptHint": "Doda smernice o mejah modulov, odgovornostih in vzdržljivem oblikovanju.",
-    "budget": "Proračun (USD)",
-    "budgetHint": "0 onemogoči prikaz proračuna.",
     "language": "Jezik",
     "replyLanguage": "Jezik odgovorov",
     "replyLanguageDefault": "Privzeto (jezik modela)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Na primer: docs.rs dovoli to stran, *.github.com dovoli vse njene poddomene.",
     "segment": {
       "allowed": "Dovoljeno",
-      "needsApproval": "Zahteva odobritev"
+      "needsApproval": "Zahteva odobritev",
+      "title": "Kaj potrebuje odobritev",
+      "summary": "{{ count }} od {{ total }} delov potrebuje odobritev",
+      "folderOnly": "Pravila ukazov ne morejo dovoliti poti zunaj projekta. Namesto tega spodaj dovolite mapo."
     },
     "risk": {
       "low": "Nizko",

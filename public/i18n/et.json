@@ -749,8 +749,6 @@
     "testingPromptHint": "Lisab juhiseid keskendunud ja deterministlike testide kirjutamiseks ning nende käivitamiseks enne lõpetamist.",
     "architecturePrompt": "Tarkvaraarhitektuur",
     "architecturePromptHint": "Lisab juhiseid moodulite piiride, vastutuste ja hooldatava disaini kohta.",
-    "budget": "Eelarve (USD)",
-    "budgetHint": "0 lülitab eelarve kuvamise välja.",
     "language": "Keel",
     "replyLanguage": "Vastuse keel",
     "replyLanguageDefault": "Vaikimisi (mudeli keel)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Näiteks: docs.rs lubab seda saiti, *.github.com lubab kõiki selle alamdomeene.",
     "segment": {
       "allowed": "Lubatud",
-      "needsApproval": "Vajab kinnitust"
+      "needsApproval": "Vajab kinnitust",
+      "title": "Mis vajab kinnitamist",
+      "summary": "{{ count }} osa {{ total }}-st vajavad kinnitamist",
+      "folderOnly": "Käsureeglid ei saa lubada teid väljaspool projekti. Luba selle asemel allpool kaust."
     },
     "risk": {
       "low": "Madal",

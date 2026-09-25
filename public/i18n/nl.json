@@ -749,8 +749,6 @@
     "testingPromptHint": "Voegt richtlijnen toe over het schrijven van gerichte, deterministische tests en het uitvoeren ervan voordat je afrondt.",
     "architecturePrompt": "Software-architectuur",
     "architecturePromptHint": "Voegt richtlijnen toe over modulegrenzen, verantwoordelijkheden en onderhoudbaar ontwerp.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 schakelt de budgetweergave uit.",
     "language": "Taal",
     "replyLanguage": "Antwoordtaal",
     "replyLanguageDefault": "Standaard (taal van het model)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Bijvoorbeeld: docs.rs staat die site toe, *.github.com staat alle subdomeinen toe.",
     "segment": {
       "allowed": "Toegestaan",
-      "needsApproval": "Vereist goedkeuring"
+      "needsApproval": "Vereist goedkeuring",
+      "title": "Wat goedkeuring nodig heeft",
+      "summary": "{{ count }} van {{ total }} delen hebben goedkeuring nodig",
+      "folderOnly": "Opdrachtregels kunnen geen paden buiten het project toestaan. Sta in plaats daarvan hieronder een map toe."
     },
     "risk": {
       "low": "Laag",

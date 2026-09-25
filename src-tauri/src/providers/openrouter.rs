@@ -114,6 +114,14 @@ pub struct ChatOutcome {
     pub tool_calls: Vec<crate::models::ToolCallRecord>,
 }
 
+/// Credit limits reported by `GET /key` for the API key in use. Both fields are
+/// `None` when the key is unlimited and therefore has no budget to display.
+#[derive(Debug, Clone, Default)]
+pub struct KeyInfo {
+    pub limit: Option<f64>,
+    pub limit_remaining: Option<f64>,
+}
+
 #[derive(Clone)]
 pub struct OpenRouterClient {
     http: reqwest::Client,
@@ -286,6 +294,24 @@ impl OpenRouterClient {
             })
             .collect();
         Ok(providers)
+    }
+
+    pub async fn get_key_info(&self, api_key: &str) -> Result<KeyInfo> {
+        let response = self
+            .request(reqwest::Method::GET, "/key", api_key)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(openrouter_error(status.as_u16(), &body));
+        }
+        let parsed: KeyResponse = serde_json::from_str(&body)
+            .map_err(|err| AppError::msg(format!("invalid key info: {err}")))?;
+        Ok(KeyInfo {
+            limit: parsed.data.limit,
+            limit_remaining: parsed.data.limit_remaining,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -835,6 +861,17 @@ struct RawProvider {
     terms_of_service_url: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct KeyResponse {
+    data: RawKey,
+}
+
+#[derive(Deserialize)]
+struct RawKey {
+    limit: Option<f64>,
+    limit_remaining: Option<f64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,6 +910,22 @@ mod tests {
         assert_eq!(workload_metric(Some(&workloads), "throughput"), Some(42.0));
         assert_eq!(workload_metric(Some(&workloads), "latency"), Some(120.0));
         assert_eq!(workload_metric(None, "throughput"), None);
+    }
+
+    #[test]
+    fn key_info_parses_limits() {
+        let body = r#"{"data":{"label":"k","limit":100.0,"limit_remaining":75.5,"usage":24.5}}"#;
+        let parsed: KeyResponse = serde_json::from_str(body).expect("parse");
+        assert_eq!(parsed.data.limit, Some(100.0));
+        assert_eq!(parsed.data.limit_remaining, Some(75.5));
+    }
+
+    #[test]
+    fn key_info_allows_unlimited() {
+        let body = r#"{"data":{"limit":null,"limit_remaining":null}}"#;
+        let parsed: KeyResponse = serde_json::from_str(body).expect("parse");
+        assert_eq!(parsed.data.limit, None);
+        assert_eq!(parsed.data.limit_remaining, None);
     }
 
     #[test]

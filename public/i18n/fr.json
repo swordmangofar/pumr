@@ -749,8 +749,6 @@
     "testingPromptHint": "Ajoute des conseils sur l'écriture de tests ciblés et déterministes et leur exécution avant de terminer.",
     "architecturePrompt": "Architecture logicielle",
     "architecturePromptHint": "Ajoute des conseils sur les frontières des modules, les responsabilités et une conception maintenable.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 désactive l'affichage du budget.",
     "language": "Langue",
     "replyLanguage": "Langue de réponse",
     "replyLanguageDefault": "Par défaut (langue du modèle)",
@@ -1004,7 +1002,10 @@
     "siteRuleHint": "Par exemple : docs.rs autorise ce site, *.github.com autorise tous ses sous-domaines.",
     "segment": {
       "allowed": "Autorisé",
-      "needsApproval": "Nécessite une approbation"
+      "needsApproval": "Nécessite une approbation",
+      "title": "Ce qui nécessite une approbation",
+      "summary": "{{ count }} parties sur {{ total }} nécessitent une approbation",
+      "folderOnly": "Les règles de commande ne peuvent pas autoriser des chemins hors du projet. Autorisez plutôt un dossier ci-dessous."
     },
     "risk": {
       "low": "Faible",
