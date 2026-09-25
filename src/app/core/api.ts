@@ -33,6 +33,7 @@ import {
   QuestionAnswer,
   RevertResult,
   RoutedEvent,
+  RunningTurns,
   SendMessageArgs,
   Session,
   Settings,
@@ -53,10 +54,11 @@ export function isTauri(): boolean {
 }
 
 /**
- * Identifies one `send_message` call. Tauri re-delivers an invoke whose IPC
- * request failed (a webview reload mid-turn does that) with the same payload,
- * and the backend uses this id to ignore the repeat instead of starting a
- * second turn that would cancel the running one.
+ * Identifies one `send_message` or `attach_session` call. Tauri re-delivers an
+ * invoke whose IPC request failed (a webview reload mid-turn does that) with
+ * the same payload, and the backend uses this id to ignore the repeat instead
+ * of starting a second turn that would cancel the running one, or of routing a
+ * turn back to the reloaded page.
  */
 function newRequestId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -104,6 +106,10 @@ export const api = {
   getSpendStats: (fromMs: number, toMs: number, bucket: 'day' | 'hour' = 'day') =>
     invoke<SpendStats>('get_spend_stats', { fromMs, toMs, bucket }),
   stopGeneration: (sessionId: string) => invoke<void>('stop_generation', { sessionId }),
+  listRunningTurns: () => invoke<RunningTurns>('list_running_turns'),
+  /** Resolves once the turn has finished; `false` when none was running. */
+  attachSession: (sessionId: string, channel: Channel<RoutedEvent>) =>
+    invoke<boolean>('attach_session', { sessionId, requestId: newRequestId(), channel }),
   resolvePermission: (
     requestId: string,
     decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',

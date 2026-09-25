@@ -737,3 +737,15 @@ pub struct RoutedEvent {
 /// Cloneable sink used by the agent loop. The routed session id is supplied by
 /// the emitter, which allows parallel subagents to share one sink.
 pub type EventSink = Arc<dyn Fn(RoutedEvent) + Send + Sync>;
+
+/// Chat turns still running in the backend and the prompts they wait on, so a
+/// webview that reloaded mid-turn can pick them up again.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningTurns {
+    pub session_ids: Vec<String>,
+    /// Pending `PermissionRequest` events, oldest first.
+    pub permissions: Vec<RoutedEvent>,
+    /// Pending `QuestionRequest` events, oldest first.
+    pub questions: Vec<RoutedEvent>,
+}

@@ -94,6 +94,8 @@ pub fn run() {
             commands::get_spend,
             commands::get_spend_stats,
             commands::stop_generation,
+            commands::list_running_turns,
+            commands::attach_session,
             commands::resolve_permission,
             commands::list_permission_audit,
             commands::clear_permission_audit,

@@ -9,11 +9,12 @@ use crate::models::{
     Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine,
     GitCommit, GitCommitDetail, GitInfo, GitRefs, GitStatus, Mention, Message, ModelInfo,
     PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
-    RoutedEvent, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
+    RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry,
+    WorkspaceFile,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::openrouter::{ChatChunk, ChatMessage};
-use crate::state::{AppState, SendClaim};
+use crate::state::{AppState, SendClaim, SwappableSink};
 use crate::tools::ToolRuntime;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
@@ -347,6 +348,48 @@ pub fn get_spend_stats(
 #[tauri::command]
 pub fn stop_generation(state: State<'_, AppState>, session_id: String) {
     state.cancel(&session_id);
+}
+
+/// Chat turns that are still running and the prompts they wait on, for a
+/// webview that reloaded mid-turn and lost the channels streaming them.
+#[tauri::command]
+pub fn list_running_turns(state: State<'_, AppState>) -> RunningTurns {
+    RunningTurns {
+        session_ids: state.running_turns(),
+        permissions: state.broker.pending_requests(),
+        questions: state.questions.pending_requests(),
+    }
+}
+
+/// Streams a running turn's events, and the prompts it still waits on, to
+/// `channel` instead of the channel `send_message` was given. Like
+/// `send_message`, it resolves once the turn has finished: `true` then, or
+/// `false` right away when the session has no running turn. A repeated
+/// delivery of `request_id` (see `send_message`) leaves the turn's route alone.
+#[tauri::command]
+pub async fn attach_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    request_id: Option<String>,
+    channel: Channel<RoutedEvent>,
+) -> Result<bool> {
+    let Some(turn) = state.attach_turn(
+        &session_id,
+        request_id.as_deref(),
+        channel_sink(channel),
+    ) else {
+        return Ok(false);
+    };
+    turn.finished().await;
+    Ok(true)
+}
+
+/// Adapts a webview channel to an [`EventSink`]. Send errors are ignored: a
+/// channel whose page reloaded just drops the event.
+fn channel_sink(channel: Channel<RoutedEvent>) -> EventSink {
+    Arc::new(move |event: RoutedEvent| {
+        let _ = channel.send(event);
+    })
 }
 
 #[tauri::command]
@@ -2104,15 +2147,16 @@ async fn run_send_message(
         resume,
     )?;
 
-    let sink: EventSink = {
-        let channel = channel.clone();
-        Arc::new(move |event: RoutedEvent| {
-            let _ = channel.send(event);
-        })
-    };
+    // Everything the turn emits goes through `events`, so `attach_session` can
+    // move the stream to a new channel if the webview reloads mid-turn.
+    let events = SwappableSink::new(channel_sink(channel));
+    let sink = events.sink();
 
     let mode = config::resolve_mode(&setup.settings, setup.session.mode_id.as_deref());
-    let cancel = state.register_cancel(&session_id);
+    // Dropped on every exit path below, unregistering this turn but never a
+    // newer one that replaced it.
+    let registration = state.register_turn(&session_id, events);
+    let cancel = registration.token();
     let file_ignore = Arc::new(FileIgnoreConfig::from_settings(&setup.settings));
 
     let (context, mcp_manager) = assemble_turn_context(
@@ -2245,13 +2289,11 @@ async fn run_send_message(
 
     let result = {
         let _keep_awake = state.power.acquire();
-        agent::run_turn(&deps, request, sink).await
+        agent::run_turn(&deps, request, sink.clone()).await
     };
 
-    state.clear_cancel(&session_id);
-
     let send = |event: StreamEvent| {
-        let _ = channel.send(RoutedEvent {
+        (sink)(RoutedEvent {
             session_id: session_id.clone(),
             event,
         });
@@ -2764,7 +2806,7 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
         });
 
     let client = state.provider();
-    let cancel = state.register_cancel(&format!("handover:{session_id}"));
+    let registration = state.register_cancel(&format!("handover:{session_id}"));
     let mut summary = String::new();
     let result = client
         .stream_chat(
@@ -2779,7 +2821,7 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
             fallback_pricing,
             &[],
             false,
-            cancel,
+            registration.token(),
             &mut |chunk| {
                 if let ChatChunk::Delta(text) = chunk {
                     summary.push_str(&text);
@@ -2787,7 +2829,7 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
             },
         )
         .await;
-    state.clear_cancel(&format!("handover:{session_id}"));
+    drop(registration);
     result?;
 
     let summary = summary.trim().to_string();
