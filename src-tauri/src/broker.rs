@@ -156,6 +156,20 @@ fn allow_by(by: &str) -> PermissionDecision {
     }
 }
 
+/// Records `decision` unless the prompt already has one.
+fn decide_once(
+    sender: &watch::Sender<Option<PermissionDecision>>,
+    decision: PermissionDecision,
+) -> bool {
+    sender.send_if_modified(|current| {
+        if current.is_some() {
+            return false;
+        }
+        *current = Some(decision);
+        true
+    })
+}
+
 /// Receives every permission decision for the audit log.
 pub type AuditSink = Arc<dyn Fn(PermissionAuditEntry) + Send + Sync>;
 
@@ -274,12 +288,18 @@ impl PermissionBroker {
         }
     }
 
-    pub fn resolve(&self, request_id: &str, decision: PermissionDecision) {
+    /// Answers a queued prompt. The first decision wins: a prompt stays listed
+    /// until its waiter wakes up, and in that window an automatic re-check or a
+    /// deny cascade must not overwrite what the user (or an earlier grant)
+    /// already decided. Returns whether this decision was the one applied.
+    pub fn resolve(&self, request_id: &str, decision: PermissionDecision) -> bool {
         // The waiter that created the prompt removes the entry after waking up.
         // Sending without removing lets late duplicates reuse the same answer.
-        if let Some(entry) = self.inner.lock().unwrap().pending.get(request_id) {
-            entry.sender.send_replace(Some(decision));
-        }
+        let inner = self.inner.lock().unwrap();
+        let Some(entry) = inner.pending.get(request_id) else {
+            return false;
+        };
+        decide_once(&entry.sender, decision)
     }
 
     /// Returns the backend-owned details of a still-pending prompt. `None` when
@@ -291,6 +311,7 @@ impl PermissionBroker {
             .unwrap()
             .pending
             .get(request_id)
+            .filter(|entry| entry.sender.borrow().is_none())
             .map(|entry| PendingPrompt {
                 kind: entry.kind.clone(),
                 command: entry.signature.command.clone(),
@@ -331,7 +352,7 @@ impl PermissionBroker {
         let inner = self.inner.lock().unwrap();
         for entry in inner.pending.values() {
             if entry.grant_session_id == session_id || entry.session_id == session_id {
-                entry.sender.send_replace(Some(deny_by("stopped")));
+                decide_once(&entry.sender, deny_by("stopped"));
             }
         }
     }
@@ -349,7 +370,9 @@ impl PermissionBroker {
             inner
                 .pending
                 .iter()
-                .filter(|(_, entry)| entry.grant_session_id == grant_session_id)
+                .filter(|(_, entry)| {
+                    entry.grant_session_id == grant_session_id && entry.sender.borrow().is_none()
+                })
                 .map(|(request_id, entry)| PendingSnapshot {
                     request_id: request_id.clone(),
                     kind: entry.kind.clone(),
@@ -365,16 +388,13 @@ impl PermissionBroker {
         };
         let mut resolved = Vec::new();
         for snapshot in snapshots {
-            match snapshot.evaluate(permissions) {
-                Some(true) => {
-                    self.resolve(&snapshot.request_id, allow_by("grant"));
-                    resolved.push(snapshot.request_id);
-                }
-                Some(false) => {
-                    self.resolve(&snapshot.request_id, deny_by("grant"));
-                    resolved.push(snapshot.request_id);
-                }
-                None => {}
+            let decision = match snapshot.evaluate(permissions) {
+                Some(true) => allow_by("grant"),
+                Some(false) => deny_by("grant"),
+                None => continue,
+            };
+            if self.resolve(&snapshot.request_id, decision) {
+                resolved.push(snapshot.request_id);
             }
         }
         resolved
@@ -1098,6 +1118,68 @@ mod tests {
 
         broker.resolve(&first_id, deny_by("user"));
         assert!(!first.await.allowed);
+    }
+
+    #[tokio::test]
+    async fn a_decision_is_not_overwritten_before_its_waiter_wakes_up() {
+        let root = std::env::current_dir().unwrap();
+        let outside = outside_test_dir("first-wins");
+        let broker = PermissionBroker::new();
+        let recorded: Arc<Mutex<Vec<PermissionAuditEntry>>> = Arc::default();
+        let sink = recorded.clone();
+        broker.set_audit_sink(Arc::new(move |entry| sink.lock().unwrap().push(entry)));
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let first = broker.ask(
+            folder_prompt(&root, &outside.join("a.txt"), "chat"),
+            &cancel,
+            "chat",
+            &emit,
+        );
+        let second = broker.ask(
+            folder_prompt(&root, &outside.join("b.txt"), "chat"),
+            &cancel,
+            "chat",
+            &emit,
+        );
+        tokio::pin!(first, second);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+        let mut ids: Vec<(u64, String)> = broker
+            .inner
+            .lock()
+            .unwrap()
+            .pending
+            .iter()
+            .map(|(id, entry)| (entry.seq, id.clone()))
+            .collect();
+        ids.sort();
+        let (first_id, second_id) = (ids[0].1.clone(), ids[1].1.clone());
+
+        // The user allows the first prompt and grants its folder; before its
+        // waiter runs, the grant's re-check sees it still queued.
+        let user = PermissionDecision {
+            allowed: true,
+            rule: None,
+            folder: Some(outside.display().to_string()),
+            decided_by: "user".into(),
+            decision: Some("allow_session".into()),
+        };
+        assert!(broker.resolve(&first_id, user));
+        assert!(broker.pending_prompt(&first_id).is_none());
+        let permissions = live_permissions(vec![outside.display().to_string()]);
+        assert_eq!(broker.auto_resolve("chat", &permissions), vec![second_id.clone()]);
+        // A later cascade cannot turn either answer into a denial.
+        broker.deny_chat("chat", "another");
+        assert!(!broker.resolve(&second_id, deny_by("user")));
+
+        assert!(first.await.allowed);
+        assert!(second.await.allowed);
+        let entries = recorded.lock().unwrap().clone();
+        let by: Vec<&str> = entries.iter().map(|entry| entry.decided_by.as_str()).collect();
+        assert_eq!(by, ["user", "grant"]);
+        assert_eq!(entries[0].decision.as_deref(), Some("allow_session"));
+        std::fs::remove_dir_all(&outside).ok();
     }
 
     #[tokio::test]

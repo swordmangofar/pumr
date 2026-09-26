@@ -270,6 +270,7 @@ export interface Settings {
   subagentModel: string | null;
   compactionModel: string | null;
   titleModel: string | null;
+  commitMessageModel: string | null;
   promptCaching: boolean;
   commandRules: CommandRule[];
   deniedCommandRules: CommandRule[];
@@ -596,6 +597,73 @@ export interface FileDiff {
   tooLarge?: boolean;
 }
 
+export type GitDiffLineKind = 'context' | 'add' | 'del';
+
+/** One line of a hunk as `git diff` printed it. */
+export interface GitDiffLine {
+  /** Position in the whole diff; line actions refer to it. */
+  id: number;
+  kind: GitDiffLineKind;
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+  /** The last line of its side, without a newline at the end of the file. */
+  noNewline: boolean;
+}
+
+export interface GitDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  /** The function or section git names after the `@@` header. */
+  section: string;
+  lines: GitDiffLine[];
+}
+
+/** Why single lines and hunks of a diff cannot be staged, unstaged or discarded. */
+export type GitLineBlock =
+  | 'binary'
+  | 'tooLarge'
+  | 'conflict'
+  | 'symlink'
+  | 'submodule'
+  | 'whitespace';
+
+/** A working-tree or staged diff split into hunks. */
+export interface GitHunkDiff {
+  path: string;
+  staged: boolean;
+  status: string;
+  language: string;
+  hunks: GitDiffHunk[];
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  tooLarge: boolean;
+  blocked: GitLineBlock | null;
+  /** Identifies this exact diff, so line actions refuse to run on a stale view. */
+  fingerprint: string;
+}
+
+export type GitLineAction = 'stage' | 'unstage' | 'discard';
+
+export type GitResetMode = 'soft' | 'mixed' | 'hard';
+
+export type GitConflictSide = 'ours' | 'theirs';
+
+/** How the Changes view shows a diff; kept across projects and restarts. */
+export interface GitDiffOptions {
+  /** Unchanged lines around each change; `GIT_WHOLE_FILE_CONTEXT` shows the whole file. */
+  context: number;
+  ignoreWhitespace: boolean;
+  layout: 'unified' | 'split';
+  wrap: boolean;
+}
+
+/** Context lines that make a diff show the whole file as one hunk. */
+export const GIT_WHOLE_FILE_CONTEXT = 10_000_000;
+
 export interface ProcessInfo {
   id: string;
   sessionId: string;
@@ -614,6 +682,8 @@ export interface RevertResult {
 export interface QuestionOption {
   label: string;
   description: string | null;
+  /** The option the assistant would pick; shown with a "Recommended" badge. */
+  recommended: boolean;
 }
 
 export interface QuestionItem {

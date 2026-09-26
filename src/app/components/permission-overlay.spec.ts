@@ -227,6 +227,18 @@ describe('PermissionOverlay', () => {
       await create(request({ risk: { level: 'danger', detail: 'x' } }));
       expect(document.activeElement).toBe(option('allow'));
     });
+
+    it('leaves focus in the message box the user is typing in', async () => {
+      const composer = document.createElement('textarea');
+      document.body.appendChild(composer);
+      composer.focus();
+      await create(request());
+      expect(document.activeElement).toBe(composer);
+      // The Enter that sends the message does not answer the prompt.
+      press('Enter', composer);
+      expect(resolvePermission).not.toHaveBeenCalled();
+      composer.remove();
+    });
   });
 
   describe('keyboard', () => {

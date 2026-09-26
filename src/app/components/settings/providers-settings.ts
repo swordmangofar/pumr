@@ -147,6 +147,22 @@ import { TypedInput } from '../typed-input';
     </section>
 
     <section class="mt-8">
+      <label class="mb-2 block text-sm text-mist/50">{{
+        'settings.commitMessageModel' | transloco
+      }}</label>
+      <input
+        list="pumr-handover-models"
+        class="field w-full max-w-md rounded-xl px-4 py-2 text-sm"
+        [placeholder]="'settings.commitMessageModelPlaceholder' | transloco"
+        [value]="draft.draft().commitMessageModel ?? ''"
+        (input)="onCommitMessageModelInput($event)"
+      />
+      <p class="mt-2 text-xs text-mist/30">
+        {{ 'settings.commitMessageModelHint' | transloco }}
+      </p>
+    </section>
+
+    <section class="mt-8">
       <h3 class="mb-2 text-sm font-semibold text-white">
         {{ 'settings.providers.future' | transloco }}
       </h3>
@@ -199,6 +215,11 @@ export class ProvidersSettings {
   protected onHandoverModelInput(event: Event): void {
     const value = (event.target as HTMLInputElement).value.trim();
     this.draft.patch('handoverModel', value.length > 0 ? value : null);
+  }
+
+  protected onCommitMessageModelInput(event: Event): void {
+    const value = (event.target as HTMLInputElement).value.trim();
+    this.draft.patch('commitMessageModel', value.length > 0 ? value : null);
   }
 
   protected async saveApiKey(): Promise<void> {

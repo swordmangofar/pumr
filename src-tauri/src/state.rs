@@ -45,6 +45,8 @@ pub struct AppState {
     pub permissions: Arc<LivePermissions>,
     pub power: PowerManager,
     pub marketplace: MarketplaceService,
+    /// MCP connections and approvals kept between a session's turns.
+    pub mcp: crate::mcp::McpSessions,
     cancels: Arc<CancelRegistry>,
     pub sends: SendLedger,
     models_cache: Mutex<Option<Vec<ModelInfo>>>,
@@ -89,6 +91,7 @@ impl AppState {
             permissions,
             power,
             marketplace,
+            mcp: crate::mcp::McpSessions::default(),
             cancels: Arc::new(CancelRegistry::default()),
             sends: SendLedger::default(),
             models_cache: Mutex::new(None),
@@ -184,6 +187,49 @@ impl AppState {
         self.cancels.cancel(key);
         self.broker.deny_session(key);
         self.questions.skip_session(key);
+    }
+
+    /// Stops everything that runs for `session_ids` (typically a chat and its
+    /// subagent sessions, before they are deleted or archived): their turns,
+    /// background processes, open prompts and MCP servers. Returns tokens that
+    /// fire once each stopped turn has finished unwinding.
+    pub fn stop_sessions(&self, session_ids: &[String]) -> Vec<CancellationToken> {
+        let mut finished = Vec::new();
+        for id in session_ids {
+            self.processes.stop_for_session(id);
+            if let Some(token) = self.cancels.turn_finished(id) {
+                finished.push(token);
+            }
+            self.cancel(id);
+        }
+        self.mcp.forget(session_ids);
+        finished
+    }
+
+    /// Stops the turn behind `session_id`. A message sent from a subagent's
+    /// tab runs as that session's own turn; a subagent spawned by its parent
+    /// runs inside the parent's turn. So the session's own turn is stopped
+    /// when it has one, otherwise the nearest running ancestor's.
+    pub fn stop_session(&self, session_id: &str) {
+        let mut key = session_id.to_string();
+        let mut seen = HashSet::new();
+        while seen.insert(key.clone()) {
+            if self.cancels.is_registered(&key) {
+                self.cancel(&key);
+                return;
+            }
+            match self
+                .db
+                .get_session(&key)
+                .ok()
+                .and_then(|session| session.parent_session_id)
+            {
+                Some(parent) => key = parent,
+                None => break,
+            }
+        }
+        // Nothing is running; still answer anything left waiting on the user.
+        self.cancel(session_id);
     }
 
     /// Session ids of the chat turns that are still running.
@@ -350,6 +396,17 @@ impl CancelRegistry {
         if let Some(entry) = self.inner.lock().unwrap().entries.get(key) {
             entry.token.cancel();
         }
+    }
+
+    fn is_registered(&self, key: &str) -> bool {
+        self.inner.lock().unwrap().entries.contains_key(key)
+    }
+
+    /// Fires once the chat turn registered under `key` has finished.
+    fn turn_finished(&self, key: &str) -> Option<CancellationToken> {
+        let inner = self.inner.lock().unwrap();
+        let turn = inner.entries.get(key)?.turn.as_ref()?;
+        Some(turn.finished.clone())
     }
 
     fn running_turns(&self) -> Vec<String> {
@@ -644,6 +701,41 @@ mod tests {
             options: Vec::new(),
             multi_select: false,
         }]
+    }
+
+    #[test]
+    fn stop_targets_a_subagents_own_turn_or_the_turn_driving_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let project = state
+            .db
+            .upsert_project(&temp.path().display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let subagent = state
+            .db
+            .create_sub_session(&project.id, &chat.id, "subagent", None, None, None, None)
+            .unwrap();
+        let nested = state
+            .db
+            .create_sub_session(&project.id, &subagent.id, "nested", None, None, None, None)
+            .unwrap();
+        let (sink, _) = capture();
+
+        // A message sent from the subagent's tab runs as its own turn.
+        let parent_turn = state.register_turn(&chat.id, SwappableSink::new(sink.clone()));
+        let own_turn = state.register_turn(&subagent.id, SwappableSink::new(sink));
+        state.stop_session(&subagent.id);
+        assert!(own_turn.token().is_cancelled());
+        assert!(!parent_turn.token().is_cancelled());
+        drop(own_turn);
+
+        // A subagent without a turn of its own runs inside its ancestor's.
+        state.stop_session(&nested.id);
+        assert!(parent_turn.token().is_cancelled());
     }
 
     #[tokio::test]

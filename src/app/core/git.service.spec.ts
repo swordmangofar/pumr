@@ -3,7 +3,14 @@ import { TranslocoService } from '@jsverse/transloco';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
 import { GitService } from './git.service';
-import { GitBranch, GitCommit, GitCommitDetail, GitRefs, GitStatus } from './models';
+import {
+  GitBranch,
+  GitCommit,
+  GitCommitDetail,
+  GitHunkDiff,
+  GitRefs,
+  GitStatus,
+} from './models';
 
 function commit(hash: string): GitCommit {
   return {
@@ -61,6 +68,34 @@ const status: GitStatus = {
 
 const refs: GitRefs = { branches: [], tags: [], stashes: [], submodules: [], remotes: [] };
 
+function hunkDiff(path: string): GitHunkDiff {
+  return {
+    path,
+    staged: false,
+    status: 'M',
+    language: 'plaintext',
+    hunks: [
+      {
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        section: '',
+        lines: [
+          { id: 0, kind: 'context', oldLine: 1, newLine: 1, text: 'a', noNewline: false },
+          { id: 1, kind: 'add', oldLine: null, newLine: 2, text: path, noNewline: false },
+        ],
+      },
+    ],
+    additions: 1,
+    deletions: 0,
+    binary: false,
+    tooLarge: false,
+    blocked: null,
+    fingerprint: `fp-${path}`,
+  };
+}
+
 /** A promise the test settles by hand. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -90,6 +125,7 @@ function stubReloads(): void {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -234,26 +270,106 @@ describe('GitService', () => {
 
   it('ignores a file diff that arrives after a newer selection', async () => {
     const git = service();
-    const slow = deferred<Awaited<ReturnType<typeof api.getGitFileDiff>>>();
-    const diff = (path: string) => ({
-      path,
-      oldContent: '',
-      newContent: path,
-      language: 'plaintext',
-      additions: 1,
-      deletions: 0,
-      status: 'A',
-    });
-    vi.spyOn(api, 'getGitFileDiff')
+    const slow = deferred<GitHunkDiff>();
+    vi.spyOn(api, 'getGitFileHunks')
       .mockReturnValueOnce(slow.promise)
-      .mockResolvedValueOnce(diff('b'));
+      .mockResolvedValueOnce(hunkDiff('b'));
 
     const first = git.selectChange('p1', 'a', false);
     await git.selectChange('p1', 'b', false);
-    slow.resolve(diff('a'));
+    slow.resolve(hunkDiff('a'));
     await first;
 
     expect(git.diffFor('p1')?.path).toBe('b');
+  });
+
+  it('loads a conflicted file whole instead of as hunks', async () => {
+    const git = service();
+    vi.spyOn(api, 'getGitFileHunks').mockResolvedValue({
+      ...hunkDiff('a'),
+      hunks: [],
+      blocked: 'conflict',
+    });
+    const whole = vi.spyOn(api, 'getGitFileDiff').mockResolvedValue({
+      path: 'a',
+      oldContent: 'ours',
+      newContent: 'merged',
+      language: 'plaintext',
+      additions: 1,
+      deletions: 1,
+      status: 'M',
+    });
+
+    await git.selectChange('p1', 'a', true);
+
+    expect(whole).toHaveBeenCalledWith('p1', 'a', false);
+    expect(git.diffFor('p1')?.conflict?.newContent).toBe('merged');
+  });
+
+  it('applies lines with the viewed fingerprint and keeps the file on its side', async () => {
+    const git = service();
+    const hunks = vi.spyOn(api, 'getGitFileHunks').mockResolvedValue(hunkDiff('a'));
+    const apply = vi.spyOn(api, 'gitApplyLines').mockResolvedValue();
+    vi.spyOn(api, 'getGitStatus').mockResolvedValue({
+      ...status,
+      unstaged: [{ path: 'a', additions: 1, deletions: 0, status: 'M' }],
+      staged: [{ path: 'a', additions: 1, deletions: 0, status: 'M' }],
+    });
+    await git.selectChange('p1', 'a', false);
+
+    await git.applyLines('p1', 'stage', [1]);
+
+    expect(apply).toHaveBeenCalledWith('p1', 'a', false, 'stage', 3, 'fp-a', [1]);
+    expect(hunks).toHaveBeenLastCalledWith('p1', 'a', false, 3, false);
+    expect(git.diffFor('p1')?.staged).toBe(false);
+  });
+
+  it('follows a file to the staged side once all its lines are staged', async () => {
+    const git = service();
+    vi.spyOn(api, 'getGitFileHunks').mockImplementation(async (_id, path, staged) => ({
+      ...hunkDiff(path),
+      staged,
+    }));
+    vi.spyOn(api, 'gitApplyLines').mockResolvedValue();
+    vi.spyOn(api, 'getGitStatus').mockResolvedValue({
+      ...status,
+      staged: [{ path: 'a', additions: 1, deletions: 0, status: 'M' }],
+    });
+    await git.selectChange('p1', 'a', false);
+
+    await git.applyLines('p1', 'stage', [1]);
+
+    expect(git.diffFor('p1')?.staged).toBe(true);
+  });
+
+  it('reports a stale diff and loads it again', async () => {
+    const git = service();
+    const hunks = vi.spyOn(api, 'getGitFileHunks').mockResolvedValue(hunkDiff('a'));
+    vi.spyOn(api, 'gitApplyLines').mockRejectedValue('stale diff: a changed since its diff was loaded');
+    vi.spyOn(api, 'getGitStatus').mockResolvedValue({
+      ...status,
+      unstaged: [{ path: 'a', additions: 1, deletions: 0, status: 'M' }],
+    });
+    await git.selectChange('p1', 'a', false);
+
+    await git.applyLines('p1', 'discard', [1]);
+
+    expect(git.errorFor('p1')).toBe('git.diff.stale');
+    expect(hunks).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads the viewed diff when context lines change, not when the layout does', async () => {
+    const git = service();
+    const hunks = vi.spyOn(api, 'getGitFileHunks').mockResolvedValue(hunkDiff('a'));
+    await git.selectChange('p1', 'a', false);
+
+    git.setDiffOptions('p1', { layout: 'split' });
+    git.setDiffOptions('p1', { context: 25 });
+    await Promise.resolve();
+
+    expect(hunks).toHaveBeenCalledTimes(2);
+    expect(hunks).toHaveBeenLastCalledWith('p1', 'a', false, 25, false);
+    expect(git.diffOptions().layout).toBe('split');
   });
 
   it('prefills the previous commit for amend', async () => {

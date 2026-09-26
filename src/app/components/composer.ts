@@ -23,6 +23,7 @@ import {
   WorkspaceEntry,
 } from '../core/models';
 import { api } from '../core/api';
+import { formatTokenCount } from '../core/format';
 import { ModelsService } from '../core/models.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
@@ -41,6 +42,9 @@ const METER_GOOD = '#34d399';
 const METER_WARN = '#fbbf24';
 const METER_BAD = '#fb7185';
 const METER_MUTED = 'rgba(255,255,255,0.25)';
+/** Context-meter fill ratios at which it turns amber and red. */
+const METER_WARN_RATIO = 0.75;
+const METER_BAD_RATIO = 0.9;
 
 interface MentionItem {
   kind: MentionKind;
@@ -1001,7 +1005,16 @@ const PROVIDER_PRESETS = [
       <div
         class="mx-auto mt-1.5 flex w-full max-w-4xl items-center gap-3 px-1 text-xs text-mist/40"
       >
-        <p class="hidden min-w-0 flex-1 truncate sm:block">{{ 'chat.hint' | transloco }}</p>
+        <p class="hidden min-w-0 flex-1 truncate sm:block">
+          @if (streaming()) {
+            {{ 'chat.hintStreaming' | transloco }}
+          } @else {
+            {{ 'chat.hint' | transloco }}
+            @if (!composingDraft() && hasPreviousPrompt()) {
+              · {{ 'chat.hintRecall' | transloco }}
+            }
+          }
+        </p>
 
         <div class="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1">
           @if (workspace.activeSession()) {
@@ -1042,9 +1055,16 @@ const PROVIDER_PRESETS = [
             <div class="group relative">
               <button
                 type="button"
-                class="flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent ring-1 ring-accent/30 ring-inset transition-colors hover:bg-accent/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent/15 disabled:hover:text-accent"
+                class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                [class]="
+                  suggestHandover()
+                    ? 'bg-amber-400/20 text-amber-200 ring-amber-400/50 hover:bg-amber-400/30 hover:text-white'
+                    : 'bg-accent/15 text-accent ring-accent/30 hover:bg-accent/25 hover:text-white disabled:hover:bg-accent/15 disabled:hover:text-accent'
+                "
                 [disabled]="!canHandover()"
-                [attr.aria-label]="'chat.handoverHint' | transloco"
+                [attr.aria-label]="
+                  (suggestHandover() ? 'chat.handoverSuggested' : 'chat.handoverHint') | transloco
+                "
                 (click)="handoverSession()"
               >
                 @if (handover()) {
@@ -1082,7 +1102,9 @@ const PROVIDER_PRESETS = [
                 class="pointer-events-none absolute right-0 bottom-full z-20 mb-2 w-60 rounded-xl border border-white/10 bg-navy px-3 py-2 text-left text-xs leading-relaxed text-mist opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100"
                 role="tooltip"
               >
-                {{ 'chat.handoverHint' | transloco }}
+                {{
+                  (suggestHandover() ? 'chat.handoverSuggested' : 'chat.handoverHint') | transloco
+                }}
               </div>
             </div>
           }
@@ -1095,7 +1117,8 @@ const PROVIDER_PRESETS = [
                 ': ' +
                 usage.usedLabel +
                 ' / ' +
-                usage.limitLabel
+                usage.limitLabel +
+                (usage.breakdown ? ' · ' + ('chat.contextUsage' | transloco: usage.breakdown) : '')
               "
             >
               <svg class="h-3.5 w-3.5 -rotate-90" viewBox="0 0 16 16" aria-hidden="true">
@@ -1314,6 +1337,14 @@ export class Composer {
     return session ? this.queue.forSession(session.id) : [];
   });
   protected readonly sessionCost = computed(() => this.workspace.activeAgent()?.cost ?? 0);
+  protected readonly composingDraft = computed(
+    () =>
+      this.draft().trim().length > 0 ||
+      this.attachments().length > 0 ||
+      this.mentions().length > 0 ||
+      this.textBlocks().length > 0,
+  );
+  protected readonly hasPreviousPrompt = computed(() => this.lastPrompt() !== null);
   protected readonly handover = computed(() => {
     const session = this.workspace.activeSession();
     return session ? this.workspace.isHandover(session.id) : false;
@@ -1330,12 +1361,16 @@ export class Composer {
   });
   protected readonly contextUsage = computed(() => {
     const session = this.workspace.activeAgent();
-    const limit = this.selectedModel()?.contextLength ?? 0;
-    if (!session || limit <= 0) {
+    if (!session) {
       return null;
     }
-    const used = this.lastTurnTokens(session.id);
-    if (used <= 0) {
+    // Prefer the backend's estimate of the next request against the budget the
+    // history is trimmed to; after a reload only the last reported usage is left.
+    const live = this.workspace.contextUsage()[session.id];
+    const hasLive = !!live && live.budgetTokens > 0 && live.usedTokens > 0;
+    const used = hasLive ? live.usedTokens : this.lastTurnTokens(session.id);
+    const limit = hasLive ? live.budgetTokens : (this.selectedModel()?.contextLength ?? 0);
+    if (used <= 0 || limit <= 0) {
       return null;
     }
     const ratio = Math.min(1, used / limit);
@@ -1345,8 +1380,20 @@ export class Composer {
       color: this.usageColor(ratio),
       usedLabel: used.toLocaleString(),
       limitLabel: limit.toLocaleString(),
+      breakdown: hasLive
+        ? {
+            system: formatTokenCount(live.systemTokens),
+            history: formatTokenCount(live.historyTokens),
+            tools: formatTokenCount(live.toolSchemaTokens),
+            toolOutput: formatTokenCount(live.toolOutputTokens),
+          }
+        : null,
     };
   });
+  /** Nudges towards a handover once the context meter turns amber. */
+  protected readonly suggestHandover = computed(
+    () => (this.contextUsage()?.ratio ?? 0) >= METER_WARN_RATIO && this.canHandover(),
+  );
   protected readonly filteredModels = computed(() => {
     const filter = this.modelFilter().trim().toLowerCase();
     const favorites = new Set(this.favoriteModels());
@@ -1409,6 +1456,22 @@ export class Composer {
       element.value = text;
       element.focus();
       element.setSelectionRange(element.value.length, element.value.length);
+    });
+    effect(() => {
+      const editor = this.editorRef()?.nativeElement;
+      const insert = this.workspace.pendingComposerInsert();
+      if (!editor || !insert) {
+        return;
+      }
+      untracked(() => {
+        this.workspace.consumeComposerInsert();
+        this.placeCaretAtEnd(editor);
+        if (insert.mention) {
+          this.insertPill(insert.mention, null);
+        }
+        this.addTextBlock(insert.text);
+        this.focusInput();
+      });
     });
     effect(() => {
       const editor = this.editorRef()?.nativeElement;
@@ -1496,6 +1559,25 @@ export class Composer {
 
   private focusInput(): void {
     this.editorRef()?.nativeElement.focus();
+  }
+
+  /** Moves the caret to the end of the editor unless it already is inside it. */
+  private placeCaretAtEnd(editor: HTMLElement): void {
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0 && editor.contains(selection.anchorNode)) {
+      return;
+    }
+    this.moveCaretToEnd(editor);
+  }
+
+  private moveCaretToEnd(editor: HTMLElement): void {
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
   }
 
   private setEditorText(text: string): void {
@@ -2161,6 +2243,26 @@ export class Composer {
       this.closeMenus();
       return;
     }
+    if (event.key === 'Escape' && this.streaming()) {
+      event.preventDefault();
+      void this.stop();
+      return;
+    }
+    if (
+      event.key === 'ArrowUp' &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !this.composingDraft()
+    ) {
+      const previous = this.lastPrompt();
+      if (previous) {
+        event.preventDefault();
+        this.recallPrompt(previous);
+      }
+      return;
+    }
     if (event.key === 'Enter' && !this.modelOpen() && !this.providerOpen() && !this.modeOpen()) {
       event.preventDefault();
       if (event.shiftKey) {
@@ -2169,6 +2271,31 @@ export class Composer {
         void this.send();
       }
     }
+  }
+
+  /** The latest prompt typed into this session, for recalling it with ↑. */
+  private lastPrompt(): string | null {
+    const session = this.workspace.activeAgent();
+    if (!session) {
+      return null;
+    }
+    const messages = this.workspace.messagesFor(session.id);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === 'user' && message.content.trim()) {
+        return message.content;
+      }
+    }
+    return null;
+  }
+
+  private recallPrompt(text: string): void {
+    const editor = this.editorRef()?.nativeElement;
+    if (!editor) {
+      return;
+    }
+    this.setEditorText(text);
+    this.moveCaretToEnd(editor);
   }
 
   protected async send(): Promise<void> {
@@ -2490,10 +2617,10 @@ export class Composer {
   }
 
   private usageColor(ratio: number): string {
-    if (ratio >= 0.9) {
+    if (ratio >= METER_BAD_RATIO) {
       return METER_BAD;
     }
-    if (ratio >= 0.75) {
+    if (ratio >= METER_WARN_RATIO) {
       return METER_WARN;
     }
     return 'var(--color-accent)';

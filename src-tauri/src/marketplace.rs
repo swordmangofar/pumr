@@ -864,17 +864,42 @@ fn registry_params(limit: u32, query: Option<&str>) -> Vec<(&'static str, String
     params
 }
 
+/// 64-bit FNV-1a: tiny, and stable across Rust versions and platforms.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// The directory name earlier versions used for a checkout.
+fn legacy_checkout_name(url: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 impl MarketplaceService {
     pub fn new(http: reqwest::Client, cache_dir: PathBuf) -> Self {
         Self { http, cache_dir }
     }
 
+    /// Where a marketplace is checked out. The name has to stay the same across
+    /// builds, so it uses FNV-1a rather than `DefaultHasher`, whose output may
+    /// change with the Rust version. A checkout still under its old name is
+    /// moved over the first time it is looked up.
     fn checkout_dir(&self, url: &str) -> PathBuf {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        url.hash(&mut hasher);
-        self.cache_dir.join(format!("{:016x}", hasher.finish()))
+        let dir = self.cache_dir.join(format!("{:016x}", fnv1a(url.as_bytes())));
+        if !dir.exists() {
+            let legacy = self.cache_dir.join(legacy_checkout_name(url));
+            if legacy.is_dir() {
+                if let Err(error) = std::fs::rename(&legacy, &dir) {
+                    log::warn!("could not move marketplace checkout for {url}: {error}");
+                }
+            }
+        }
+        dir
     }
 
     /// Searches the official registry. The term is sent as the registry's own
@@ -1208,9 +1233,8 @@ impl MarketplaceService {
     }
 
     fn write_custom_marketplace_urls(&self, urls: &[String]) -> Result<()> {
-        std::fs::create_dir_all(&self.cache_dir)?;
         let path = self.cache_dir.join("marketplaces.json");
-        std::fs::write(path, serde_json::to_string_pretty(urls)?)?;
+        crate::config::write_file_atomic(&path, serde_json::to_string_pretty(urls)?.as_bytes(), false)?;
         Ok(())
     }
 
@@ -1538,6 +1562,26 @@ mod tests {
         );
         assert!(!marketplace.verified);
         assert!(!marketplace.spoofed_name);
+    }
+
+    #[test]
+    fn checkout_dirs_have_stable_names_and_adopt_legacy_checkouts() {
+        // Reference values for 64-bit FNV-1a.
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("marketplaces");
+        let service = MarketplaceService::new(reqwest::Client::new(), cache.clone());
+        let url = "https://github.com/acme/skills";
+        let legacy = cache.join(legacy_checkout_name(url));
+        fs::create_dir_all(legacy.join(".claude-plugin")).unwrap();
+
+        let checkout = service.checkout_dir(url);
+        assert_eq!(checkout, cache.join(format!("{:016x}", fnv1a(url.as_bytes()))));
+        assert!(checkout.join(".claude-plugin").is_dir());
+        assert!(!legacy.exists());
+        assert_eq!(service.checkout_dir(url), checkout);
     }
 
     #[test]

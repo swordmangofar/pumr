@@ -10,11 +10,15 @@ import {
   GitBlameLine,
   GitCommit,
   GitCommitDetail,
+  GitConflictSide,
+  GitHunkDiff,
   GitInfo,
+  GitLineAction,
   GitOperation,
   GitPullStrategy,
   GitRebaseEntry,
   GitRefs,
+  GitResetMode,
   GitStash,
   GitStatus,
   IgnoreCatalogEntry,
@@ -163,6 +167,49 @@ export const api = {
     invoke<FileDiff>('get_git_commit_file_diff', { projectId, hash, path }),
   getGitFileDiff: (projectId: string, path: string, staged: boolean) =>
     invoke<FileDiff>('get_git_file_diff', { projectId, path, staged }),
+  getGitFileHunks: (
+    projectId: string,
+    path: string,
+    staged: boolean,
+    context: number,
+    ignoreWhitespace: boolean,
+  ) =>
+    invoke<GitHunkDiff>('get_git_file_hunks', {
+      projectId,
+      path,
+      staged,
+      context,
+      ignoreWhitespace,
+    }),
+  gitApplyLines: (
+    projectId: string,
+    path: string,
+    staged: boolean,
+    action: GitLineAction,
+    context: number,
+    fingerprint: string,
+    lines: number[],
+  ) =>
+    invoke<void>('git_apply_lines', {
+      projectId,
+      path,
+      staged,
+      action,
+      context,
+      fingerprint,
+      lines,
+    }),
+  gitResolveConflict: (projectId: string, path: string, side: GitConflictSide) =>
+    invoke<void>('git_resolve_conflict', { projectId, path, side }),
+  gitCherryPick: (projectId: string, hash: string) =>
+    invoke<string>('git_cherry_pick', { projectId, hash }),
+  gitRevert: (projectId: string, hash: string) => invoke<string>('git_revert', { projectId, hash }),
+  gitReset: (projectId: string, hash: string, mode: GitResetMode) =>
+    invoke<string>('git_reset', { projectId, hash, mode }),
+  gitCheckoutCommit: (projectId: string, hash: string) =>
+    invoke<string>('git_checkout_commit', { projectId, hash }),
+  gitGenerateCommitMessage: (projectId: string) =>
+    invoke<string>('git_generate_commit_message', { projectId }),
   gitStage: (projectId: string, path: string | null = null) =>
     invoke<void>('git_stage', { projectId, path }),
   gitStagePaths: (projectId: string, paths: string[]) =>

@@ -10,7 +10,8 @@ import {
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { ContextUsageInfo, FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
+import { formatTokenCount } from '../core/format';
+import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
 import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { AttachmentPreview } from './attachment-preview';
@@ -62,15 +63,17 @@ type ChatEntry = MessageEntry | ToolEntry | ToolGroupEntry;
 const HIDDEN_TOOLS = new Set(['ls']);
 const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
 
-/** Compact token count for the context meter, e.g. 12300 -> "12.3k". */
-function formatTokenCount(value: number): string {
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1)}M`;
-  }
-  if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(1)}k`;
-  }
-  return `${value}`;
+/**
+ * An assistant step that only called tools. It has nothing of its own to show,
+ * and leaving it out lets consecutive calls of one tool group across steps.
+ */
+function isToolCallOnly(message: Message): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.toolCalls.length > 0 &&
+    !message.content &&
+    !message.reasoning
+  );
 }
 
 import { TypedInput } from './typed-input';
@@ -108,22 +111,6 @@ import { TypedInput } from './typed-input';
           >
             {{ 'chat.openSettings' | transloco }}
           </button>
-        </div>
-      }
-
-      @if (contextUsage(); as usage) {
-        <div
-          class="flex items-center gap-2 border-b border-white/5 px-5 py-1.5"
-          [attr.title]="contextTooltip(usage)"
-        >
-          <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-            <div
-              class="h-full rounded-full transition-all"
-              [class]="contextBarClass(usage)"
-              [style.width.%]="contextPercent(usage)"
-            ></div>
-          </div>
-          <span class="text-[11px] tabular-nums text-mist/50">{{ contextLabel(usage) }}</span>
         </div>
       }
 
@@ -407,7 +394,7 @@ import { TypedInput } from './typed-input';
                             />
                           }
 
-                          @if (entry.message.content || entry.message.cost > 0) {
+                          @if (entry.message.content) {
                             <div
                               class="mt-2 flex flex-wrap items-center gap-3 text-xs text-mist/30"
                             >
@@ -420,27 +407,32 @@ import { TypedInput } from './typed-input';
                                   {{ money(entry.message.cost) }}</span
                                 >
                               }
-                              @if (entry.message.promptTokens > 0) {
-                                <span>
-                                  {{ entry.message.promptTokens }}→{{
-                                    entry.message.completionTokens
-                                  }}
-                                  {{ 'chat.tokens' | transloco }}
-                                </span>
-                              }
-                              @if (entry.message.cachedTokens > 0) {
-                                <span
-                                  >{{ 'chat.cache' | transloco }}
-                                  {{ cacheRate(entry.message) }}%</span
-                                >
-                              }
-                              @if (entry.message.content) {
-                                <app-copy-button
-                                  class="ml-auto"
-                                  [text]="entry.message.content"
-                                  buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
-                                />
-                              }
+                              <span
+                                class="flex items-center gap-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+                              >
+                                @if (entry.message.promptTokens > 0) {
+                                  <span
+                                    class="tabular-nums"
+                                    [attr.title]="exactTokens(entry.message)"
+                                  >
+                                    {{ tokenCount(entry.message.promptTokens) }}→{{
+                                      tokenCount(entry.message.completionTokens)
+                                    }}
+                                    {{ 'chat.tokens' | transloco }}
+                                  </span>
+                                }
+                                @if (entry.message.cachedTokens > 0) {
+                                  <span
+                                    >{{ 'chat.cache' | transloco }}
+                                    {{ cacheRate(entry.message) }}%</span
+                                  >
+                                }
+                              </span>
+                              <app-copy-button
+                                class="ml-auto"
+                                [text]="entry.message.content"
+                                buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+                              />
                             </div>
                           }
                         </div>
@@ -475,9 +467,25 @@ import { TypedInput } from './typed-input';
 
               @if (error(); as err) {
                 <div
-                  class="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+                  class="mb-4 flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+                  role="alert"
                 >
-                  {{ 'chat.error' | transloco }}: {{ err }}
+                  <p class="min-w-0 flex-1 leading-relaxed break-words">
+                    {{ 'chat.error' | transloco }}: {{ err }}
+                  </p>
+                  <app-copy-button
+                    [text]="err"
+                    buttonClass="h-7 w-7 border-rose-400/30 bg-rose-500/10 text-rose-300/70 hover:border-rose-300/60 hover:text-rose-200"
+                  />
+                  @if (!streaming()) {
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-full border border-rose-400/40 px-3.5 py-1 text-sm font-medium text-rose-200 transition-colors hover:bg-rose-500/20"
+                      (click)="continueGeneration()"
+                    >
+                      {{ 'chat.retry' | transloco }}
+                    </button>
+                  }
                 </div>
               }
 
@@ -660,45 +668,6 @@ export class ChatView {
 
   protected readonly session = this.workspace.activeAgent;
   protected readonly subAgents = this.workspace.activeSubAgents;
-  protected readonly contextUsage = computed<ContextUsageInfo | null>(() => {
-    const session = this.session();
-    if (!session) {
-      return null;
-    }
-    const usage = this.workspace.contextUsage()[session.id];
-    return usage && usage.budgetTokens > 0 ? usage : null;
-  });
-
-  protected contextPercent(usage: ContextUsageInfo): number {
-    if (usage.budgetTokens <= 0) {
-      return 0;
-    }
-    return Math.min(100, Math.round((usage.usedTokens / usage.budgetTokens) * 100));
-  }
-
-  protected contextLabel(usage: ContextUsageInfo): string {
-    return `${formatTokenCount(usage.usedTokens)} / ${formatTokenCount(usage.budgetTokens)}`;
-  }
-
-  protected contextTooltip(usage: ContextUsageInfo): string {
-    return [
-      `system ${formatTokenCount(usage.systemTokens)}`,
-      `history ${formatTokenCount(usage.historyTokens)}`,
-      `tools ${formatTokenCount(usage.toolSchemaTokens)}`,
-      `tool output ${formatTokenCount(usage.toolOutputTokens)}`,
-    ].join(' · ');
-  }
-
-  protected contextBarClass(usage: ContextUsageInfo): string {
-    const percent = this.contextPercent(usage);
-    if (percent >= 90) {
-      return 'bg-red-500';
-    }
-    if (percent >= 70) {
-      return 'bg-amber-400';
-    }
-    return 'bg-accent';
-  }
   protected readonly fromSubAgent = computed(() => this.session()?.parentSessionId != null);
   protected readonly viewingSubAgent = computed(() => {
     const root = this.workspace.activeSession();
@@ -753,7 +722,8 @@ export class ChatView {
     }
     for (const message of messages) {
       const entry = this.messageEntry(message, commands, summaries);
-      if (entry.kind !== 'tool' || !HIDDEN_TOOLS.has(entry.name)) {
+      const hidden = entry.kind === 'tool' ? HIDDEN_TOOLS.has(entry.name) : isToolCallOnly(message);
+      if (!hidden) {
         entries.push(entry);
       }
       for (const tool of anchored.get(message.id) ?? []) {
@@ -1064,6 +1034,14 @@ export class ChatView {
   protected shortModel(model: string): string {
     const parts = model.split('/');
     return parts.length > 1 ? parts[1] : model;
+  }
+
+  protected tokenCount(value: number): string {
+    return formatTokenCount(value);
+  }
+
+  protected exactTokens(message: Message): string {
+    return `${message.promptTokens.toLocaleString()} → ${message.completionTokens.toLocaleString()}`;
   }
 
   protected cacheRate(message: Message): string {

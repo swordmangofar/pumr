@@ -171,6 +171,11 @@ function styleOf(state: AnsiState): string {
   return styles.join(';');
 }
 
+/** Drops escape sequences, leaving the plain text a terminal would show (for copying). */
+export function stripAnsi(input: string): string {
+  return input.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b/g, '');
+}
+
 export function ansiToHtml(input: string): string {
   const state = initialState();
   let result = '';

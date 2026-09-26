@@ -69,10 +69,10 @@ export class MonacoService {
     return `pumr-${this.themeService.current().id}`;
   }
 
-  async colorize(text: string, languageId: string): Promise<string> {
+  async colorize(text: string, languageId: string, tabSize = 2): Promise<string> {
     const monaco = (await this.load()) as MonacoApi;
     this.applyTheme(monaco);
-    return monaco.editor.colorize(text, languageId, { tabSize: 2 });
+    return monaco.editor.colorize(text, languageId, { tabSize });
   }
 
   /** Colorizes a markdown code block, or resolves to null for a language Monaco cannot tokenize. */

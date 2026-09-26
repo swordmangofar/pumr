@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { ansiToHtml } from '../core/ansi';
+import { ansiToHtml, stripAnsi } from '../core/ansi';
 import { FileChange } from '../core/models';
 import { MonacoService } from '../core/monaco.service';
 import { WorkspaceService } from '../core/workspace.service';
@@ -25,6 +25,7 @@ import { ToolStatus } from './tool-status';
       <button
         type="button"
         class="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+        [attr.aria-expanded]="expanded()"
         (click)="expanded.set(!expanded())"
       >
         <span class="text-xs font-semibold uppercase tracking-wider" [class]="statusColor()">
@@ -79,8 +80,16 @@ import { ToolStatus } from './tool-status';
           </div>
         }
         <div class="border-t border-white/5 px-4 py-3">
-          <div class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-mist/30">
-            {{ 'tools.output' | transloco }}
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <div class="text-[10px] font-semibold uppercase tracking-wider text-mist/30">
+              {{ 'tools.output' | transloco }}
+            </div>
+            @if (output()) {
+              <app-copy-button
+                [text]="plainOutput()"
+                buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+              />
+            }
           </div>
           @if (output()) {
             <pre
@@ -111,6 +120,7 @@ export class ToolCard {
   protected readonly outputHtml = computed<SafeHtml>(() =>
     this.sanitizer.bypassSecurityTrustHtml(ansiToHtml(this.output())),
   );
+  protected readonly plainOutput = computed(() => stripAnsi(this.output()));
   private readonly workspace = inject(WorkspaceService);
   private readonly monaco = inject(MonacoService);
   private readonly sanitizer = inject(DomSanitizer);

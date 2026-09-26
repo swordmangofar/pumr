@@ -131,6 +131,35 @@ const AUDIT_MAX_ROWS: i64 = 10_000;
 /// How long permission decisions are kept (90 days).
 const AUDIT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
+fn session_tree(conn: &Connection, id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE tree(id, depth) AS (
+             SELECT ?1, 0
+             UNION
+             SELECT s.id, tree.depth + 1 FROM sessions s JOIN tree ON s.parent_session_id = tree.id
+         )
+         SELECT id FROM tree ORDER BY depth",
+    )?;
+    let rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row?);
+    }
+    Ok(ids)
+}
+
+/// The first instant of `date` in `zone`, in milliseconds. Where a DST switch
+/// skips local midnight the day starts at the first local time that exists,
+/// and where midnight occurs twice it starts at the first one.
+fn day_start<Tz: TimeZone>(zone: &Tz, date: chrono::NaiveDate) -> Option<i64> {
+    (0..24 * 60).find_map(|minute| {
+        let time = date.and_hms_opt(minute / 60, minute % 60, 0)?;
+        zone.from_local_datetime(&time)
+            .earliest()
+            .map(|instant| instant.timestamp_millis())
+    })
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -254,6 +283,18 @@ impl Db {
             "UPDATE sessions SET agent_status = 'stopped' WHERE agent_status = 'running'",
             [],
         )?;
+        // Earlier versions deleted a chat without its subagent sessions. They
+        // can never be opened again; remove them (and theirs, level by level).
+        loop {
+            let removed = conn.execute(
+                "DELETE FROM sessions WHERE parent_session_id IS NOT NULL
+                   AND parent_session_id NOT IN (SELECT id FROM sessions)",
+                [],
+            )?;
+            if removed == 0 {
+                break;
+            }
+        }
         Ok(())
     }
 
@@ -341,7 +382,17 @@ impl Db {
 
     pub fn remove_project(&self, project_id: &str) -> Result<()> {
         self.with_conn(|conn| {
-            conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+            let tx = conn.unchecked_transaction()?;
+            // Sessions go with the project (ON DELETE CASCADE); their permission
+            // history has no foreign key and is removed explicitly.
+            tx.execute(
+                "DELETE FROM permission_audit
+                 WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?1)
+                    OR conversation_id IN (SELECT id FROM sessions WHERE project_id = ?1)",
+                params![project_id],
+            )?;
+            tx.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+            tx.commit()?;
             Ok(())
         })
     }
@@ -581,14 +632,41 @@ impl Db {
         })
     }
 
+    /// The session plus every subagent session below it, parents first.
+    pub fn session_tree(&self, id: &str) -> Result<Vec<String>> {
+        self.with_conn(|conn| session_tree(conn, id))
+    }
+
+    /// Ids of every session of a project, subagent sessions included.
+    pub fn project_session_ids(&self, project_id: &str) -> Result<Vec<String>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT id FROM sessions WHERE project_id = ?1")?;
+            let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row?);
+            }
+            Ok(ids)
+        })
+    }
+
+    /// Deletes a chat together with its subagent sessions (nothing else refers
+    /// to them) and the permission history of all of them.
     pub fn delete_session(&self, id: &str) -> Result<()> {
         self.with_conn(|conn| {
-            conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
-            // A deleted chat takes its permission history with it.
-            conn.execute(
-                "DELETE FROM permission_audit WHERE conversation_id = ?1 OR session_id = ?1",
-                params![id],
-            )?;
+            let ids = session_tree(conn, id)?;
+            let tx = conn.unchecked_transaction()?;
+            for id in &ids {
+                tx.execute(
+                    "DELETE FROM permission_audit WHERE conversation_id = ?1 OR session_id = ?1",
+                    params![id],
+                )?;
+            }
+            // Children first, so no row ever points at a missing parent.
+            for id in ids.iter().rev() {
+                tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+            }
+            tx.commit()?;
             Ok(())
         })
     }
@@ -980,11 +1058,7 @@ impl Db {
                     .unwrap_or(0.0),
                 None => 0.0,
             };
-            let today_start = Local
-                .from_local_datetime(&Local::now().date_naive().and_hms_opt(0, 0, 0).unwrap())
-                .single()
-                .map(|dt| dt.timestamp_millis())
-                .unwrap_or(0);
+            let today_start = day_start(&Local, Local::now().date_naive()).unwrap_or(0);
             let today_cost: f64 = conn.query_row(
                 "SELECT COALESCE(SUM(cost), 0) FROM messages WHERE created_at >= ?1",
                 params![today_start],
@@ -1272,6 +1346,63 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
 mod tests {
     use super::*;
 
+    /// A zone whose clocks jump from 23:59 straight to 01:00 on 2026-03-29, as
+    /// some zones that switch to summer time at midnight do.
+    #[derive(Clone, Copy)]
+    struct SkipsMidnight;
+
+    impl SkipsMidnight {
+        fn gap_day() -> chrono::NaiveDate {
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 29).unwrap()
+        }
+        fn utc() -> chrono::FixedOffset {
+            chrono::FixedOffset::east_opt(0).unwrap()
+        }
+    }
+
+    impl TimeZone for SkipsMidnight {
+        type Offset = chrono::FixedOffset;
+
+        fn from_offset(_: &chrono::FixedOffset) -> Self {
+            SkipsMidnight
+        }
+        fn offset_from_local_date(
+            &self,
+            _: &chrono::NaiveDate,
+        ) -> chrono::LocalResult<chrono::FixedOffset> {
+            chrono::LocalResult::Single(Self::utc())
+        }
+        fn offset_from_local_datetime(
+            &self,
+            local: &chrono::NaiveDateTime,
+        ) -> chrono::LocalResult<chrono::FixedOffset> {
+            use chrono::Timelike;
+            if local.date() == Self::gap_day() && local.hour() == 0 {
+                chrono::LocalResult::None
+            } else {
+                chrono::LocalResult::Single(Self::utc())
+            }
+        }
+        fn offset_from_utc_date(&self, _: &chrono::NaiveDate) -> chrono::FixedOffset {
+            Self::utc()
+        }
+        fn offset_from_utc_datetime(&self, _: &chrono::NaiveDateTime) -> chrono::FixedOffset {
+            Self::utc()
+        }
+    }
+
+    #[test]
+    fn day_start_survives_a_skipped_midnight() {
+        let at = |date: chrono::NaiveDate, hour: u32| {
+            Utc.from_utc_datetime(&date.and_hms_opt(hour, 0, 0).unwrap())
+                .timestamp_millis()
+        };
+        let gap_day = SkipsMidnight::gap_day();
+        assert_eq!(day_start(&SkipsMidnight, gap_day), Some(at(gap_day, 1)));
+        let normal_day = gap_day.succ_opt().unwrap();
+        assert_eq!(day_start(&SkipsMidnight, normal_day), Some(at(normal_day, 0)));
+    }
+
     fn entry(conversation: &str, subject: &str, allowed: bool) -> PermissionAuditEntry {
         PermissionAuditEntry {
             id: 0,
@@ -1312,5 +1443,77 @@ mod tests {
         assert!(db.list_permission_audit(Some("a"), 10).unwrap().is_empty());
         db.clear_permission_audit(None).unwrap();
         assert!(db.list_permission_audit(None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_chat_removes_its_subagent_sessions_and_their_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-delete-tree").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let sub = db
+            .create_sub_session(&project.id, &chat.id, "sub", None, None, None, None)
+            .unwrap();
+        let nested = db
+            .create_sub_session(&project.id, &sub.id, "nested", None, None, None, None)
+            .unwrap();
+        let other = db
+            .create_session(&project.id, "other", None, None, None, None, None)
+            .unwrap();
+        let mut sub_entry = entry(&chat.id, "ls", true);
+        sub_entry.session_id = nested.id.clone();
+        db.record_permission_audit(&sub_entry).unwrap();
+        db.record_permission_audit(&entry(&other.id, "pwd", true)).unwrap();
+
+        assert_eq!(
+            db.session_tree(&chat.id).unwrap(),
+            vec![chat.id.clone(), sub.id.clone(), nested.id.clone()]
+        );
+        db.delete_session(&chat.id).unwrap();
+        for id in [&chat.id, &sub.id, &nested.id] {
+            assert!(db.get_session(id).is_err());
+        }
+        assert!(db.get_session(&other.id).is_ok());
+        let left = db.list_permission_audit(None, 10).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].conversation_id, other.id);
+
+        db.remove_project(&project.id).unwrap();
+        assert!(db.get_session(&other.id).is_err());
+        assert!(db.list_permission_audit(None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migrating_removes_subagent_sessions_left_behind_by_old_deletes() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-orphans").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let sub = db
+            .create_sub_session(&project.id, &chat.id, "sub", None, None, None, None)
+            .unwrap();
+        let nested = db
+            .create_sub_session(&project.id, &sub.id, "nested", None, None, None, None)
+            .unwrap();
+        let kept = db
+            .create_session(&project.id, "kept", None, None, None, None, None)
+            .unwrap();
+        // What the old delete did: only the chat's own row.
+        db.with_conn(|conn| {
+            conn.execute("DELETE FROM sessions WHERE id = ?1", params![chat.id])?;
+            Ok(())
+        })
+        .unwrap();
+
+        db.migrate().unwrap();
+        assert!(db.get_session(&sub.id).is_err());
+        assert!(db.get_session(&nested.id).is_err());
+        assert!(db.get_session(&kept.id).is_ok());
     }
 }

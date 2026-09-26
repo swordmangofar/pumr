@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::git::ShadowRepo;
 use crate::mcp::McpManager;
 use crate::models::{
-    Attachment, CommandRule, EventSink, FileChange, Message, RoutedEvent, SkillEntry, StreamEvent,
+    Attachment, EventSink, FileChange, Message, RoutedEvent, SkillEntry, StreamEvent,
     ToolCallRecord,
 };
 use crate::permissions::{FileIgnoreConfig, LivePermissions};
@@ -37,7 +37,6 @@ pub struct TurnRequest {
     pub depth: usize,
     pub project_root: PathBuf,
     pub extra_folders: Vec<PathBuf>,
-    pub command_rules: Vec<CommandRule>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub context_message_limit: usize,
     /// The selected model's context window in tokens (0 when unknown). Used to
@@ -368,10 +367,11 @@ fn should_defer_mcp(request: &TurnRequest, mcp_schemas: &[Value]) -> bool {
     estimated > threshold
 }
 
-/// Runs the tool calls the model requested. Read-only calls (`read`, `glob`,
-/// `grep`, `ls`, `webfetch`, `websearch`) run concurrently in bounded batches,
-/// while mutating calls and `bash` stay serial and ordered. `task` calls run as
-/// parallel subagents. Returns `true` when the turn was cancelled part-way.
+/// Runs the tool calls the model requested. Consecutive read-only calls
+/// (`read`, `glob`, `grep`, `ls`, `webfetch`, `websearch`) run concurrently in
+/// bounded batches, while mutating calls and `bash` keep their place in the
+/// order. `task` calls run as parallel subagents. Returns `true` when the turn
+/// was cancelled part-way.
 async fn execute_tool_calls(
     deps: &TurnDeps,
     request: &TurnRequest,
@@ -404,8 +404,15 @@ async fn execute_tool_calls(
         tokio::task::JoinHandle<ToolOutcome>,
         std::time::Instant,
     )> = Vec::new();
-    let mut read_only: Vec<(usize, &ToolCallRecord)> = Vec::new();
-    let mut serial: Vec<(usize, &ToolCallRecord)> = Vec::new();
+    // The other calls in the order the model requested them: consecutive
+    // read-only calls form one step and run concurrently, while a write, an
+    // edit or `bash` runs after the reads before it and before the reads
+    // after it, so `edit` followed by `read` sees the edited file.
+    enum Step<'a> {
+        Reads(Vec<(usize, &'a ToolCallRecord)>),
+        Serial(usize, &'a ToolCallRecord),
+    }
+    let mut steps: Vec<Step> = Vec::new();
 
     for (index, call) in tool_calls.iter().enumerate() {
         if call.name == "task" {
@@ -420,34 +427,41 @@ async fn execute_tool_calls(
             });
             subagents.push((index, handle, started));
         } else if is_read_only_tool(&call.name) {
-            read_only.push((index, call));
+            match steps.last_mut() {
+                Some(Step::Reads(reads)) => reads.push((index, call)),
+                _ => steps.push(Step::Reads(vec![(index, call)])),
+            }
         } else {
-            serial.push((index, call));
+            steps.push(Step::Serial(index, call));
         }
     }
 
-    // Read-only calls are independent, so run them concurrently in small
-    // batches while keeping per-call timing for the transcript.
     let mut results: Vec<(usize, ToolOutcome, i64)> = Vec::new();
-    for batch in read_only.chunks(READ_ONLY_CONCURRENCY) {
-        let futures = batch.iter().map(|(index, call)| {
-            let index = *index;
-            async move {
+    for step in steps {
+        match step {
+            // Independent reads run concurrently in small batches, keeping
+            // per-call timing for the transcript.
+            Step::Reads(reads) => {
+                for batch in reads.chunks(READ_ONLY_CONCURRENCY) {
+                    let futures = batch.iter().map(|(index, call)| {
+                        let index = *index;
+                        async move {
+                            let started = std::time::Instant::now();
+                            let outcome = execute_call(deps, request, call, sink).await;
+                            let duration_ms = started.elapsed().as_millis() as i64;
+                            (index, outcome, duration_ms)
+                        }
+                    });
+                    results.extend(futures_util::future::join_all(futures).await);
+                }
+            }
+            Step::Serial(index, call) => {
                 let started = std::time::Instant::now();
                 let outcome = execute_call(deps, request, call, sink).await;
                 let duration_ms = started.elapsed().as_millis() as i64;
-                (index, outcome, duration_ms)
+                results.push((index, outcome, duration_ms));
             }
-        });
-        results.extend(futures_util::future::join_all(futures).await);
-    }
-
-    // Writes, edits and bash run serially in the order the model requested.
-    for (index, call) in serial {
-        let started = std::time::Instant::now();
-        let outcome = execute_call(deps, request, call, sink).await;
-        let duration_ms = started.elapsed().as_millis() as i64;
-        results.push((index, outcome, duration_ms));
+        }
     }
 
     // Subagents were spawned above; collect their reports now.
@@ -560,7 +574,7 @@ fn run_subagent<'a>(
             &request.project_id,
             &request.session_id,
             &title,
-            Some(&request.model),
+            Some(&request.subagent_model),
             request.reasoning_effort.as_deref(),
             request.provider.as_deref(),
             Some(&child_system_prompt),
@@ -605,7 +619,6 @@ fn run_subagent<'a>(
             depth: request.depth + 1,
             project_root: request.project_root.clone(),
             extra_folders: request.extra_folders.clone(),
-            command_rules: request.command_rules.clone(),
             file_ignore: request.file_ignore.clone(),
             context_message_limit: request.context_message_limit,
             context_length: request.context_length,
@@ -708,25 +721,33 @@ async fn build_history(
     let messages = deps
         .db
         .list_messages_limited(&request.session_id, request.context_message_limit)?;
-    // The window above only covers the newest messages, so a long tool loop can
-    // push the user's prompt out of view. Keep the latest prompt aside and put it
-    // back if the window, trimming or compaction dropped it — otherwise the model
-    // sees no user turn at all and asks what to work on.
+    // The window above only covers the newest messages, and trimming or
+    // compaction drop the oldest ones, so a long tool loop can push the user's
+    // prompt out of view and leave the model asking what to work on. The
+    // latest prompt is therefore pinned: kept out of trimming, with its room
+    // reserved in the budget, and put back where it belongs.
     let latest_user = deps.db.latest_user_message(&request.session_id)?;
-    let latest_user_content = latest_user.as_ref().and_then(|message| {
-        user_content(&message.content, &message.attachments, &message.context)
+    let pinned = latest_user.as_ref().and_then(|message| {
+        user_content(&message.content, &message.attachments, &message.context).map(|content| {
+            let mut prompt = ChatMessage::parts("user", content);
+            prompt.seq = Some(message.seq);
+            prompt
+        })
     });
+    let pinned_id = pinned
+        .as_ref()
+        .and(latest_user.as_ref())
+        .map(|message| message.id.clone());
 
     let mut history = vec![ChatMessage::text("system", request.system_prompt.clone())];
     for message in messages {
-        match message.role.as_str() {
-            "user" => {
-                if let Some(content) =
-                    user_content(&message.content, &message.attachments, &message.context)
-                {
-                    history.push(ChatMessage::parts("user", content));
-                }
-            }
+        if pinned_id.as_deref() == Some(message.id.as_str()) {
+            continue;
+        }
+        let seq = message.seq;
+        let converted = match message.role.as_str() {
+            "user" => user_content(&message.content, &message.attachments, &message.context)
+                .map(|content| ChatMessage::parts("user", content)),
             "assistant" => {
                 if !message.tool_calls.is_empty() {
                     let calls: Vec<Value> = message
@@ -743,20 +764,24 @@ async fn build_history(
                             })
                         })
                         .collect();
-                    history.push(ChatMessage::assistant_tool_calls(
+                    Some(ChatMessage::assistant_tool_calls(
                         message.content,
                         Value::Array(calls),
-                    ));
+                    ))
                 } else if !message.content.is_empty() {
-                    history.push(ChatMessage::text("assistant", message.content));
+                    Some(ChatMessage::text("assistant", message.content))
+                } else {
+                    None
                 }
             }
-            "tool" => {
-                if let Some(call_id) = message.tool_call_id {
-                    history.push(ChatMessage::tool_result(&call_id, message.content));
-                }
-            }
-            _ => {}
+            "tool" => message
+                .tool_call_id
+                .map(|call_id| ChatMessage::tool_result(&call_id, message.content)),
+            _ => None,
+        };
+        if let Some(mut converted) = converted {
+            converted.seq = Some(seq);
+            history.push(converted);
         }
     }
 
@@ -764,26 +789,43 @@ async fn build_history(
         .iter()
         .map(|schema| estimate_tokens(&schema.to_string()))
         .sum();
-    let history = compact_history(deps, request, history, overhead, summary_cache).await;
-    let mut history = sanitize(history);
-    anchor_latest_user(&mut history, latest_user_content);
-    Ok(history)
+    let history = match pinned {
+        Some(prompt) => {
+            let prompt = fit_pinned_prompt(prompt, request.context_length, overhead);
+            let reserved = message_token_estimate(&prompt);
+            let mut history =
+                compact_history(deps, request, history, overhead + reserved, summary_cache).await;
+            place_pinned_prompt(&mut history, prompt);
+            history
+        }
+        None => compact_history(deps, request, history, overhead, summary_cache).await,
+    };
+    Ok(sanitize(history))
 }
 
-/// Re-anchors the user's most recent prompt after trimming or compaction dropped
-/// it, so the model always has an instruction even on a resumed turn. A prompt
-/// already present (or an empty one) is left untouched; the re-anchored message
-/// goes directly after the system prompt to keep chronological order.
-fn anchor_latest_user(history: &mut Vec<ChatMessage>, latest_user: Option<Value>) {
-    let Some(content) = latest_user else {
-        return;
-    };
-    let present = history
-        .iter()
-        .any(|message| message.role == "user" && message.content == content);
-    if !present && !history.is_empty() {
-        history.insert(1, ChatMessage::parts("user", content));
+/// Shortens a pinned prompt that alone would take more than half of the input
+/// budget, so the rest of the conversation still fits next to it.
+fn fit_pinned_prompt(prompt: ChatMessage, context_length: i64, overhead: usize) -> ChatMessage {
+    match context_token_budget(context_length, overhead) {
+        Some(budget) if message_token_estimate(&prompt) > budget / 2 => {
+            truncate_message(prompt, budget / 2)
+        }
+        _ => prompt,
     }
+}
+
+/// Puts the pinned prompt back before the first message that came after it
+/// (or at the end), after the system prompt and anything older, including a
+/// summary of what came before it.
+fn place_pinned_prompt(history: &mut Vec<ChatMessage>, prompt: ChatMessage) {
+    let pinned = prompt.seq.unwrap_or(i64::MIN);
+    let index = history
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, message)| message.seq.is_some_and(|seq| seq > pinned))
+        .map_or(history.len(), |(index, _)| index);
+    history.insert(index.max(1).min(history.len()), prompt);
 }
 
 /// Rough token estimate. ASCII text averages ~4 characters per token while
@@ -990,10 +1032,14 @@ async fn compact_history(
         if let Some(summary) = summarize_prefix(deps, request, &dropped, summary_cache).await {
             let mut rebuilt: Vec<ChatMessage> = Vec::with_capacity(history.len() - drop_end + 2);
             rebuilt.push(history[0].clone());
-            rebuilt.push(ChatMessage::text(
+            let mut summary = ChatMessage::text(
                 "user",
                 format!("(Summary of earlier conversation)\n{summary}"),
-            ));
+            );
+            // Stands in for the dropped prefix, so a pinned prompt is placed
+            // relative to it like it would have been to the messages it covers.
+            summary.seq = dropped.iter().find_map(|message| message.seq);
+            rebuilt.push(summary);
             rebuilt.extend(history[drop_end..].iter().cloned());
             return trim_to_budget(rebuilt, request.context_length, overhead);
         }
@@ -1305,11 +1351,7 @@ fn preview_changes(deps: &TurnDeps, request: &TurnRequest) -> Option<Vec<FileCha
         Ok(None) => (Vec::new(), None),
         Err(_) => return None,
     };
-    let from = if request.resume {
-        last_commit.unwrap_or_else(|| request.base_commit.clone())
-    } else {
-        request.base_commit.clone()
-    };
+    let from = increment_start(deps, request, last_commit);
     let increment = deps
         .shadow
         .changes_since(&from)
@@ -1341,14 +1383,7 @@ fn finalize_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
             return existing;
         }
     };
-    // A new prompt snapshots the working tree first, so its `base_commit`
-    // already isolates the turn. A resume reuses the original prompt snapshot,
-    // so continue from the previous finalize boundary instead.
-    let from = if request.resume {
-        last_commit.unwrap_or_else(|| request.base_commit.clone())
-    } else {
-        request.base_commit.clone()
-    };
+    let from = increment_start(deps, request, last_commit);
     let increment = match deps.shadow.changes_between(&from, &after) {
         Ok(increment) => increment,
         Err(error) if from != request.base_commit => {
@@ -1380,6 +1415,18 @@ fn finalize_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
         );
     }
     merged
+}
+
+/// Where this turn's increment starts. A new prompt snapshots the working
+/// tree first, so its `base_commit` isolates the turn. When the change record
+/// was pinned after that snapshot (a resume, or the change list was read while
+/// the turn ran), the record already holds everything up to its boundary, so
+/// counting again from `base_commit` would count those changes twice.
+fn increment_start(deps: &TurnDeps, request: &TurnRequest, last_commit: Option<String>) -> String {
+    match last_commit {
+        Some(last) if request.resume || deps.shadow.is_ancestor(&request.base_commit, &last) => last,
+        _ => request.base_commit.clone(),
+    }
 }
 
 /// Merges a turn's file changes into a session's cumulative set. Additions and
@@ -1693,28 +1740,75 @@ mod tests {
         assert_eq!(content_to_text(&sanitized[1].content), "partial answer");
     }
 
-    #[test]
-    fn anchor_latest_user_restores_a_dropped_prompt() {
-        let mut history = vec![
-            ChatMessage::text("system", "sys"),
-            ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])),
-            ChatMessage::tool_result("a", "result"),
-        ];
-        anchor_latest_user(&mut history, Some(json!("the original question")));
-        assert_eq!(history.len(), 4);
-        assert_eq!(history[1].role, "user");
-        assert_eq!(content_to_text(&history[1].content), "the original question");
+    fn with_seq(mut message: ChatMessage, seq: i64) -> ChatMessage {
+        message.seq = Some(seq);
+        message
     }
 
     #[test]
-    fn anchor_latest_user_leaves_an_existing_prompt_untouched() {
+    fn pinned_prompt_goes_back_before_the_work_that_followed_it() {
         let mut history = vec![
             ChatMessage::text("system", "sys"),
-            ChatMessage::text("user", "the original question"),
-            ChatMessage::text("assistant", "answer"),
+            with_seq(ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])), 11),
+            with_seq(ChatMessage::tool_result("a", "result"), 12),
         ];
-        anchor_latest_user(&mut history, Some(json!("the original question")));
-        assert_eq!(history.len(), 3);
-        assert_eq!(content_to_text(&history[1].content), "the original question");
+        place_pinned_prompt(&mut history, with_seq(ChatMessage::text("user", "task"), 10));
+        assert_eq!(history.len(), 4);
+        assert_eq!(content_to_text(&history[1].content), "task");
+        assert_eq!(history[2].role, "assistant");
+    }
+
+    #[test]
+    fn pinned_prompt_keeps_its_place_after_older_messages() {
+        let mut history = vec![
+            ChatMessage::text("system", "sys"),
+            with_seq(ChatMessage::text("user", "(Summary of earlier conversation)\n..."), 1),
+            with_seq(ChatMessage::text("assistant", "older answer"), 8),
+            with_seq(ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])), 11),
+            with_seq(ChatMessage::tool_result("a", "result"), 12),
+        ];
+        place_pinned_prompt(&mut history, with_seq(ChatMessage::text("user", "task"), 10));
+        let roles: Vec<&str> = history.iter().map(|message| message.role.as_str()).collect();
+        assert_eq!(roles, ["system", "user", "assistant", "user", "assistant", "tool"]);
+        assert_eq!(content_to_text(&history[3].content), "task");
+    }
+
+    #[test]
+    fn pinned_prompt_goes_last_when_nothing_followed_it() {
+        let mut history = vec![
+            ChatMessage::text("system", "sys"),
+            with_seq(ChatMessage::text("assistant", "older answer"), 3),
+        ];
+        place_pinned_prompt(&mut history, with_seq(ChatMessage::text("user", "task"), 4));
+        assert_eq!(content_to_text(&history[2].content), "task");
+    }
+
+    #[test]
+    fn a_huge_pinned_prompt_is_cut_to_half_the_budget() {
+        let prompt = with_seq(ChatMessage::text("user", "x".repeat(400_000)), 1);
+        let budget = context_token_budget(32_000, 0).unwrap();
+        let fitted = fit_pinned_prompt(prompt, 32_000, 0);
+        assert!(message_token_estimate(&fitted) <= budget / 2 + 4);
+        assert_eq!(fitted.seq, Some(1));
+
+        let small = ChatMessage::text("user", "short task");
+        let kept = fit_pinned_prompt(small, 32_000, 0);
+        assert_eq!(content_to_text(&kept.content), "short task");
+    }
+
+    #[test]
+    fn trimming_with_the_prompt_reserved_leaves_room_for_it() {
+        let budget = context_token_budget(8_000, 0).unwrap();
+        let prompt = with_seq(ChatMessage::text("user", "y".repeat(8_000)), 1);
+        let reserved = message_token_estimate(&prompt);
+        let mut history = vec![ChatMessage::text("system", "sys")];
+        for seq in 2..60 {
+            history.push(with_seq(ChatMessage::text("assistant", "z".repeat(1_000)), seq));
+        }
+        let mut history = trim_to_budget(history, 8_000, reserved);
+        place_pinned_prompt(&mut history, prompt);
+        let total: usize = history.iter().map(message_token_estimate).sum();
+        assert!(total <= budget, "{total} > {budget}");
+        assert_eq!(content_to_text(&history[1].content), "y".repeat(8_000));
     }
 }

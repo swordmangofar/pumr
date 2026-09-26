@@ -160,6 +160,14 @@ function mostSpecificFolders(folders: string[]): string[] {
   );
 }
 
+/** Whether keys typed while `element` has focus go into text. */
+export function isEditable(element: Element | null): boolean {
+  if (!(element instanceof HTMLElement)) {
+    return false;
+  }
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable;
+}
+
 @Component({
   selector: 'app-permission-overlay',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -810,6 +818,12 @@ export class PermissionOverlay {
       }
       this.focusedRequestId = request.requestId;
       this.activeIndex.set(index);
+      // Never pull focus out of a field the user is typing in: the Enter
+      // meant to send their message would approve the prompt instead.
+      const focused = document.activeElement;
+      if (isEditable(focused) && !this.element.nativeElement.contains(focused)) {
+        return;
+      }
       buttons[index].nativeElement.focus();
     });
   }
@@ -947,10 +961,7 @@ export class PermissionOverlay {
       return;
     }
     const target = event.target as HTMLElement | null;
-    if (
-      target &&
-      (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable)
-    ) {
+    if (isEditable(target)) {
       return;
     }
     const actions = this.actions();
