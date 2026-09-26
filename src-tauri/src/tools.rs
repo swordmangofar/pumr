@@ -796,6 +796,24 @@ fn ignore_relative(runtime: &ToolRuntime, path: &Path) -> String {
         .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"))
 }
 
+/// The project root, then the extra folders the user allowed outside it.
+fn scope_roots(runtime: &ToolRuntime) -> Vec<PathBuf> {
+    let mut roots = vec![runtime.project_root.clone()];
+    roots.extend(runtime.permissions.extra_folders());
+    roots
+}
+
+/// `path` below the first of `roots` that holds it, or `path` itself outside
+/// all of them. Ignore rules that look at directory names (generated folders,
+/// `.git`) get this path, so the folders above a project, like `~/tmp` or
+/// `~/work/build`, never hide the whole project.
+fn scoped_path<'a>(roots: &[PathBuf], path: &'a Path) -> &'a Path {
+    roots
+        .iter()
+        .find_map(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+}
+
 /// Reason the agent should not touch a path, or `None` if it is allowed.
 fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str> {
     let relative = ignore_relative(runtime, path);
@@ -804,9 +822,11 @@ fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str
         shadow: Some(&runtime.shadow),
     };
     let gitignored = !relative.is_empty() && probe.is_ignored(&relative);
-    runtime
-        .file_ignore
-        .ignore_reason(path, &relative, gitignored)
+    runtime.file_ignore.ignore_reason(
+        scoped_path(&scope_roots(runtime), path),
+        &relative,
+        gitignored,
+    )
 }
 
 /// Canonicalize existing resources, but retain the full absolute path for new files.
@@ -1358,8 +1378,13 @@ fn whitespace_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
 /// dependencies enabled can still be searched quickly. A user exemption or an
 /// explicitly disabled generated rule re-enables the matching subtree.
 /// `.gitignore` is handled separately so user exemptions can override it.
-fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>) -> ignore::Walk {
-    let root = project_root.to_path_buf();
+///
+/// `roots` are the project root followed by the extra folders (see
+/// `scope_roots`): exemptions match paths relative to the project root, the
+/// `.git` and generated rules paths relative to the root holding them.
+fn file_walker(base: &Path, roots: &[PathBuf], config: &Arc<FileIgnoreConfig>) -> ignore::Walk {
+    let roots = roots.to_vec();
+    let root = roots.first().cloned().unwrap_or_else(|| base.to_path_buf());
     let config = config.clone();
     let mut builder = WalkBuilder::new(base);
     builder
@@ -1369,7 +1394,8 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         .git_exclude(false);
     builder.filter_entry(move |entry| {
         let path = entry.path();
-        if path
+        let scoped = scoped_path(&roots, path);
+        if scoped
             .components()
             .any(|component| component.as_os_str() == ".git")
         {
@@ -1385,8 +1411,8 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir
             && !config.has_exemptions()
-            && config.is_generated_path(path)
-            && !config.generated_rule_explicitly_disabled(path)
+            && config.is_generated_path(scoped)
+            && !config.generated_rule_explicitly_disabled(scoped)
         {
             return false;
         }
@@ -1415,7 +1441,8 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Err(error) => return ToolOutcome::error(format!("Invalid pattern: {error}")),
     };
     let mut candidates: Vec<PathBuf> = Vec::new();
-    for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
+    let roots = scope_roots(runtime);
+    for entry in file_walker(&base, &roots, &runtime.file_ignore).flatten() {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
         }
@@ -1444,7 +1471,7 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         let relative = ignore_relative(runtime, path);
         if runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(scoped_path(&roots, path), &relative, ignored.contains(path))
             .is_some()
         {
             continue;
@@ -1485,7 +1512,8 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         return outcome;
     }
     let mut candidates: Vec<PathBuf> = Vec::new();
-    for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
+    let roots = scope_roots(runtime);
+    for entry in file_walker(&base, &roots, &runtime.file_ignore).flatten() {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
         }
@@ -1519,7 +1547,7 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         let relative = ignore_relative(runtime, path);
         if runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(scoped_path(&roots, path), &relative, ignored.contains(path))
             .is_some()
         {
             continue;
@@ -1591,11 +1619,12 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     } else {
         HashSet::new()
     };
+    let roots = scope_roots(runtime);
     items.retain(|(_, _, path)| {
         let relative = ignore_relative(runtime, path);
         runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(scoped_path(&roots, path), &relative, ignored.contains(path))
             .is_none()
     });
     items.sort_by(|a, b| {
@@ -2713,9 +2742,18 @@ mod tests {
     }
 
     fn walk_relative(base: &Path, config: &Arc<FileIgnoreConfig>) -> Vec<String> {
-        let mut found: Vec<String> = file_walker(base, base, config)
+        walk_within(base, &[base.to_path_buf()], config)
+    }
+
+    fn walk_within(base: &Path, roots: &[PathBuf], config: &Arc<FileIgnoreConfig>) -> Vec<String> {
+        let mut found: Vec<String> = file_walker(base, roots, config)
             .flatten()
-            .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .map(|kind| kind.is_file())
+                    .unwrap_or(false)
+            })
             .map(|entry| {
                 entry
                     .path()
@@ -2771,6 +2809,76 @@ mod tests {
         let found = walk_relative(root, &disabled);
         assert!(found.contains(&"node_modules/pkg/index.js".to_string()));
         assert!(!found.contains(&"dist/app.js".to_string()));
+    }
+
+    /// A source file next to dependency, build and git folders a walk prunes.
+    fn create_project(root: &Path) {
+        for (file, contents) in [
+            ("src/main.rs", "fn main() {}"),
+            ("node_modules/pkg/index.js", "x"),
+            ("dist/app.js", "y"),
+            (".git/config", "z"),
+        ] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+    }
+
+    #[test]
+    fn walk_ignores_generated_names_above_the_project_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = Arc::new(FileIgnoreConfig::new(true, true, false, true, &[]));
+        for parent in ["tmp", "build", "out", "node_modules"] {
+            let root = directory.path().join(parent).join("project");
+            create_project(&root);
+            assert_eq!(
+                walk_relative(&root, &config),
+                vec!["src/main.rs"],
+                "{parent}"
+            );
+        }
+    }
+
+    #[test]
+    fn walk_ignores_generated_names_above_an_extra_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("project");
+        let extra = directory.path().join("vendor").join("shared");
+        create_project(&project);
+        create_project(&extra);
+        let config = Arc::new(FileIgnoreConfig::new(true, true, false, true, &[]));
+        let roots = [project, extra.clone()];
+        assert_eq!(walk_within(&extra, &roots, &config), vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn ignore_rules_only_see_folders_below_the_root() {
+        let config = FileIgnoreConfig::new(true, false, false, true, &[]);
+        let roots = [
+            PathBuf::from("/home/me/tmp/project"),
+            PathBuf::from("/srv/build/shared"),
+        ];
+        let hidden = |path: &str, relative: &str| {
+            config
+                .ignore_reason(scoped_path(&roots, Path::new(path)), relative, false)
+                .is_some()
+        };
+        assert!(!hidden("/home/me/tmp/project/src/main.rs", "src/main.rs"));
+        assert!(hidden(
+            "/home/me/tmp/project/node_modules/pkg/index.js",
+            "node_modules/pkg/index.js"
+        ));
+        assert!(!hidden(
+            "/srv/build/shared/lib.rs",
+            "/srv/build/shared/lib.rs"
+        ));
+        assert!(hidden(
+            "/srv/build/shared/dist/app.js",
+            "/srv/build/shared/dist/app.js"
+        ));
+        // Outside every root the whole path still counts: .env files stay guarded.
+        assert!(hidden("/etc/app/.env", "/etc/app/.env"));
     }
 
     #[test]

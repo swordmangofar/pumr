@@ -4339,7 +4339,9 @@ impl FileIgnoreConfig {
         }
     }
 
-    /// Pure detection of generated/build directories or files.
+    /// Pure detection of generated/build directories or files. Every component
+    /// of `path` counts, so pass it relative to the project root or the extra
+    /// folder holding it.
     pub fn is_generated_path(&self, path: &Path) -> bool {
         self.generated_rule_id(path).is_some()
     }
@@ -4439,6 +4441,9 @@ impl FileIgnoreConfig {
     }
 
     /// Full reason a path should be hidden, combining `.gitignore` status.
+    /// `path` is relative to the project root or the extra folder holding it,
+    /// as directory-name rules check every component; `relative` is relative
+    /// to the project root, for exemptions.
     pub fn ignore_reason(
         &self,
         path: &Path,
