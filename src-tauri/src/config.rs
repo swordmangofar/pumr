@@ -17,7 +17,7 @@ Tools:
 - Use bash to run tests, builds and git commands. Prefer project scripts (pnpm/npm scripts) over ad-hoc commands.
 - Use webfetch to read a specific URL and websearch to look things up on the web. The user must approve every new website; if a website is denied, do not retry it.
 - Use task to spawn subagents for independent work in parallel. Give each subagent a complete, self-contained prompt: it cannot see this conversation. Multiple task calls in one turn run concurrently. Prefer doing the work yourself for small tasks.
-- Use question to ask the user when you are blocked on a decision, need a preference, or requirements are ambiguous. Prefer this over ending your turn with an open question: provide concise options when a small set of choices fits, and the user can always type a custom answer. When you have a preferred option, put it first and append the literal text "(Recommendation)" to the end of its label, with a short description explaining why.
+- Use question to ask the user when you are blocked on a decision, need a preference, or requirements are ambiguous. Prefer this over ending your turn with an open question: provide concise options when a small set of choices fits, and the user can always type a custom answer. When you have a preferred option, put it first and set recommended on it, with a short description explaining why. Set multiSelect when the options are not mutually exclusive so the user can pick several.
 - Long-running commands are moved to the background automatically; tell the user they can stop them from the running processes indicator.
 - Some tool calls require user approval. Give such calls a one-sentence reason argument explaining why you need them; the user sees it in the approval prompt. If a tool is denied, do not retry it; adapt or ask the user.
 
@@ -444,6 +444,9 @@ pub struct ModelSettings {
     /// Reserved for model-generated session titles. Empty falls back to the
     /// session's model.
     pub title_model: Option<String>,
+    /// Model that drafts commit messages in the git view. Empty falls back to
+    /// the default model.
+    pub commit_message_model: Option<String>,
     /// Whether to mark the stable prompt prefix as cacheable. OpenRouter
     /// forwards the marker to providers that support prompt caching.
     pub prompt_caching: bool,
@@ -464,6 +467,7 @@ impl Default for ModelSettings {
             subagent_model: None,
             compaction_model: None,
             title_model: None,
+            commit_message_model: None,
             prompt_caching: true,
         }
     }
@@ -802,11 +806,33 @@ pub fn default_system_prompts() -> DefaultSystemPrompts {
 }
 
 pub fn load_settings(path: &Path) -> Settings {
-    let mut settings = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Settings>(&raw).ok())
-        .unwrap_or_default();
-    if migrate_settings(&mut settings) {
+    let loaded = match std::fs::read(path) {
+        Ok(raw) => serde_json::from_slice::<Settings>(&raw).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(error) => Err(error.to_string()),
+    };
+    let (mut settings, intact) = match loaded {
+        Ok(settings) => (settings, true),
+        Err(error) => {
+            // The next save replaces the file with these defaults, so keep a
+            // copy of what the user had, and do not write anything until the
+            // user actually changes a setting.
+            let backup = broken_settings_backup(path);
+            match std::fs::copy(path, &backup) {
+                Ok(_) => log::warn!(
+                    "could not read {} ({error}); using defaults, the file was copied to {}",
+                    path.display(),
+                    backup.display()
+                ),
+                Err(copy_error) => log::warn!(
+                    "could not read {} ({error}); using defaults, and the file could not be backed up: {copy_error}",
+                    path.display()
+                ),
+            }
+            (Settings::default(), false)
+        }
+    };
+    if migrate_settings(&mut settings) && intact {
         let _ = save_settings(path, &settings);
     }
     merge_default_user_system_prompts(&mut settings);
@@ -877,13 +903,60 @@ fn merge_default_modes(settings: &mut Settings) {
     }
 }
 
+/// Where an unreadable settings file is copied before defaults replace it,
+/// e.g. `settings.json.broken-20260926-143012`.
+fn broken_settings_backup(path: &Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "settings.json".to_string());
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    path.with_file_name(format!("{name}.broken-{stamp}"))
+}
+
 pub fn save_settings(path: &Path, settings: &Settings) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let raw = serde_json::to_string_pretty(settings)?;
-    std::fs::write(path, raw)?;
+    write_file_atomic(path, raw.as_bytes(), false)?;
     Ok(())
+}
+
+/// Replaces `path` with `contents` without ever leaving a half-written file
+/// behind: the data goes to a temporary file in the same directory, is flushed
+/// to disk, and then takes the original's place in a single rename. A crash or
+/// a full disk mid-write leaves the previous version intact. `private` limits
+/// the file to its owner on Unix from the moment it is created.
+pub(crate) fn write_file_atomic(path: &Path, contents: &[u8], private: bool) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    std::fs::create_dir_all(parent)?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = parent.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let written = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        let mut file = options.open(&temp)?;
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written
 }
 
 #[cfg(not(all(debug_assertions, target_os = "macos")))]
@@ -952,13 +1025,8 @@ mod dev_store {
 
     fn save(keys: &HashMap<String, String>) -> Result<()> {
         let path = path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&path, serde_json::to_string_pretty(keys)?)?;
         // The dev store holds plaintext keys; keep it readable only by the user.
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        write_file_atomic(&path, serde_json::to_string_pretty(keys)?.as_bytes(), true)?;
         Ok(())
     }
 
@@ -1104,6 +1172,45 @@ mod tests {
         assert!(!migrate_settings(&mut settings));
         assert!(!settings.permissions.auto_approve_project_commands);
         assert_eq!(settings.permissions.permission_defaults.command, "once");
+    }
+
+    #[test]
+    fn a_broken_settings_file_is_backed_up_and_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let broken = "{ \"theme\": \"dark\", oops";
+        std::fs::write(&path, broken).unwrap();
+
+        let settings = load_settings(&path);
+        assert_eq!(settings.settings_version, Settings::default().settings_version.max(1));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("settings.json.broken-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read_to_string(backups[0].path()).unwrap(), broken);
+    }
+
+    #[test]
+    fn atomic_writes_replace_the_file_and_leave_no_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("marketplaces.json");
+        write_file_atomic(&path, b"[\"a\"]", false).unwrap();
+        write_file_atomic(&path, b"[\"b\"]", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[\"b\"]");
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["marketplaces.json"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 
     #[test]

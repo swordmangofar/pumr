@@ -9,7 +9,7 @@ use crate::models::{
 use crate::permissions::{
     self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
 };
-use crate::processes::{ProcessRegistry, RunningProcess};
+use crate::processes::{kill_tree, OutputBuffer, ProcessRegistry, RunningProcess};
 use globset::Glob;
 use ignore::WalkBuilder;
 use regex::Regex;
@@ -370,7 +370,7 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "question",
-                "description": "Ask the user one or more questions and wait for their answers before continuing. Use this whenever you are blocked on a decision, need a preference, or requirements are ambiguous instead of guessing or ending your turn with an open question. Provide concise options when a small set of choices covers the answer; the user can always type a custom answer. Ask several related questions in one call.",
+                "description": "Ask the user one or more questions and wait for their answers before continuing. Use this whenever you are blocked on a decision, need a preference, or requirements are ambiguous instead of guessing or ending your turn with an open question. Provide concise options when a small set of choices covers the answer; the user can always type a custom answer. Mark the option you would pick with recommended, and set multiSelect when several options can apply at once. Ask several related questions in one call.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -389,12 +389,13 @@ fn base_tool_schemas() -> Vec<Value> {
                                             "type": "object",
                                             "properties": {
                                                 "label": { "type": "string", "description": "Short answer text" },
-                                                "description": { "type": "string", "description": "Optional clarification of what this option means" }
+                                                "description": { "type": "string", "description": "Optional clarification of what this option means" },
+                                                "recommended": { "type": "boolean", "description": "Set true on the option you recommend (list it first and say why in its description); the user sees it marked as recommended. Do not add \"(Recommended)\" to the label." }
                                             },
                                             "required": ["label"]
                                         }
                                     },
-                                    "multiSelect": { "type": "boolean", "description": "Allow selecting more than one option. Defaults to false." }
+                                    "multiSelect": { "type": "boolean", "description": "Set true when the options are not mutually exclusive so the user can pick several (checkboxes); the answer's selected list then holds every picked label. Defaults to false (pick one)." }
                                 },
                                 "required": ["question"]
                             }
@@ -675,7 +676,12 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
     if !decision.allowed {
         return ToolOutcome::refused(&decision);
     }
-    match manager.call(name, arguments.clone()).await {
+    // Stop ends the call even when the server does not answer.
+    let result = tokio::select! {
+        _ = runtime.cancel.cancelled() => return ToolOutcome::cancelled(),
+        result = manager.call(name, arguments.clone()) => result,
+    };
+    match result {
         Ok((text, is_error)) => {
             if is_error {
                 ToolOutcome::error(text)
@@ -726,12 +732,18 @@ async fn ask_question(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutco
                         if label.is_empty() {
                             return None;
                         }
+                        let (label, suffixed) = strip_recommended_suffix(label);
                         Some(QuestionOption {
                             label: label.to_string(),
                             description: entry
                                 .get("description")
                                 .and_then(Value::as_str)
                                 .map(str::to_string),
+                            recommended: suffixed
+                                || entry
+                                    .get("recommended")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false),
                         })
                     })
                     .collect()
@@ -767,6 +779,31 @@ async fn ask_question(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutco
         None => json!({ "answers": [], "skipped": true }),
     };
     ToolOutcome::ok(payload.to_string())
+}
+
+/// Older system prompts (still saved in users' settings) tell the model to
+/// mark its pick by appending "(Recommendation)" to the label. Strips such a
+/// marker so the UI shows a badge instead, and reports whether one was found.
+fn strip_recommended_suffix(label: &str) -> (&str, bool) {
+    const MARKERS: [&str; 4] = [
+        "(recommended)",
+        "(recommendation)",
+        "[recommended]",
+        "[recommendation]",
+    ];
+    // ASCII lowercasing keeps byte offsets, and every marker is ASCII, so the
+    // cut below always lands on a char boundary.
+    let lower = label.to_ascii_lowercase();
+    for marker in MARKERS {
+        if lower.ends_with(marker) {
+            let stripped = label[..label.len() - marker.len()]
+                .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '-' | '–' | '—'));
+            if !stripped.is_empty() {
+                return (stripped, true);
+            }
+        }
+    }
+    (label, false)
 }
 
 fn arg_str(arguments: &Value, key: &str) -> Result<String> {
@@ -833,6 +870,9 @@ async fn ensure_path_access(
             .map(Path::to_path_buf)
             .unwrap_or_else(|| absolute.to_path_buf())
     };
+    // Granting the home directory or `/` would open everything below it, so
+    // a path directly in one of them can only be allowed once.
+    let folder = (!permissions::is_too_broad_folder(&folder)).then(|| folder.display().to_string());
     let decision = runtime
         .broker
         .ask(
@@ -845,7 +885,7 @@ async fn ensure_path_access(
                 detail: format!("The assistant wants to access {}.", absolute.display()),
                 command: None,
                 path: Some(permission_path(absolute).display().to_string()),
-                folder: Some(folder.display().to_string()),
+                folder,
                 url: None,
                 suggested_rule: None,
                 segments: Vec::new(),
@@ -1504,6 +1544,9 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         HashSet::new()
     };
     let mut results: Vec<String> = Vec::new();
+    // Credential files are read only after a prompt (see `read_file`), so grep
+    // leaves them out instead of printing their contents.
+    let mut sensitive_skipped = 0usize;
     'outer: for path in &candidates {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
@@ -1520,6 +1563,10 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             .ignore_reason(&relative, ignored.contains(path))
             .is_some()
         {
+            continue;
+        }
+        if runtime.file_ignore.sensitive_reason(path).is_some() {
+            sensitive_skipped += 1;
             continue;
         }
         let metadata = match std::fs::metadata(path) {
@@ -1543,8 +1590,18 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             }
         }
     }
+    let skipped_note = (sensitive_skipped > 0).then(|| {
+        format!(
+            "{sensitive_skipped} file{} that look like credentials or keys were not searched; read one with the read tool to ask the user for access.",
+            if sensitive_skipped == 1 { "" } else { "s" }
+        )
+    });
     if results.is_empty() {
-        return ToolOutcome::ok(format!("No matches for '{pattern}'."));
+        let mut output = format!("No matches for '{pattern}'.");
+        if let Some(note) = skipped_note {
+            output.push_str(&format!("\n\n{note}"));
+        }
+        return ToolOutcome::ok(output);
     }
     let capped = results.len() >= 200;
     let mut output = results.join("\n");
@@ -1552,6 +1609,9 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         output.push_str(
             "\n\n… showing the first 200 matches only. Narrow the pattern or add include/path to see more.",
         );
+    }
+    if let Some(note) = skipped_note {
+        output.push_str(&format!("\n\n{note}"));
     }
     ToolOutcome::ok(output)
 }
@@ -2321,13 +2381,18 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Its own process group, so stopping the command also stops what it
+    // started (see `kill_tree`).
+    #[cfg(unix)]
+    process.process_group(0);
 
     let mut child = match process.spawn() {
         Ok(child) => child,
         Err(error) => return ToolOutcome::error(format!("Cannot start command: {error}")),
     };
+    let pid = child.id();
 
-    let output = Arc::new(Mutex::new(String::new()));
+    let output = Arc::new(Mutex::new(OutputBuffer::default()));
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
     spawn_reader(child.stdout.take(), output.clone(), sender.clone());
     spawn_reader(child.stderr.take(), output.clone(), sender.clone());
@@ -2352,7 +2417,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         tokio::select! {
             _ = runtime.cancel.cancelled() => {
                 if let Some(child) = child_handle.lock().unwrap().as_mut() {
-                    let _ = child.start_kill();
+                    kill_tree(child, pid);
                 }
                 return ToolOutcome::cancelled();
             }
@@ -2376,8 +2441,22 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         }
     }
 
-    tokio::time::sleep(Duration::from_millis(80)).await;
-    let buffered = output.lock().unwrap().clone();
+    // The shell has exited: let the readers deliver what is still in the
+    // pipes. A process it left running in the background can keep them
+    // open, so this waits only briefly.
+    if !moved_to_background {
+        let drain_until = tokio::time::Instant::now() + Duration::from_millis(500);
+        while !channel_closed {
+            match tokio::time::timeout_at(drain_until, receiver.recv()).await {
+                Ok(Some(text)) => runtime.send(StreamEvent::ToolDelta {
+                    call_id: runtime.call_id.clone(),
+                    text,
+                }),
+                Ok(None) | Err(_) => channel_closed = true,
+            }
+        }
+    }
+    let buffered = output.lock().unwrap().text();
 
     if moved_to_background {
         let id = Uuid::new_v4().to_string();
@@ -2389,6 +2468,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             started_at: crate::db::now_ms(),
             output: output.clone(),
             child: child_handle,
+            pid,
             running,
         }));
         return ToolOutcome::ok(format!(
@@ -2413,7 +2493,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
 
 fn spawn_reader<R>(
     reader: Option<R>,
-    output: Arc<Mutex<String>>,
+    output: Arc<Mutex<OutputBuffer>>,
     sender: tokio::sync::mpsc::UnboundedSender<String>,
 ) where
     R: AsyncReadExt + Unpin + Send + 'static,
@@ -2423,19 +2503,59 @@ fn spawn_reader<R>(
     };
     tokio::spawn(async move {
         let mut buffer = [0u8; 4096];
+        // Bytes of a character split across two reads.
+        let mut pending: Vec<u8> = Vec::new();
         loop {
-            match reader.read(&mut buffer).await {
-                Ok(0) | Err(_) => break,
+            let finished = match reader.read(&mut buffer).await {
+                Ok(0) | Err(_) => true,
                 Ok(read) => {
-                    let text = String::from_utf8_lossy(&buffer[..read]).to_string();
-                    output.lock().unwrap().push_str(&text);
-                    if sender.send(text).is_err() {
-                        // no receiver yet, keep buffering
-                    }
+                    pending.extend_from_slice(&buffer[..read]);
+                    false
                 }
+            };
+            let text = if finished {
+                String::from_utf8_lossy(&std::mem::take(&mut pending)).into_owned()
+            } else {
+                take_utf8(&mut pending)
+            };
+            if !text.is_empty() {
+                output.lock().unwrap().push(&text);
+                // Nobody listens once the command moved to the background.
+                let _ = sender.send(text);
+            }
+            if finished {
+                break;
             }
         }
     });
+}
+
+/// Decodes the complete UTF-8 at the start of `pending` and keeps a
+/// character that is cut off at its end for the next read. Invalid bytes
+/// become U+FFFD.
+pub(crate) fn take_utf8(pending: &mut Vec<u8>) -> String {
+    let mut text = String::new();
+    loop {
+        let (valid, invalid) = match std::str::from_utf8(pending) {
+            Ok(valid) => {
+                text.push_str(valid);
+                pending.clear();
+                return text;
+            }
+            Err(error) => (error.valid_up_to(), error.error_len()),
+        };
+        text.push_str(&String::from_utf8_lossy(&pending[..valid]));
+        match invalid {
+            None => {
+                pending.drain(..valid);
+                return text;
+            }
+            Some(length) => {
+                text.push('\u{FFFD}');
+                pending.drain(..valid + length);
+            }
+        }
+    }
 }
 
 fn spawn_waiter(
@@ -2833,6 +2953,57 @@ mod tests {
     }
 
     #[test]
+    fn recommended_suffixes_are_stripped_from_labels() {
+        assert_eq!(strip_recommended_suffix("Use Postgres (Recommendation)"), ("Use Postgres", true));
+        assert_eq!(strip_recommended_suffix("Use Postgres (recommended)"), ("Use Postgres", true));
+        assert_eq!(strip_recommended_suffix("Ja – [Recommended]"), ("Ja", true));
+        assert_eq!(strip_recommended_suffix("Größer (Recommended)"), ("Größer", true));
+        assert_eq!(strip_recommended_suffix("(Recommended)"), ("(Recommended)", false));
+        assert_eq!(strip_recommended_suffix("Recommended settings"), ("Recommended settings", false));
+    }
+
+    #[tokio::test]
+    async fn question_options_carry_the_recommendation_and_multi_select() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+        let asked: Arc<Mutex<Vec<QuestionItem>>> = Arc::default();
+        let sink = asked.clone();
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::QuestionRequest { questions, .. } = routed.event {
+                *sink.lock().unwrap() = questions;
+            }
+        });
+        // Already cancelled, so the question is announced and then skipped.
+        runtime.cancel.cancel();
+
+        let outcome = ask_question(
+            &mut runtime,
+            &json!({ "questions": [{
+                "question": "Which features?",
+                "multiSelect": true,
+                "options": [
+                    { "label": "Search", "recommended": true },
+                    { "label": "Export (Recommendation)" },
+                    { "label": "Sync" }
+                ]
+            }] }),
+        )
+        .await;
+
+        assert_eq!(outcome.result, r#"{"answers":[],"skipped":true}"#);
+        let asked = asked.lock().unwrap();
+        assert!(asked[0].multi_select);
+        let options: Vec<(&str, bool)> = asked[0]
+            .options
+            .iter()
+            .map(|option| (option.label.as_str(), option.recommended))
+            .collect();
+        assert_eq!(options, [("Search", true), ("Export", true), ("Sync", false)]);
+    }
+
+    #[test]
     fn duckduckgo_results_are_parsed() {
         let html = r#"
             <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.rs%2Fserde&amp;rut=x">serde - <b>Rust</b></a>
@@ -2945,5 +3116,33 @@ mod tests {
             assert_eq!(outcome.status, "canceled", "{decided_by}");
             assert_ne!(outcome.result, user.result, "{decided_by}");
         }
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn characters_split_across_reads_are_decoded_whole() {
+        let bytes = "Grüße 🦀".as_bytes();
+        let mut pending = Vec::new();
+        let mut text = String::new();
+        for chunk in bytes.chunks(1) {
+            pending.extend_from_slice(chunk);
+            text.push_str(&take_utf8(&mut pending));
+        }
+        assert_eq!(text, "Grüße 🦀");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn invalid_bytes_become_replacement_characters() {
+        let mut pending = vec![b'a', 0xff, b'b'];
+        assert_eq!(take_utf8(&mut pending), "a\u{FFFD}b");
+        // A cut-off character waits for the rest.
+        let mut pending = vec![b'x', 0xc3];
+        assert_eq!(take_utf8(&mut pending), "x");
+        assert_eq!(pending, vec![0xc3]);
     }
 }

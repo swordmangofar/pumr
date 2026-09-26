@@ -12,6 +12,10 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
+mod hunks;
+
+pub use hunks::{git_apply_lines, project_file_hunks};
+
 const DEFAULT_EXCLUDES: &str = "\
 node_modules/
 dist/
@@ -569,6 +573,19 @@ impl ShadowRepo {
     pub fn changes_between(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
         let _guard = lock_ignoring_poison(&self.lock);
         self.diff_unlocked(&[base, after])
+    }
+
+    /// Whether `ancestor` is `commit` or one of its ancestors. Snapshots form
+    /// one line of history, so this says which of two was taken first.
+    pub fn is_ancestor(&self, ancestor: &str, commit: &str) -> bool {
+        if ancestor.is_empty() || commit.is_empty() {
+            return false;
+        }
+        self.command()
+            .args(["merge-base", "--is-ancestor", ancestor, commit])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
     }
 
     /// Loads `relative_path` as of `commit` for a diff.
@@ -1457,40 +1474,42 @@ pub fn git_discard_paths(project_root: &Path, paths: &[String]) -> Result<()> {
     if paths.is_empty() {
         return Ok(());
     }
+    with_repo_lock(project_root, || discard_paths_unlocked(project_root, paths))
+}
+
+fn discard_paths_unlocked(project_root: &Path, paths: &[String]) -> Result<()> {
     let entries = paths
         .iter()
         .map(|path| project_entry(project_root, path))
         .collect::<Result<Vec<_>>>()?;
-    with_repo_lock(project_root, || {
-        let index: BTreeSet<String> =
-            nul_entries(&git_bytes(project_root, &["ls-files", "-z"])?).collect();
-        // A folder counts as tracked when the index has files inside it.
-        let tracked_folder = |path: &str| {
-            let prefix = format!("{}/", path.trim_end_matches('/'));
-            index
-                .range::<str, _>((Bound::Included(prefix.as_str()), Bound::Unbounded))
-                .next()
-                .is_some_and(|entry| entry.starts_with(&prefix))
-        };
-        let mut restore = Vec::new();
-        let mut delete = Vec::new();
-        for (path, entry) in paths.iter().zip(entries) {
-            if index.contains(path.as_str()) || tracked_folder(path) {
-                restore.push(path.as_str());
-            } else {
-                delete.push(entry);
-            }
+    let index: BTreeSet<String> =
+        nul_entries(&git_bytes(project_root, &["ls-files", "-z"])?).collect();
+    // A folder counts as tracked when the index has files inside it.
+    let tracked_folder = |path: &str| {
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+        index
+            .range::<str, _>((Bound::Included(prefix.as_str()), Bound::Unbounded))
+            .next()
+            .is_some_and(|entry| entry.starts_with(&prefix))
+    };
+    let mut restore = Vec::new();
+    let mut delete = Vec::new();
+    for (path, entry) in paths.iter().zip(entries) {
+        if index.contains(path.as_str()) || tracked_folder(path) {
+            restore.push(path.as_str());
+        } else {
+            delete.push(entry);
         }
-        for chunk in restore.chunks(PATH_CHUNK) {
-            let mut args = vec!["checkout", "--"];
-            args.extend(chunk);
-            git_stdout(project_root, &args)?;
-        }
-        for entry in delete {
-            remove_entry(&entry)?;
-        }
-        Ok(())
-    })
+    }
+    for chunk in restore.chunks(PATH_CHUNK) {
+        let mut args = vec!["checkout", "--"];
+        args.extend(chunk);
+        git_stdout(project_root, &args)?;
+    }
+    for entry in delete {
+        remove_entry(&entry)?;
+    }
+    Ok(())
 }
 
 /// Returns the per-line blame for a tracked file.
@@ -1650,6 +1669,145 @@ pub fn git_commit(project_root: &Path, message: &str, amend: bool) -> Result<Str
         args.push("--amend");
     }
     with_repo_lock(project_root, || git_combined(project_root, &args))
+}
+
+/// Whether `hash` names a commit with more than one parent.
+fn is_merge_commit(project_root: &Path, hash: &str) -> bool {
+    git_stdout_opt(project_root, &["rev-list", "--parents", "-n", "1", hash, "--"])
+        .is_some_and(|line| line.split_whitespace().count() > 2)
+}
+
+/// Applies the change a commit introduced on top of HEAD. A merge commit is
+/// replayed against its first parent, the branch it was merged into.
+pub fn git_cherry_pick(project_root: &Path, hash: &str) -> Result<String> {
+    let hash = ensure_hash(hash)?;
+    with_repo_lock(project_root, || {
+        let mut args = vec!["cherry-pick"];
+        if is_merge_commit(project_root, hash) {
+            args.extend(["-m", "1"]);
+        }
+        args.push(hash);
+        git_combined(project_root, &args)
+    })
+}
+
+/// Commits the inverse of a commit, relative to its first parent for a merge.
+pub fn git_revert(project_root: &Path, hash: &str) -> Result<String> {
+    let hash = ensure_hash(hash)?;
+    with_repo_lock(project_root, || {
+        let mut args = vec!["revert", "--no-edit"];
+        if is_merge_commit(project_root, hash) {
+            args.extend(["-m", "1"]);
+        }
+        args.push(hash);
+        git_combined(project_root, &args)
+    })
+}
+
+/// Moves the current branch to a commit. `soft` keeps the changes staged,
+/// `mixed` keeps them in the work tree and `hard` throws them away.
+pub fn git_reset(project_root: &Path, hash: &str, mode: &str) -> Result<String> {
+    let hash = ensure_hash(hash)?;
+    let flag = match mode {
+        "soft" => "--soft",
+        "mixed" => "--mixed",
+        "hard" => "--hard",
+        other => return Err(AppError::msg(format!("invalid reset mode: {other:?}"))),
+    };
+    with_repo_lock(project_root, || {
+        git_combined(project_root, &["reset", flag, hash, "--"])
+    })
+}
+
+/// Checks out a commit without a branch (a detached HEAD).
+pub fn git_checkout_commit(project_root: &Path, hash: &str) -> Result<String> {
+    let hash = ensure_hash(hash)?;
+    with_repo_lock(project_root, || {
+        git_combined(project_root, &["checkout", "--detach", hash, "--"])
+    })
+}
+
+/// Resolves a conflicted path with one side's version: `ours` is what HEAD
+/// had, `theirs` the change being merged, rebased or picked. When that side
+/// deleted the file, resolving removes it.
+pub fn git_resolve_conflict(project_root: &Path, path: &str, side: &str) -> Result<()> {
+    let path = ensure_relative_path(path)?;
+    let (flag, stage) = match side {
+        "ours" => ("--ours", "2"),
+        "theirs" => ("--theirs", "3"),
+        other => return Err(AppError::msg(format!("invalid conflict side: {other:?}"))),
+    };
+    with_repo_lock(project_root, || {
+        let output = git_bytes(project_root, &["ls-files", "-u", "-z", "--", path])?;
+        let stages: Vec<String> = nul_entries(&output)
+            .filter_map(|entry| {
+                let (meta, name) = entry.split_once('\t')?;
+                (name == path).then(|| meta.split(' ').nth(2).unwrap_or_default().to_string())
+            })
+            .collect();
+        if stages.is_empty() {
+            return Err(AppError::msg(format!("{path} has no conflict")));
+        }
+        if stages.iter().any(|entry| entry == stage) {
+            git_stdout(project_root, &["checkout", flag, "--", path])?;
+            git_stdout(project_root, &["add", "--", path])?;
+        } else {
+            git_stdout(project_root, &["rm", "--quiet", "--", path])?;
+        }
+        Ok(())
+    })
+}
+
+/// What a commit message is written from.
+pub struct StagedSummary {
+    pub branch: Option<String>,
+    pub stat: String,
+    /// The staged diff, cut to the requested size.
+    pub patch: String,
+    pub truncated: bool,
+    /// Subjects of recent commits, newest first, for the project's style.
+    pub recent_subjects: Vec<String>,
+}
+
+pub fn staged_summary(project_root: &Path, max_patch_chars: usize) -> Result<StagedSummary> {
+    let stat = git_stdout(
+        project_root,
+        &["diff", "--cached", "--no-color", "--no-ext-diff", "--stat=160"],
+    )?;
+    if stat.trim().is_empty() {
+        return Err(AppError::msg("nothing is staged"));
+    }
+    let raw = git_bytes(
+        project_root,
+        &[
+            "diff",
+            "--cached",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-U2",
+        ],
+    )?;
+    let full = String::from_utf8_lossy(&raw);
+    let truncated = full.chars().count() > max_patch_chars;
+    let patch = if truncated {
+        full.chars().take(max_patch_chars).collect()
+    } else {
+        full.into_owned()
+    };
+    let recent_subjects = git_stdout_opt(
+        project_root,
+        &["log", "-n", "12", "--no-merges", "--format=%s", "--"],
+    )
+    .map(|text| text.lines().map(str::to_string).collect())
+    .unwrap_or_default();
+    Ok(StagedSummary {
+        branch: project_current_branch(project_root),
+        stat,
+        patch,
+        truncated,
+        recent_subjects,
+    })
 }
 
 pub fn git_checkout(
@@ -3544,5 +3702,158 @@ mod tests {
         )
         .unwrap();
         assert_eq!(refs(&project).submodules, vec!["libs/shared code"]);
+    }
+
+    fn head(project: &Path) -> String {
+        sh(project, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn commits_can_be_cherry_picked_and_reverted() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let default = project_current_branch(&project).expect("default branch");
+        git_branch_create(&project, "feature", Some("HEAD"), true).unwrap();
+        std::fs::write(project.join("feature.txt"), "feature\n").unwrap();
+        commit(&project, "add feature");
+        let picked = head(&project);
+        git_checkout(&project, &default, false, None).unwrap();
+        std::fs::write(project.join("main.txt"), "main\n").unwrap();
+        commit(&project, "main moves on");
+
+        git_cherry_pick(&project, &picked).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join("feature.txt")).unwrap(),
+            "feature\n"
+        );
+        let cherry = head(&project);
+        assert_ne!(cherry, picked);
+
+        git_revert(&project, &cherry).unwrap();
+        assert!(!project.join("feature.txt").exists());
+        let subject = sh(&project, &["log", "-1", "--format=%s"]);
+        assert!(subject.starts_with("Revert"), "{subject}");
+        assert!(git_revert(&project, "--hard").is_err());
+    }
+
+    #[test]
+    fn merge_commits_are_picked_against_their_first_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let default = project_current_branch(&project).expect("default branch");
+        git_branch_create(&project, "feature", Some("HEAD"), true).unwrap();
+        std::fs::write(project.join("feature.txt"), "feature\n").unwrap();
+        commit(&project, "feature");
+        git_checkout(&project, &default, false, None).unwrap();
+        std::fs::write(project.join("main.txt"), "main\n").unwrap();
+        commit(&project, "main");
+        sh(&project, &["merge", "--no-ff", "-q", "-m", "merge feature", "feature"]);
+        let merge = head(&project);
+        assert!(is_merge_commit(&project, &merge));
+
+        git_revert(&project, &merge).unwrap();
+        assert!(!project.join("feature.txt").exists());
+        assert!(project.join("main.txt").exists());
+    }
+
+    #[test]
+    fn reset_modes_keep_or_drop_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let base = head(&project);
+        std::fs::write(project.join("tracked.txt"), "two\n").unwrap();
+        commit(&project, "second");
+
+        git_reset(&project, &base, "soft").unwrap();
+        assert_eq!(head(&project), base);
+        let status = project_git_status(&project).unwrap();
+        assert!(status.staged.iter().any(|change| change.path == "tracked.txt"));
+
+        git_reset(&project, &base, "mixed").unwrap();
+        let status = project_git_status(&project).unwrap();
+        assert!(status.staged.is_empty());
+        assert!(status.unstaged.iter().any(|change| change.path == "tracked.txt"));
+
+        git_reset(&project, &base, "hard").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project.join("tracked.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(git_reset(&project, &base, "keep").is_err());
+    }
+
+    #[test]
+    fn a_commit_can_be_checked_out_detached() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let base = head(&project);
+        std::fs::write(project.join("tracked.txt"), "two\n").unwrap();
+        commit(&project, "second");
+
+        git_checkout_commit(&project, &base).unwrap();
+        assert_eq!(head(&project), base);
+        assert_eq!(project_current_branch(&project), None);
+    }
+
+    #[test]
+    fn conflicts_resolve_with_either_side() {
+        for (side, expected) in [("ours", "main\n"), ("theirs", "feature\n")] {
+            let temp = tempfile::tempdir().unwrap();
+            let project = temp.path().join("project");
+            init_repo(&project);
+            start_conflicting_merge(&project);
+
+            git_resolve_conflict(&project, "tracked.txt", side).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(project.join("tracked.txt")).unwrap(),
+                expected
+            );
+            let status = project_git_status(&project).unwrap();
+            assert!(status.conflicted.is_empty());
+            assert!(git_resolve_conflict(&project, "tracked.txt", side).is_err());
+        }
+    }
+
+    #[test]
+    fn resolving_with_the_deleting_side_removes_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let default = project_current_branch(&project).expect("default branch");
+        git_branch_create(&project, "feature", Some("HEAD"), true).unwrap();
+        sh(&project, &["rm", "-q", "--", "tracked.txt"]);
+        sh(&project, &["commit", "-q", "-m", "delete"]);
+        git_checkout(&project, &default, false, None).unwrap();
+        std::fs::write(project.join("tracked.txt"), "changed\n").unwrap();
+        commit(&project, "change");
+        assert!(git_merge(&project, "feature").is_err());
+
+        git_resolve_conflict(&project, "tracked.txt", "theirs").unwrap();
+        assert!(!project.join("tracked.txt").exists());
+        assert!(project_git_status(&project).unwrap().conflicted.is_empty());
+    }
+
+    #[test]
+    fn staged_summary_lists_the_staged_diff_and_recent_subjects() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        assert!(staged_summary(&project, 1000).is_err());
+
+        std::fs::write(project.join("tracked.txt"), "one\ntwo\n").unwrap();
+        git_stage(&project, None).unwrap();
+        let summary = staged_summary(&project, 1000).unwrap();
+        assert!(summary.stat.contains("tracked.txt"));
+        assert!(summary.patch.contains("+two"));
+        assert!(!summary.truncated);
+        assert_eq!(summary.recent_subjects, vec!["init".to_string()]);
+
+        let summary = staged_summary(&project, 10).unwrap();
+        assert!(summary.truncated);
+        assert_eq!(summary.patch.chars().count(), 10);
     }
 }

@@ -15,6 +15,7 @@ mod permissions;
 mod power;
 mod processes;
 mod providers;
+mod shell_lex;
 mod state;
 mod tools;
 mod window;
@@ -131,6 +132,14 @@ pub fn run() {
             commands::get_git_commit,
             commands::get_git_commit_file_diff,
             commands::get_git_file_diff,
+            commands::get_git_file_hunks,
+            commands::git_apply_lines,
+            commands::git_resolve_conflict,
+            commands::git_cherry_pick,
+            commands::git_revert,
+            commands::git_reset,
+            commands::git_checkout_commit,
+            commands::git_generate_commit_message,
             commands::git_stage,
             commands::git_stage_paths,
             commands::git_unstage,

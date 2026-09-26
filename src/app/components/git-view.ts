@@ -6,10 +6,19 @@ import {
   effect,
   inject,
   signal,
+  viewChild,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { confirmWarning } from '../core/confirm-warning';
-import { FileChange, GitCommit, GitOperation, GitPullStrategy } from '../core/models';
+import {
+  FileChange,
+  GIT_WHOLE_FILE_CONTEXT,
+  GitCommit,
+  GitConflictSide,
+  GitDiffOptions,
+  GitOperation,
+  GitPullStrategy,
+} from '../core/models';
 import {
   GIT_GRAPH_RADIUS,
   GIT_GRAPH_ROW_HEIGHT,
@@ -21,7 +30,9 @@ import { GitService } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
+import { GitCommitMenu } from './git-commit-menu';
 import { GitFileMenu } from './git-file-menu';
+import { DiffQuestion, HunkDiffView, LineActionRequest } from './hunk-diff-view';
 import { TypedInput } from './typed-input';
 
 /** Fixed height of a changed-file row, shared by the list and its spacers. */
@@ -45,7 +56,16 @@ interface VirtualWindow {
 @Component({
   selector: 'app-git-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe, ChangeStatusIcon, DiffView, FileIcon, GitFileMenu],
+  imports: [
+    TypedInput,
+    TranslocoPipe,
+    ChangeStatusIcon,
+    DiffView,
+    FileIcon,
+    GitCommitMenu,
+    GitFileMenu,
+    HunkDiffView,
+  ],
   template: `
     <div class="flex h-full min-h-0 flex-col">
       <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/5 px-3 py-2">
@@ -323,6 +343,7 @@ interface VirtualWindow {
                     : 'text-mist/70 hover:bg-white/5'
                 "
                 (click)="selectCommit(row.commit)"
+                (contextmenu)="openCommitMenu($event, row.commit)"
               >
                 <svg
                   class="shrink-0"
@@ -726,9 +747,11 @@ interface VirtualWindow {
                   <header
                     class="flex shrink-0 items-center gap-3 border-b border-white/5 px-4 py-1.5"
                   >
-                    <span class="min-w-0 flex-1 truncate font-mono text-xs text-mist/60">{{
-                      active.path
-                    }}</span>
+                    <span
+                      class="min-w-0 flex-1 truncate font-mono text-xs text-mist/60"
+                      [title]="active.path"
+                      >{{ active.path }}</span
+                    >
                     @if (active.staged) {
                       <span
                         class="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] text-accent"
@@ -737,13 +760,156 @@ interface VirtualWindow {
                       </span>
                     }
                     <span class="shrink-0 text-xs text-emerald-400"
-                      >+{{ active.diff.additions }}</span
+                      >+{{ active.hunks.additions }}</span
                     >
-                    <span class="shrink-0 text-xs text-rose-400">-{{ active.diff.deletions }}</span>
+                    <span class="shrink-0 text-xs text-rose-400"
+                      >-{{ active.hunks.deletions }}</span
+                    >
+                    @if (!active.conflict) {
+                      <div class="flex shrink-0 items-center gap-0.5">
+                        <select
+                          class="mr-1 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] text-mist/60 focus:border-accent/50 focus:outline-none"
+                          [title]="'git.diff.context' | transloco"
+                          [value]="diffOptions().context"
+                          (change)="onContextChange($any($event.target).value)"
+                        >
+                          @for (choice of contextChoices; track choice) {
+                            <option [value]="choice">
+                              {{
+                                choice === wholeFile
+                                  ? ('git.diff.wholeFile' | transloco)
+                                  : ('git.diff.contextLines' | transloco: { count: choice })
+                              }}
+                            </option>
+                          }
+                        </select>
+                        <button
+                          type="button"
+                          class="diff-tool"
+                          [class.diff-tool-active]="diffOptions().ignoreWhitespace"
+                          [attr.aria-pressed]="diffOptions().ignoreWhitespace"
+                          [title]="'git.diff.ignoreWhitespace' | transloco"
+                          (click)="setDiffOption({ ignoreWhitespace: !diffOptions().ignoreWhitespace })"
+                        >
+                          <span class="text-[13px] leading-none">¶</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="diff-tool"
+                          [class.diff-tool-active]="diffOptions().layout === 'split'"
+                          [attr.aria-pressed]="diffOptions().layout === 'split'"
+                          [title]="'git.diff.splitView' | transloco"
+                          (click)="
+                            setDiffOption({
+                              layout: diffOptions().layout === 'split' ? 'unified' : 'split',
+                            })
+                          "
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.4"
+                            stroke-linejoin="round"
+                          >
+                            <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                            <path d="M8 3v10" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="diff-tool"
+                          [class.diff-tool-active]="diffOptions().wrap"
+                          [attr.aria-pressed]="diffOptions().wrap"
+                          [title]="'git.diff.wrapLines' | transloco"
+                          (click)="setDiffOption({ wrap: !diffOptions().wrap })"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.4"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M2.5 4h11M2.5 8h9a2 2 0 0 1 0 4H8m1.5-1.5L8 12l1.5 1.5M2.5 12h3" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="diff-tool"
+                          [title]="'git.diff.findTitle' | transloco"
+                          (click)="openFind()"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.4"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <circle cx="7" cy="7" r="4.5" />
+                            <path d="m10.5 10.5 3 3" />
+                          </svg>
+                        </button>
+                        <span
+                          class="diff-tool cursor-help text-[11px]"
+                          [title]="'git.diff.shortcuts' | transloco"
+                          >?</span
+                        >
+                      </div>
+                    }
                   </header>
-                  <div class="min-h-0 flex-1">
-                    <app-diff-view [diff]="active.diff" />
-                  </div>
+                  @if (active.conflict; as conflict) {
+                    <div
+                      class="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-[11px] text-amber-200"
+                    >
+                      <span class="min-w-0 flex-1">{{ 'git.conflict.fileHint' | transloco }}</span>
+                      <button
+                        type="button"
+                        class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-100 transition-colors hover:bg-white/10 disabled:opacity-40"
+                        [disabled]="busy()"
+                        (click)="resolveConflict(active.path, 'ours')"
+                      >
+                        {{ 'git.conflict.useOurs' | transloco }}
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-100 transition-colors hover:bg-white/10 disabled:opacity-40"
+                        [disabled]="busy()"
+                        (click)="resolveConflict(active.path, 'theirs')"
+                      >
+                        {{ 'git.conflict.useTheirs' | transloco }}
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-100 transition-colors hover:bg-white/10 disabled:opacity-40"
+                        [disabled]="busy()"
+                        (click)="markResolved(active.path, conflict.newContent)"
+                      >
+                        {{ 'git.conflict.markResolved' | transloco }}
+                      </button>
+                    </div>
+                    <div class="min-h-0 flex-1">
+                      <app-diff-view [diff]="conflict" />
+                    </div>
+                  } @else {
+                    <div class="min-h-0 flex-1">
+                      <app-hunk-diff-view
+                        [diff]="active.hunks"
+                        [layout]="diffOptions().layout"
+                        [wrap]="diffOptions().wrap"
+                        [busy]="busy()"
+                        (lineAction)="onLineAction($event)"
+                        (ask)="askPumr($event)"
+                        (showWhitespace)="setDiffOption({ ignoreWhitespace: false })"
+                      />
+                    </div>
+                  }
                 </div>
               } @else {
                 <div class="flex h-full items-center justify-center">
@@ -753,13 +919,34 @@ interface VirtualWindow {
             </div>
 
             <div class="shrink-0 border-t border-white/10 p-3">
-              <input
-                type="text"
-                class="w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
-                [placeholder]="'git.commitSubject' | transloco"
-                [value]="subject()"
-                (typedValue)="subject.set($event)"
-              />
+              <div class="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  class="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
+                  [placeholder]="'git.commitSubject' | transloco"
+                  [value]="subject()"
+                  (typedValue)="subject.set($event)"
+                />
+                <button
+                  type="button"
+                  class="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-mist/60 transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  [disabled]="staged().length === 0 || generating()"
+                  [title]="'git.generateMessage' | transloco"
+                  [attr.aria-label]="'git.generateMessage' | transloco"
+                  (click)="generateMessage()"
+                >
+                  @if (generating()) {
+                    <svg viewBox="0 0 16 16" class="h-3.5 w-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                      <path d="M8 2a6 6 0 1 1-6 6" />
+                    </svg>
+                  } @else {
+                    <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M8 2.5 9.2 6 12.5 7.2 9.2 8.4 8 12 6.8 8.4 3.5 7.2 6.8 6z" />
+                      <path d="M12.5 2v2.5M11.25 3.25h2.5" />
+                    </svg>
+                  }
+                </button>
+              </div>
               <textarea
                 rows="2"
                 class="mt-1.5 w-full resize-none rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
@@ -807,10 +994,43 @@ interface VirtualWindow {
         [path]="menu.path"
         [paths]="menu.paths"
         [staged]="menu.staged"
+        [conflicted]="conflicted().includes(menu.path)"
         [x]="menu.x"
         [y]="menu.y"
         (closed)="closeFileMenu()"
       />
+    }
+
+    @if (commitMenu(); as menu) {
+      <app-git-commit-menu
+        [commit]="menu.commit"
+        [x]="menu.x"
+        [y]="menu.y"
+        [currentBranch]="status()?.branch ?? null"
+        (closed)="commitMenu.set(null)"
+      />
+    }
+  `,
+  styles: `
+    .diff-tool {
+      display: flex;
+      height: 1.5rem;
+      width: 1.5rem;
+      align-items: center;
+      justify-content: center;
+      border-radius: 0.375rem;
+      color: rgb(from var(--color-mist) r g b / 0.45);
+      transition:
+        background-color 120ms ease,
+        color 120ms ease;
+    }
+    .diff-tool:hover {
+      background: rgb(255 255 255 / 0.08);
+      color: var(--color-mist);
+    }
+    .diff-tool-active {
+      background: rgb(from var(--color-accent) r g b / 0.15);
+      color: var(--color-accent);
     }
   `,
 })
@@ -862,6 +1082,14 @@ export class GitView {
     x: number;
     y: number;
   } | null>(null);
+  protected readonly commitMenu = signal<{ commit: GitCommit; x: number; y: number } | null>(
+    null,
+  );
+  protected readonly generating = signal(false);
+  protected readonly diffOptions = this.git.diffOptions;
+  protected readonly wholeFile = GIT_WHOLE_FILE_CONTEXT;
+  protected readonly contextChoices = [3, 10, 25, GIT_WHOLE_FILE_CONTEXT];
+  private readonly hunkView = viewChild(HunkDiffView);
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private dateFormat: { lang: string; format: Intl.DateTimeFormat } | null = null;
 
@@ -1210,6 +1438,87 @@ export class GitView {
 
   protected closeFileMenu(): void {
     this.fileMenu.set(null);
+  }
+
+  protected openCommitMenu(event: MouseEvent, commit: GitCommit): void {
+    event.preventDefault();
+    this.commitMenu.set({ commit, x: event.clientX, y: event.clientY });
+  }
+
+  protected setDiffOption(patch: Partial<GitDiffOptions>): void {
+    this.git.setDiffOptions(this.project()?.id ?? null, patch);
+  }
+
+  protected onContextChange(value: string): void {
+    const context = Number(value);
+    if (Number.isInteger(context) && context > 0) {
+      this.setDiffOption({ context });
+    }
+  }
+
+  protected openFind(): void {
+    this.hunkView()?.openFind();
+  }
+
+  /** Discarding lines cannot be undone, so it is confirmed like a whole-file discard. */
+  protected async onLineAction(request: LineActionRequest): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    if (
+      request.action === 'discard' &&
+      !(await confirmWarning(
+        this.transloco.translate('git.diff.discardConfirm', { count: request.lines.length }),
+      ))
+    ) {
+      return;
+    }
+    await this.git.applyLines(projectId, request.action, request.lines);
+  }
+
+  protected askPumr(question: DiffQuestion): void {
+    this.workspace.askInChat({
+      mention: { kind: 'file', value: question.path, label: this.baseName(question.path) },
+      text: question.text,
+    });
+  }
+
+  protected async resolveConflict(path: string, side: GitConflictSide): Promise<void> {
+    const projectId = this.project()?.id;
+    if (projectId) {
+      await this.git.resolveConflict(projectId, path, side);
+    }
+  }
+
+  /** Marks a conflict resolved, after asking when conflict markers are still in the file. */
+  protected async markResolved(path: string, content: string): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId) {
+      return;
+    }
+    const markers = /^(<{7}|>{7})(\s|$)/m.test(content);
+    if (markers && !(await confirmWarning(this.transloco.translate('git.conflict.markersLeft')))) {
+      return;
+    }
+    await this.git.stagePath(projectId, path);
+  }
+
+  protected async generateMessage(): Promise<void> {
+    const projectId = this.project()?.id;
+    if (!projectId || this.generating()) {
+      return;
+    }
+    this.generating.set(true);
+    try {
+      const message = await this.git.generateCommitMessage(projectId);
+      if (message) {
+        this.subject.set(message.subject);
+        this.description.set(message.body);
+      }
+    } finally {
+      this.generating.set(false);
+    }
   }
 
   protected clearCommitPath(): void {

@@ -45,6 +45,7 @@ export const FALLBACK_SETTINGS: Settings = {
   subagentModel: null,
   compactionModel: null,
   titleModel: null,
+  commitMessageModel: null,
   promptCaching: true,
   commandRules: [],
   deniedCommandRules: [],

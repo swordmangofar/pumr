@@ -15,7 +15,7 @@ Rules:
    `bg, cs, da, de, el, es, et, fi, fr, ga, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, sk, sl, sv`.
    A key that exists in only some languages is considered incomplete.
 4. **Keep key parity.** Every locale must have exactly the same set of flat keys as
-   `en.json` (currently 741 keys). The language JSON files are flat-namespaced with
+   `en.json` (currently 931 keys). The language JSON files are flat-namespaced with
    identical nesting and ordering; insert new keys next to their English siblings.
 5. **Preserve interpolations exactly.** Placeholders such as `{{ count }}`,
    `{{ current }}`, `{{ total }}`, `{{ version }}`, `{{ progress }}` and `{{ names }}`

@@ -7,7 +7,8 @@ use crate::mcp::McpManager;
 use crate::mentions;
 use crate::models::{
     Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine,
-    GitCommit, GitCommitDetail, GitInfo, GitRefs, GitStatus, Mention, Message, ModelInfo,
+    GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus, Mention, Message,
+    ModelInfo,
     PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
     RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry,
     WorkspaceFile,
@@ -74,8 +75,15 @@ fn validate_base_url(url: &str) -> std::result::Result<(), String> {
     match parsed.scheme() {
         "https" => Ok(()),
         "http" => {
+            // IPv6 hosts come back in brackets ("[::1]").
             let host = parsed.host_str().unwrap_or("");
-            if matches!(host, "localhost" | "127.0.0.1" | "::1") {
+            let loopback = host == "localhost"
+                || host
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback());
+            if loopback {
                 Ok(())
             } else {
                 Err("The base URL must use https (http is only allowed for localhost).".to_string())
@@ -180,8 +188,32 @@ pub fn add_project(state: State<'_, AppState>, path: String) -> Result<Project> 
     state.db.upsert_project(&canonical.to_string_lossy())
 }
 
+/// How long deleting waits for stopped turns to unwind, so they do not write
+/// into sessions that are already gone.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Stops the turns, processes, prompts and MCP servers of sessions that are
+/// about to be deleted, forgets their chat grants, and waits (briefly) until
+/// the stopped turns have finished.
+async fn stop_for_deletion(state: &AppState, session_ids: &[String]) {
+    let finished = state.stop_sessions(session_ids);
+    for id in session_ids {
+        state.permissions.clear_session(id);
+    }
+    let all_finished = async {
+        for token in finished {
+            token.cancelled().await;
+        }
+    };
+    if tokio::time::timeout(STOP_GRACE, all_finished).await.is_err() {
+        log::warn!("a stopped turn was still running when its session was deleted");
+    }
+}
+
 #[tauri::command]
-pub fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<()> {
+pub async fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<()> {
+    let session_ids = state.db.project_session_ids(&project_id)?;
+    stop_for_deletion(&state, &session_ids).await;
     state.db.remove_project(&project_id)?;
     // The shadow repository keeps a copy of every snapshot; nothing refers to
     // it once the project is gone.
@@ -301,16 +333,20 @@ pub fn archive_session(
     archived: bool,
 ) -> Result<Session> {
     if archived {
-        state.processes.stop_for_session(&session_id);
-        state.cancel(&session_id);
+        // Subagent sessions below the chat can run turns of their own.
+        state.stop_sessions(&state.db.session_tree(&session_id)?);
     }
     state.db.set_session_archived(&session_id, archived)
 }
 
+/// Deletes a chat with its subagent sessions, after stopping everything that
+/// still runs for any of them: otherwise the model call, tool batch and
+/// subagents of a running turn would carry on (and keep costing money) with
+/// no chat left to show them.
 #[tauri::command]
-pub fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<()> {
-    state.processes.stop_for_session(&session_id);
-    state.permissions.clear_session(&session_id);
+pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<()> {
+    let session_ids = state.db.session_tree(&session_id)?;
+    stop_for_deletion(&state, &session_ids).await;
     state.db.delete_session(&session_id)
 }
 
@@ -347,7 +383,7 @@ pub fn get_spend_stats(
 
 #[tauri::command]
 pub fn stop_generation(state: State<'_, AppState>, session_id: String) {
-    state.cancel(&session_id);
+    state.stop_session(&session_id);
 }
 
 /// Chat turns that are still running and the prompts they wait on, for a
@@ -1328,6 +1364,41 @@ pub async fn get_git_file_diff(
     .await
 }
 
+/// The diff of one changed path split into hunks, for line staging.
+#[tauri::command]
+pub async fn get_git_file_hunks(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+    staged: bool,
+    context: u32,
+    ignore_whitespace: bool,
+) -> Result<GitHunkDiff> {
+    in_project(&state, &project_id, move |root| {
+        git::project_file_hunks(root, &path, staged, context, ignore_whitespace)
+    })
+    .await
+}
+
+/// Stages, unstages or discards single lines of a hunk diff.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn git_apply_lines(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+    staged: bool,
+    action: String,
+    context: u32,
+    fingerprint: String,
+    lines: Vec<u32>,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::git_apply_lines(root, &path, staged, &action, context, &fingerprint, &lines)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn git_stage(
     state: State<'_, AppState>,
@@ -1412,6 +1483,172 @@ pub async fn git_ignore(
         git::git_ignore(root, &path)
     })
     .await
+}
+
+/// Resolves a conflicted path with `ours` or `theirs`.
+#[tauri::command]
+pub async fn git_resolve_conflict(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+    side: String,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::git_resolve_conflict(root, &path, &side)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_cherry_pick(
+    state: State<'_, AppState>,
+    project_id: String,
+    hash: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| {
+        git::git_cherry_pick(root, &hash)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_revert(
+    state: State<'_, AppState>,
+    project_id: String,
+    hash: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| git::git_revert(root, &hash)).await
+}
+
+#[tauri::command]
+pub async fn git_reset(
+    state: State<'_, AppState>,
+    project_id: String,
+    hash: String,
+    mode: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| {
+        git::git_reset(root, &hash, &mode)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_checkout_commit(
+    state: State<'_, AppState>,
+    project_id: String,
+    hash: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| {
+        git::git_checkout_commit(root, &hash)
+    })
+    .await
+}
+
+/// Staged diff text sent to the model; enough to describe most commits
+/// without paying for a huge prompt.
+const COMMIT_MESSAGE_MAX_PATCH_CHARS: usize = 40_000;
+
+const COMMIT_MESSAGE_SYSTEM_PROMPT: &str = "You write git commit messages for staged changes. Reply with the commit message only, without quotes, code fences or commentary. Start with a subject line of at most 72 characters in the imperative mood that says what the change does. If the change needs explaining, add a blank line and a short body that says what changed and why, wrapped at 72 characters; leave the body out for small, obvious changes. Follow the style of the recent commit subjects you are given, including any prefix convention such as \"feat:\" or a ticket number, and write in their language.";
+
+/// Drafts a commit message for the staged changes with the configured model.
+#[tauri::command]
+pub async fn git_generate_commit_message(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<String> {
+    let settings = state.settings();
+    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| AppError::msg("No OpenRouter API key configured. Add one in Settings."))?;
+    let model = settings
+        .model
+        .commit_message_model
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| settings.model.default_model.clone())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AppError::msg("No model configured. Pick a default model in Settings."))?;
+    let summary = in_project(&state, &project_id, |root| {
+        git::staged_summary(root, COMMIT_MESSAGE_MAX_PATCH_CHARS)
+    })
+    .await?;
+
+    let mut prompt = String::new();
+    if let Some(branch) = &summary.branch {
+        prompt.push_str(&format!("Branch: {branch}\n\n"));
+    }
+    if !summary.recent_subjects.is_empty() {
+        prompt.push_str("Recent commit subjects:\n");
+        for subject in &summary.recent_subjects {
+            prompt.push_str(&format!("- {subject}\n"));
+        }
+        prompt.push('\n');
+    }
+    prompt.push_str(&format!("Staged files:\n{}\n\nStaged diff", summary.stat));
+    if summary.truncated {
+        prompt.push_str(" (cut off; the file list above is complete)");
+    }
+    prompt.push_str(&format!(":\n{}", summary.patch));
+
+    let fallback_pricing = state
+        .cached_models()
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model))
+        .map(|entry| {
+            (
+                entry.prompt_price_per_m / 1_000_000.0,
+                entry.completion_price_per_m / 1_000_000.0,
+            )
+        });
+    let client = state.provider();
+    let registration = state.register_cancel(&format!("commit-message:{project_id}"));
+    let mut reply = String::new();
+    let result = client
+        .stream_chat(
+            &api_key,
+            &model,
+            vec![
+                ChatMessage::text("system", COMMIT_MESSAGE_SYSTEM_PROMPT),
+                ChatMessage::text("user", prompt),
+            ],
+            None,
+            None,
+            fallback_pricing,
+            &[],
+            false,
+            registration.token(),
+            &mut |chunk| {
+                if let ChatChunk::Delta(text) = chunk {
+                    reply.push_str(&text);
+                }
+            },
+        )
+        .await;
+    drop(registration);
+    result?;
+
+    let message = clean_commit_message(&reply);
+    if message.is_empty() {
+        return Err(AppError::msg("The model returned an empty commit message."));
+    }
+    Ok(message)
+}
+
+/// Strips what models tend to wrap a commit message in: code fences,
+/// surrounding quotes and blank lines.
+fn clean_commit_message(reply: &str) -> String {
+    let lines: Vec<&str> = reply
+        .trim()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("```"))
+        .collect();
+    let text = lines.join("\n");
+    let text = text.trim();
+    let text = text
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or(text);
+    text.trim().to_string()
 }
 
 #[tauri::command]
@@ -1777,8 +2014,7 @@ pub async fn git_pull_request_url(
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<()> {
     // Only allow web links through the OS opener. This blocks `file:`,
-    // `javascript:`, and custom protocol handlers (and keeps `cmd.exe` on
-    // Windows from seeing shell metacharacters).
+    // `javascript:`, and custom protocol handlers.
     let parsed =
         reqwest::Url::parse(url.trim()).map_err(|_| AppError::msg("invalid URL".to_string()))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -1794,8 +2030,11 @@ pub fn open_external_url(url: String) -> Result<()> {
         }
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("cmd")
-                .args(["/C", "start", "", &url])
+            // Hands the URL straight to ShellExecute. Going through `cmd /C
+            // start` would let cmd.exe interpret `&` and `|`, which are valid
+            // in a URL's query string, as command separators.
+            std::process::Command::new("rundll32")
+                .args(["url.dll,FileProtocolHandler", &url])
                 .status()
         }
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -1827,8 +2066,14 @@ pub fn allow_asset_path(app: &AppHandle, path: &str) {
 /// chosen file access to the asset protocol. The grant happens only after the
 /// user confirms a file, so a compromised webview cannot widen the scope.
 #[tauri::command]
-pub fn pick_asset_file(app: AppHandle, kind: String) -> Result<Option<String>> {
-    let (title, extensions): (&str, &[&str]) = match kind.as_str() {
+pub async fn pick_asset_file(app: AppHandle, kind: String) -> Result<Option<String>> {
+    // `blocking_pick_file` waits for the dialog and must not run on the main
+    // thread, which is where synchronous commands run.
+    blocking(move || pick_asset_file_blocking(&app, &kind)).await
+}
+
+fn pick_asset_file_blocking(app: &AppHandle, kind: &str) -> Result<Option<String>> {
+    let (title, extensions): (&str, &[&str]) = match kind {
         "sound" => (
             "Select sound file",
             &[
@@ -1852,7 +2097,7 @@ pub fn pick_asset_file(app: AppHandle, kind: String) -> Result<Option<String>> {
     let path = file_path
         .into_path()
         .map_err(|error| AppError::msg(error.to_string()))?;
-    allow_asset_path(&app, &path.to_string_lossy());
+    allow_asset_path(app, &path.to_string_lossy());
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
@@ -1899,13 +2144,18 @@ fn session_file_diff(state: &AppState, session_id: &str, path: &str) -> Result<F
     Ok(diff)
 }
 
+/// Reads rule files and resolves the session's changes (which can stage the
+/// whole project in the shadow repository), so it runs off the main thread.
 #[tauri::command]
-pub fn get_project_rules(
-    state: State<'_, AppState>,
+pub async fn get_project_rules(
+    app: AppHandle,
     project_id: String,
     session_id: Option<String>,
 ) -> Result<Vec<ProjectRule>> {
-    collect_project_rules(&state, &project_id, session_id.as_deref())
+    blocking(move || {
+        collect_project_rules(&app.state::<AppState>(), &project_id, session_id.as_deref())
+    })
+    .await
 }
 
 fn collect_project_rules(
@@ -1947,22 +2197,9 @@ fn collect_project_rules(
     }
 
     if let Some(session_id) = session_id {
-        let mut directories: Vec<PathBuf> = Vec::new();
-        if let Ok(changes) = session_changes_resolved(state, session_id) {
-            for change in changes {
-                let mut current = project_root.join(&change.path);
-                current.pop();
-                while current.starts_with(project_root) && current != *project_root {
-                    if !directories.contains(&current) {
-                        directories.push(current.clone());
-                    }
-                    if !current.pop() {
-                        break;
-                    }
-                }
-            }
-        }
-        for directory in directories {
+        let changes = session_changes_resolved(state, session_id).unwrap_or_default();
+        let paths: Vec<&str> = changes.iter().map(|change| change.path.as_str()).collect();
+        for directory in nested_rule_directories(project_root, &paths) {
             let candidate = directory.join("AGENTS.md");
             if rules.iter().any(|rule| Path::new(&rule.path) == candidate) {
                 continue;
@@ -1980,6 +2217,32 @@ fn collect_project_rules(
     }
 
     Ok(rules)
+}
+
+/// The directories between the project root and each changed file, ordered
+/// from least to most specific: the prompt tells the model that the last rule
+/// file listed wins on conflict.
+fn nested_rule_directories(project_root: &Path, changed: &[&str]) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = Vec::new();
+    for path in changed {
+        let mut current = project_root.join(path);
+        current.pop();
+        while current.starts_with(project_root) && current != *project_root {
+            if !directories.contains(&current) {
+                directories.push(current.clone());
+            }
+            if !current.pop() {
+                break;
+            }
+        }
+    }
+    directories.sort_by(|left, right| {
+        left.components()
+            .count()
+            .cmp(&right.components().count())
+            .then_with(|| left.cmp(right))
+    });
+    directories
 }
 
 fn resolve_provider_preset(state: &AppState, model: &str, provider: String) -> String {
@@ -2244,7 +2507,6 @@ async fn run_send_message(
             .iter()
             .map(PathBuf::from)
             .collect(),
-        command_rules: setup.settings.permissions.command_rules.clone(),
         file_ignore,
         context_message_limit: setup.settings.model.context_message_limit,
         context_length,
@@ -2406,10 +2668,7 @@ fn prepare_turn(
         // change summary still covers everything since that prompt.
         state
             .db
-            .list_messages(session_id)?
-            .into_iter()
-            .rev()
-            .find(|message| message.role == "user")
+            .latest_user_message(session_id)?
             .and_then(|message| message.base_commit)
             .unwrap_or_default()
     } else {
@@ -2503,8 +2762,8 @@ async fn assemble_turn_context(
         ));
     }
 
-    let mut mcp_manager = Arc::new(McpManager::empty());
     let mut mcp_errors: Vec<String> = Vec::new();
+    let mut configs = Vec::new();
     if !mcp_servers.is_empty() {
         let available = crate::discovery::discover_mcp_servers(
             &settings.integrations.mcp_folders,
@@ -2512,9 +2771,11 @@ async fn assemble_turn_context(
             &settings.integrations.mcp_disabled_servers,
             settings.integrations.mcp_auto_discovery,
         );
-        let mut configs = Vec::new();
         for name in &mcp_servers {
             match available.iter().find(|config| &config.name == name) {
+                Some(config) if state.mcp.is_approved(session_id, config) => {
+                    configs.push(config.clone());
+                }
                 Some(config) => {
                     // Starting a server spawns a process or opens a network
                     // connection, so require explicit user approval and show the
@@ -2566,6 +2827,9 @@ async fn assemble_turn_context(
                         .await
                         .allowed;
                     if allowed {
+                        // Remembered for this chat, for exactly this command,
+                        // environment and URL.
+                        state.mcp.approve(session_id, config);
                         configs.push(config.clone());
                     } else {
                         mcp_errors.push(format!(
@@ -2579,8 +2843,10 @@ async fn assemble_turn_context(
                 )),
             }
         }
-        mcp_manager = Arc::new(McpManager::connect(configs).await);
     }
+    // Reuses the servers of the session's previous turn when they still match,
+    // and stops them when this turn needs none.
+    let mcp_manager = state.mcp.manager(session_id, configs).await;
     mcp_errors.extend(mcp_manager.errors.iter().cloned());
     if !mcp_errors.is_empty() {
         context.push_str("\n\n## MCP connection issues\n");
@@ -2913,4 +3179,56 @@ fn truncate_title(content: &str) -> String {
         .chars()
         .take(60)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_messages_lose_fences_and_quotes() {
+        assert_eq!(
+            clean_commit_message("```\nAdd login\n\nExplain why.\n```\n"),
+            "Add login\n\nExplain why."
+        );
+        assert_eq!(clean_commit_message("\"Fix typo\"\n"), "Fix typo");
+        assert_eq!(clean_commit_message("  \n "), "");
+    }
+
+    #[test]
+    fn nested_rule_directories_list_the_most_specific_last() {
+        let root = Path::new("/work/app");
+        let directories = nested_rule_directories(
+            root,
+            &["src/core/deep/file.rs", "src/lib.rs", "docs/guide.md", "README.md"],
+        );
+        let relative: Vec<String> = directories
+            .iter()
+            .map(|directory| directory.strip_prefix(root).unwrap().display().to_string())
+            .collect();
+        assert_eq!(relative, ["docs", "src", "src/core", "src/core/deep"]);
+    }
+
+    #[test]
+    fn plain_http_base_urls_are_limited_to_loopback() {
+        for url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8080",
+            "http://127.0.0.2",
+            "http://[::1]:1234/api",
+            "https://openrouter.ai/api/v1",
+            "",
+        ] {
+            assert_eq!(validate_base_url(url), Ok(()), "{url}");
+        }
+        for url in [
+            "http://example.com",
+            "http://10.0.0.1",
+            "http://[::2]",
+            "http://localhost.example.com",
+            "ftp://localhost",
+        ] {
+            assert!(validate_base_url(url).is_err(), "{url}");
+        }
+    }
 }

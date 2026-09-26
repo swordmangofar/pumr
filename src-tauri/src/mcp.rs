@@ -20,7 +20,7 @@ use tokio::sync::{oneshot, Mutex};
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServerConfig {
     pub name: String,
     pub command: Option<String>,
@@ -57,6 +57,10 @@ impl McpClient {
             Transport::Http {
                 client: reqwest::Client::builder()
                     .user_agent("pumr/0.1")
+                    // Like the stdio transport: a server that stops answering
+                    // must not hold the turn forever.
+                    .connect_timeout(Duration::from_secs(15))
+                    .timeout(REQUEST_TIMEOUT)
                     .build()
                     .map_err(|error| AppError::msg(format!("HTTP client error: {error}")))?,
                 url,
@@ -137,6 +141,11 @@ impl McpClient {
                     let Ok(value) = serde_json::from_str::<Value>(line) else {
                         continue;
                     };
+                    // Requests and notifications from the server carry a
+                    // `method`; its ids are its own and can collide with ours.
+                    if value.get("method").is_some() {
+                        continue;
+                    }
                     if let Some(id) = value.get("id").and_then(Value::as_i64) {
                         if let Some(sender) = reader_pending.lock().await.remove(&id) {
                             let _ = sender.send(value);
@@ -164,6 +173,14 @@ impl McpClient {
         });
         client.initialize().await?;
         Ok(client)
+    }
+
+    /// False once a spawned server has exited; remote servers are assumed up.
+    async fn is_alive(&self) -> bool {
+        match &self.transport {
+            Transport::Stdio(state) => matches!(state._child.lock().await.try_wait(), Ok(None)),
+            Transport::Http { .. } => true,
+        }
     }
 
     async fn initialize(&self) -> Result<()> {
@@ -262,7 +279,7 @@ impl McpClient {
             Transport::Stdio(state) => {
                 let (sender, receiver) = oneshot::channel();
                 state.pending.lock().await.insert(id, sender);
-                {
+                let written = async {
                     let mut stdin = state.stdin.lock().await;
                     let mut line = serde_json::to_string(&message)?;
                     line.push('\n');
@@ -273,21 +290,33 @@ impl McpClient {
                         ))
                     })?;
                     let _ = stdin.flush().await;
+                    Ok::<(), AppError>(())
                 }
-                let response = tokio::time::timeout(REQUEST_TIMEOUT, receiver)
-                    .await
-                    .map_err(|_| {
-                        AppError::msg(format!(
-                            "MCP server '{}' timed out on {method}",
-                            self.config.name
-                        ))
-                    })?
-                    .map_err(|_| {
-                        AppError::msg(format!(
+                .await;
+                let response = match written {
+                    Ok(()) => tokio::time::timeout(REQUEST_TIMEOUT, receiver).await,
+                    Err(error) => {
+                        state.pending.lock().await.remove(&id);
+                        return Err(error);
+                    }
+                };
+                let response = match response {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(_)) => {
+                        return Err(AppError::msg(format!(
                             "MCP server '{}' disconnected during {method}",
                             self.config.name
-                        ))
-                    })?;
+                        )))
+                    }
+                    Err(_) => {
+                        // Nobody will answer this id any more.
+                        state.pending.lock().await.remove(&id);
+                        return Err(AppError::msg(format!(
+                            "MCP server '{}' timed out on {method}",
+                            self.config.name
+                        )));
+                    }
+                };
                 unwrap_response(response, method)
             }
             Transport::Http {
@@ -389,7 +418,8 @@ fn parse_sse_response(body: &str, id: i64) -> Result<Value> {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(data) {
-            if value.get("id").and_then(Value::as_i64) == Some(id) {
+            if value.get("method").is_none() && value.get("id").and_then(Value::as_i64) == Some(id)
+            {
                 return Ok(value);
             }
         }
@@ -454,6 +484,20 @@ impl McpManager {
 
     pub fn tools(&self) -> &[McpToolInfo] {
         &self.tools
+    }
+
+    /// Whether every server connected without an error and is still running,
+    /// i.e. the manager can be reused as it is.
+    async fn is_healthy(&self) -> bool {
+        if !self.errors.is_empty() {
+            return false;
+        }
+        for client in self.clients.values() {
+            if !client.is_alive().await {
+                return false;
+            }
+        }
+        true
     }
 
     /// Ranks MCP tools against a natural-language query over their server,
@@ -537,6 +581,101 @@ impl McpManager {
     }
 }
 
+/// How many sessions keep their MCP servers running between turns. The least
+/// recently used session beyond this stops its servers.
+const MAX_CACHED_SESSIONS: usize = 4;
+
+/// Keeps each session's MCP connections, and the servers each chat approved,
+/// between turns: without it every message restarted every server and asked
+/// to start it again.
+#[derive(Default)]
+pub struct McpSessions {
+    inner: std::sync::Mutex<McpSessionsInner>,
+}
+
+#[derive(Default)]
+struct McpSessionsInner {
+    /// Chat id -> the exact server configurations the user approved there. A
+    /// changed command, argument, variable or URL asks again.
+    approved: HashMap<String, Vec<McpServerConfig>>,
+    /// Session id, the configurations its manager connected, and the manager;
+    /// least recently used first.
+    managers: Vec<(String, Vec<McpServerConfig>, Arc<McpManager>)>,
+}
+
+impl McpSessions {
+    pub fn is_approved(&self, chat_id: &str, config: &McpServerConfig) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .approved
+            .get(chat_id)
+            .is_some_and(|approved| approved.contains(config))
+    }
+
+    pub fn approve(&self, chat_id: &str, config: &McpServerConfig) {
+        let mut inner = self.inner.lock().unwrap();
+        let approved = inner.approved.entry(chat_id.to_string()).or_default();
+        approved.retain(|existing| existing.name != config.name);
+        approved.push(config.clone());
+    }
+
+    /// The session's manager for exactly `configs`: the one from its previous
+    /// turn while that still fits and is healthy, otherwise a new connection.
+    /// A running turn keeps its own handle, so replacing or evicting a manager
+    /// only stops its servers once no turn uses them anymore.
+    pub async fn manager(&self, session_id: &str, configs: Vec<McpServerConfig>) -> Arc<McpManager> {
+        if configs.is_empty() {
+            self.remove(&[session_id.to_string()], false);
+            return Arc::new(McpManager::empty());
+        }
+        let cached = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .managers
+                .iter()
+                .find(|(id, connected, _)| id == session_id && *connected == configs)
+                .map(|(_, _, manager)| manager.clone())
+        };
+        let manager = match cached {
+            Some(manager) if manager.is_healthy().await => manager,
+            _ => Arc::new(McpManager::connect(configs.clone()).await),
+        };
+        let mut inner = self.inner.lock().unwrap();
+        inner.managers.retain(|(id, _, _)| id != session_id);
+        inner
+            .managers
+            .push((session_id.to_string(), configs, manager.clone()));
+        let excess = inner.managers.len().saturating_sub(MAX_CACHED_SESSIONS);
+        inner.managers.drain(..excess);
+        manager
+    }
+
+    /// Stops the servers of deleted, archived or removed sessions and drops
+    /// the approvals of those chats.
+    pub fn forget(&self, session_ids: &[String]) {
+        self.remove(session_ids, true);
+    }
+
+    fn remove(&self, session_ids: &[String], approvals: bool) {
+        let dropped: Vec<Arc<McpManager>> = {
+            let mut inner = self.inner.lock().unwrap();
+            if approvals {
+                for id in session_ids {
+                    inner.approved.remove(id);
+                }
+            }
+            let (dropped, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut inner.managers)
+                .into_iter()
+                .partition(|(id, _, _)| session_ids.contains(id));
+            inner.managers = kept;
+            dropped.into_iter().map(|(_, _, manager)| manager).collect()
+        };
+        // Dropped outside the lock: the last handle kills the server processes.
+        drop(dropped);
+    }
+}
+
 /// Builds the function name the model sees for an MCP tool. Names are
 /// restricted to `[A-Za-z0-9_]` so every provider accepts them.
 pub fn exposed_name(server: &str, tool: &str) -> String {
@@ -577,13 +716,12 @@ mod tests {
         assert!(parse_sse_response(body, 3).is_err());
     }
 
+    /// A stdio MCP server with one `echo` tool, written as a shell script.
     #[cfg(unix)]
-    #[tokio::test]
-    async fn stdio_server_round_trip() {
+    fn fake_server(dir: &std::path::Path) -> McpServerConfig {
         use std::io::Write;
 
-        let dir = tempfile::tempdir().unwrap();
-        let script = dir.path().join("fake-mcp.sh");
+        let script = dir.join("fake-mcp.sh");
         let mut file = std::fs::File::create(&script).unwrap();
         write!(
             file,
@@ -600,15 +738,21 @@ done
         .unwrap();
         drop(file);
 
-        let config = McpServerConfig {
+        McpServerConfig {
             name: "fake".to_string(),
             command: Some("/bin/sh".to_string()),
             args: vec![script.to_string_lossy().to_string()],
             env: Vec::new(),
             url: None,
             source: "test".to_string(),
-        };
-        let manager = McpManager::connect(vec![config]).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdio_server_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = McpManager::connect(vec![fake_server(dir.path())]).await;
         assert!(manager.errors.is_empty(), "{:?}", manager.errors);
         assert_eq!(manager.tools().len(), 1);
         assert_eq!(manager.tools()[0].exposed_name, "mcp__fake__echo");
@@ -619,5 +763,38 @@ done
             .unwrap();
         assert!(!is_error);
         assert_eq!(text, "hello");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sessions_reuse_their_servers_and_approvals_between_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = fake_server(dir.path());
+        let sessions = McpSessions::default();
+
+        assert!(!sessions.is_approved("chat", &config));
+        sessions.approve("chat", &config);
+        assert!(sessions.is_approved("chat", &config));
+        assert!(!sessions.is_approved("other", &config));
+        let mut changed = config.clone();
+        changed.args.push("--verbose".to_string());
+        assert!(!sessions.is_approved("chat", &changed));
+
+        let first = sessions.manager("chat", vec![config.clone()]).await;
+        let second = sessions.manager("chat", vec![config.clone()]).await;
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(second.tools().len(), 1);
+
+        // Different servers mean a new connection; none at all, no manager.
+        let third = sessions.manager("chat", vec![changed]).await;
+        assert!(!Arc::ptr_eq(&second, &third));
+        assert!(sessions.manager("chat", Vec::new()).await.tools().is_empty());
+        assert!(sessions.inner.lock().unwrap().managers.is_empty());
+        assert!(sessions.is_approved("chat", &config));
+
+        sessions.manager("chat", vec![config.clone()]).await;
+        sessions.forget(&["chat".to_string()]);
+        assert!(!sessions.is_approved("chat", &config));
+        assert!(sessions.inner.lock().unwrap().managers.is_empty());
     }
 }

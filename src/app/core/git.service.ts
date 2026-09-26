@@ -3,14 +3,20 @@ import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
   FileDiff,
+  GIT_WHOLE_FILE_CONTEXT,
   GitBlameLine,
   GitCommit,
   GitCommitDetail,
+  GitConflictSide,
+  GitDiffOptions,
+  GitHunkDiff,
   GitInfo,
+  GitLineAction,
   GitOperation,
   GitPullStrategy,
   GitRebaseEntry,
   GitRefs,
+  GitResetMode,
   GitStash,
   GitStatus,
   GitTag,
@@ -20,8 +26,50 @@ const GIT_COMMIT_PAGE_SIZE = 50;
 /** Pages loaded at most while looking for a branch tip or tag in the history. */
 const GIT_REVEAL_MAX_PAGES = 20;
 
-export type GitChangeDiff = { path: string; staged: boolean; diff: FileDiff };
+/**
+ * The change shown in the Changes view: its hunks and, for a conflicted file,
+ * the whole file against "ours" instead.
+ */
+export type GitChangeDiff = {
+  path: string;
+  staged: boolean;
+  hunks: GitHunkDiff;
+  conflict: FileDiff | null;
+};
 export type GitViewMode = 'changes' | 'commits';
+
+const GIT_DIFF_OPTIONS_KEY = 'pumr.gitDiffOptions';
+const DEFAULT_DIFF_OPTIONS: GitDiffOptions = {
+  context: 3,
+  ignoreWhitespace: false,
+  layout: 'unified',
+  wrap: false,
+};
+/** Starts the backend error of a line action on a diff that changed meanwhile. */
+const STALE_DIFF = 'stale diff';
+
+function loadDiffOptions(): GitDiffOptions {
+  try {
+    const stored = JSON.parse(localStorage.getItem(GIT_DIFF_OPTIONS_KEY) ?? 'null') as Partial<
+      GitDiffOptions
+    > | null;
+    if (!stored || typeof stored !== 'object') {
+      return DEFAULT_DIFF_OPTIONS;
+    }
+    const context = Number(stored.context);
+    return {
+      context:
+        Number.isInteger(context) && context > 0
+          ? Math.min(context, GIT_WHOLE_FILE_CONTEXT)
+          : DEFAULT_DIFF_OPTIONS.context,
+      ignoreWhitespace: stored.ignoreWhitespace === true,
+      layout: stored.layout === 'split' ? 'split' : 'unified',
+      wrap: stored.wrap === true,
+    };
+  } catch {
+    return DEFAULT_DIFF_OPTIONS;
+  }
+}
 
 const EMPTY_REFS: GitRefs = { branches: [], tags: [], stashes: [], submodules: [], remotes: [] };
 
@@ -86,10 +134,13 @@ export class GitService {
   private readonly busyState = signal<Record<string, boolean>>({});
   private readonly messageState = signal<Record<string, string | null>>({});
   private readonly errorState = signal<Record<string, string | null>>({});
+  private readonly diffOptionsState = signal<GitDiffOptions>(loadDiffOptions());
   private readonly tokens = new RequestTokens();
   private readonly statusRequests = new Map<string, Promise<void>>();
 
   readonly infoByProject = this.infoState.asReadonly();
+  /** How the Changes view shows diffs, shared by all projects. */
+  readonly diffOptions = this.diffOptionsState.asReadonly();
 
   constructor(private readonly transloco: TranslocoService) {}
 
@@ -408,10 +459,14 @@ export class GitService {
   async selectChange(projectId: string, path: string, staged: boolean): Promise<void> {
     const key = `change:${projectId}`;
     const token = this.tokens.next(key);
+    const { context, ignoreWhitespace } = this.diffOptionsState();
     try {
-      const diff = await api.getGitFileDiff(projectId, path, staged);
+      const hunks = await api.getGitFileHunks(projectId, path, staged, context, ignoreWhitespace);
+      // A conflicted file has no hunks; it is shown whole, against "ours".
+      const conflict =
+        hunks.blocked === 'conflict' ? await api.getGitFileDiff(projectId, path, false) : null;
       if (this.tokens.isLatest(key, token)) {
-        this.set(this.diffState, projectId, { path, staged, diff });
+        this.set(this.diffState, projectId, { path, staged, hunks, conflict });
       }
     } catch (error) {
       if (this.tokens.isLatest(key, token)) {
@@ -419,6 +474,50 @@ export class GitService {
         this.setError(projectId, error);
       }
     }
+  }
+
+  /**
+   * Changes how diffs are shown. Context lines and whitespace change the
+   * hunks, so the diff of `projectId` is loaded again; layout and wrapping
+   * only change how it is drawn.
+   */
+  setDiffOptions(projectId: string | null, patch: Partial<GitDiffOptions>): void {
+    const next = { ...this.diffOptionsState(), ...patch };
+    this.diffOptionsState.set(next);
+    try {
+      localStorage.setItem(GIT_DIFF_OPTIONS_KEY, JSON.stringify(next));
+    } catch {
+      // Storage may be unavailable; the options still apply for this run.
+    }
+    const current = projectId ? this.diffFor(projectId) : null;
+    if (projectId && current && ('context' in patch || 'ignoreWhitespace' in patch)) {
+      void this.selectChange(projectId, current.path, current.staged);
+    }
+  }
+
+  /**
+   * Stages, unstages or discards single lines (ids from the viewed diff). A
+   * diff that changed since it was shown is refused by the backend; it is then
+   * loaded again so the user can review it.
+   */
+  async applyLines(projectId: string, action: GitLineAction, lines: number[]): Promise<void> {
+    const current = this.diffFor(projectId);
+    if (!current || lines.length === 0) {
+      return;
+    }
+    const { path, staged, hunks } = current;
+    const context = this.diffOptionsState().context;
+    await this.changeFile(projectId, path, staged, () =>
+      api.gitApplyLines(projectId, path, staged, action, context, hunks.fingerprint, lines),
+    );
+  }
+
+  /** Resolves a conflicted file with one side's version. */
+  async resolveConflict(projectId: string, path: string, side: GitConflictSide): Promise<void> {
+    const selected = this.diffFor(projectId);
+    await this.changeFile(projectId, path, selected?.staged ?? false, () =>
+      api.gitResolveConflict(projectId, path, side),
+    );
   }
 
   async stagePath(projectId: string, path: string | null): Promise<void> {
@@ -490,6 +589,43 @@ export class GitService {
   async commit(projectId: string, message: string, amend: boolean): Promise<string> {
     return this.runAction(projectId, async () => {
       const output = await api.gitCommit(projectId, message, amend);
+      this.set(this.diffState, projectId, null);
+      return output;
+    });
+  }
+
+  /** Drafts a commit message for the staged changes; failures show in the git view. */
+  async generateCommitMessage(projectId: string): Promise<{ subject: string; body: string } | null> {
+    this.clearError(projectId);
+    try {
+      const message = await api.gitGenerateCommitMessage(projectId);
+      const [subject, ...body] = message.split('\n');
+      return { subject: subject.trim(), body: body.join('\n').trim() };
+    } catch (error) {
+      this.setError(projectId, error);
+      return null;
+    }
+  }
+
+  async cherryPick(projectId: string, hash: string): Promise<string> {
+    return this.runAction(projectId, () => api.gitCherryPick(projectId, hash));
+  }
+
+  async revert(projectId: string, hash: string): Promise<string> {
+    return this.runAction(projectId, () => api.gitRevert(projectId, hash));
+  }
+
+  async reset(projectId: string, hash: string, mode: GitResetMode): Promise<string> {
+    return this.runAction(projectId, async () => {
+      const output = await api.gitReset(projectId, hash, mode);
+      this.set(this.diffState, projectId, null);
+      return output;
+    });
+  }
+
+  async checkoutCommit(projectId: string, hash: string): Promise<string> {
+    return this.runAction(projectId, async () => {
+      const output = await api.gitCheckoutCommit(projectId, hash);
       this.set(this.diffState, projectId, null);
       return output;
     });
@@ -726,6 +862,47 @@ export class GitService {
     const selected = this.diffFor(projectId);
     if (selected && (paths === null || paths.includes(selected.path))) {
       await this.selectChange(projectId, selected.path, staged);
+    }
+  }
+
+  /**
+   * Runs an edit of one file's changes, then shows fresh status. The file
+   * stays selected on the side that still lists it.
+   */
+  private async changeFile(
+    projectId: string,
+    path: string,
+    staged: boolean,
+    operation: () => Promise<void>,
+  ): Promise<void> {
+    this.clearError(projectId);
+    this.set(this.busyState, projectId, true);
+    try {
+      await operation();
+    } catch (error) {
+      if (String(error).includes(STALE_DIFF)) {
+        this.set(this.errorState, projectId, this.transloco.translate('git.diff.stale'));
+      } else {
+        this.setError(projectId, error);
+      }
+    } finally {
+      this.set(this.busyState, projectId, false);
+    }
+    await this.loadStatus(projectId, true);
+    const selected = this.diffFor(projectId);
+    if (!selected || selected.path !== path) {
+      return;
+    }
+    const status = this.statusFor(projectId);
+    const listed = (side: boolean) =>
+      (side ? status?.staged : status?.unstaged)?.some((change) => change.path === path) ?? false;
+    if (listed(staged)) {
+      await this.selectChange(projectId, path, staged);
+    } else if (listed(!staged)) {
+      await this.selectChange(projectId, path, !staged);
+    } else {
+      this.tokens.next(`change:${projectId}`);
+      this.set(this.diffState, projectId, null);
     }
   }
 

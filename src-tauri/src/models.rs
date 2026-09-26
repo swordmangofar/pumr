@@ -459,6 +459,63 @@ pub struct FileDiff {
     pub too_large: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitDiffLineKind {
+    Context,
+    Add,
+    Del,
+}
+
+/// One line of a hunk as `git diff` printed it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffLine {
+    /// Position of the line in the whole diff; line actions refer to it.
+    pub id: u32,
+    pub kind: GitDiffLineKind,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    /// The line without its terminator (and without a trailing `\r`).
+    pub text: String,
+    /// The last line of its side, without a newline at the end of the file.
+    pub no_newline: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffHunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    /// The function or section git names after the `@@` header.
+    pub section: String,
+    pub lines: Vec<GitDiffLine>,
+}
+
+/// A working-tree or staged diff split into hunks, for the Changes view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHunkDiff {
+    pub path: String,
+    pub staged: bool,
+    /// `A`, `M` or `D`.
+    pub status: String,
+    pub language: String,
+    pub hunks: Vec<GitDiffHunk>,
+    pub additions: i64,
+    pub deletions: i64,
+    pub binary: bool,
+    pub too_large: bool,
+    /// Why single lines and hunks cannot be staged, unstaged or discarded:
+    /// `binary`, `tooLarge`, `conflict`, `symlink`, `submodule` or
+    /// `whitespace`. `None` when they can.
+    pub blocked: Option<String>,
+    /// Identifies this exact diff, so line actions refuse to run on a stale view.
+    pub fingerprint: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessInfo {
@@ -526,6 +583,9 @@ pub struct QuestionOption {
     pub label: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// The option the assistant would pick; the UI marks it as recommended.
+    #[serde(default)]
+    pub recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

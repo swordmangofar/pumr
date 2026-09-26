@@ -11,6 +11,7 @@ import {
   GitInfo,
   GitPullStrategy,
   LiveToolCall,
+  Mention,
   Message,
   MessageAttachment,
   PendingPermission,
@@ -57,6 +58,12 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 }
 
 type LeftTab = 'projects' | 'workspace' | 'git';
+
+/** A file mention and a text block to add to the composer. */
+export interface ComposerInsert {
+  mention: Mention | null;
+  text: string;
+}
 type RightTab = 'changes' | 'session' | 'prompts' | 'modes';
 type SessionView = 'projects' | 'history';
 type PanelId = 'left' | 'center' | 'right';
@@ -104,6 +111,7 @@ export class WorkspaceService {
   private readonly rightPanelWidthState = signal(512);
   private readonly focusedPanelState = signal<PanelId | null>(null);
   private readonly composerFocusState = signal(0);
+  private readonly composerInsertState = signal<ComposerInsert | null>(null);
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
@@ -171,6 +179,8 @@ export class WorkspaceService {
   readonly rightPanelWidth = this.rightPanelWidthState.asReadonly();
   readonly focusedPanel = this.focusedPanelState.asReadonly();
   readonly composerFocusNonce = this.composerFocusState.asReadonly();
+  /** Content waiting to be added to the composer, see `askInChat`. */
+  readonly pendingComposerInsert = this.composerInsertState.asReadonly();
   readonly pendingDraft = this.draftState.asReadonly();
   readonly debugSessionId = this.debugSessionState.asReadonly();
   readonly debugOpen = computed(() => this.debugSessionState() !== null);
@@ -473,9 +483,12 @@ export class WorkspaceService {
   async reloadProjects(): Promise<void> {
     const projects = await api.listProjects();
     this.projectsState.set(projects);
-    for (const project of projects) {
-      await this.reloadSessions(project.id);
-    }
+    await Promise.all(projects.map((project) => this.reloadSessions(project.id)));
+  }
+
+  /** Refreshes the project list and its counts without reloading every project's sessions. */
+  private async refreshProjectList(): Promise<void> {
+    this.projectsState.set(await api.listProjects());
   }
 
   async reloadSessions(projectId: string): Promise<void> {
@@ -549,11 +562,16 @@ export class WorkspaceService {
   }
 
   async removeProject(projectId: string): Promise<void> {
-    const sessionIds = this.projectSessionsState()[projectId] ?? [];
+    const sessionIds = Object.values(this.sessionsState())
+      .filter((session) => session.projectId === projectId)
+      .map((session) => session.id);
     await api.removeProject(projectId);
-    for (const id of sessionIds) {
-      this.closeTab(id);
-    }
+    this.forgetSessions(sessionIds);
+    this.projectSessionsState.update((state) => {
+      const next = { ...state };
+      delete next[projectId];
+      return next;
+    });
     await this.reloadProjects();
   }
 
@@ -825,7 +843,7 @@ export class WorkspaceService {
       try {
         await this.loadMessages(sessionId, true);
         await this.reloadSessions(session.projectId);
-        await this.reloadProjects();
+        await this.refreshProjectList();
         await this.refreshSpend();
         await this.loadChanges(sessionId);
         await this.loadRules(session.projectId, sessionId);
@@ -1037,10 +1055,13 @@ export class WorkspaceService {
     this.questionState.update(keep);
   }
 
+  /**
+   * Stops the turn behind a session. The backend stops the session's own
+   * turn (a message sent from a subagent's tab) and otherwise the running
+   * ancestor turn that drives the subagent.
+   */
   async stop(sessionId: string): Promise<void> {
-    const session = this.sessionsState()[sessionId];
-    const target = session?.parentSessionId ?? sessionId;
-    await api.stopGeneration(target);
+    await api.stopGeneration(sessionId);
   }
 
   async resolvePermission(
@@ -1110,32 +1131,75 @@ export class WorkspaceService {
 
   async deleteSession(sessionId: string): Promise<void> {
     const session = this.sessionsState()[sessionId];
+    // The backend deletes the chat together with its subagent sessions.
+    const deleted = this.sessionTree(sessionId);
     await api.deleteSession(sessionId);
-    this.clearComposerDraft(sessionId);
-    this.clearComposerAttachments(sessionId);
-    this.messagesState.update((state) => {
+    this.forgetSessions(deleted);
+    if (session) {
+      await this.reloadSessions(session.projectId);
+    }
+  }
+
+  /** A session plus every subagent session below it. */
+  private sessionTree(sessionId: string): string[] {
+    const sessions = Object.values(this.sessionsState());
+    const tree = [sessionId];
+    for (let index = 0; index < tree.length; index++) {
+      for (const session of sessions) {
+        if (session.parentSessionId === tree[index] && !tree.includes(session.id)) {
+          tree.push(session.id);
+        }
+      }
+    }
+    return tree;
+  }
+
+  /**
+   * Drops deleted sessions from every per-session store and closes their
+   * tabs: `reloadSessions` only adds and updates entries, so it never removes
+   * a deleted session (or its subagents) on its own.
+   */
+  private forgetSessions(sessionIds: string[]): void {
+    if (sessionIds.length === 0) {
+      return;
+    }
+    const gone = new Set(sessionIds);
+    const without = <T>(state: Record<string, T>): Record<string, T> => {
       const next = { ...state };
-      delete next[sessionId];
+      for (const id of gone) {
+        delete next[id];
+      }
       return next;
-    });
+    };
+    for (const id of sessionIds) {
+      this.clearComposerDraft(id);
+      this.clearComposerAttachments(id);
+    }
+    this.sessionsState.update(without);
+    this.messagesState.update(without);
+    this.changesState.update(without);
+    this.streamingState.update(without);
+    this.errorsState.update(without);
     this.subAgentsState.update((state) => {
-      const next = { ...state };
-      delete next[sessionId];
+      const next = without(state);
+      for (const [parent, ids] of Object.entries(next)) {
+        if (ids.some((id) => gone.has(id))) {
+          next[parent] = ids.filter((id) => !gone.has(id));
+        }
+      }
       return next;
     });
     this.viewingState.update((state) => {
-      const next = { ...state };
-      delete next[sessionId];
+      const next = without(state);
       for (const [root, agent] of Object.entries(next)) {
-        if (agent === sessionId) {
+        if (gone.has(agent)) {
           delete next[root];
         }
       }
       return next;
     });
-    this.closeTab(sessionId);
-    if (session) {
-      await this.reloadSessions(session.projectId);
+    for (const id of sessionIds) {
+      this.closeTab(id);
     }
   }
 
@@ -1266,6 +1330,24 @@ export class WorkspaceService {
       const index = tabs.indexOf(this.rightTabState());
       this.setRightTab(tabs[(index + direction + tabs.length) % tabs.length]);
     }
+  }
+
+  /**
+   * Opens the chat of the active session with `insert` added to its composer,
+   * e.g. diff lines from the git view the user wants to ask about.
+   */
+  askInChat(insert: ComposerInsert): void {
+    const sessionId = this.activeSessionId();
+    if (!sessionId) {
+      return;
+    }
+    this.setLeftTab('projects');
+    this.openTab(sessionId);
+    this.composerInsertState.set(insert);
+  }
+
+  consumeComposerInsert(): void {
+    this.composerInsertState.set(null);
   }
 
   /** Asks the composer to put keyboard focus in its editor. */

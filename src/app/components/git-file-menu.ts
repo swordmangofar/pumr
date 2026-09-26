@@ -17,9 +17,20 @@ import { GitService } from '../core/git.service';
 
 /** Rendered menu footprint, used to keep it inside the viewport. */
 const MENU_WIDTH_PX = 240;
-const MENU_HEIGHT_PX = 320;
+const MENU_HEIGHT_PX = 420;
 
-type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignore' | 'open' | 'reveal';
+type FileAction =
+  | 'stage'
+  | 'unstage'
+  | 'discard'
+  | 'blame'
+  | 'history'
+  | 'ignore'
+  | 'open'
+  | 'reveal'
+  | 'useOurs'
+  | 'useTheirs'
+  | 'markResolved';
 
 @Component({
   selector: 'app-git-file-menu',
@@ -36,6 +47,18 @@ type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignor
         class="glass-pop fixed z-50 w-60 overflow-hidden rounded-xl py-1 text-[13px] text-mist shadow-2xl"
         [style]="menuStyle()"
       >
+        @if (conflicted()) {
+          <button type="button" class="menu-item" (click)="run('useOurs')">
+            {{ 'git.conflict.useOurs' | transloco }}
+          </button>
+          <button type="button" class="menu-item" (click)="run('useTheirs')">
+            {{ 'git.conflict.useTheirs' | transloco }}
+          </button>
+          <button type="button" class="menu-item" (click)="run('markResolved')">
+            {{ 'git.conflict.markResolved' | transloco }}
+          </button>
+          <div class="menu-sep"></div>
+        }
         @if (staged()) {
           <button type="button" class="menu-item" (click)="run('unstage')">
             {{ unstageLabel() | transloco: { count: count() } }}
@@ -155,6 +178,8 @@ export class GitFileMenu {
   readonly path = input.required<string>();
   readonly paths = input<string[]>([]);
   readonly staged = input.required<boolean>();
+  /** The path has a merge conflict, so it can be resolved from here. */
+  readonly conflicted = input(false);
   readonly x = input.required<number>();
   readonly y = input.required<number>();
   readonly closed = output<void>();
@@ -253,6 +278,15 @@ export class GitFileMenu {
       case 'blame':
         this.menuVisible.set(false);
         void this.loadBlame(projectId);
+        break;
+      case 'useOurs':
+      case 'useTheirs':
+        void this.git.resolveConflict(projectId, this.path(), action === 'useOurs' ? 'ours' : 'theirs');
+        this.close();
+        break;
+      case 'markResolved':
+        void this.git.stagePath(projectId, this.path());
+        this.close();
         break;
     }
   }

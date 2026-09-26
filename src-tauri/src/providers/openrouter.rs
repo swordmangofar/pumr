@@ -15,6 +15,10 @@ pub struct ChatMessage {
     pub tool_calls: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Position of the stored message this was built from; never sent. Lets
+    /// the history put a pinned prompt back where it belongs.
+    #[serde(skip)]
+    pub seq: Option<i64>,
 }
 
 impl ChatMessage {
@@ -24,6 +28,7 @@ impl ChatMessage {
             content: Value::String(content.into()),
             tool_calls: None,
             tool_call_id: None,
+            seq: None,
         }
     }
 
@@ -33,6 +38,7 @@ impl ChatMessage {
             content,
             tool_calls: None,
             tool_call_id: None,
+            seq: None,
         }
     }
 
@@ -42,6 +48,7 @@ impl ChatMessage {
             content: Value::String(content),
             tool_calls: Some(tool_calls),
             tool_call_id: None,
+            seq: None,
         }
     }
 
@@ -51,6 +58,7 @@ impl ChatMessage {
             content: Value::String(content.into()),
             tool_calls: None,
             tool_call_id: Some(call_id.to_string()),
+            seq: None,
         }
     }
 }
@@ -399,7 +407,9 @@ impl OpenRouterClient {
             }
 
             let mut usage = ChatUsage::default();
-            let mut buffer = String::new();
+            // Raw bytes: a multi-byte character can be split across network
+            // chunks, so lines are only decoded once they are complete.
+            let mut buffer: Vec<u8> = Vec::new();
             let mut cancelled = false;
             let mut emitted = false;
             let mut tool_calls: std::collections::BTreeMap<u64, crate::models::ToolCallRecord> =
@@ -429,10 +439,8 @@ impl OpenRouterClient {
                         return Err(error.into());
                     }
                 };
-                buffer.push_str(&String::from_utf8_lossy(&bytes));
-                while let Some(index) = buffer.find('\n') {
-                    let line = buffer[..index].trim().to_string();
-                    buffer.drain(..=index);
+                buffer.extend_from_slice(&bytes);
+                while let Some(line) = take_line(&mut buffer) {
                     let Some(data) = line.strip_prefix("data:") else {
                         continue;
                     };
@@ -872,9 +880,39 @@ struct RawKey {
     limit_remaining: Option<f64>,
 }
 
+/// Removes the first complete line from `buffer` and decodes it. `\n` never
+/// occurs inside a multi-byte UTF-8 sequence, so a complete line never ends
+/// in the middle of a character.
+fn take_line(buffer: &mut Vec<u8>) -> Option<String> {
+    let index = buffer.iter().position(|byte| *byte == b'\n')?;
+    let line = String::from_utf8_lossy(&buffer[..index]).trim().to_string();
+    buffer.drain(..=index);
+    Some(line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn take_line_keeps_characters_split_across_chunks() {
+        let text = "data: {\"content\":\"grüße 👋\"}\n";
+        let bytes = text.as_bytes();
+        // Split inside the "ü" and inside the emoji.
+        let first = text.find('ü').unwrap() + 1;
+        let second = text.find('👋').unwrap() + 2;
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&bytes[..first]);
+        assert_eq!(take_line(&mut buffer), None);
+        buffer.extend_from_slice(&bytes[first..second]);
+        assert_eq!(take_line(&mut buffer), None);
+        buffer.extend_from_slice(&bytes[second..]);
+        assert_eq!(
+            take_line(&mut buffer).as_deref(),
+            Some("data: {\"content\":\"grüße 👋\"}")
+        );
+        assert!(buffer.is_empty());
+    }
 
     #[test]
     fn endpoint_metrics_accept_objects() {

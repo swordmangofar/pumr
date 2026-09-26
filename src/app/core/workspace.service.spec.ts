@@ -182,3 +182,59 @@ describe('WorkspaceService after a webview reload', () => {
     expect(workspace.sessionAttention('chat')).toBeNull();
   });
 });
+
+describe('WorkspaceService session lifecycle', () => {
+  let workspace: WorkspaceService;
+
+  beforeEach(async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        WorkspaceService,
+        { provide: SettingsService, useValue: { settings: signal(null) } },
+        { provide: SoundService, useValue: { play: vi.fn() } },
+        { provide: TranslocoService, useValue: { translate: (key: string) => key } },
+        { provide: ProcessService, useValue: { processes: signal([]) } },
+        { provide: GitService, useValue: {} },
+        {
+          provide: WorkspaceEditorService,
+          useValue: { loadWorkspaceEntries: async () => {}, activeFileFor: () => null },
+        },
+      ],
+    });
+    workspace = TestBed.inject(WorkspaceService);
+    vi.spyOn(api, 'listProjects').mockResolvedValue([]);
+    vi.spyOn(api, 'listSessions').mockResolvedValue([session('chat'), session('other')]);
+    vi.spyOn(api, 'listSubSessionsForProject').mockResolvedValue([
+      session('subagent', 'chat'),
+      session('nested', 'subagent'),
+    ]);
+    vi.spyOn(api, 'getSpend').mockRejectedValue(new Error('no spend'));
+    await workspace.reloadSessions('project');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('forgets the subagent sessions of a deleted chat', async () => {
+    vi.spyOn(api, 'deleteSession').mockResolvedValue();
+    vi.mocked(api.listSessions).mockResolvedValue([session('other')]);
+    vi.mocked(api.listSubSessionsForProject).mockResolvedValue([]);
+
+    await workspace.deleteSession('chat');
+
+    expect(workspace.session('chat')).toBeNull();
+    expect(workspace.session('subagent')).toBeNull();
+    expect(workspace.session('nested')).toBeNull();
+    expect(workspace.session('other')).not.toBeNull();
+    expect(workspace.subAgentsFor('chat')).toEqual([]);
+  });
+
+  it('stops the turn of the session the user is looking at', async () => {
+    vi.spyOn(api, 'stopGeneration').mockResolvedValue();
+
+    await workspace.stop('subagent');
+
+    expect(api.stopGeneration).toHaveBeenCalledWith('subagent');
+  });
+});

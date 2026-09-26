@@ -80,7 +80,17 @@ import { TypedInput } from './typed-input';
                     }
                   </span>
                   <span class="flex min-w-0 flex-col gap-0.5">
-                    <span class="text-sm font-semibold text-white">{{ option.label }}</span>
+                    <span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span class="text-sm font-semibold text-white">{{ option.label }}</span>
+                      @if (option.recommended) {
+                        <span
+                          data-testid="recommended"
+                          class="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
+                        >
+                          {{ 'question.recommended' | transloco }}
+                        </span>
+                      }
+                    </span>
                     @if (option.description) {
                       <span class="text-xs leading-snug text-white/50">
                         {{ option.description }}
@@ -95,7 +105,7 @@ import { TypedInput } from './typed-input';
                 class="flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors"
                 [class]="cardClass(customActive())"
                 [attr.aria-pressed]="customActive()"
-                (click)="activateCustom()"
+                (click)="toggleCustom()"
               >
                 <span
                   class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center border transition-colors"
@@ -266,15 +276,20 @@ export class QuestionOverlay {
     );
   }
 
-  protected activateCustom(): void {
+  /** Toggles the custom answer, which behaves like one more option. */
+  protected toggleCustom(): void {
     const index = this.index();
     const multi = this.current().multiSelect;
     this.drafts.update((drafts) =>
-      drafts.map((draft, position) =>
-        position === index
-          ? { ...draft, customActive: true, selected: multi ? draft.selected : [] }
-          : draft,
-      ),
+      drafts.map((draft, position) => {
+        if (position !== index) {
+          return draft;
+        }
+        if (draft.customActive) {
+          return { ...draft, customActive: false };
+        }
+        return { ...draft, customActive: true, selected: multi ? draft.selected : [] };
+      }),
     );
   }
 
@@ -289,11 +304,15 @@ export class QuestionOverlay {
     const request = this.request();
     const answers: QuestionAnswer[] = request.questions.map((question, index) => {
       const draft = this.draft(index);
-      const custom = draft.custom.trim();
+      // Text typed before switching to an option is not part of the answer.
+      const custom = draft.customActive ? draft.custom.trim() : '';
       return {
         header: question.header,
         question: question.question,
-        selected: draft.selected,
+        // Report picks in the order the options were offered, not click order.
+        selected: question.options
+          .map((option) => option.label)
+          .filter((label) => draft.selected.includes(label)),
         custom: custom.length > 0 ? custom : null,
       };
     });
