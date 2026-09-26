@@ -804,9 +804,7 @@ fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str
         shadow: Some(&runtime.shadow),
     };
     let gitignored = !relative.is_empty() && probe.is_ignored(&relative);
-    runtime
-        .file_ignore
-        .ignore_reason(path, &relative, gitignored)
+    runtime.file_ignore.ignore_reason(&relative, gitignored)
 }
 
 /// Canonicalize existing resources, but retain the full absolute path for new files.
@@ -1369,24 +1367,24 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         .git_exclude(false);
     builder.filter_entry(move |entry| {
         let path = entry.path();
-        if path
+        // Judge directory names only below the project root, so a project that
+        // itself lives under e.g. `/tmp` or `~/build` is not pruned whole.
+        let inside = path.strip_prefix(&root).unwrap_or(path);
+        if inside
             .components()
             .any(|component| component.as_os_str() == ".git")
         {
             return false;
         }
-        let relative = path
-            .strip_prefix(&root)
-            .map(|value| value.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+        let relative = inside.to_string_lossy().replace('\\', "/");
         if config.is_exempt(&relative) {
             return true;
         }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir
             && !config.has_exemptions()
-            && config.is_generated_path(path)
-            && !config.generated_rule_explicitly_disabled(path)
+            && config.is_generated_path(inside)
+            && !config.generated_rule_explicitly_disabled(inside)
         {
             return false;
         }
@@ -1444,7 +1442,7 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         let relative = ignore_relative(runtime, path);
         if runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(&relative, ignored.contains(path))
             .is_some()
         {
             continue;
@@ -1519,7 +1517,7 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         let relative = ignore_relative(runtime, path);
         if runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(&relative, ignored.contains(path))
             .is_some()
         {
             continue;
@@ -1595,7 +1593,7 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         let relative = ignore_relative(runtime, path);
         runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(&relative, ignored.contains(path))
             .is_none()
     });
     items.sort_by(|a, b| {
@@ -2530,6 +2528,7 @@ fn ceil_char_boundary(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::permissions::AutoApproveConfig;
 
     fn schema_named(name: &str) -> Value {
         tool_schemas()
@@ -2771,6 +2770,66 @@ mod tests {
         let found = walk_relative(root, &disabled);
         assert!(found.contains(&"node_modules/pkg/index.js".to_string()));
         assert!(!found.contains(&"dist/app.js".to_string()));
+    }
+
+    #[test]
+    fn walk_ignores_generated_names_above_the_project_root() {
+        // A checkout under `/tmp`, `~/build`, … must not be pruned as a whole.
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tmp/project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+
+        let config = Arc::new(FileIgnoreConfig::new(true, true, false, true, &[]));
+        assert_eq!(walk_relative(&root, &config), vec!["src/main.rs"]);
+    }
+
+    fn test_runtime(project_root: &Path, app_data: &Path) -> ToolRuntime {
+        ToolRuntime {
+            call_id: "call".to_string(),
+            project_root: project_root.to_path_buf(),
+            permissions: Arc::new(LivePermissions::new(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                AutoApproveConfig::default(),
+            )),
+            file_ignore: Arc::new(FileIgnoreConfig::default()),
+            session_id: "session".to_string(),
+            conversation_id: "session".to_string(),
+            shadow: Arc::new(ShadowRepo::open(app_data, "project", project_root).unwrap()),
+            processes: Arc::new(ProcessRegistry::new()),
+            broker: Arc::new(PermissionBroker::new()),
+            questions: Arc::new(QuestionBroker::new()),
+            http: reqwest::Client::new(),
+            mcp: None,
+            skills: Vec::new(),
+            justification: None,
+            cancel: CancellationToken::new(),
+            emit: Arc::new(|_: RoutedEvent| {}),
+        }
+    }
+
+    #[tokio::test]
+    async fn glob_grep_and_list_work_in_a_project_under_tmp() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tmp/project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "fn main() {}\n").unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        let globbed = glob_files(&mut runtime, &json!({ "pattern": "**/*.{rs,js}" })).await;
+        assert_eq!(globbed.result, "src/main.rs");
+        let grepped = grep_files(&mut runtime, &json!({ "pattern": "fn main" })).await;
+        assert_eq!(grepped.result, "src/main.rs:1: fn main() {}");
+        let listed = list_dir(&mut runtime, &json!({})).await;
+        assert_eq!(listed.result, "src/");
     }
 
     #[test]
