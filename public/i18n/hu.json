@@ -71,8 +71,12 @@
     "unstage": "Előkészítés visszavonása",
     "stageAll": "Összes előkészítése",
     "unstageAll": "Összes visszavonása",
+    "stageSelected": "{{ count }} kijelölt előkészítése",
+    "unstageSelected": "{{ count }} kijelölt visszavonása",
     "discard": "Elvetés",
     "discardConfirm": "Elveti a(z) „{{ path }}” módosításait? Ez nem vonható vissza.",
+    "discardSelected": "{{ count }} fájl elvetése",
+    "discardSelectedConfirm": "Elveti a módosításokat {{ count }} fájlban? Ez nem vonható vissza.",
     "blame": "Blame",
     "blameEmpty": "Nincs elérhető blame információ.",
     "ignore": "Hozzáadás a .gitignore-hoz",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} folyamatban",
       "files": "{{ count }} ütköző fájl",
       "continue": "Folytatás",
-      "abort": "Megszakítás"
+      "abort": "Megszakítás",
+      "resolveFirst": "Előbb oldd fel az összes ütközést, és add hozzá a fájlokat a stage-hez."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "A hitelesítés sikertelen. Ellenőrizze a Git hitelesítő adatait.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Váltás az új ágra",
       "confirm": "Megerősítés",
       "mergeConfirm": "Összefésüljük a(z) '{{branch}}' ágat a(z) '{{current}}' ágba?",
+      "rebaseConfirm": "Rebase-eled a(z) '{{current}}' ágat erre: '{{branch}}'? Ez újraírja a(z) '{{current}}' ág commitjait.",
       "deleteConfirm": "Törlöd a(z) '{{branch}}' ágat? Ez nem vonható vissza.",
       "deleteRemoteConfirm": "Törlöd a(z) '{{branch}}' távoli ágat? Ez hatással van a távoli tárolóra.",
+      "forceDeleteConfirm": "A(z) '{{branch}}' ág nincs teljesen összefésülve. Mégis törlöd? A nem összefésült commitjai elvesznek.",
       "rebaseHint": "Rendezd át a commitokat, és válassz műveletet mindegyikhez. A rebase a legrégebbitől a legújabbig fut.",
-      "nothingToRebase": "Nincsenek rebase-elhető commitok."
+      "nothingToRebase": "Nincsenek rebase-elhető commitok.",
+      "rebaseActions": {
+        "pick": "Megtartás (pick)",
+        "squash": "Összevonás (squash)",
+        "fixup": "Beolvasztás (fixup)",
+        "drop": "Elvetés (drop)"
+      },
+      "rebaseSquashFirst": "Az első commit nem vonható össze (squash vagy fixup): nincs korábbi commit, amellyel egyesíteni lehetne.",
+      "moveUp": "Mozgatás fel",
+      "moveDown": "Mozgatás le"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Egyetlen lépés sem felel meg az aktuális szűrőknek.",
     "view": {
       "timeline": "Idővonal",
-      "branches": "Ágak"
+      "branches": "Ágak",
+      "permissions": "Engedélyek"
     },
     "filters": {
       "type": "Írja be",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Munkamenet felülbírálása",
       "default": "Alapértelmezett beállítások"
+    },
+    "permissions": {
+      "empty": "Ehhez a csevegéshez még nincs rögzített engedélydöntés.",
+      "clear": "Napló törlése",
+      "clearConfirm": "Kattints újra a törléshez",
+      "allowed": "Engedélyezve",
+      "denied": "Elutasítva",
+      "why": "Indok:",
+      "rule": "Szabály:",
+      "filters": {
+        "auto": "Kérdés nélkül engedélyezve",
+        "asked": "Rákérdezett",
+        "denied": "Elutasítva"
+      },
+      "by": {
+        "auto": "Automatikus",
+        "rule": "Tiltó szabály",
+        "user": "Te",
+        "grant": "Új engedély lefedte",
+        "cascade": "Egy másik kéréssel együtt elutasítva",
+        "stopped": "Leállítva",
+        "timeout": "Időtúllépés",
+        "cancelled": "Megszakítva"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Útmutatást ad célzott, determinisztikus tesztek írásához és azok befejezés előtti futtatásához.",
     "architecturePrompt": "Szoftverarchitektúra",
     "architecturePromptHint": "Útmutatást ad a modulhatárokról, a felelősségekről és a karbantartható tervezésről.",
-    "budget": "Költségvetés (USD)",
-    "budgetHint": "A 0 letiltja a költségvetés megjelenítését.",
     "language": "Nyelv",
     "replyLanguage": "Válasz nyelve",
     "replyLanguageDefault": "Alapértelmezett (a modell nyelve)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Hány egymást követő eszközhívást hajthat végre az ügyintéző, mielőtt szünetet tart, és felkéri a folytatásra. A határ egy biztonsági szelep: megakadályozza, hogy egy hurokba ragadt modell örökre futhasson és tokeneket égessen el. A 35 jó alapértelmezett; emelje fel hosszú, több lépésből álló feladatokra.",
     "autoContinueAllSessions": "Minden munkamenet automatikus folytatása",
     "autoContinueAllSessionsHint": "Amikor egy munkamenet eléri az eszközhívási korlátot, a szünet helyett automatikusan folytassa. Ez eltávolítja a hurokvédő hálót, így egy elakadt ügynök addig futhat, amíg meg nem állítja. Ezt a csevegésben is átkapcsolhatja, ha elérte a határt.",
+    "subagentModel": "Alügynök-modell",
+    "subagentModelHint": "Az alügynökökhöz használt modell. Hagyja üresen a munkamenet modelljének használatához.",
+    "compactionModel": "Tömörítési modell",
+    "compactionModelHint": "A hosszú beszélgetések összegzéséhez használt modell. Hagyja üresen a munkamenet modelljének használatához.",
+    "promptCaching": "Prompt-gyorsítótárazás",
+    "promptCachingHint": "Jelölje meg a stabil prompt-előtagot gyorsítótárazhatónak, hogy a gyorsítótárat támogató szolgáltatók olcsóbban számítsák fel a gyorsítótárazott bemeneti tokeneket.",
+    "mcpProgressiveDisclosure": "MCP-eszközök fokozatos felfedése",
+    "mcpProgressiveDisclosureHint": "Ha sok MCP-eszköz csatlakozik, jelenítsen meg egy tool_search/mcp_invoke párt ahelyett, hogy minden sémát beágyazna a kontextus megtakarítása érdekében. A kis eszközkészletek mindig beágyazódnak.",
     "fileAccessRules": "Fájl hozzáférési szabályok",
     "fileAccessRulesHint": "Szabályozza, hogy az asszisztens mely fájlokat fedezheti fel és olvashatja. A felhasználói mentességek mindig minden alábbi szabályt nyernek.",
     "ignoreGitignored": "A .gitignore fájlban felsorolt ​​fájlok figyelmen kívül hagyása",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Nincsenek blokkolt parancsok.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + alparancs",
       "programFlags": "Program + kapcsolók",
       "exact": "Pontos"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Még nincsenek parancsszabályok. Hozzon létre egyet a „mindig engedélyez” lehetőséggel az engedélykérésben.",
     "websiteRules": "Webhelyek",
-    "websiteRulesHint": "Webhelyek, amelyeket az asszisztens felkereshet. A tiltó szabályok elsőbbséget élveznek az engedélyező szabályokkal szemben; egy sima domain a aldomainjeit is lefedi. Hozzon létre egyet a „mindig engedélyez” vagy „mindig tilt” lehetőséggel az engedélykérésben.",
+    "websiteRulesHint": "Webhelyek, amelyeket az asszisztens a webes eszközeivel vagy olyan parancsokkal, mint a curl, a git és az ssh, felkereshet. A tiltó szabályok elsőbbséget élveznek az engedélyező szabályokkal szemben; egy sima domain a aldomainjeit is lefedi. Hozzon létre egyet a „mindig engedélyez” vagy „mindig tilt” lehetőséggel az engedélykérésben.",
     "permissionPrompts": "Engedélykérések",
     "permissionPromptsHint": "Válaszd ki, mit tesz alapértelmezésben a fő engedélyezés gomb. Egyszeri engedélyezés egyetlen kérést hagy jóvá; engedélyezés erre a munkamenetre megjegyzi a mappahozzáférést az alkalmazás újraindításáig.",
+    "autoApprove": "Automatikus jóváhagyás",
+    "autoApproveHint": "Kihagyja a kérdéseket olyan munkánál, amelyet az asszisztens bizonyíthatóan biztonságos. A veszélyes parancsok, a beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, a projekten kívüli útvonalak és az érzékeny fájlok mindig kérdeznek.",
+    "autoApproveReadOnly": "Csak olvasható parancsok",
+    "autoApproveReadOnlyHint": "Engedélyezi az ellenőrző parancsokat, például ls, grep és git status, kérdezés nélkül.",
+    "autoApprovePackageScripts": "Csomagkezelők és build eszközök",
+    "autoApprovePackageScriptsHint": "Engedélyezi a pnpm, npm, yarn, bun, ng, make és hasonló eszközöket, ha semmi nem mutat a projekten kívülre.",
+    "autoApproveProjectExecutables": "Projekt futtatható fájljai",
+    "autoApproveProjectExecutablesHint": "Engedélyezi a projekten belüli futtatható fájlokat, például ./node_modules/.bin/ng, minden alkalommal kérdezés nélkül.",
+    "autoApproveProjectCommands": "Minden parancs a projekten belül",
+    "autoApproveProjectCommandsHint": "Engedélyez minden nem veszélyes parancsot, amelynek útvonalai a projekten belül maradnak. A veszélyes parancsok, a beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, az érzékeny fájlok és minden külső továbbra is kérdez.",
+    "permissionPreset": {
+      "strict": "Szigorú",
+      "strictHint": "Csak a kizárólag olvasó parancsok futnak kérdés nélkül.",
+      "balanced": "Kiegyensúlyozott",
+      "balancedHint": "Az olvasó parancsok, a csomagkezelők, a build eszközök és a projekt futtatható fájljai kérdés nélkül futnak.",
+      "autonomous": "Önálló",
+      "autonomousHint": "A projekten belüli minden nem veszélyes parancs kérdés nélkül fut.",
+      "custom": "Egyéni",
+      "autonomousWarning": "Az önálló mód megbízik ebben a projektben: a szkriptjei, Makefile-jai és futtatható fájljai kérdés nélkül bármit megtehetnek. A beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, a veszélyes parancsok és a projekten kívüli dolgok továbbra is kérdeznek.",
+      "confirm": "Önálló mód használata"
+    },
     "noAllowedWebsites": "Még nincsenek mindig engedélyezett webhelyek.",
     "noDeniedWebsites": "Még nincsenek mindig tiltott webhelyek.",
     "websitePlaceholder": "pl. docs.rs vagy *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Mappa"
     },
     "allowAlways": "Mindig engedélyez",
-    "addFolder": "Mappa végleges hozzáadása",
     "siteRuleLabel": "Webhely szabálya (domain vagy glob)",
     "siteRuleHint": "Például: a docs.rs engedélyezi azt az oldalt, a *.github.com engedélyezi annak összes aldomainjét.",
-    "segment": {
-      "allowed": "Engedélyezett",
-      "needsApproval": "Jóváhagyást igényel"
-    },
+    "siteRuleInvalid": "Ez a szabály nem fedi le a(z) {{ host }} címet, vagy túl tág, ezért helyette a(z) {{ host }} kerül mentésre.",
     "risk": {
       "low": "Alacsony",
       "medium": "Közepes",
+      "network": "Hálózat",
       "high": "Magas",
       "danger": "Veszély"
     },
@@ -994,7 +1066,39 @@
       "title": "Szabály hatóköre",
       "hint": "Válaszd ki, milyen szélesen érvényes a szabály."
     },
-    "allowChat": "Engedélyezés ebben a csevegésben"
+    "folderScope": {
+      "title": "Mappa engedélyezése",
+      "hint": "Hozzáadja a mappát és mindent, ami benne van, a mindig engedélyezett mappákhoz.",
+      "option": "Mappa + almappák"
+    },
+    "hostScope": {
+      "title": "Webhely engedélyezése",
+      "hint": "Hozzáadja a webhelyet és aldomainjeit az engedélyezett webhelyekhez.",
+      "option": "Webhely + aldomainek"
+    },
+    "allowChat": "Engedélyezés ebben a csevegésben",
+    "option": {
+      "yes": "Igen",
+      "chat": "Igen, és ebben a csevegésben ne kérdezzen újra erről:",
+      "session": "Igen, és újraindításig ne kérdezzen újra erről:",
+      "always": "Igen, és mindig engedélyezze:",
+      "no": "Nem",
+      "denyAlways": "Nem, és mindig tiltsa:"
+    },
+    "customize": "Testreszabás",
+    "justification": "Miért",
+    "keyboardHint": "Nyomd meg az 1–{{ count }} gombot, vagy használd a ↑ ↓ és Enter billentyűket · Esc elutasít",
+    "url": {
+      "queryWarning": "Ez a cím sok adatot hordoz a lekérdezési karakterláncában. Engedélyezés előtt győződj meg róla, hogy nincs benne semmi személyes."
+    },
+    "tooltip": {
+      "deny": "Ennek a kérésnek és a csevegésben várakozó összes többi kérésnek az elutasítása.",
+      "denyAlways": "Elutasítás és tiltó szabály mentése a beállításokba. A csevegésben várakozó többi kérés is elutasításra kerül.",
+      "allowOnce": "Csak ennek a kérésnek az engedélyezése.",
+      "allowSession": "Minden csevegésben megmarad az alkalmazás újraindításáig.",
+      "allowChat": "A parancsszabályok ebben a csevegésben és alügynökeinél maradnak meg; a mappák és webhelyek az alkalmazás újraindításáig.",
+      "allowAlways": "A beállításokba kerül, és minden csevegésre vonatkozik."
+    }
   },
   "question": {
     "title": "Kérdés",
@@ -1044,6 +1148,8 @@
     "installing": "Telepítés…",
     "uninstall": "Eltávolítás",
     "addFolder": "Mappa hozzáadása",
-    "noFolders": "Még nincsenek hozzáadott mappák."
+    "noFolders": "Még nincsenek hozzáadott mappák.",
+    "binaryFile": "Bináris fájl – nincs elérhető előnézet.",
+    "fileTooLarge": "Ez a fájl túl nagy az előnézethez."
   }
 }

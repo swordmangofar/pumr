@@ -14,6 +14,41 @@ import { Toggle } from '../toggle';
 type FileToggleKey =
   'ignoreGitignored' | 'scanGeneratedFiles' | 'ignoreLocalDatabases' | 'ignoreEnvFiles';
 
+type AutoApproveToggleKey =
+  | 'autoApproveReadOnly'
+  | 'autoApprovePackageScripts'
+  | 'autoApproveProjectExecutables'
+  | 'autoApproveProjectCommands';
+
+export type PermissionPreset = 'strict' | 'balanced' | 'autonomous';
+
+/// The automatic approvals each preset turns on. Any other combination shows
+/// as "custom".
+export const PERMISSION_PRESETS: Readonly<
+  Record<PermissionPreset, Readonly<Record<AutoApproveToggleKey, boolean>>>
+> = {
+  strict: {
+    autoApproveReadOnly: true,
+    autoApprovePackageScripts: false,
+    autoApproveProjectExecutables: false,
+    autoApproveProjectCommands: false,
+  },
+  balanced: {
+    autoApproveReadOnly: true,
+    autoApprovePackageScripts: true,
+    autoApproveProjectExecutables: true,
+    autoApproveProjectCommands: false,
+  },
+  autonomous: {
+    autoApproveReadOnly: true,
+    autoApprovePackageScripts: true,
+    autoApproveProjectExecutables: true,
+    autoApproveProjectCommands: true,
+  },
+};
+
+const PRESET_ORDER: readonly PermissionPreset[] = ['strict', 'balanced', 'autonomous'];
+
 interface CatalogGroup {
   key: string;
   labelKey: string;
@@ -174,7 +209,7 @@ import { TypedInput } from '../typed-input';
                   />
                 }
               </div>
-              <div class="grid grid-cols-2 gap-1.5">
+              <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 @for (entry of catalogFor(group.key); track entry.id) {
                   <div
                     class="flex items-center justify-between gap-2 rounded-lg border border-white/10 px-3 py-1.5"
@@ -462,6 +497,94 @@ import { TypedInput } from '../typed-input';
         }
       </div>
     </section>
+
+    <section class="mt-8">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.autoApprove' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.autoApproveHint' | transloco }}</p>
+      <div class="mb-3" data-testid="permission-presets">
+        <div class="flex flex-wrap items-center gap-1.5">
+          @for (preset of presets; track preset) {
+            <button
+              type="button"
+              class="rounded-full border px-3 py-1 text-xs transition-colors"
+              [class]="
+                activePreset() === preset
+                  ? 'border-accent/60 bg-accent/15 text-white'
+                  : 'border-white/10 text-mist/60 hover:bg-white/5'
+              "
+              [attr.title]="'settings.permissionPreset.' + preset + 'Hint' | transloco"
+              [attr.data-preset]="preset"
+              (click)="choosePreset(preset)"
+            >
+              {{ 'settings.permissionPreset.' + preset | transloco }}
+            </button>
+          }
+          @if (activePreset() === null) {
+            <span
+              class="rounded-full border border-accent/40 px-3 py-1 text-xs text-accent/80"
+              data-testid="custom-preset"
+            >
+              {{ 'settings.permissionPreset.custom' | transloco }}
+            </span>
+          }
+        </div>
+        @if (activePreset(); as preset) {
+          <p class="mt-1.5 text-xs text-mist/40">
+            {{ 'settings.permissionPreset.' + preset + 'Hint' | transloco }}
+          </p>
+        }
+        @if (confirmingAutonomous()) {
+          <div
+            class="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+            data-testid="autonomous-warning"
+          >
+            <p class="text-xs leading-relaxed text-amber-200/90">
+              {{ 'settings.permissionPreset.autonomousWarning' | transloco }}
+            </p>
+            <div class="mt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist hover:bg-white/5"
+                (click)="confirmingAutonomous.set(false)"
+              >
+                {{ 'common.cancel' | transloco }}
+              </button>
+              <button
+                type="button"
+                class="rounded-full border border-amber-400/50 px-3 py-1 text-xs text-amber-200 hover:bg-amber-500/15"
+                data-testid="confirm-autonomous"
+                (click)="applyPreset('autonomous')"
+              >
+                {{ 'settings.permissionPreset.confirm' | transloco }}
+              </button>
+            </div>
+          </div>
+        }
+      </div>
+      <div class="space-y-1.5">
+        @for (row of autoApproveRows; track row.key) {
+          <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
+            <div class="flex items-start gap-3">
+              <app-toggle
+                class="mt-0.5"
+                [checked]="isAuto(row.key)"
+                (toggled)="toggleAuto(row.key)"
+              />
+              <div>
+                <label class="block text-sm font-medium text-mist">
+                  {{ row.labelKey | transloco }}
+                </label>
+                <p class="mt-1 text-xs leading-relaxed text-mist/30">
+                  {{ row.hintKey | transloco }}
+                </p>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    </section>
   `,
 })
 export class AgentRulesSettings {
@@ -502,6 +625,76 @@ export class AgentRulesSettings {
 
   protected toggleAdvanced(): void {
     this.draft.patch('fileIgnoreAdvanced', !this.draft.draft().fileIgnoreAdvanced);
+  }
+
+  protected readonly autoApproveRows: ReadonlyArray<{
+    key: AutoApproveToggleKey;
+    labelKey: string;
+    hintKey: string;
+  }> = [
+    {
+      key: 'autoApproveReadOnly',
+      labelKey: 'settings.autoApproveReadOnly',
+      hintKey: 'settings.autoApproveReadOnlyHint',
+    },
+    {
+      key: 'autoApprovePackageScripts',
+      labelKey: 'settings.autoApprovePackageScripts',
+      hintKey: 'settings.autoApprovePackageScriptsHint',
+    },
+    {
+      key: 'autoApproveProjectExecutables',
+      labelKey: 'settings.autoApproveProjectExecutables',
+      hintKey: 'settings.autoApproveProjectExecutablesHint',
+    },
+    {
+      key: 'autoApproveProjectCommands',
+      labelKey: 'settings.autoApproveProjectCommands',
+      hintKey: 'settings.autoApproveProjectCommandsHint',
+    },
+  ];
+
+  protected readonly presets = PRESET_ORDER;
+  protected readonly confirmingAutonomous = signal(false);
+
+  /// The preset matching the current toggles, or `null` for a custom mix.
+  protected readonly activePreset = computed<PermissionPreset | null>(() => {
+    const draft = this.draft.draft();
+    return (
+      PRESET_ORDER.find((preset) =>
+        (Object.keys(PERMISSION_PRESETS[preset]) as AutoApproveToggleKey[]).every(
+          (key) => draft[key] === PERMISSION_PRESETS[preset][key],
+        ),
+      ) ?? null
+    );
+  });
+
+  /// Autonomous trusts project scripts to run anything, so switching to it
+  /// asks for confirmation first.
+  protected choosePreset(preset: PermissionPreset): void {
+    if (preset === 'autonomous' && this.activePreset() !== 'autonomous') {
+      this.confirmingAutonomous.set(true);
+      return;
+    }
+    this.applyPreset(preset);
+  }
+
+  protected applyPreset(preset: PermissionPreset): void {
+    this.confirmingAutonomous.set(false);
+    const values = PERMISSION_PRESETS[preset];
+    for (const key of Object.keys(values) as AutoApproveToggleKey[]) {
+      if (this.draft.draft()[key] !== values[key]) {
+        this.draft.patch(key, values[key]);
+      }
+    }
+  }
+
+  protected isAuto(key: AutoApproveToggleKey): boolean {
+    return this.draft.draft()[key];
+  }
+
+  protected toggleAuto(key: AutoApproveToggleKey): void {
+    this.draft.patch(key, !this.draft.draft()[key]);
   }
 
   private baseOn(group: string): boolean {

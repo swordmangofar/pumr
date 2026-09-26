@@ -71,8 +71,12 @@
     "unstage": "Usuń z indeksu",
     "stageAll": "Dodaj wszystko do indeksu",
     "unstageAll": "Usuń wszystko z indeksu",
+    "stageSelected": "Dodaj {{ count }} wybrane do indeksu",
+    "unstageSelected": "Usuń {{ count }} wybrane z indeksu",
     "discard": "Odrzuć",
     "discardConfirm": "Odrzucić zmiany w „{{ path }}”? Tej operacji nie można cofnąć.",
+    "discardSelected": "Odrzuć {{ count }} plików",
+    "discardSelectedConfirm": "Odrzucić zmiany w {{ count }} plikach? Tej operacji nie można cofnąć.",
     "blame": "Blame",
     "blameEmpty": "Brak informacji blame.",
     "ignore": "Dodaj do .gitignore",
@@ -124,7 +128,14 @@
       "banner": "Trwa {{ operation }}",
       "files": "{{ count }} plików z konfliktami",
       "continue": "Kontynuuj",
-      "abort": "Przerwij"
+      "abort": "Przerwij",
+      "resolveFirst": "Najpierw rozwiąż wszystkie konflikty i dodaj pliki do stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Uwierzytelnianie nie powiodło się. Sprawdź dane logowania Git.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Przełącz na nową gałąź",
       "confirm": "Potwierdź",
       "mergeConfirm": "Scalić '{{branch}}' do '{{current}}'?",
+      "rebaseConfirm": "Wykonać rebase '{{current}}' na '{{branch}}'? Commity gałęzi '{{current}}' zostaną przepisane.",
       "deleteConfirm": "Usunąć gałąź '{{branch}}'? Tej operacji nie można cofnąć.",
       "deleteRemoteConfirm": "Usunąć zdalną gałąź '{{branch}}'? Wpłynie to na zdalne repozytorium.",
+      "forceDeleteConfirm": "Gałąź '{{branch}}' nie jest w pełni scalona. Usunąć mimo to? Jej niescalone commity zostaną utracone.",
       "rebaseHint": "Zmień kolejność commitów i wybierz akcję dla każdego. Rebase przebiega od najstarszego do najnowszego.",
-      "nothingToRebase": "Brak commitów do rebase."
+      "nothingToRebase": "Brak commitów do rebase.",
+      "rebaseActions": {
+        "pick": "Zachowaj (pick)",
+        "squash": "Połącz (squash)",
+        "fixup": "Wchłoń (fixup)",
+        "drop": "Porzuć (drop)"
+      },
+      "rebaseSquashFirst": "Pierwszego commita nie można połączyć (squash ani fixup): brak wcześniejszego commita, z którym można go połączyć.",
+      "moveUp": "Przesuń w górę",
+      "moveDown": "Przesuń w dół"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Żadne kroki nie pasują do bieżących filtrów.",
     "view": {
       "timeline": "Oś czasu",
-      "branches": "Gałęzie"
+      "branches": "Gałęzie",
+      "permissions": "Uprawnienia"
     },
     "filters": {
       "type": "Typ",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Zastąpienie sesji",
       "default": "Ustawienia domyślne"
+    },
+    "permissions": {
+      "empty": "Dla tego czatu nie zapisano jeszcze żadnych decyzji o uprawnieniach.",
+      "clear": "Wyczyść dziennik",
+      "clearConfirm": "Kliknij ponownie, aby wyczyścić",
+      "allowed": "Dozwolone",
+      "denied": "Odrzucone",
+      "why": "Dlaczego:",
+      "rule": "Reguła:",
+      "filters": {
+        "auto": "Dozwolone bez pytania",
+        "asked": "Zapytano",
+        "denied": "Odrzucone"
+      },
+      "by": {
+        "auto": "Automatycznie",
+        "rule": "Reguła odmowy",
+        "user": "Ty",
+        "grant": "Objęte nowym zezwoleniem",
+        "cascade": "Odrzucone razem z inną prośbą",
+        "stopped": "Zatrzymane",
+        "timeout": "Przekroczono limit czasu",
+        "cancelled": "Anulowane"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Dodaje wskazówki dotyczące pisania skupionych, deterministycznych testów i uruchamiania ich przed zakończeniem.",
     "architecturePrompt": "Architektura oprogramowania",
     "architecturePromptHint": "Dodaje wskazówki dotyczące granic modułów, odpowiedzialności i łatwego w utrzymaniu projektu.",
-    "budget": "Budżet (USD)",
-    "budgetHint": "0 wyłącza wyświetlanie budżetu.",
     "language": "Język",
     "replyLanguage": "Język odpowiedzi",
     "replyLanguageDefault": "Domyślny (język modelu)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Ile kolejnych wywołań narzędzi może wykonać agent, zanim zatrzyma się i poprosi o kontynuację. Limit jest zaworem bezpieczeństwa: powstrzymuje model, który utknie w pętli, przed niekończącym się bieganiem i spalaniem żetonów. 35 to dobra wartość domyślna; podnieś go do długich, wieloetapowych zadań.",
     "autoContinueAllSessions": "Automatycznie kontynuuj wszystkie sesje",
     "autoContinueAllSessionsHint": "Kiedy sesja osiągnie limit wywołań narzędzi, kontynuuj ją automatycznie, zamiast wstrzymywać. Spowoduje to usunięcie siatki zabezpieczającej pętlę, więc zablokowany agent może działać, dopóki go nie zatrzymasz. Możesz także przełączyć tę opcję na czacie po osiągnięciu limitu.",
+    "subagentModel": "Model podagenta",
+    "subagentModelHint": "Model używany dla podagentów. Pozostaw puste, aby użyć modelu sesji.",
+    "compactionModel": "Model kompresji",
+    "compactionModelHint": "Model używany do streszczania długich rozmów. Pozostaw puste, aby użyć modelu sesji.",
+    "promptCaching": "Buforowanie promptów",
+    "promptCachingHint": "Oznacz stały prefiks promptu jako buforowalny, aby dostawcy obsługujący buforowanie rozliczali buforowane tokeny wejściowe taniej.",
+    "mcpProgressiveDisclosure": "Stopniowe ujawnianie narzędzi MCP",
+    "mcpProgressiveDisclosureHint": "Gdy podłączonych jest wiele narzędzi MCP, pokaż parę tool_search/mcp_invoke zamiast wstawiać każdy schemat, oszczędzając kontekst. Małe zestawy narzędzi są zawsze wstawiane.",
     "fileAccessRules": "Zasady dostępu do plików",
     "fileAccessRulesHint": "Kontroluj, które pliki asystent może odkryć i odczytać. Zwolnienia użytkowników zawsze wygrywają z każdą poniższą zasadą.",
     "ignoreGitignored": "Ignoruj ​​pliki wymienione w .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Brak zablokowanych poleceń.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + podpolecenie",
       "programFlags": "Program + flagi",
       "exact": "Dokładne"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Brak reguł poleceń. Użyj „zezwalaj zawsze” w prośbie o uprawnienia, aby ją utworzyć.",
     "websiteRules": "Strony internetowe",
-    "websiteRulesHint": "Strony, które asystent może odwiedzać. Reguły odmowy mają pierwszeństwo przed regułami zezwolenia; sama domena obejmuje także jej subdomeny. Użyj „zezwalaj zawsze” lub „odmawiaj zawsze” w prośbie o uprawnienia, aby ją utworzyć.",
+    "websiteRulesHint": "Strony, które asystent może odwiedzać swoimi narzędziami internetowymi lub poleceniami takimi jak curl, git i ssh. Reguły odmowy mają pierwszeństwo przed regułami zezwolenia; sama domena obejmuje także jej subdomeny. Użyj „zezwalaj zawsze” lub „odmawiaj zawsze” w prośbie o uprawnienia, aby ją utworzyć.",
     "permissionPrompts": "Prośby o uprawnienia",
     "permissionPromptsHint": "Wybierz domyślne działanie głównego przycisku zezwalania. Zezwól raz zatwierdza pojedynczą prośbę; zezwól na tę sesję zapamiętuje dostęp do folderu do ponownego uruchomienia aplikacji.",
+    "autoApprove": "Automatyczna zgoda",
+    "autoApproveHint": "Pomija pytania o pracę, którą asystent może udowodnić jako bezpieczną. Niebezpieczne polecenia, kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, ścieżki poza projektem i wrażliwe pliki zawsze pytają.",
+    "autoApproveReadOnly": "Polecenia tylko do odczytu",
+    "autoApproveReadOnlyHint": "Zezwala na polecenia kontrolne, takie jak ls, grep i git status, bez pytania.",
+    "autoApprovePackageScripts": "Menedżery pakietów i narzędzia budowania",
+    "autoApprovePackageScriptsHint": "Zezwala na pnpm, npm, yarn, bun, ng, make i podobne narzędzia, gdy nic nie wskazuje poza projekt.",
+    "autoApproveProjectExecutables": "Pliki wykonywalne projektu",
+    "autoApproveProjectExecutablesHint": "Zezwala na pliki wykonywalne w projekcie, takie jak ./node_modules/.bin/ng, bez pytania za każdym razem.",
+    "autoApproveProjectCommands": "Wszystkie polecenia w projekcie",
+    "autoApproveProjectCommandsHint": "Zezwala na każde niegroźne polecenie, którego ścieżki pozostają w projekcie. Niebezpieczne polecenia, kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, wrażliwe pliki i wszystko na zewnątrz nadal pytają.",
+    "permissionPreset": {
+      "strict": "Ścisły",
+      "strictHint": "Bez pytania działają tylko polecenia, które wyłącznie czytają.",
+      "balanced": "Zrównoważony",
+      "balancedHint": "Polecenia tylko do odczytu, menedżery pakietów, narzędzia budowania i pliki wykonywalne projektu działają bez pytania.",
+      "autonomous": "Autonomiczny",
+      "autonomousHint": "Każde niegroźne polecenie w projekcie działa bez pytania.",
+      "custom": "Niestandardowy",
+      "autonomousWarning": "Tryb autonomiczny ufa temu projektowi: jego skrypty, pliki Makefile i pliki wykonywalne mogą zrobić wszystko bez pytania. Kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, niebezpieczne polecenia i wszystko poza projektem nadal pytają.",
+      "confirm": "Użyj trybu autonomicznego"
+    },
     "noAllowedWebsites": "Brak stron z zawsze zezwolonym dostępem.",
     "noDeniedWebsites": "Brak stron z zawsze odmówionym dostępem.",
     "websitePlaceholder": "np. docs.rs lub *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Folder"
     },
     "allowAlways": "Zezwalaj zawsze",
-    "addFolder": "Dodaj folder na stałe",
     "siteRuleLabel": "Reguła strony internetowej (domena lub glob)",
     "siteRuleHint": "Na przykład: docs.rs zezwala na tę witrynę, *.github.com zezwala na wszystkie jej subdomeny.",
-    "segment": {
-      "allowed": "Dozwolone",
-      "needsApproval": "Wymaga zatwierdzenia"
-    },
+    "siteRuleInvalid": "Ta reguła nie obejmuje {{ host }} lub jest zbyt szeroka, więc zamiast niej zostanie zapisany {{ host }}.",
     "risk": {
       "low": "Niskie",
       "medium": "Średnie",
+      "network": "Sieć",
       "high": "Wysokie",
       "danger": "Zagrożenie"
     },
@@ -994,7 +1066,39 @@
       "title": "Zakres reguły",
       "hint": "Wybierz, jak szeroko obowiązuje reguła."
     },
-    "allowChat": "Zezwól na tym czacie"
+    "folderScope": {
+      "title": "Zezwól na folder",
+      "hint": "Dodaje folder i wszystko w nim do folderów zawsze dozwolonych.",
+      "option": "Folder + podfoldery"
+    },
+    "hostScope": {
+      "title": "Zezwól na stronę",
+      "hint": "Dodaje stronę i jej subdomeny do dozwolonych stron.",
+      "option": "Strona + subdomeny"
+    },
+    "allowChat": "Zezwól na tym czacie",
+    "option": {
+      "yes": "Tak",
+      "chat": "Tak, i nie pytaj więcej na tym czacie o",
+      "session": "Tak, i nie pytaj więcej do ponownego uruchomienia o",
+      "always": "Tak, i zawsze zezwalaj na",
+      "no": "Nie",
+      "denyAlways": "Nie, i zawsze odmawiaj"
+    },
+    "customize": "Dostosuj",
+    "justification": "Dlaczego",
+    "keyboardHint": "Naciśnij 1–{{ count }} lub użyj ↑ ↓ i Enter · Esc odmawia",
+    "url": {
+      "queryWarning": "Ten adres przenosi dużo danych w ciągu zapytania. Przed zezwoleniem upewnij się, że nie zawiera niczego prywatnego."
+    },
+    "tooltip": {
+      "deny": "Odrzuć tę prośbę i wszystkie inne oczekujące prośby na tym czacie.",
+      "denyAlways": "Odrzuć i zapisz regułę odmowy w ustawieniach. Inne oczekujące prośby na tym czacie również zostaną odrzucone.",
+      "allowOnce": "Zezwól tylko na tę prośbę.",
+      "allowSession": "Zapamiętane na wszystkich czatach do ponownego uruchomienia aplikacji.",
+      "allowChat": "Reguły poleceń są zapamiętywane dla tego czatu i jego podagentów; foldery i strony do ponownego uruchomienia aplikacji.",
+      "allowAlways": "Zapisane w ustawieniach i obowiązuje na wszystkich czatach."
+    }
   },
   "question": {
     "title": "Pytanie",
@@ -1044,6 +1148,8 @@
     "installing": "Instaluję…",
     "uninstall": "Odinstaluj",
     "addFolder": "Dodaj folder",
-    "noFolders": "Nie dodano jeszcze folderów."
+    "noFolders": "Nie dodano jeszcze folderów.",
+    "binaryFile": "Plik binarny – podgląd niedostępny.",
+    "fileTooLarge": "Ten plik jest zbyt duży, aby wyświetlić podgląd."
   }
 }

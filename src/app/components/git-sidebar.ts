@@ -7,21 +7,21 @@ import {
   signal,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { confirmWarning } from '../core/confirm-warning';
 import { buildBranchTree, flattenBranchTree } from '../core/git-branches';
-import { GitBranch, GitTag } from '../core/models';
+import { GitBranch, GitStash, GitTag } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
 import { GitService } from '../core/git.service';
 import { GitBranchMenu } from './git-branch-menu';
+import { GitNameDialog, GitNameDialogResult } from './git-name-dialog';
+import { TypedInput } from './typed-input';
 
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
-
-import { TypedInput } from './typed-input';
 
 @Component({
   selector: 'app-git-sidebar',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe, GitBranchMenu],
+  imports: [TypedInput, TranslocoPipe, GitBranchMenu, GitNameDialog],
   host: {
     '(document:keydown.escape)': 'onEscape()',
   },
@@ -373,7 +373,7 @@ import { TypedInput } from './typed-input';
                         </svg>
                         <span class="min-w-0 flex-1 truncate">{{ tag.name }}</span>
                         <span class="shrink-0 font-mono text-[10px] text-mist/25">{{
-                          tag.hash
+                          tag.hash.slice(0, 7)
                         }}</span>
                       </button>
                       <button
@@ -442,9 +442,10 @@ import { TypedInput } from './typed-input';
             </div>
             @if (stashesOpen()) {
               <div class="mt-0.5 space-y-0.5">
-                @for (stash of stashes(); track stash) {
+                @for (stash of stashes(); track stash.hash) {
                   <div
                     class="group flex w-full items-center gap-1 rounded-lg px-2 py-1 text-[13px] text-mist/50"
+                    [title]="stash.name"
                   >
                     <svg
                       viewBox="0 0 16 16"
@@ -458,7 +459,9 @@ import { TypedInput } from './typed-input';
                       <rect x="3" y="3" width="10" height="10" rx="1.5" />
                       <path d="M3 6.5h10M3 9.5h10" />
                     </svg>
-                    <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ stash }}</span>
+                    <span class="min-w-0 flex-1 truncate text-xs">{{
+                      stash.message || stash.name
+                    }}</span>
                     <div
                       class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
                     >
@@ -672,67 +675,18 @@ import { TypedInput } from './typed-input';
     }
 
     @if (createOpen()) {
-      <div
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
-        (click)="closeCreateDialog()"
-      >
-        <div
-          class="w-[28rem] max-w-full glass-pop rounded-2xl shadow-2xl"
-          (click)="$event.stopPropagation()"
-        >
-          <div class="p-6">
-            <h2 class="text-base font-semibold text-white">
-              {{ 'git.createBranch' | transloco }}
-            </h2>
-            <label class="mt-4 block text-xs font-medium text-mist/70" for="git-create-branch-name">
-              {{ 'git.branchName' | transloco }}
-            </label>
-            <input
-              id="git-create-branch-name"
-              type="text"
-              autofocus
-              class="mt-1 w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 font-mono text-[13px] text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
-              placeholder="feature/my-branch"
-              [value]="createName()"
-              (typedValue)="createName.set($event)"
-              (keydown.enter)="confirmCreate()"
-            />
-            <p class="mt-3 text-xs text-mist/50">
-              {{ 'git.createBranchAt' | transloco: { branch: currentBranch() } }}
-            </p>
-            <label class="mt-3 flex cursor-pointer items-center gap-2 text-xs text-mist/70">
-              <input
-                type="checkbox"
-                class="accent-[var(--color-accent)]"
-                [checked]="createCheckout()"
-                (typedChecked)="createCheckout.set($event)"
-              />
-              {{ 'git.checkoutAfterCreate' | transloco }}
-            </label>
-            @if (createError(); as message) {
-              <p class="mt-3 text-xs text-rose-400">{{ message }}</p>
-            }
-          </div>
-          <footer class="flex items-center justify-end gap-2 border-t border-white/5 px-6 py-4">
-            <button
-              type="button"
-              class="rounded-full px-4 py-2 text-sm text-mist/70 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
-              [disabled]="createBusy()"
-              (click)="closeCreateDialog()"
-            >
-              {{ 'common.cancel' | transloco }}
-            </button>
-            <button
-              type="button"
-              class="rounded-full bg-accent px-5 py-2 text-sm font-medium text-ink transition-opacity hover:opacity-90 disabled:opacity-50"
-              [disabled]="createBusy() || createName().trim().length === 0"
-              (click)="confirmCreate()"
-            >
-              {{ (createCheckout() ? 'git.createAndCheckout' : 'git.create') | transloco }}
-            </button>
-          </footer>
-        </div>
-      </div>
+      <app-git-name-dialog
+        titleKey="git.createBranch"
+        labelKey="git.branchName"
+        placeholder="feature/my-branch"
+        hintKey="git.createBranchAt"
+        [hintParams]="{ branch: currentBranchLabel() }"
+        checkoutLabelKey="git.checkoutAfterCreate"
+        confirmKey="git.create"
+        confirmCheckoutKey="git.createAndCheckout"
+        [submit]="createBranch"
+        (closed)="createOpen.set(false)"
+      />
     }
 
     @if (branchMenu(); as menu) {
@@ -740,9 +694,9 @@ import { TypedInput } from './typed-input';
         [branch]="menu.branch"
         [x]="menu.x"
         [y]="menu.y"
-        [branches]="status()?.branches ?? []"
+        [branches]="refs().branches"
         [currentBranch]="status()?.branch ?? null"
-        [remotes]="remotes()"
+        [remotes]="refs().remotes"
         (closed)="closeBranchMenu()"
       />
     }
@@ -754,7 +708,9 @@ export class GitSidebar {
   private readonly transloco = inject(TranslocoService);
 
   protected readonly project = this.workspace.activeProject;
-  protected readonly status = this.workspace.activeGitStatus;
+  private readonly gitState = this.git.scope(() => this.project()?.id ?? null);
+  protected readonly status = this.gitState.status;
+  protected readonly refs = this.gitState.refs;
   protected readonly filter = signal('');
   protected readonly branchesOpen = signal(true);
   protected readonly remotesOpen = signal(true);
@@ -767,19 +723,15 @@ export class GitSidebar {
   protected readonly trackBusy = signal(false);
   protected readonly trackError = signal<string | null>(null);
   protected readonly createOpen = signal(false);
-  protected readonly createName = signal('');
-  protected readonly createCheckout = signal(true);
-  protected readonly createBusy = signal(false);
-  protected readonly createError = signal<string | null>(null);
   protected readonly branchMenu = signal<{ branch: GitBranch; x: number; y: number } | null>(null);
-  protected readonly remotes = this.workspace.activeGitRemotes;
 
   protected readonly changeCount = computed(() => {
     const status = this.status();
     return status ? status.unstaged.length + status.staged.length : 0;
   });
 
-  protected readonly currentBranch = computed(() => this.status()?.branch ?? 'HEAD');
+  /** Shown in the create dialog; the branch itself is created from HEAD. */
+  protected readonly currentBranchLabel = computed(() => this.status()?.branch ?? 'HEAD');
 
   protected readonly changesActive = computed(() => this.view() === 'changes');
 
@@ -787,26 +739,20 @@ export class GitSidebar {
     () => this.view() === 'commits' && this.selectedBranch() === null,
   );
 
-  private readonly view = computed(() => {
-    const project = this.project();
-    return project ? this.git.viewFor(project.id) : 'changes';
-  });
+  private readonly view = this.gitState.view;
 
-  private readonly selectedBranch = computed(() => {
-    const project = this.project();
-    return project ? this.git.selectedBranchFor(project.id) : null;
-  });
+  private readonly selectedBranch = this.gitState.selectedBranch;
 
   protected readonly localBranches = computed(() => {
     const query = this.filter().trim().toLowerCase();
-    const branches = (this.status()?.branches ?? []).filter((branch) => !branch.remote);
+    const branches = this.refs().branches.filter((branch) => !branch.remote);
     return query
       ? branches.filter((branch) => branch.name.toLowerCase().includes(query))
       : branches;
   });
 
   protected readonly remoteBranches = computed(() =>
-    (this.status()?.branches ?? []).filter((branch) => branch.remote),
+    this.refs().branches.filter((branch) => branch.remote),
   );
 
   protected readonly filteredRemoteBranches = computed(() => {
@@ -819,12 +765,12 @@ export class GitSidebar {
 
   protected readonly tags = computed(() => {
     const query = this.filter().trim().toLowerCase();
-    const tags = this.status()?.tags ?? [];
+    const tags = this.refs().tags;
     return query ? tags.filter((tag) => tag.name.toLowerCase().includes(query)) : tags;
   });
 
-  protected readonly stashes = computed(() => this.status()?.stashes ?? []);
-  protected readonly submodules = computed(() => this.status()?.submodules ?? []);
+  protected readonly stashes = computed(() => this.refs().stashes);
+  protected readonly submodules = computed(() => this.refs().submodules);
 
   protected readonly filterActive = computed(() => this.filter().trim().length > 0);
   protected readonly localBranchRows = computed(() =>
@@ -840,11 +786,19 @@ export class GitSidebar {
     ),
   );
 
+  protected readonly createBranch = (result: GitNameDialogResult) => {
+    const projectId = this.project()?.id;
+    return projectId
+      ? this.git.branchCreate(projectId, result.name, null, result.checkout)
+      : Promise.resolve();
+  };
+
   constructor() {
     effect(() => {
       const project = this.project();
       if (project) {
         void this.git.loadStatus(project.id);
+        void this.git.loadRefs(project.id);
       }
     });
   }
@@ -928,7 +882,7 @@ export class GitSidebar {
   protected openTrackDialog(branch: GitBranch): void {
     this.trackError.set(null);
     this.trackBusy.set(false);
-    this.trackName.set(localNameFor(branch.name));
+    this.trackName.set(branch.remoteBranch ?? localNameFor(branch.name));
     this.tracking.set(branch);
   }
 
@@ -961,45 +915,13 @@ export class GitSidebar {
     }
   }
 
+  /** The create dialog handles its own escape. */
   protected onEscape(): void {
-    this.closeCreateDialog();
     this.closeTrackDialog();
   }
 
   protected openCreateDialog(): void {
-    this.createName.set('');
-    this.createCheckout.set(true);
-    this.createError.set(null);
-    this.createBusy.set(false);
     this.createOpen.set(true);
-  }
-
-  protected closeCreateDialog(): void {
-    if (this.createBusy()) {
-      return;
-    }
-    this.createOpen.set(false);
-  }
-
-  protected async confirmCreate(): Promise<void> {
-    const name = this.createName().trim();
-    if (name.length === 0 || this.createBusy()) {
-      return;
-    }
-    this.createBusy.set(true);
-    this.createError.set(null);
-    try {
-      const projectId = this.project()?.id;
-      if (!projectId) {
-        return;
-      }
-      await this.git.branchCreate(projectId, name, this.currentBranch(), this.createCheckout());
-      this.createOpen.set(false);
-    } catch (error) {
-      this.createError.set(String(error));
-    } finally {
-      this.createBusy.set(false);
-    }
   }
 
   protected async createStash(): Promise<void> {
@@ -1014,7 +936,7 @@ export class GitSidebar {
     }
   }
 
-  protected async applyStash(stash: string): Promise<void> {
+  protected async applyStash(stash: GitStash): Promise<void> {
     const projectId = this.project()?.id;
     if (!projectId) {
       return;
@@ -1026,7 +948,7 @@ export class GitSidebar {
     }
   }
 
-  protected async popStash(stash: string): Promise<void> {
+  protected async popStash(stash: GitStash): Promise<void> {
     const projectId = this.project()?.id;
     if (!projectId) {
       return;
@@ -1038,13 +960,14 @@ export class GitSidebar {
     }
   }
 
-  protected async dropStash(stash: string): Promise<void> {
+  protected async dropStash(stash: GitStash): Promise<void> {
     const projectId = this.project()?.id;
     if (!projectId) {
       return;
     }
-    const confirmed = await this.ask(
-      this.transloco.translate('git.stashDropConfirm', { stash }),
+    const label = stash.message ? `${stash.name}: ${stash.message}` : stash.name;
+    const confirmed = await confirmWarning(
+      this.transloco.translate('git.stashDropConfirm', { stash: label }),
     );
     if (!confirmed) {
       return;
@@ -1061,7 +984,7 @@ export class GitSidebar {
     if (!projectId) {
       return;
     }
-    const confirmed = await this.ask(
+    const confirmed = await confirmWarning(
       this.transloco.translate('git.tagDeleteConfirm', { tag: tag.name }),
     );
     if (!confirmed) {
@@ -1079,7 +1002,7 @@ export class GitSidebar {
     if (!projectId) {
       return;
     }
-    const remotes = this.remotes();
+    const remotes = this.refs().remotes;
     const remote = remotes.includes('origin') ? 'origin' : (remotes[0] ?? 'origin');
     try {
       await this.git.tagPush(projectId, remote, tag.name);
@@ -1097,14 +1020,6 @@ export class GitSidebar {
       await this.git.submoduleUpdate(projectId, module);
     } catch (error) {
       console.error(error);
-    }
-  }
-
-  private async ask(message: string): Promise<boolean> {
-    try {
-      return await confirm(message, { title: 'pumr', kind: 'warning' });
-    } catch {
-      return false;
     }
   }
 }

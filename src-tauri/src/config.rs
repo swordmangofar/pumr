@@ -19,13 +19,14 @@ Tools:
 - Use task to spawn subagents for independent work in parallel. Give each subagent a complete, self-contained prompt: it cannot see this conversation. Multiple task calls in one turn run concurrently. Prefer doing the work yourself for small tasks.
 - Use question to ask the user when you are blocked on a decision, need a preference, or requirements are ambiguous. Prefer this over ending your turn with an open question: provide concise options when a small set of choices fits, and the user can always type a custom answer. When you have a preferred option, put it first and append the literal text "(Recommendation)" to the end of its label, with a short description explaining why.
 - Long-running commands are moved to the background automatically; tell the user they can stop them from the running processes indicator.
-- Some tool calls require user approval. If a tool is denied, do not retry it; adapt or ask the user.
+- Some tool calls require user approval. Give such calls a one-sentence reason argument explaining why you need them; the user sees it in the approval prompt. If a tool is denied, do not retry it; adapt or ask the user.
 
 Guidelines:
 - Explain briefly what changed and why after making changes.
 - Respect the project's existing conventions, tooling and style.
 - Never run destructive commands (rm, deletes, database drops, force pushes) without approval; pumr enforces this.
 - Ask for clarification when requirements are ambiguous instead of guessing.
+- Before reporting a task as complete, verify it: run the project's build, tests or lint when they exist, and state exactly what you ran and the outcome. Report what passed, what failed and what you could not verify; never claim success you have not checked.
 - Format code in fenced blocks with the correct language tag."#
         .to_string()
 }
@@ -134,6 +135,19 @@ Do not produce code changes, diffs or file writes in this mode — only analysis
         .to_string()
 }
 
+pub fn default_verifier_prompt() -> String {
+    r#"# Verification
+
+You are a read-only verifier. Do not modify code, configuration or documentation — the write and edit tools are disabled. Your job is to produce trustworthy evidence about whether a change actually works.
+
+- Identify the project's verification contract before guessing commands: read the rule files, README, package manifest scripts and CI configuration.
+- Prefer the project's single build/test entry point when one exists; run the narrowest check that covers the change first, then the full applicable set.
+- Run the commands yourself and capture real output. Never infer success from reading source.
+- Report each check as PASS (ran and succeeded), FAIL (ran and failed), BLOCKED (could not run — say why) or NOT_RUN (skipped — say why). Never claim a check passed when it was not run.
+- Lead with the outcome, then the exact commands and relevant output. Name the likely cause of any failure."#
+        .to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mode {
@@ -163,6 +177,10 @@ pub struct Mode {
     /// Disables the write/edit tools so the agent can only plan.
     #[serde(default)]
     pub plan_only: bool,
+    /// Keeps the read tools and `bash` but disables `write`/`edit`, so the
+    /// agent can reproduce and verify behaviour without changing the project.
+    #[serde(default)]
+    pub read_only: bool,
     #[serde(default)]
     pub builtin: bool,
 }
@@ -184,6 +202,7 @@ pub fn default_modes() -> Vec<Mode> {
             include_global_prompts: true,
             include_project_rules: true,
             plan_only: false,
+            read_only: false,
             builtin: true,
         },
         Mode {
@@ -199,6 +218,23 @@ pub fn default_modes() -> Vec<Mode> {
             include_global_prompts: true,
             include_project_rules: true,
             plan_only: true,
+            read_only: false,
+            builtin: true,
+        },
+        Mode {
+            id: "verification".to_string(),
+            name: "Verification".to_string(),
+            description:
+                "Verifies a change without modifying it: reproduces behaviour, runs the project's build and tests, and reports PASS/FAIL/BLOCKED evidence."
+                    .to_string(),
+            system_prompt: default_verifier_prompt(),
+            user_prompt_ids: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
+            include_global_prompts: true,
+            include_project_rules: true,
+            plan_only: false,
+            read_only: true,
             builtin: true,
         },
         Mode {
@@ -214,6 +250,7 @@ pub fn default_modes() -> Vec<Mode> {
             include_global_prompts: false,
             include_project_rules: false,
             plan_only: false,
+            read_only: false,
             builtin: true,
         },
     ]
@@ -315,6 +352,9 @@ impl Default for CustomTheme {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Schema version of the settings file. Missing means 0 (pre-versioning),
+    /// which lets `load_settings` migrate older files exactly once.
+    pub settings_version: u32,
     #[serde(flatten)]
     pub prompts: PromptSettings,
     #[serde(flatten)]
@@ -380,12 +420,15 @@ impl Default for ModeSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelSettings {
-    pub budget_usd: f64,
     pub openrouter_base_url: String,
     pub default_model: Option<String>,
     pub handover_model: Option<String>,
     pub default_reasoning_effort: Option<String>,
     pub favorite_models: Vec<String>,
+    /// Remembered provider/routing selection per model id, so the composer can
+    /// restore a model's provider choice (e.g. "auto:throughput") when it is
+    /// selected again.
+    pub provider_by_model: std::collections::BTreeMap<String, String>,
     pub context_message_limit: usize,
     /// Maximum number of consecutive model turns that may request tool calls
     /// before the agent pauses. Acts as a safety valve against runaway loops.
@@ -393,20 +436,35 @@ pub struct ModelSettings {
     /// When enabled, the agent automatically continues past the tool-iteration
     /// limit for all sessions instead of pausing and asking the user.
     pub auto_continue_all_sessions: bool,
+    /// Model used for subagents. Empty falls back to the session's model.
+    pub subagent_model: Option<String>,
+    /// Model used to summarise trimmed history (compaction). Empty falls back
+    /// to the session's model.
+    pub compaction_model: Option<String>,
+    /// Reserved for model-generated session titles. Empty falls back to the
+    /// session's model.
+    pub title_model: Option<String>,
+    /// Whether to mark the stable prompt prefix as cacheable. OpenRouter
+    /// forwards the marker to providers that support prompt caching.
+    pub prompt_caching: bool,
 }
 
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
-            budget_usd: 0.0,
             openrouter_base_url: crate::providers::openrouter::DEFAULT_BASE_URL.to_string(),
             default_model: None,
             handover_model: None,
             default_reasoning_effort: Some("medium".to_string()),
             favorite_models: Vec::new(),
+            provider_by_model: std::collections::BTreeMap::new(),
             context_message_limit: 40,
             max_tool_iterations: 35,
             auto_continue_all_sessions: false,
+            subagent_model: None,
+            compaction_model: None,
+            title_model: None,
+            prompt_caching: true,
         }
     }
 }
@@ -423,6 +481,13 @@ pub struct PermissionSettings {
     pub denied_websites: Vec<String>,
     /// Default action of the primary allow button per prompt category.
     pub permission_defaults: PermissionDefaults,
+    /// Automatic approvals that skip the prompt for recognizable safe work.
+    /// They never bypass the dangerous, outside-project, sensitive-file or
+    /// shell-substitution checks, which still ask.
+    pub auto_approve_read_only: bool,
+    pub auto_approve_package_scripts: bool,
+    pub auto_approve_project_executables: bool,
+    pub auto_approve_project_commands: bool,
     pub ignore_gitignored: bool,
     pub scan_generated_files: bool,
     pub ignore_local_databases: bool,
@@ -476,6 +541,14 @@ impl Default for PermissionSettings {
             allowed_websites: Vec::new(),
             denied_websites: Vec::new(),
             permission_defaults: PermissionDefaults::default(),
+            auto_approve_read_only: true,
+            auto_approve_package_scripts: true,
+            auto_approve_project_executables: true,
+            // opencode-style default: any non-dangerous command whose paths stay
+            // inside the project runs without asking. Dangerous programs,
+            // sensitive files, outside-project paths and shell substitution
+            // still always ask.
+            auto_approve_project_commands: true,
             ignore_gitignored: true,
             scan_generated_files: false,
             ignore_local_databases: false,
@@ -489,8 +562,9 @@ impl Default for PermissionSettings {
 }
 
 /// Default action used by the primary "allow" button in a permission prompt.
-/// `once` allows a single request, `session` remembers the folder for the rest
-/// of the app session. Stored as `"once"` or `"session"`.
+/// `once` focuses the single-use grant, `session` focuses the grant that is
+/// remembered for the rest of the chat/app session. Stored as `"once"` or
+/// `"session"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PermissionDefaults {
@@ -503,8 +577,8 @@ impl Default for PermissionDefaults {
     fn default() -> Self {
         Self {
             website: "once".to_string(),
-            command: "once".to_string(),
-            folder: "once".to_string(),
+            command: "session".to_string(),
+            folder: "session".to_string(),
         }
     }
 }
@@ -527,6 +601,10 @@ pub struct IntegrationSettings {
     /// Secure default: only show curated/verified marketplace entries and block
     /// installing from unverified sources unless the user opts out.
     pub marketplace_verified_only: bool,
+    /// Defer large MCP tool schemas behind `tool_search`/`mcp_invoke` instead of
+    /// inlining them for every request. Falls back to inlining when the schemas
+    /// are small relative to the model's context window.
+    pub mcp_progressive_disclosure: bool,
 }
 
 impl Default for IntegrationSettings {
@@ -541,6 +619,7 @@ impl Default for IntegrationSettings {
             skills_disabled: Vec::new(),
             skills_disabled_items: Vec::new(),
             marketplace_verified_only: true,
+            mcp_progressive_disclosure: true,
         }
     }
 }
@@ -727,9 +806,29 @@ pub fn load_settings(path: &Path) -> Settings {
         .ok()
         .and_then(|raw| serde_json::from_str::<Settings>(&raw).ok())
         .unwrap_or_default();
+    if migrate_settings(&mut settings) {
+        let _ = save_settings(path, &settings);
+    }
     merge_default_user_system_prompts(&mut settings);
     merge_default_modes(&mut settings);
     settings
+}
+
+/// One-time settings migrations, keyed by `settings_version`. Returns true when
+/// a migration ran and the file should be rewritten.
+fn migrate_settings(settings: &mut Settings) -> bool {
+    if settings.settings_version >= 1 {
+        return false;
+    }
+    // Version 1: opencode-style permission defaults. Normal in-project commands
+    // stop asking (dangerous programs, sensitive files, outside-project paths
+    // and shell substitution still do), and the focused allow button grants the
+    // chat/session scope so one keystroke stops repeat prompts.
+    settings.settings_version = 1;
+    settings.permissions.auto_approve_project_commands = true;
+    settings.permissions.permission_defaults.command = "session".to_string();
+    settings.permissions.permission_defaults.folder = "session".to_string();
+    true
 }
 
 /// Built-in user prompts are always available. If a settings file predates a
@@ -945,7 +1044,6 @@ mod tests {
             ),
         ] {
             let mut original = serde_json::to_value(Settings::default()).unwrap();
-            original["budgetUsd"] = json!(42.5);
             original["defaultSystemPrompt"] = json!("Custom prompt");
             original["language"] = json!("de");
             original["theme"] = json!("custom");
@@ -966,8 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_command_rule_fields_keep_settings_defaults() {
-        for input in [
+    fn missing_command_rule_fields_keep_settings_defaults() {        for input in [
             json!({"theme": "custom"}),
             json!({"theme": "custom", "commandRules": ["pnpm *"]}),
             json!({"theme": "custom", "deniedCommandRules": ["rm *"]}),
@@ -983,5 +1080,64 @@ mod tests {
             assert_eq!(settings.permissions.denied_command_rules, expected);
             assert!(settings.permissions.ignore_gitignored);
         }
+    }
+
+    #[test]
+    fn version_zero_settings_migrate_to_opencode_style_defaults_once() {
+        let mut settings = Settings::default();
+        settings.permissions.auto_approve_project_commands = false;
+        settings.permissions.permission_defaults.command = "once".to_string();
+        settings.permissions.permission_defaults.folder = "once".to_string();
+
+        assert!(migrate_settings(&mut settings));
+        assert_eq!(settings.settings_version, 1);
+        assert!(settings.permissions.auto_approve_project_commands);
+        assert_eq!(settings.permissions.permission_defaults.command, "session");
+        assert_eq!(settings.permissions.permission_defaults.folder, "session");
+        // Websites keep the single-use default.
+        assert_eq!(settings.permissions.permission_defaults.website, "once");
+
+        // The migration runs exactly once, so an explicit opt-out afterwards
+        // is never flipped back.
+        settings.permissions.auto_approve_project_commands = false;
+        settings.permissions.permission_defaults.command = "once".to_string();
+        assert!(!migrate_settings(&mut settings));
+        assert!(!settings.permissions.auto_approve_project_commands);
+        assert_eq!(settings.permissions.permission_defaults.command, "once");
+    }
+
+    #[test]
+    fn load_settings_migrates_version_zero_files_and_rewrites_them() {
+        let unique = format!(
+            "pumr-config-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        // A pre-versioning file: no settingsVersion, old defaults materialised.
+        let mut stored = serde_json::to_value(Settings::default()).unwrap();
+        stored.as_object_mut().unwrap().remove("settingsVersion");
+        stored["autoApproveProjectCommands"] = json!(false);
+        stored["permissionDefaults"] = json!({"website": "once", "command": "once", "folder": "once"});
+        std::fs::write(&path, serde_json::to_string_pretty(&stored).unwrap()).unwrap();
+
+        let settings = load_settings(&path);
+        assert_eq!(settings.settings_version, 1);
+        assert!(settings.permissions.auto_approve_project_commands);
+        assert_eq!(settings.permissions.permission_defaults.command, "session");
+        assert_eq!(settings.permissions.permission_defaults.folder, "session");
+
+        // The migrated file was persisted, so reloading does not migrate again.
+        let reloaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(reloaded["settingsVersion"], json!(1));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

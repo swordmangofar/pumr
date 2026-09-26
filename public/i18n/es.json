@@ -71,8 +71,12 @@
     "unstage": "Despreparar",
     "stageAll": "Preparar todo",
     "unstageAll": "Despreparar todo",
+    "stageSelected": "Preparar {{ count }} seleccionados",
+    "unstageSelected": "Despreparar {{ count }} seleccionados",
     "discard": "Descartar",
     "discardConfirm": "¿Descartar los cambios en «{{ path }}»? Esto no se puede deshacer.",
+    "discardSelected": "Descartar {{ count }} archivos",
+    "discardSelectedConfirm": "¿Descartar los cambios en {{ count }} archivos? Esto no se puede deshacer.",
     "blame": "Blame",
     "blameEmpty": "No hay información de blame disponible.",
     "ignore": "Añadir a .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} en curso",
       "files": "{{ count }} archivos en conflicto",
       "continue": "Continuar",
-      "abort": "Abortar"
+      "abort": "Abortar",
+      "resolveFirst": "Resuelve y prepara primero todos los archivos en conflicto."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "La autenticación falló. Revisa tus credenciales de Git.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Cambiar a la nueva rama",
       "confirm": "Confirmar",
       "mergeConfirm": "¿Fusionar '{{branch}}' en '{{current}}'?",
+      "rebaseConfirm": "¿Hacer rebase de '{{current}}' sobre '{{branch}}'? Esto reescribe los commits de '{{current}}'.",
       "deleteConfirm": "¿Eliminar la rama '{{branch}}'? Esto no se puede deshacer.",
       "deleteRemoteConfirm": "¿Eliminar la rama remota '{{branch}}'? Esto afecta al repositorio remoto.",
+      "forceDeleteConfirm": "La rama '{{branch}}' no está completamente fusionada. ¿Eliminarla de todos modos? Se perderán sus commits no fusionados.",
       "rebaseHint": "Reordena los commits y elige una acción para cada uno. El rebase va del más antiguo al más reciente.",
-      "nothingToRebase": "No hay commits para rebasar."
+      "nothingToRebase": "No hay commits para rebasar.",
+      "rebaseActions": {
+        "pick": "Usar (pick)",
+        "squash": "Combinar (squash)",
+        "fixup": "Integrar (fixup)",
+        "drop": "Descartar (drop)"
+      },
+      "rebaseSquashFirst": "El primer commit no puede combinarse (squash o fixup): no hay un commit anterior con el que unirlo.",
+      "moveUp": "Subir",
+      "moveDown": "Bajar"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Ningún paso coincide con los filtros actuales.",
     "view": {
       "timeline": "Línea de tiempo",
-      "branches": "Ramas"
+      "branches": "Ramas",
+      "permissions": "Permisos"
     },
     "filters": {
       "type": "Tipo",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Anulación de sesión",
       "default": "Configuración predeterminada"
+    },
+    "permissions": {
+      "empty": "Aún no hay decisiones de permisos registradas para este chat.",
+      "clear": "Borrar registro",
+      "clearConfirm": "Haz clic de nuevo para borrar",
+      "allowed": "Permitido",
+      "denied": "Denegado",
+      "why": "Motivo:",
+      "rule": "Regla:",
+      "filters": {
+        "auto": "Permitido sin preguntar",
+        "asked": "Preguntado",
+        "denied": "Denegado"
+      },
+      "by": {
+        "auto": "Automático",
+        "rule": "Regla de denegación",
+        "user": "Tú",
+        "grant": "Cubierto por un nuevo permiso",
+        "cascade": "Denegado junto con otra solicitud",
+        "stopped": "Detenido",
+        "timeout": "Tiempo agotado",
+        "cancelled": "Cancelado"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Añade orientación sobre cómo escribir pruebas enfocadas y deterministas y ejecutarlas antes de terminar.",
     "architecturePrompt": "Arquitectura de software",
     "architecturePromptHint": "Añade orientación sobre límites de módulos, responsabilidades y diseño mantenible.",
-    "budget": "Presupuesto (USD)",
-    "budgetHint": "0 desactiva la visualización del presupuesto.",
     "language": "Idioma",
     "replyLanguage": "Idioma de respuesta",
     "replyLanguageDefault": "Predeterminado (idioma del modelo)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Cuántas llamadas consecutivas a la herramienta puede realizar el agente antes de hacer una pausa y pedirle que continúe. El límite es una válvula de seguridad: evita que un modelo que se queda atrapado en un bucle funcione para siempre y queme fichas. 35 es un buen valor predeterminado; levántelo para tareas largas y de varios pasos.",
     "autoContinueAllSessions": "Continuar automáticamente todas las sesiones",
     "autoContinueAllSessionsHint": "Cuando una sesión alcanza el límite de llamadas de herramientas, continúa automáticamente en lugar de pausarla. Esto elimina la red de seguridad del bucle, por lo que un agente atascado puede correr hasta que lo detengas. También puedes alternar esto desde el chat cuando se alcanza un límite.",
+    "subagentModel": "Modelo de subagente",
+    "subagentModelHint": "Modelo usado para subagentes. Déjalo vacío para usar el modelo de la sesión.",
+    "compactionModel": "Modelo de compactación",
+    "compactionModelHint": "Modelo usado para resumir conversaciones largas. Déjalo vacío para usar el modelo de la sesión.",
+    "promptCaching": "Caché de prompts",
+    "promptCachingHint": "Marca el prefijo estable del prompt como almacenable en caché para que los proveedores compatibles facturen los tokens de entrada en caché a menor precio.",
+    "mcpProgressiveDisclosure": "Divulgación progresiva de herramientas MCP",
+    "mcpProgressiveDisclosureHint": "Cuando hay muchas herramientas MCP conectadas, muestra un par tool_search/mcp_invoke en lugar de incluir cada esquema para ahorrar contexto. Los conjuntos pequeños siempre se incluyen.",
     "fileAccessRules": "Reglas de acceso a archivos",
     "fileAccessRulesHint": "Controle qué archivos el asistente puede descubrir y leer. Las exenciones de usuario siempre superan todas las reglas siguientes.",
     "ignoreGitignored": "Ignorar archivos listados en .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "No hay comandos bloqueados.",
     "scope": {
       "program": "Programa",
+      "subcommand": "Programa + subcomando",
       "programFlags": "Programa + opciones",
       "exact": "Exacto"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Aún no hay reglas de comandos. Usa «permitir siempre» en una solicitud de permiso para crear una.",
     "websiteRules": "Sitios web",
-    "websiteRulesHint": "Sitios web que el asistente puede visitar. Las reglas de denegación prevalecen sobre las de permiso; un dominio simple también cubre sus subdominios. Usa «permitir siempre» o «denegar siempre» en una solicitud de permiso para crear una.",
+    "websiteRulesHint": "Sitios web que el asistente puede visitar con sus herramientas web o con comandos como curl, git y ssh. Las reglas de denegación prevalecen sobre las de permiso; un dominio simple también cubre sus subdominios. Usa «permitir siempre» o «denegar siempre» en una solicitud de permiso para crear una.",
     "permissionPrompts": "Solicitudes de permiso",
     "permissionPromptsHint": "Elige qué hace por defecto el botón principal de permitir. Permitir una vez aprueba una sola solicitud; permitir durante esta sesión recuerda el acceso a la carpeta hasta que la aplicación se reinicie.",
+    "autoApprove": "Aprobación automática",
+    "autoApproveHint": "Omite las solicitudes para trabajo que el asistente puede demostrar que es seguro. Los comandos peligrosos, el código en línea, las descargas de paquetes, los sitios web aún no permitidos, las rutas fuera del proyecto y los archivos sensibles siempre preguntan.",
+    "autoApproveReadOnly": "Comandos de solo lectura",
+    "autoApproveReadOnlyHint": "Permite comandos de inspección como ls, grep y git status sin preguntar.",
+    "autoApprovePackageScripts": "Gestores de paquetes y herramientas de compilación",
+    "autoApprovePackageScriptsHint": "Permite pnpm, npm, yarn, bun, ng, make y herramientas similares cuando nada apunta fuera del proyecto.",
+    "autoApproveProjectExecutables": "Ejecutables del proyecto",
+    "autoApproveProjectExecutablesHint": "Permite ejecutables dentro del proyecto, como ./node_modules/.bin/ng, sin preguntar cada vez.",
+    "autoApproveProjectCommands": "Todos los comandos dentro del proyecto",
+    "autoApproveProjectCommandsHint": "Permite cualquier comando no peligroso cuyas rutas permanezcan dentro del proyecto. Los comandos peligrosos, el código en línea, las descargas de paquetes, los sitios web aún no permitidos, los archivos sensibles y todo lo externo siguen preguntando.",
+    "permissionPreset": {
+      "strict": "Estricto",
+      "strictHint": "Solo los comandos que únicamente leen se ejecutan sin preguntar.",
+      "balanced": "Equilibrado",
+      "balancedHint": "Los comandos de solo lectura, los gestores de paquetes, las herramientas de compilación y los ejecutables del proyecto se ejecutan sin preguntar.",
+      "autonomous": "Autónomo",
+      "autonomousHint": "Todo comando no peligroso dentro del proyecto se ejecuta sin preguntar.",
+      "custom": "Personalizado",
+      "autonomousWarning": "El modo autónomo confía en este proyecto: sus scripts, Makefiles y ejecutables pueden hacer cualquier cosa sin preguntar. El código en línea, las descargas de paquetes, los sitios web aún no permitidos, los comandos peligrosos y todo lo que esté fuera del proyecto siguen preguntando.",
+      "confirm": "Usar modo autónomo"
+    },
     "noAllowedWebsites": "Aún no hay sitios web siempre permitidos.",
     "noDeniedWebsites": "Aún no hay sitios web siempre denegados.",
     "websitePlaceholder": "p. ej. docs.rs o *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Carpeta"
     },
     "allowAlways": "Permitir siempre",
-    "addFolder": "Añadir carpeta permanentemente",
     "siteRuleLabel": "Regla de sitio web (dominio o glob)",
     "siteRuleHint": "Por ejemplo: docs.rs permite ese sitio, *.github.com permite todos sus subdominios.",
-    "segment": {
-      "allowed": "Permitido",
-      "needsApproval": "Requiere aprobación"
-    },
+    "siteRuleInvalid": "Esta regla no cubre {{ host }} o es demasiado amplia, así que se guardará {{ host }} en su lugar.",
     "risk": {
       "low": "Bajo",
       "medium": "Medio",
+      "network": "Red",
       "high": "Alto",
       "danger": "Peligro"
     },
@@ -994,7 +1066,39 @@
       "title": "Ámbito de la regla",
       "hint": "Elige qué tan amplia se aplica la regla."
     },
-    "allowChat": "Permitir en este chat"
+    "folderScope": {
+      "title": "Permitir carpeta",
+      "hint": "Añade la carpeta y todo su contenido a las carpetas siempre permitidas.",
+      "option": "Carpeta + subcarpetas"
+    },
+    "hostScope": {
+      "title": "Permitir sitio web",
+      "hint": "Añade el sitio web y sus subdominios a los sitios web permitidos.",
+      "option": "Sitio web + subdominios"
+    },
+    "allowChat": "Permitir en este chat",
+    "option": {
+      "yes": "Sí",
+      "chat": "Sí, y no volver a preguntar en este chat por",
+      "session": "Sí, y no volver a preguntar hasta reiniciar por",
+      "always": "Sí, y permitir siempre",
+      "no": "No",
+      "denyAlways": "No, y denegar siempre"
+    },
+    "customize": "Personalizar",
+    "justification": "Por qué",
+    "keyboardHint": "Pulsa 1–{{ count }} o usa ↑ ↓ y Enter · Esc deniega",
+    "url": {
+      "queryWarning": "Esta dirección lleva muchos datos en su cadena de consulta. Asegúrate de que no contiene nada privado antes de permitirla."
+    },
+    "tooltip": {
+      "deny": "Deniega esta solicitud y todas las demás solicitudes pendientes de este chat.",
+      "denyAlways": "Deniega y guarda una regla de denegación en tus ajustes. Las demás solicitudes pendientes de este chat también se deniegan.",
+      "allowOnce": "Permite solo esta solicitud.",
+      "allowSession": "Se recuerda en todos los chats hasta que se reinicie la aplicación.",
+      "allowChat": "Las reglas de comandos se recuerdan en este chat y sus subagentes; las carpetas y los sitios web, hasta que se reinicie la aplicación.",
+      "allowAlways": "Se guarda en tus ajustes y se aplica a todos los chats."
+    }
   },
   "question": {
     "title": "Pregunta",
@@ -1044,6 +1148,8 @@
     "installing": "Instalando…",
     "uninstall": "Desinstalar",
     "addFolder": "Añadir carpeta",
-    "noFolders": "Aún no se ha añadido ninguna carpeta."
+    "noFolders": "Aún no se ha añadido ninguna carpeta.",
+    "binaryFile": "Archivo binario: no hay vista previa disponible.",
+    "fileTooLarge": "Este archivo es demasiado grande para mostrar una vista previa."
   }
 }

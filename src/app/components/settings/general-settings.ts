@@ -17,7 +17,7 @@ import { TypedInput } from '../typed-input';
         {{ 'settings.language' | transloco }}
       </label>
       <select
-        class="field field-select w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
+        class="field field-select w-full max-w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
         [value]="draft.draft().language"
         (typedValue)="draft.patch('language', $event)"
       >

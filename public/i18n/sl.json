@@ -71,8 +71,12 @@
     "unstage": "Prekliči pripravo",
     "stageAll": "Pripravi vse",
     "unstageAll": "Prekliči pripravo vsega",
+    "stageSelected": "Pripravi {{ count }} izbranih",
+    "unstageSelected": "Odstrani {{ count }} izbranih iz priprave",
     "discard": "Zavrzi",
     "discardConfirm": "Zavržeš spremembe v »{{ path }}«? Tega ni mogoče razveljaviti.",
+    "discardSelected": "Zavrzi {{ count }} datotek",
+    "discardSelectedConfirm": "Zavrzi spremembe v {{ count }} datotekah? Tega ni mogoče razveljaviti.",
     "blame": "Blame",
     "blameEmpty": "Ni podatkov o avtorstvu.",
     "ignore": "Dodaj v .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} poteka",
       "files": "{{ count }} datotek s konflikti",
       "continue": "Nadaljuj",
-      "abort": "Prekini"
+      "abort": "Prekini",
+      "resolveFirst": "Najprej razreši vse konflikte in datoteke dodaj v stage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Preverjanje pristnosti ni uspelo. Preverite poverilnice Git.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Preklopi na novo vejo",
       "confirm": "Potrdi",
       "mergeConfirm": "Združim '{{branch}}' v '{{current}}'?",
+      "rebaseConfirm": "Izvedem rebase '{{current}}' na '{{branch}}'? Commiti veje '{{current}}' bodo prepisani.",
       "deleteConfirm": "Izbrišem vejo '{{branch}}'? Tega ni mogoče razveljaviti.",
       "deleteRemoteConfirm": "Izbrišem oddaljeno vejo '{{branch}}'? To vpliva na oddaljeni repozitorij.",
+      "forceDeleteConfirm": "Veja '{{branch}}' ni v celoti združena. Jo vseeno izbrišem? Njeni nezdruženi commiti bodo izgubljeni.",
       "rebaseHint": "Preuredi commite in izberi dejanje za vsakega. Rebase poteka od najstarejšega do najnovejšega.",
-      "nothingToRebase": "Ni commitov za rebase."
+      "nothingToRebase": "Ni commitov za rebase.",
+      "rebaseActions": {
+        "pick": "Ohrani (pick)",
+        "squash": "Združi (squash)",
+        "fixup": "Vključi (fixup)",
+        "drop": "Zavrzi (drop)"
+      },
+      "rebaseSquashFirst": "Prvega commita ni mogoče združiti (squash ali fixup): ni prejšnjega commita, s katerim bi ga združili.",
+      "moveUp": "Premakni gor",
+      "moveDown": "Premakni dol"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Noben korak se ne ujema s trenutnimi filtri.",
     "view": {
       "timeline": "Časovnica",
-      "branches": "Veje"
+      "branches": "Veje",
+      "permissions": "Dovoljenja"
     },
     "filters": {
       "type": "Vrsta",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Preglasitev seje",
       "default": "Privzete nastavitve"
+    },
+    "permissions": {
+      "empty": "Za ta klepet še ni zabeleženih odločitev o dovoljenjih.",
+      "clear": "Počisti dnevnik",
+      "clearConfirm": "Kliknite znova za čiščenje",
+      "allowed": "Dovoljeno",
+      "denied": "Zavrnjeno",
+      "why": "Zakaj:",
+      "rule": "Pravilo:",
+      "filters": {
+        "auto": "Dovoljeno brez vprašanja",
+        "asked": "Vprašano",
+        "denied": "Zavrnjeno"
+      },
+      "by": {
+        "auto": "Samodejno",
+        "rule": "Pravilo zavrnitve",
+        "user": "Vi",
+        "grant": "Pokrito z novim dovoljenjem",
+        "cascade": "Zavrnjeno skupaj z drugo zahtevo",
+        "stopped": "Ustavljeno",
+        "timeout": "Časovna omejitev",
+        "cancelled": "Preklicano"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Doda smernice o pisanju osredotočenih, determinističnih testov in njihovem izvajanju pred zaključkom.",
     "architecturePrompt": "Programska arhitektura",
     "architecturePromptHint": "Doda smernice o mejah modulov, odgovornostih in vzdržljivem oblikovanju.",
-    "budget": "Proračun (USD)",
-    "budgetHint": "0 onemogoči prikaz proračuna.",
     "language": "Jezik",
     "replyLanguage": "Jezik odgovorov",
     "replyLanguageDefault": "Privzeto (jezik modela)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Koliko zaporednih klicev orodij lahko opravi agent, preden se zaustavi in ​​vas prosi, da nadaljujete. Omejitev je varnostni ventil: prepreči, da bi model, ki se zatakne v zanki, večno deloval in zažgal žetone. 35 je dobra privzeta vrednost; dvignite ga za dolge naloge v več korakih.",
     "autoContinueAllSessions": "Samodejno nadaljevanje vseh sej",
     "autoContinueAllSessionsHint": "Ko seja doseže omejitev klica orodja, nadaljujte samodejno, namesto da se začasno ustavite. S tem se odstrani varnostna mreža zanke, zato lahko zataknjeni agent deluje, dokler ga ne ustavite. To lahko tudi preklopite iz klepeta, ko je dosežena omejitev.",
+    "subagentModel": "Model podagenta",
+    "subagentModelHint": "Model, ki se uporablja za podagente. Pustite prazno za uporabo modela seje.",
+    "compactionModel": "Model stiskanja",
+    "compactionModelHint": "Model, ki se uporablja za povzemanje dolgih pogovorov. Pustite prazno za uporabo modela seje.",
+    "promptCaching": "Predpomnjenje pozivov",
+    "promptCachingHint": "Označite stabilno predpono poziva kot predpomnljivo, da ponudniki, ki podpirajo predpomnjenje, predpomnjene vhodne žetone zaračunajo ceneje.",
+    "mcpProgressiveDisclosure": "Postopno razkritje orodij MCP",
+    "mcpProgressiveDisclosureHint": "Ko je povezanih veliko orodij MCP, prikažite par tool_search/mcp_invoke namesto vključitve vsake sheme, da prihranite kontekst. Majhni nabori orodij so vedno vključeni.",
     "fileAccessRules": "Pravila za dostop do datotek",
     "fileAccessRulesHint": "Nadzorujte, katere datoteke sme pomočnik odkriti in prebrati. Izjeme uporabnikov vedno prevladajo nad vsemi spodnjimi pravili.",
     "ignoreGitignored": "Prezri datoteke, navedene v .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Ni blokiranih ukazov.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + podukaz",
       "programFlags": "Program + zastavice",
       "exact": "Natančno"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Ni še pravil ukazov. Uporabite »dovoli vedno« v pozivu za dovoljenje, da ga ustvarite.",
     "websiteRules": "Spletne strani",
-    "websiteRulesHint": "Spletne strani, ki jih pomočnik lahko obišče. Pravila zavrnitve prevladajo nad pravili dovolitve; gola domena pokriva tudi njene poddomene. Uporabite »dovoli vedno« ali »zavrni vedno« v pozivu za dovoljenje, da ga ustvarite.",
+    "websiteRulesHint": "Spletne strani, ki jih pomočnik lahko obišče s svojimi spletnimi orodji ali z ukazi, kot so curl, git in ssh. Pravila zavrnitve prevladajo nad pravili dovolitve; gola domena pokriva tudi njene poddomene. Uporabite »dovoli vedno« ali »zavrni vedno« v pozivu za dovoljenje, da ga ustvarite.",
     "permissionPrompts": "Zahteve za dovoljenje",
     "permissionPromptsHint": "Izberi, kaj glavni gumb za dovoljenje naredi privzeto. Dovoli enkrat odobri eno zahtevo; dovoli za to sejo si zapomni dostop do mape do ponovnega zagona aplikacije.",
+    "autoApprove": "Samodejna odobritev",
+    "autoApproveHint": "Preskoči vprašanja za delo, ki ga pomočnik lahko dokaže kot varno. Nevarne ukaze, vstavljeno kodo, prenose paketov, še nedovoljene spletne strani, poti zunaj projekta in občutljive datoteke vedno vpraša.",
+    "autoApproveReadOnly": "Ukazi samo za branje",
+    "autoApproveReadOnlyHint": "Dovoli pregledne ukaze, kot so ls, grep in git status, brez vprašanja.",
+    "autoApprovePackageScripts": "Upravitelji paketov in orodja za gradnjo",
+    "autoApprovePackageScriptsHint": "Dovoli pnpm, npm, yarn, bun, ng, make in podobna orodja, ko nič ne kaže zunaj projekta.",
+    "autoApproveProjectExecutables": "Izvršne datoteke projekta",
+    "autoApproveProjectExecutablesHint": "Dovoli izvršne datoteke znotraj projekta, kot je ./node_modules/.bin/ng, brez vsakokratnega vprašanja.",
+    "autoApproveProjectCommands": "Vsi ukazi znotraj projekta",
+    "autoApproveProjectCommandsHint": "Dovoli vsak nenevaren ukaz, katerega poti ostanejo znotraj projekta. Nevarni ukazi, vstavljena koda, prenosi paketov, še nedovoljene spletne strani, občutljive datoteke in vse zunaj še vedno vprašajo.",
+    "permissionPreset": {
+      "strict": "Strogo",
+      "strictHint": "Brez vprašanja se izvajajo samo ukazi, ki samo berejo.",
+      "balanced": "Uravnoteženo",
+      "balancedHint": "Ukazi samo za branje, upravitelji paketov, orodja za gradnjo in izvedljive datoteke projekta se izvajajo brez vprašanja.",
+      "autonomous": "Samostojno",
+      "autonomousHint": "Vsak nenevaren ukaz znotraj projekta se izvede brez vprašanja.",
+      "custom": "Po meri",
+      "autonomousWarning": "Samostojni način zaupa temu projektu: njegovi skripti, datoteke Makefile in izvedljive datoteke lahko brez vprašanja naredijo karkoli. Vstavljena koda, prenosi paketov, še nedovoljene spletne strani, nevarni ukazi in vse zunaj projekta še vedno vprašajo.",
+      "confirm": "Uporabi samostojni način"
+    },
     "noAllowedWebsites": "Ni še vedno dovoljenih spletnih strani.",
     "noDeniedWebsites": "Ni še vedno zavrnjenih spletnih strani.",
     "websitePlaceholder": "npr. docs.rs ali *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Mapa"
     },
     "allowAlways": "Dovoli vedno",
-    "addFolder": "Trajno dodaj mapo",
     "siteRuleLabel": "Pravilo spletne strani (domena ali glob)",
     "siteRuleHint": "Na primer: docs.rs dovoli to stran, *.github.com dovoli vse njene poddomene.",
-    "segment": {
-      "allowed": "Dovoljeno",
-      "needsApproval": "Zahteva odobritev"
-    },
+    "siteRuleInvalid": "To pravilo ne pokriva {{ host }} ali je preširoko, zato bo namesto njega shranjen {{ host }}.",
     "risk": {
       "low": "Nizko",
       "medium": "Srednje",
+      "network": "Omrežje",
       "high": "Visoko",
       "danger": "Nevarnost"
     },
@@ -994,7 +1066,39 @@
       "title": "Obseg pravila",
       "hint": "Izberi, kako široko velja pravilo."
     },
-    "allowChat": "Dovoli v tem klepetu"
+    "folderScope": {
+      "title": "Dovoli mapo",
+      "hint": "Doda mapo in vse v njej med vedno dovoljene mape.",
+      "option": "Mapa + podmape"
+    },
+    "hostScope": {
+      "title": "Dovoli spletno stran",
+      "hint": "Doda spletno stran in njene poddomene med dovoljene spletne strani.",
+      "option": "Spletna stran + poddomene"
+    },
+    "allowChat": "Dovoli v tem klepetu",
+    "option": {
+      "yes": "Da",
+      "chat": "Da, in v tem klepetu ne sprašuj več za",
+      "session": "Da, in do ponovnega zagona ne sprašuj več za",
+      "always": "Da, in vedno dovoli",
+      "no": "Ne",
+      "denyAlways": "Ne, in vedno zavrni"
+    },
+    "customize": "Prilagodi",
+    "justification": "Zakaj",
+    "keyboardHint": "Pritisnite 1–{{ count }} ali uporabite ↑ ↓ in Enter · Esc zavrne",
+    "url": {
+      "queryWarning": "Ta naslov v nizu poizvedbe nosi veliko podatkov. Preden ga dovolite, preverite, da ne vsebuje ničesar zasebnega."
+    },
+    "tooltip": {
+      "deny": "Zavrni to zahtevo in vse druge čakajoče zahteve v tem klepetu.",
+      "denyAlways": "Zavrni in shrani pravilo zavrnitve v nastavitve. Tudi druge čakajoče zahteve v tem klepetu so zavrnjene.",
+      "allowOnce": "Dovoli samo to zahtevo.",
+      "allowSession": "Zapomni si v vseh klepetih do ponovnega zagona aplikacije.",
+      "allowChat": "Pravila ukazov si zapomni za ta klepet in njegove podagente; mape in spletne strani do ponovnega zagona aplikacije.",
+      "allowAlways": "Shrani se v nastavitve in velja za vse klepete."
+    }
   },
   "question": {
     "title": "Vprašanje",
@@ -1044,6 +1148,8 @@
     "installing": "Namestitev ...",
     "uninstall": "Odstrani",
     "addFolder": "Dodaj mapo",
-    "noFolders": "Ni še dodanih map."
+    "noFolders": "Ni še dodanih map.",
+    "binaryFile": "Binarna datoteka – predogled ni na voljo.",
+    "fileTooLarge": "Ta datoteka je prevelika za predogled."
   }
 }

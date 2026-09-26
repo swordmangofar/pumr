@@ -5,6 +5,7 @@ import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import {
   CommandRule,
+  ContextUsageInfo,
   FileChange,
   FileDiff,
   GitInfo,
@@ -90,6 +91,7 @@ export class WorkspaceService {
   private readonly spendState = signal<SpendSummary | null>(null);
   private readonly liveToolsState = signal<Record<string, LiveToolCall[]>>({});
   private readonly changesState = signal<Record<string, FileChange[]>>({});
+  private readonly contextUsageState = signal<Record<string, ContextUsageInfo>>({});
   private readonly selectedPathState = signal<Record<string, string | null>>({});
   private readonly diffState = signal<FileDiff | null>(null);
   private readonly leftTabState = signal<LeftTab>('projects');
@@ -156,6 +158,7 @@ export class WorkspaceService {
   readonly processes = this.processesService.processes;
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
+  readonly contextUsage = this.contextUsageState.asReadonly();
   readonly leftTab = this.leftTabState.asReadonly();
   readonly rightTab = this.rightTabState.asReadonly();
   readonly sessionView = this.sessionViewState.asReadonly();
@@ -206,77 +209,6 @@ export class WorkspaceService {
   readonly activeGitInfo = computed(() => {
     const project = this.activeProject();
     return project ? (this.gitService.infoByProject()[project.id] ?? null) : null;
-  });
-  readonly gitDiff = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.diffFor(project.id) : null;
-  });
-  readonly gitBusy = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.busyFor(project.id) : false;
-  });
-  readonly gitMessage = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.messageFor(project.id) : null;
-  });
-  readonly gitError = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.errorFor(project.id) : null;
-  });
-  readonly gitView = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.viewFor(project.id) : 'changes';
-  });
-  readonly selectedGitBranch = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.selectedBranchFor(project.id) : null;
-  });
-  readonly gitCommits = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.commitsFor(project.id) : [];
-  });
-  readonly gitCommitsLoading = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.commitsLoadingFor(project.id) : false;
-  });
-  readonly gitCommitsHasMore = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.commitsHasMoreFor(project.id) : false;
-  });
-  readonly gitCommitSearch = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.commitSearchFor(project.id) : '';
-  });
-  readonly gitCommitDetail = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.commitDetailFor(project.id) : null;
-  });
-  readonly gitCommitFileDiff = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.commitFileDiffFor(project.id) : null;
-  });
-  readonly selectedGitCommit = computed(() => {
-    const project = this.activeProject();
-    return project ? this.gitService.selectedCommitFor(project.id) : null;
-  });
-  readonly activeGitBranches = computed(() => {
-    const project = this.activeProject();
-    if (!project) {
-      return [];
-    }
-    return (
-      this.gitService.branchesByProject()[project.id] ??
-      this.gitService.statusByProject()[project.id]?.branches ??
-      []
-    );
-  });
-  readonly activeGitStatus = computed(() => {
-    const project = this.activeProject();
-    return project ? (this.gitService.statusByProject()[project.id] ?? null) : null;
-  });
-  readonly activeGitRemotes = computed(() => {
-    const project = this.activeProject();
-    return project ? (this.gitService.remotesByProject()[project.id] ?? []) : [];
   });
   private readonly gitPullStrategyState = signal<GitPullStrategy>('ff-only');
   readonly gitPullStrategy = this.gitPullStrategyState.asReadonly();
@@ -855,6 +787,19 @@ export class WorkspaceService {
             cost: event.cost,
           }));
           break;
+        case 'contextUsage':
+          this.contextUsageState.update((state) => ({
+            ...state,
+            [sessionId]: {
+              usedTokens: event.usedTokens,
+              budgetTokens: event.budgetTokens,
+              systemTokens: event.systemTokens,
+              historyTokens: event.historyTokens,
+              toolSchemaTokens: event.toolSchemaTokens,
+              toolOutputTokens: event.toolOutputTokens,
+            },
+          }));
+          break;
         case 'assistant':
           this.flushStreamBuffers();
           this.replaceMessage(sessionId, event.message);
@@ -1005,13 +950,19 @@ export class WorkspaceService {
   async resolvePermission(
     decision: 'allow_once' | 'allow_session' | 'allow_always' | 'deny' | 'deny_always',
     rulesOverride?: CommandRule[],
+    foldersOverride?: string[],
+    hostsOverride?: string[],
+    websiteRule?: string,
   ): Promise<void> {
     const request = this.permission();
     if (!request) {
       return;
     }
     const isCommand = request.promptKind === 'command';
-    const rules = !isCommand && request.suggestedRule ? [request.suggestedRule] : null;
+    // A website prompt may send the rule the user edited; the backend saves
+    // it only while it still covers the requested host.
+    const siteRule = websiteRule?.trim() || request.suggestedRule;
+    const rules = !isCommand && siteRule ? [siteRule] : null;
     await api.resolvePermission(
       request.requestId,
       decision,
@@ -1019,6 +970,8 @@ export class WorkspaceService {
       request.folder,
       request.promptKind,
       isCommand ? rulesOverride ?? null : null,
+      foldersOverride ?? null,
+      isCommand ? hostsOverride ?? null : null,
     );
     // Allow-always/deny-always persist a rule in settings; refresh so the
     // settings lists reflect it immediately.
@@ -1363,7 +1316,9 @@ export class WorkspaceService {
   private async activateSession(sessionId: string): Promise<void> {
     const session = this.sessionsState()[sessionId];
     this.diffState.set(null);
-    this.gitService.resetView(session.projectId);
+    if (session) {
+      this.gitService.resetView(session.projectId);
+    }
     this.scrollTargetState.set(null);
     await this.loadMessages(sessionId);
     if (session) {

@@ -84,7 +84,7 @@ import { TypedInput } from '../typed-input';
       <p class="mt-2 text-xs text-mist/30">{{ 'settings.baseUrlHint' | transloco }}</p>
     </section>
 
-    <section class="mt-8 grid grid-cols-2 gap-6">
+    <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div>
         <label class="mb-2 block text-sm text-mist/50">{{
           'settings.defaultModel' | transloco

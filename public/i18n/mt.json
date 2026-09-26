@@ -71,8 +71,12 @@
     "unstage": "Neħħi l-preparazzjoni",
     "stageAll": "Ipprepara kollha",
     "unstageAll": "Neħħi l-preparazzjoni kollha",
+    "stageSelected": "Ipprepara {{ count }} magħżula",
+    "unstageSelected": "Neħħi l-preparazzjoni ta' {{ count }} magħżula",
     "discard": "Warrab",
     "discardConfirm": "Twarrab il-bidliet f'\"{{ path }}\"? Dan ma jistax jiġi annullat.",
+    "discardSelected": "Tiskarta {{ count }} fajls",
+    "discardSelectedConfirm": "Tiskarta l-bidliet f'{{ count }} fajls? Dan ma jistax jiġi annullat.",
     "blame": "Blame",
     "blameEmpty": "M'hemmx informazzjoni tal-blame disponibbli.",
     "ignore": "Żid ma' .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} għaddej",
       "files": "{{ count }} fajls b'kunflitti",
       "continue": "Kompli",
-      "abort": "Waqqaf"
+      "abort": "Waqqaf",
+      "resolveFirst": "L-ewwel issolvi l-kunflitti kollha u żid il-fajls fl-istage."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "L-awtentikazzjoni falliet. Iċċekkja l-kredenzjali tal-Git.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Aqleb għall-fergħa l-ġdida",
       "confirm": "Ikkonferma",
       "mergeConfirm": "Għaqqad '{{branch}}' fi '{{current}}'?",
+      "rebaseConfirm": "Tagħmel rebase ta' '{{current}}' fuq '{{branch}}'? Dan jikteb mill-ġdid il-commits ta' '{{current}}'.",
       "deleteConfirm": "Ħassar il-fergħa '{{branch}}'? Dan ma jistax jiġi annullat.",
       "deleteRemoteConfirm": "Ħassar il-fergħa remota '{{branch}}'? Dan jaffettwa r-repożitorju remot.",
+      "forceDeleteConfirm": "Il-fergħa '{{branch}}' mhijiex magħquda għalkollox. Tħassarha xorta waħda? Il-commits tagħha mhux magħquda jintilfu.",
       "rebaseHint": "Erġa' ordna l-commits u agħżel azzjoni għal kull wieħed. Ir-rebase jimxi mill-eqdem għall-aktar reċenti.",
-      "nothingToRebase": "L-ebda commit x'jiġi rebased."
+      "nothingToRebase": "L-ebda commit x'jiġi rebased.",
+      "rebaseActions": {
+        "pick": "Żomm (pick)",
+        "squash": "Għaqqad (squash)",
+        "fixup": "Inkorpora (fixup)",
+        "drop": "Warrab (drop)"
+      },
+      "rebaseSquashFirst": "L-ewwel commit ma jistax jingħaqad (squash jew fixup): m'hemmx commit preċedenti biex jingħaqad miegħu.",
+      "moveUp": "Ċaqlaq 'il fuq",
+      "moveDown": "Ċaqlaq 'l isfel"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "L-ebda passi ma jaqblu mal-filtri attwali.",
     "view": {
       "timeline": "Kronoloġija",
-      "branches": "Fergħat"
+      "branches": "Fergħat",
+      "permissions": "Permessi"
     },
     "filters": {
       "type": "Tip",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Sessjoni override",
       "default": "Settings default"
+    },
+    "permissions": {
+      "empty": "Għadu ma ġie rreġistrat l-ebda deċiżjoni ta' permess għal dan iċ-chat.",
+      "clear": "Naddaf ir-reġistru",
+      "clearConfirm": "Ikklikkja mill-ġdid biex tnaddaf",
+      "allowed": "Permess",
+      "denied": "Miċħud",
+      "why": "Għaliex:",
+      "rule": "Regola:",
+      "filters": {
+        "auto": "Permess mingħajr ma staqsa",
+        "asked": "Mistoqsi",
+        "denied": "Miċħud"
+      },
+      "by": {
+        "auto": "Awtomatiku",
+        "rule": "Regola ta' ċaħda",
+        "user": "Int",
+        "grant": "Kopert minn permess ġdid",
+        "cascade": "Miċħud flimkien ma' talba oħra",
+        "stopped": "Imwaqqaf",
+        "timeout": "Skada l-ħin",
+        "cancelled": "Ikkanċellat"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Iżid gwida dwar kitba ta' testijiet iffukati u deterministiċi u kif tagħmel biex taħdem qabel ma tispiċċa.",
     "architecturePrompt": "Arkitettura tas-software",
     "architecturePromptHint": "Iżid gwida dwar il-konfini tal-moduli, ir-responsabbiltajiet u disinn manutenibbli.",
-    "budget": "Baġit (USD)",
-    "budgetHint": "0 jiddiżattiva l-wiri tal-baġit.",
     "language": "Lingwa",
     "replyLanguage": "Lingwa tar-risposta",
     "replyLanguageDefault": "Default (lingwa tal-mudell)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Kemm sejħiet konsekuttivi ta' għodda jista' jagħmel l-aġent qabel ma jieqaf u jitlobek tkompli. Il-limitu huwa valv ta 'sigurtà: iwaqqaf mudell li jeħel f'linja milli jaħdem għal dejjem u jaħarqu tokens. 35 huwa default tajjeb; għolliha għal ħidmiet twal u f'diversi stadji.",
     "autoContinueAllSessions": "Kompli awtomatikament is-sessjonijiet kollha",
     "autoContinueAllSessionsHint": "Meta sessjoni tilħaq il-limitu tas-sejħa tal-għodda, kompli għaddej awtomatikament minflok ieqaf. Dan ineħħi x-xibka tas-sigurtà tal-linja, u għalhekk aġent imwaħħal jista 'jiġi għaddej sakemm twaqqafha. Tista' wkoll taqleb dan miċ-chat meta jintlaħaq limitu.",
+    "subagentModel": "Mudell tas-subagent",
+    "subagentModelHint": "Mudell użat għas-subagenti. Ħallih vojt biex tuża l-mudell tas-sessjoni.",
+    "compactionModel": "Mudell tal-kompattjar",
+    "compactionModelHint": "Mudell użat biex jiġbor konversazzjonijiet twal. Ħallih vojt biex tuża l-mudell tas-sessjoni.",
+    "promptCaching": "Cache tal-prompts",
+    "promptCachingHint": "Immarka l-prefiss stabbli tal-prompt bħala cacheable sabiex il-fornituri li jappoġġjaw il-cache jċarġu t-tokens tal-input fil-cache b'inqas.",
+    "mcpProgressiveDisclosure": "Divulgazzjoni progressiva tal-għodod MCP",
+    "mcpProgressiveDisclosureHint": "Meta jkunu konnessi ħafna għodod MCP, uri par tool_search/mcp_invoke minflok ma tintegra kull skema biex tiffranka l-kuntest. Settijiet żgħar dejjem jiġu integrati.",
     "fileAccessRules": "Regoli ta' aċċess għall-fajls",
     "fileAccessRulesHint": "Ikkontrolla liema fajls jista' jiskopri u jaqra l-assistent. L-eżenzjonijiet tal-utenti dejjem jirbħu fuq kull regola hawn taħt.",
     "ignoreGitignored": "Injora l-fajls elenkati f'.gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "L-ebda kmand imblukkat.",
     "scope": {
       "program": "Programm",
+      "subcommand": "Programm + sottokmand",
       "programFlags": "Programm + flags",
       "exact": "Eżatt"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Għad m'hemmx regoli tal-kmandi. Uża \"ħalli dejjem\" f'talba għall-permess biex toħloq waħda.",
     "websiteRules": "Siti web",
-    "websiteRulesHint": "Siti web li l-assistent jista' jżur. Regoli ta' ċaħda jirbħu fuq regoli ta' permess; dominju sempliċi jkopri wkoll is-sottdominji tiegħu. Uża \"ħalli dejjem\" jew \"iċħad dejjem\" f'talba għall-permess biex toħloq waħda.",
+    "websiteRulesHint": "Siti web li l-assistent jista' jżur bl-għodod web tiegħu jew b'kmandi bħal curl, git u ssh. Regoli ta' ċaħda jirbħu fuq regoli ta' permess; dominju sempliċi jkopri wkoll is-sottdominji tiegħu. Uża \"ħalli dejjem\" jew \"iċħad dejjem\" f'talba għall-permess biex toħloq waħda.",
     "permissionPrompts": "Talbiet għall-permess",
     "permissionPromptsHint": "Agħżel x'jagħmel il-buttuna prinċipali tal-permess b'mod awtomatiku. Ħalli darba tapprova talba waħda; ħalli għal din is-sessjoni tiftakar l-aċċess għall-folder sakemm l-app terġa' tibda.",
+    "autoApprove": "Approvazzjoni awtomatika",
+    "autoApproveHint": "Taqbeż il-mistoqsijiet għal xogħol li l-assistent jista' jipprova li huwa sigur. Kmandi perikolużi, kodiċi inline, downloads ta' pakketti, siti web li għadhom mhumiex permessi, mogħdijiet barra mill-proġett u fajls sensittivi dejjem jistaqsu.",
+    "autoApproveReadOnly": "Kmendi biss qari",
+    "autoApproveReadOnlyHint": "Tippermetti kmendi ta' spezzjoni bħal ls, grep u git status mingħajr ma tistaqsi.",
+    "autoApprovePackageScripts": "Maniġers tal-pakketti u għodod tal-bini",
+    "autoApprovePackageScriptsHint": "Tippermetti pnpm, npm, yarn, bun, ng, make u għodod simili meta xejn ma jindika barra mill-proġett.",
+    "autoApproveProjectExecutables": "Eżegwibbli tal-proġett",
+    "autoApproveProjectExecutablesHint": "Tippermetti eżegwibbli ġewwa l-proġett, bħal ./node_modules/.bin/ng, mingħajr ma tistaqsi kull darba.",
+    "autoApproveProjectCommands": "Il-kmendi kollha ġewwa l-proġett",
+    "autoApproveProjectCommandsHint": "Ippermetti kull kmand mhux perikoluż li l-mogħdijiet tiegħu jibqgħu ġewwa l-proġett. Kmandi perikolużi, kodiċi inline, downloads ta' pakketti, siti web li għadhom mhumiex permessi, fajls sensittivi u kull ħaġa barra xorta jistaqsu.",
+    "permissionPreset": {
+      "strict": "Strett",
+      "strictHint": "Il-kmandi li jaqraw biss biss jaħdmu mingħajr ma jistaqsu.",
+      "balanced": "Ibbilanċjat",
+      "balancedHint": "Kmandi li jaqraw biss, maniġers tal-pakketti, għodod tal-bini u eżekutibbli tal-proġett jaħdmu mingħajr ma jistaqsu.",
+      "autonomous": "Awtonomu",
+      "autonomousHint": "Kull kmand mhux perikoluż ġewwa l-proġett jaħdem mingħajr ma jistaqsi.",
+      "custom": "Personalizzat",
+      "autonomousWarning": "Il-modalità awtonoma tafda dan il-proġett: l-iskripts, il-Makefiles u l-eżekutibbli tiegħu jistgħu jagħmlu kollox mingħajr ma jistaqsu. Kodiċi inline, downloads ta' pakketti, siti web li għadhom mhumiex permessi, kmandi perikolużi u kull ħaġa barra l-proġett xorta jistaqsu.",
+      "confirm": "Uża l-modalità awtonoma"
+    },
     "noAllowedWebsites": "Għad m'hemmx siti web permessi dejjem.",
     "noDeniedWebsites": "Għad m'hemmx siti web miċħuda dejjem.",
     "websitePlaceholder": "eż. docs.rs jew *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Folder"
     },
     "allowAlways": "Ħalli dejjem",
-    "addFolder": "Żid folder b'mod permanenti",
     "siteRuleLabel": "Regola tas-sit web (dominju jew glob)",
     "siteRuleHint": "Pereżempju: docs.rs jippermetti dak is-sit, *.github.com jippermetti s-sottdominji kollha tiegħu.",
-    "segment": {
-      "allowed": "Permess",
-      "needsApproval": "Jeħtieġ approvazzjoni"
-    },
+    "siteRuleInvalid": "Din ir-regola ma tkoprix {{ host }} jew hija wiesgħa wisq, għalhekk minflok se jiġi ssejvjat {{ host }}.",
     "risk": {
       "low": "Baxx",
       "medium": "Medju",
+      "network": "Netwerk",
       "high": "Għoli",
       "danger": "Periklu"
     },
@@ -994,7 +1066,39 @@
       "title": "Ambitu tar-regola",
       "hint": "Agħżel kemm tapplika wiesgħa r-regola."
     },
-    "allowChat": "Ippermetti f’dan iċ-chat"
+    "folderScope": {
+      "title": "Ippermetti l-folder",
+      "hint": "Iżżid il-folder u kull ma hemm fih mal-folders dejjem permessi.",
+      "option": "Folder + sottfolders"
+    },
+    "hostScope": {
+      "title": "Ippermetti s-sit web",
+      "hint": "Iżżid is-sit web u s-sottdominji tiegħu mas-siti web permessi.",
+      "option": "Sit web + sottdominji"
+    },
+    "allowChat": "Ippermetti f’dan iċ-chat",
+    "option": {
+      "yes": "Iva",
+      "chat": "Iva, u terġax tistaqsi f’dan iċ-chat għal",
+      "session": "Iva, u terġax tistaqsi sal-bidu mill-ġdid għal",
+      "always": "Iva, u dejjem ippermetti",
+      "no": "Le",
+      "denyAlways": "Le, u dejjem iċħad"
+    },
+    "customize": "Ippersonalizza",
+    "justification": "Għaliex",
+    "keyboardHint": "Agħfas 1–{{ count }} jew uża ↑ ↓ u Enter · Esc jiċħad",
+    "url": {
+      "queryWarning": "Dan l-indirizz iġorr ħafna data fl-istring tal-mistoqsija tiegħu. Kun żgur li ma fih xejn privat qabel ma tippermettih."
+    },
+    "tooltip": {
+      "deny": "Iċħad din it-talba u kull talba oħra li qed tistenna f’dan iċ-chat.",
+      "denyAlways": "Iċħad u ssejvja regola ta' ċaħda fis-settings tiegħek. Talbiet oħra li qed jistennew f’dan iċ-chat jiġu miċħuda wkoll.",
+      "allowOnce": "Ippermetti din it-talba biss.",
+      "allowSession": "Tiftakarha f’kull chat sakemm l-app terġa' tibda.",
+      "allowChat": "Ir-regoli tal-kmandi jiġu mfakkra għal dan iċ-chat u s-sottaġenti tiegħu; folders u siti web sakemm l-app terġa' tibda.",
+      "allowAlways": "Tiġi ssejvjata fis-settings tiegħek u tapplika għal kull chat."
+    }
   },
   "question": {
     "title": "Mistoqsija",
@@ -1044,6 +1148,8 @@
     "installing": "Qed jinstalla...",
     "uninstall": "Iddiżinstalla",
     "addFolder": "Żid folder",
-    "noFolders": "Għad m'hemmx foldri miżjuda."
+    "noFolders": "Għad m'hemmx foldri miżjuda.",
+    "binaryFile": "Fajl binarju – l-ebda previżjoni disponibbli.",
+    "fileTooLarge": "Dan il-fajl huwa kbir wisq biex jintwera."
   }
 }

