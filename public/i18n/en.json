@@ -1086,6 +1086,7 @@
       "denyAlways": "No, and always deny"
     },
     "customize": "Customize",
+    "justification": "Why",
     "keyboardHint": "Press 1–{{ count }} or use ↑ ↓ and Enter · Esc denies",
     "url": {
       "queryWarning": "This address carries a lot of data in its query string. Make sure it contains nothing private before you allow it."

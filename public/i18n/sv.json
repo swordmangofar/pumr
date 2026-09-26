@@ -1086,6 +1086,7 @@
       "denyAlways": "Nej, och neka alltid"
     },
     "customize": "Anpassa",
+    "justification": "Varför",
     "keyboardHint": "Tryck 1–{{ count }} eller använd ↑ ↓ och Enter · Esc nekar",
     "url": {
       "queryWarning": "Den här adressen innehåller mycket data i sin frågesträng. Kontrollera att den inte innehåller något privat innan du tillåter den."

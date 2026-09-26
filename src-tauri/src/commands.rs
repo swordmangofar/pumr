@@ -2424,6 +2424,7 @@ async fn assemble_turn_context(
             http: state.http.clone(),
             mcp: None,
             skills: Vec::new(),
+            justification: None,
             cancel,
             emit: sink.clone(),
         };
@@ -2514,6 +2515,7 @@ async fn assemble_turn_context(
                                 folders: Vec::new(),
                                 hosts: Vec::new(),
                                 grant_session_id: session_id.to_string(),
+                                justification: None,
                             },
                             &approval_cancel,
                             session_id,

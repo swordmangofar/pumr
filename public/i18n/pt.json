@@ -1086,6 +1086,7 @@
       "denyAlways": "Não, e negar sempre"
     },
     "customize": "Personalizar",
+    "justification": "Motivo",
     "keyboardHint": "Prima 1–{{ count }} ou use ↑ ↓ e Enter · Esc nega",
     "url": {
       "queryWarning": "Este endereço transporta muitos dados na sua cadeia de consulta. Confirme que não contém nada privado antes de o permitir."

@@ -1086,6 +1086,7 @@
       "denyAlways": "Ei, ja estä aina:"
     },
     "customize": "Mukauta",
+    "justification": "Miksi",
     "keyboardHint": "Paina 1–{{ count }} tai käytä ↑ ↓ ja Enter · Esc hylkää",
     "url": {
       "queryWarning": "Tämä osoite sisältää paljon tietoa kyselymerkkijonossaan. Varmista ennen sallimista, ettei se sisällä mitään yksityistä."

@@ -54,6 +54,10 @@ pub struct PermissionPrompt {
     /// The conversation (root session) an "allow in this chat" grant belongs to.
     /// Distinct from the routing `session_id`, which may be a subagent.
     pub grant_session_id: String,
+    /// The assistant's own one-sentence explanation of why it needs this,
+    /// taken from the tool call's `reason` argument. Untrusted model text:
+    /// shown as the assistant's claim, never used for the decision.
+    pub justification: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -435,6 +439,7 @@ impl PermissionBroker {
                     scope_options: prompt.scope_options.clone(),
                     folders: prompt.folders.clone(),
                     hosts: prompt.hosts.clone(),
+                    justification: prompt.justification.clone(),
                 },
             });
         }
@@ -614,6 +619,7 @@ mod tests {
             folders: Vec::new(),
             hosts: Vec::new(),
             grant_session_id: "chat".to_string(),
+            justification: None,
         }
     }
 
@@ -822,6 +828,7 @@ mod tests {
             folders: Vec::new(),
             hosts: Vec::new(),
             grant_session_id: grant_session_id.to_string(),
+            justification: None,
         }
     }
 

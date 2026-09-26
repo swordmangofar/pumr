@@ -314,7 +314,11 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
         tool_schemas.push(tools::tool_search_schema());
         tool_schemas.push(tools::mcp_invoke_schema());
     } else {
-        tool_schemas.extend(mcp_schemas);
+        // MCP tools always ask before running, so the model must say why.
+        tool_schemas.extend(mcp_schemas.into_iter().map(|mut schema| {
+            tools::add_reason_argument(&mut schema, true);
+            schema
+        }));
     }
     if request.plan_only {
         tool_schemas.retain(|schema| {
@@ -1278,6 +1282,7 @@ async fn execute_call(
         http: deps.http.clone(),
         mcp: Some(deps.mcp.clone()),
         skills: request.skills.clone(),
+        justification: None,
         cancel: request.cancel.clone(),
         emit: sink.clone(),
     };

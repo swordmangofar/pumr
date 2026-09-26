@@ -1086,6 +1086,7 @@
       "denyAlways": "Ne, in vedno zavrni"
     },
     "customize": "Prilagodi",
+    "justification": "Zakaj",
     "keyboardHint": "Pritisnite 1–{{ count }} ali uporabite ↑ ↓ in Enter · Esc zavrne",
     "url": {
       "queryWarning": "Ta naslov v nizu poizvedbe nosi veliko podatkov. Preden ga dovolite, preverite, da ne vsebuje ničesar zasebnega."

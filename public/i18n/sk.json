@@ -1086,6 +1086,7 @@
       "denyAlways": "Nie, a vždy odmietnuť"
     },
     "customize": "Prispôsobiť",
+    "justification": "Prečo",
     "keyboardHint": "Stlačte 1–{{ count }} alebo použite ↑ ↓ a Enter · Esc odmietne",
     "url": {
       "queryWarning": "Táto adresa nesie v reťazci dopytu veľa údajov. Pred povolením sa uistite, že neobsahuje nič súkromné."

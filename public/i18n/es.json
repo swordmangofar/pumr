@@ -1086,6 +1086,7 @@
       "denyAlways": "No, y denegar siempre"
     },
     "customize": "Personalizar",
+    "justification": "Por qué",
     "keyboardHint": "Pulsa 1–{{ count }} o usa ↑ ↓ y Enter · Esc deniega",
     "url": {
       "queryWarning": "Esta dirección lleva muchos datos en su cadena de consulta. Asegúrate de que no contiene nada privado antes de permitirla."

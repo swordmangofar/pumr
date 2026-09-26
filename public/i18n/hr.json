@@ -1086,6 +1086,7 @@
       "denyAlways": "Ne, i uvijek zabrani"
     },
     "customize": "Prilagodi",
+    "justification": "Zašto",
     "keyboardHint": "Pritisnite 1–{{ count }} ili upotrijebite ↑ ↓ i Enter · Esc odbija",
     "url": {
       "queryWarning": "Ova adresa nosi mnogo podataka u svom upitu. Prije dopuštanja provjerite da ne sadrži ništa privatno."

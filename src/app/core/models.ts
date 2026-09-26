@@ -760,6 +760,8 @@ export type StreamEvent =
       folders: string[];
       /** Websites a command contacts that the user can allow. */
       hosts: string[];
+      /** The assistant's one-sentence explanation of why it asks. */
+      justification: string | null;
     }
   | { kind: 'permissionResolved'; requestId: string; allowed: boolean }
   | { kind: 'questionRequest'; requestId: string; questions: QuestionItem[] }
