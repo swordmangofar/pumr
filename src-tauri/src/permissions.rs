@@ -4339,23 +4339,25 @@ impl FileIgnoreConfig {
         }
     }
 
-    /// Pure detection of generated/build directories or files. Every component
-    /// of `path` counts, so pass it relative to the project root or the extra
-    /// folder holding it.
-    pub fn is_generated_path(&self, path: &Path) -> bool {
-        self.generated_rule_id(path).is_some()
+    /// Pure detection of generated/build directories or files, for a path
+    /// relative to the project root.
+    pub fn is_generated_path(&self, relative: &Path) -> bool {
+        self.generated_rule_id(relative).is_some()
     }
 
     /// True when the user explicitly turned off the generated rule that would
-    /// otherwise hide this path. This ignores `scan_generated_files`, so a user
-    /// who only wants generated *files* included still gets dependency
-    /// directories pruned from directory walks.
-    pub fn generated_rule_explicitly_disabled(&self, path: &Path) -> bool {
-        self.generated_rule_id(path)
+    /// otherwise hide this project-relative path. This ignores
+    /// `scan_generated_files`, so a user who only wants generated *files*
+    /// included still gets dependency directories pruned from directory walks.
+    pub fn generated_rule_explicitly_disabled(&self, relative: &Path) -> bool {
+        self.generated_rule_id(relative)
             .map(|id| self.disabled.contains(&id))
             .unwrap_or(false)
     }
 
+    /// `path` must be relative to the project root: matched against an
+    /// absolute path, a folder the project itself lives in (`/tmp/…`,
+    /// `~/build/…`) would mark every file in the project as generated.
     fn generated_rule_id(&self, path: &Path) -> Option<String> {
         for component in path.components() {
             let value = component.as_os_str().to_string_lossy();
@@ -4441,18 +4443,13 @@ impl FileIgnoreConfig {
     }
 
     /// Full reason a path should be hidden, combining `.gitignore` status.
-    /// `path` is relative to the project root or the extra folder holding it,
-    /// as directory-name rules check every component; `relative` is relative
-    /// to the project root, for exemptions.
-    pub fn ignore_reason(
-        &self,
-        path: &Path,
-        relative: &str,
-        gitignored: bool,
-    ) -> Option<&'static str> {
+    /// Every rule sees only `relative`, the path relative to the project root,
+    /// so the folders the project itself lives in never hide it.
+    pub fn ignore_reason(&self, relative: &str, gitignored: bool) -> Option<&'static str> {
         if self.is_exempt(relative) {
             return None;
         }
+        let path = Path::new(relative);
         if let Some(reason) = self.category_reason(path) {
             return Some(reason);
         }
@@ -5681,19 +5678,11 @@ mod tests {
     fn generated_files_follow_scan_setting() {
         let no_scan = FileIgnoreConfig::new(true, false, false, true, &[]);
         assert!(no_scan
-            .ignore_reason(
-                Path::new("/project/node_modules/pkg/index.js"),
-                "node_modules/pkg/index.js",
-                true,
-            )
+            .ignore_reason("node_modules/pkg/index.js", true)
             .is_some());
         let scan = FileIgnoreConfig::new(true, true, false, true, &[]);
         assert!(scan
-            .ignore_reason(
-                Path::new("/project/node_modules/pkg/index.js"),
-                "node_modules/pkg/index.js",
-                true,
-            )
+            .ignore_reason("node_modules/pkg/index.js", true)
             .is_none());
     }
 
@@ -5706,12 +5695,8 @@ mod tests {
             true,
             &["config/local.env".to_string()],
         );
-        assert!(config
-            .ignore_reason(Path::new("/project/config/local.env"), "config/local.env", true)
-            .is_none());
-        assert!(config
-            .ignore_reason(Path::new("/project/config/other.env"), "config/other.env", true)
-            .is_some());
+        assert!(config.ignore_reason("config/local.env", true).is_none());
+        assert!(config.ignore_reason("config/other.env", true).is_some());
     }
 
     #[test]
@@ -5736,16 +5721,10 @@ mod tests {
     #[test]
     fn generated_artifact_files_follow_scan_setting() {
         let no_scan = FileIgnoreConfig::new(true, false, false, true, &[]);
-        assert!(no_scan
-            .ignore_reason(Path::new("/project/app.min.js"), "app.min.js", false)
-            .is_some());
-        assert!(no_scan
-            .ignore_reason(Path::new("/project/notes.log"), "notes.log", false)
-            .is_some());
+        assert!(no_scan.ignore_reason("app.min.js", false).is_some());
+        assert!(no_scan.ignore_reason("notes.log", false).is_some());
         let scan = FileIgnoreConfig::new(true, true, false, true, &[]);
-        assert!(scan
-            .ignore_reason(Path::new("/project/app.min.js"), "app.min.js", false)
-            .is_none());
+        assert!(scan.ignore_reason("app.min.js", false).is_none());
     }
 
     #[test]
@@ -5761,9 +5740,7 @@ mod tests {
             .category_reason(Path::new("/p/node_modules/x.js"))
             .is_none());
         assert!(config.category_reason(Path::new("/p/dist/x.js")).is_some());
-        assert!(config
-            .ignore_reason(Path::new("/p/node_modules/x.js"), "node_modules/x.js", true)
-            .is_none());
+        assert!(config.ignore_reason("node_modules/x.js", true).is_none());
 
         let config = FileIgnoreConfig::new(true, false, false, true, &[])
             .with_overrides(&["creds:ext:.pem".to_string()], &[]);
