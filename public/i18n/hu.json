@@ -1086,6 +1086,7 @@
       "denyAlways": "Nem, és mindig tiltsa:"
     },
     "customize": "Testreszabás",
+    "justification": "Miért",
     "keyboardHint": "Nyomd meg az 1–{{ count }} gombot, vagy használd a ↑ ↓ és Enter billentyűket · Esc elutasít",
     "url": {
       "queryWarning": "Ez a cím sok adatot hordoz a lekérdezési karakterláncában. Engedélyezés előtt győződj meg róla, hogy nincs benne semmi személyes."

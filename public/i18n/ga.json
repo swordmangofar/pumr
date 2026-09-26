@@ -1086,6 +1086,7 @@
       "denyAlways": "Níl, agus séan i gcónaí"
     },
     "customize": "Saincheap",
+    "justification": "Cén fáth",
     "keyboardHint": "Brúigh 1–{{ count }} nó úsáid ↑ ↓ agus Enter · Séanann Esc",
     "url": {
       "queryWarning": "Iompraíonn an seoladh seo go leor sonraí ina theaghrán iarratais. Déan cinnte nach bhfuil aon rud príobháideach ann sula gceadaíonn tú é."

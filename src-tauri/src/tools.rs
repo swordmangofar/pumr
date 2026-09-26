@@ -48,6 +48,8 @@ pub struct ToolRuntime {
     pub mcp: Option<Arc<McpManager>>,
     /// Catalogue of discovered skills the `skill` tool can load on demand.
     pub skills: Vec<SkillEntry>,
+    /// The call's `reason` argument, shown in any permission prompt it raises.
+    pub justification: Option<String>,
     pub cancel: CancellationToken,
     pub emit: EventSink,
 }
@@ -132,7 +134,100 @@ impl ToolOutcome {
     }
 }
 
+/// Argument a tool call uses to tell the user, in one sentence, why it needs
+/// the action. Shown in any permission prompt the call raises.
+pub const REASON_ARGUMENT: &str = "reason";
+
+/// Longest justification shown in a permission prompt, in characters.
+const MAX_JUSTIFICATION_CHARS: usize = 300;
+
+/// Built-in tools whose calls can raise a permission prompt, and whether the
+/// model must always explain itself (the tool usually or always asks).
+const PROMPTING_TOOLS: [(&str, bool); 9] = [
+    ("read", false),
+    ("write", false),
+    ("edit", false),
+    ("glob", false),
+    ("grep", false),
+    ("ls", false),
+    ("bash", true),
+    ("webfetch", true),
+    ("websearch", false),
+];
+
+/// Adds the `reason` argument to a tool schema. Leaves schemas that already
+/// declare their own `reason` (an MCP tool's) or take no object untouched.
+pub fn add_reason_argument(schema: &mut Value, required: bool) {
+    let Some(parameters) = schema
+        .pointer_mut("/function/parameters")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if parameters.get("type").and_then(Value::as_str).unwrap_or("object") != "object" {
+        return;
+    }
+    let properties = parameters
+        .entry("properties")
+        .or_insert_with(|| json!({}));
+    let Some(properties) = properties.as_object_mut() else {
+        return;
+    };
+    if properties.contains_key(REASON_ARGUMENT) {
+        return;
+    }
+    properties.insert(
+        REASON_ARGUMENT.to_string(),
+        json!({
+            "type": "string",
+            "description": "One short sentence telling the user why you need this call. It is shown in the permission prompt when the call needs approval, e.g. 'Run the test suite to verify the fix.'"
+        }),
+    );
+    if required {
+        if let Some(list) = parameters
+            .entry("required")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+        {
+            list.push(json!(REASON_ARGUMENT));
+        }
+    }
+}
+
+/// The call's `reason`, whitespace-collapsed and capped so a prompt stays
+/// readable.
+fn justification(reason: Option<&Value>) -> Option<String> {
+    let collapsed = reason?
+        .as_str()?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    if collapsed.chars().count() <= MAX_JUSTIFICATION_CHARS {
+        return Some(collapsed);
+    }
+    let mut capped: String = collapsed.chars().take(MAX_JUSTIFICATION_CHARS - 1).collect();
+    capped.push('…');
+    Some(capped)
+}
+
 pub fn tool_schemas() -> Vec<Value> {
+    let mut schemas = base_tool_schemas();
+    for schema in &mut schemas {
+        let name = schema.pointer("/function/name").and_then(Value::as_str);
+        if let Some((_, required)) = PROMPTING_TOOLS
+            .iter()
+            .find(|(tool, _)| Some(*tool) == name)
+        {
+            add_reason_argument(schema, *required);
+        }
+    }
+    schemas
+}
+
+fn base_tool_schemas() -> Vec<Value> {
     vec![
         json!({
             "type": "function",
@@ -246,7 +341,7 @@ pub fn tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "webfetch",
-                "description": "Fetch a URL and return its readable text. The user must approve each website the first time; remember to explain why you need it.",
+                "description": "Fetch a URL and return its readable text. The user must approve each website the first time; say why you need it in reason.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -328,6 +423,10 @@ pub fn tool_schemas() -> Vec<Value> {
 }
 
 pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -> ToolOutcome {
+    // A direct MCP tool may declare its own `reason`; `call_mcp_tool` decides.
+    if !name.starts_with("mcp__") {
+        runtime.justification = justification(arguments.get(REASON_ARGUMENT));
+    }
     match name {
         "read" => read_file(runtime, arguments).await,
         "write" => write_file(runtime, arguments).await,
@@ -369,7 +468,7 @@ pub fn tool_search_schema() -> Value {
 
 /// Schema for invoking a deferred MCP tool by name.
 pub fn mcp_invoke_schema() -> Value {
-    json!({
+    let mut schema = json!({
         "type": "function",
         "function": {
             "name": "mcp_invoke",
@@ -383,7 +482,9 @@ pub fn mcp_invoke_schema() -> Value {
                 "required": ["tool"]
             }
         }
-    })
+    });
+    add_reason_argument(&mut schema, true);
+    schema
 }
 
 /// Schema for loading a discovered skill's instructions on demand.
@@ -525,6 +626,20 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
     let Some(manager) = runtime.mcp.clone() else {
         return ToolOutcome::error(format!("MCP tool '{name}' is not available."));
     };
+    // The `reason` we add to MCP schemas is for the prompt, not the server;
+    // a tool that declares its own `reason` keeps it.
+    let mut arguments = arguments.clone();
+    if !manager.declares_argument(name, REASON_ARGUMENT) {
+        if let Some(reason) = arguments
+            .as_object_mut()
+            .and_then(|object| object.remove(REASON_ARGUMENT))
+        {
+            if runtime.justification.is_none() {
+                runtime.justification = justification(Some(&reason));
+            }
+        }
+    }
+    let arguments = &arguments;
     // MCP tools run server-side and bypass the built-in command gate, so require
     // an explicit user decision before every invocation.
     let preview = serde_json::json!({ "tool": name, "arguments": arguments }).to_string();
@@ -550,6 +665,7 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 folders: Vec::new(),
                 hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
+                justification: runtime.justification.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -688,9 +804,7 @@ fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str
         shadow: Some(&runtime.shadow),
     };
     let gitignored = !relative.is_empty() && probe.is_ignored(&relative);
-    runtime
-        .file_ignore
-        .ignore_reason(path, &relative, gitignored)
+    runtime.file_ignore.ignore_reason(&relative, gitignored)
 }
 
 /// Canonicalize existing resources, but retain the full absolute path for new files.
@@ -740,6 +854,7 @@ async fn ensure_path_access(
                 folders: Vec::new(),
                 hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
+                justification: runtime.justification.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -784,6 +899,7 @@ async fn ensure_write_access(
                 folders: Vec::new(),
                 hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
+                justification: runtime.justification.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
@@ -837,6 +953,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     folders: Vec::new(),
                     hosts: Vec::new(),
                     grant_session_id: runtime.conversation_id.clone(),
+                    justification: runtime.justification.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
@@ -1250,24 +1367,24 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         .git_exclude(false);
     builder.filter_entry(move |entry| {
         let path = entry.path();
-        if path
+        // Judge directory names only below the project root, so a project that
+        // itself lives under e.g. `/tmp` or `~/build` is not pruned whole.
+        let inside = path.strip_prefix(&root).unwrap_or(path);
+        if inside
             .components()
             .any(|component| component.as_os_str() == ".git")
         {
             return false;
         }
-        let relative = path
-            .strip_prefix(&root)
-            .map(|value| value.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+        let relative = inside.to_string_lossy().replace('\\', "/");
         if config.is_exempt(&relative) {
             return true;
         }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir
             && !config.has_exemptions()
-            && config.is_generated_path(path)
-            && !config.generated_rule_explicitly_disabled(path)
+            && config.is_generated_path(inside)
+            && !config.generated_rule_explicitly_disabled(inside)
         {
             return false;
         }
@@ -1325,7 +1442,7 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         let relative = ignore_relative(runtime, path);
         if runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(&relative, ignored.contains(path))
             .is_some()
         {
             continue;
@@ -1400,7 +1517,7 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         let relative = ignore_relative(runtime, path);
         if runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(&relative, ignored.contains(path))
             .is_some()
         {
             continue;
@@ -1476,7 +1593,7 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         let relative = ignore_relative(runtime, path);
         runtime
             .file_ignore
-            .ignore_reason(path, &relative, ignored.contains(path))
+            .ignore_reason(&relative, ignored.contains(path))
             .is_none()
     });
     items.sort_by(|a, b| {
@@ -1571,6 +1688,7 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         folders: Vec::new(),
                         hosts: Vec::new(),
                         grant_session_id: runtime.conversation_id.clone(),
+                        justification: runtime.justification.clone(),
                     },
                     &runtime.cancel,
                     &runtime.session_id,
@@ -2177,6 +2295,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     folders: outside_folders,
                     hosts,
                     grant_session_id: runtime.conversation_id.clone(),
+                    justification: runtime.justification.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
@@ -2409,6 +2528,76 @@ fn ceil_char_boundary(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::permissions::AutoApproveConfig;
+
+    fn schema_named(name: &str) -> Value {
+        tool_schemas()
+            .into_iter()
+            .find(|schema| schema.pointer("/function/name").and_then(Value::as_str) == Some(name))
+            .unwrap()
+    }
+
+    fn requires_reason(schema: &Value) -> bool {
+        schema
+            .pointer("/function/parameters/required")
+            .and_then(Value::as_array)
+            .is_some_and(|list| list.iter().any(|entry| entry == REASON_ARGUMENT))
+    }
+
+    #[test]
+    fn prompting_tools_take_a_reason() {
+        for (name, required) in PROMPTING_TOOLS {
+            let schema = schema_named(name);
+            assert!(
+                schema
+                    .pointer(&format!("/function/parameters/properties/{REASON_ARGUMENT}"))
+                    .is_some(),
+                "{name}"
+            );
+            assert_eq!(requires_reason(&schema), required, "{name}");
+        }
+        assert!(schema_named("question")
+            .pointer("/function/parameters/properties/reason")
+            .is_none());
+        assert!(requires_reason(&mcp_invoke_schema()));
+    }
+
+    #[test]
+    fn reason_argument_keeps_a_declared_reason_and_fills_empty_schemas() {
+        let mut declared = json!({ "function": { "parameters": {
+            "type": "object",
+            "properties": { "reason": { "type": "integer" } },
+            "required": ["reason"]
+        } } });
+        add_reason_argument(&mut declared, true);
+        assert_eq!(
+            declared.pointer("/function/parameters/properties/reason/type"),
+            Some(&json!("integer"))
+        );
+        assert_eq!(
+            declared.pointer("/function/parameters/required"),
+            Some(&json!(["reason"]))
+        );
+
+        let mut bare = json!({ "function": { "parameters": { "type": "object" } } });
+        add_reason_argument(&mut bare, true);
+        assert!(bare.pointer("/function/parameters/properties/reason").is_some());
+        assert!(requires_reason(&bare));
+    }
+
+    #[test]
+    fn justification_is_collapsed_and_capped() {
+        assert_eq!(justification(None), None);
+        assert_eq!(justification(Some(&json!("  \n "))), None);
+        assert_eq!(justification(Some(&json!(42))), None);
+        assert_eq!(
+            justification(Some(&json!("Run  the\ntests."))).as_deref(),
+            Some("Run the tests.")
+        );
+        let long = justification(Some(&json!("a".repeat(1000)))).unwrap();
+        assert_eq!(long.chars().count(), MAX_JUSTIFICATION_CHARS);
+        assert!(long.ends_with('…'));
+    }
 
     #[test]
     fn non_public_addresses_are_blocked_in_every_form() {
@@ -2581,6 +2770,66 @@ mod tests {
         let found = walk_relative(root, &disabled);
         assert!(found.contains(&"node_modules/pkg/index.js".to_string()));
         assert!(!found.contains(&"dist/app.js".to_string()));
+    }
+
+    #[test]
+    fn walk_ignores_generated_names_above_the_project_root() {
+        // A checkout under `/tmp`, `~/build`, … must not be pruned as a whole.
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tmp/project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+
+        let config = Arc::new(FileIgnoreConfig::new(true, true, false, true, &[]));
+        assert_eq!(walk_relative(&root, &config), vec!["src/main.rs"]);
+    }
+
+    fn test_runtime(project_root: &Path, app_data: &Path) -> ToolRuntime {
+        ToolRuntime {
+            call_id: "call".to_string(),
+            project_root: project_root.to_path_buf(),
+            permissions: Arc::new(LivePermissions::new(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                AutoApproveConfig::default(),
+            )),
+            file_ignore: Arc::new(FileIgnoreConfig::default()),
+            session_id: "session".to_string(),
+            conversation_id: "session".to_string(),
+            shadow: Arc::new(ShadowRepo::open(app_data, "project", project_root).unwrap()),
+            processes: Arc::new(ProcessRegistry::new()),
+            broker: Arc::new(PermissionBroker::new()),
+            questions: Arc::new(QuestionBroker::new()),
+            http: reqwest::Client::new(),
+            mcp: None,
+            skills: Vec::new(),
+            justification: None,
+            cancel: CancellationToken::new(),
+            emit: Arc::new(|_: RoutedEvent| {}),
+        }
+    }
+
+    #[tokio::test]
+    async fn glob_grep_and_list_work_in_a_project_under_tmp() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("tmp/project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "fn main() {}\n").unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        let globbed = glob_files(&mut runtime, &json!({ "pattern": "**/*.{rs,js}" })).await;
+        assert_eq!(globbed.result, "src/main.rs");
+        let grepped = grep_files(&mut runtime, &json!({ "pattern": "fn main" })).await;
+        assert_eq!(grepped.result, "src/main.rs:1: fn main() {}");
+        let listed = list_dir(&mut runtime, &json!({})).await;
+        assert_eq!(listed.result, "src/");
     }
 
     #[test]

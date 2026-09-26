@@ -1086,6 +1086,7 @@
       "denyAlways": "Non, et toujours refuser"
     },
     "customize": "Personnaliser",
+    "justification": "Pourquoi",
     "keyboardHint": "Appuyez sur 1–{{ count }} ou utilisez ↑ ↓ et Entrée · Échap refuse",
     "url": {
       "queryWarning": "Cette adresse transporte beaucoup de données dans sa chaîne de requête. Vérifiez qu'elle ne contient rien de privé avant de l'autoriser."

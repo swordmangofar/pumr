@@ -632,6 +632,7 @@ mod tests {
             scope_options: Vec::new(),
             folders: Vec::new(),
             hosts: Vec::new(),
+            justification: None,
             grant_session_id: grant_session_id.to_string(),
         }
     }

@@ -1086,6 +1086,7 @@
       "denyAlways": "Nej, og afvis altid"
     },
     "customize": "Tilpas",
+    "justification": "Hvorfor",
     "keyboardHint": "Tryk 1–{{ count }} eller brug ↑ ↓ og Enter · Esc afviser",
     "url": {
       "queryWarning": "Denne adresse indeholder mange data i sin forespørgselsstreng. Sørg for, at den ikke indeholder noget privat, før du tillader den."

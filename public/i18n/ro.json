@@ -1086,6 +1086,7 @@
       "denyAlways": "Nu, și interzice mereu"
     },
     "customize": "Personalizează",
+    "justification": "De ce",
     "keyboardHint": "Apasă 1–{{ count }} sau folosește ↑ ↓ și Enter · Esc refuză",
     "url": {
       "queryWarning": "Această adresă transportă multe date în șirul de interogare. Asigură-te că nu conține nimic privat înainte de a o permite."

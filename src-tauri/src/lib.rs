@@ -1,4 +1,5 @@
 mod agent;
+mod appimage;
 mod broker;
 mod commands;
 mod config;
@@ -22,6 +23,9 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    appimage::isolate_gstreamer_registry(&context.config().identifier);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -172,6 +176,6 @@ pub fn run() {
             commands::summarize_session,
             commands::send_message,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

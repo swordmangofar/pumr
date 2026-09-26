@@ -1086,6 +1086,7 @@
       "denyAlways": "Nee, en altijd weigeren"
     },
     "customize": "Aanpassen",
+    "justification": "Waarom",
     "keyboardHint": "Druk op 1–{{ count }} of gebruik ↑ ↓ en Enter · Esc weigert",
     "url": {
       "queryWarning": "Dit adres bevat veel gegevens in de querystring. Controleer of er niets privés in staat voordat je het toestaat."

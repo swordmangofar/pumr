@@ -60,6 +60,7 @@ function permission(requestId: string): PermissionRequestEvent {
     scopeOptions: [],
     folders: [],
     hosts: [],
+    justification: null,
   };
 }
 
