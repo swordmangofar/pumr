@@ -1086,6 +1086,7 @@
       "denyAlways": "Ne, ir visada uždrausti"
     },
     "customize": "Tinkinti",
+    "justification": "Kodėl",
     "keyboardHint": "Spauskite 1–{{ count }} arba naudokite ↑ ↓ ir Enter · Esc atmeta",
     "url": {
       "queryWarning": "Šis adresas užklausos eilutėje neša daug duomenų. Prieš leisdami įsitikinkite, kad jame nėra nieko privataus."

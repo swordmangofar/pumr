@@ -1086,6 +1086,7 @@
       "denyAlways": "No, e rifiuta sempre"
     },
     "customize": "Personalizza",
+    "justification": "Perché",
     "keyboardHint": "Premi 1–{{ count }} o usa ↑ ↓ e Invio · Esc rifiuta",
     "url": {
       "queryWarning": "Questo indirizzo contiene molti dati nella stringa di query. Assicurati che non contenga nulla di privato prima di consentirlo."

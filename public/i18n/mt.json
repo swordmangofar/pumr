@@ -1086,6 +1086,7 @@
       "denyAlways": "Le, u dejjem iċħad"
     },
     "customize": "Ippersonalizza",
+    "justification": "Għaliex",
     "keyboardHint": "Agħfas 1–{{ count }} jew uża ↑ ↓ u Enter · Esc jiċħad",
     "url": {
       "queryWarning": "Dan l-indirizz iġorr ħafna data fl-istring tal-mistoqsija tiegħu. Kun żgur li ma fih xejn privat qabel ma tippermettih."

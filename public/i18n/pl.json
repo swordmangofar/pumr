@@ -1086,6 +1086,7 @@
       "denyAlways": "Nie, i zawsze odmawiaj"
     },
     "customize": "Dostosuj",
+    "justification": "Dlaczego",
     "keyboardHint": "Naciśnij 1–{{ count }} lub użyj ↑ ↓ i Enter · Esc odmawia",
     "url": {
       "queryWarning": "Ten adres przenosi dużo danych w ciągu zapytania. Przed zezwoleniem upewnij się, że nie zawiera niczego prywatnego."

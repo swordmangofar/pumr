@@ -203,6 +203,15 @@ function mostSpecificFolders(folders: string[]): string[] {
         </header>
 
         <div class="space-y-3 px-5 py-3">
+          @if (justification(); as justification) {
+            <p class="text-sm leading-relaxed text-mist" data-testid="justification">
+              <span class="mr-1.5 text-xs font-medium uppercase tracking-wider text-accent/70">{{
+                'permission.justification' | transloco
+              }}</span>
+              {{ justification }}
+            </p>
+          }
+
           @if (request().command; as command) {
             <div class="relative">
               @if (commandParts(); as parts) {
@@ -525,6 +534,9 @@ export class PermissionOverlay {
 
   /// Why the prompt asks: one line per distinct reason of the asking parts.
   /// Website and folder prompts need none: the title and the address say it.
+  /** The assistant's own explanation of why it asks, if it gave one. */
+  protected readonly justification = computed(() => this.request().justification?.trim() || null);
+
   protected readonly reasons = computed<string[]>(() => {
     if (this.isWeb() || this.request().promptKind === 'folder') {
       return [];

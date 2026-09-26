@@ -46,6 +46,7 @@ function request(patch: Partial<PermissionRequestEvent> = {}): PermissionRequest
     ],
     folders: [],
     hosts: [],
+    justification: null,
     ...patch,
   };
 }
@@ -173,6 +174,18 @@ describe('PermissionOverlay', () => {
         "Command 'ls' requires approval",
       );
       expect(element().textContent).not.toContain('permission.segment');
+    });
+
+    it("shows the assistant's own reason when it gave one", async () => {
+      await create(request({ justification: '  Run the tests to verify the fix. ' }));
+      const justification = element().querySelector('[data-testid="justification"]');
+      expect(justification?.textContent).toContain('permission.justification');
+      expect(justification?.textContent).toContain('Run the tests to verify the fix.');
+    });
+
+    it('omits the reason line when the assistant gave none', async () => {
+      await create(request({ justification: '   ' }));
+      expect(element().querySelector('[data-testid="justification"]')).toBeNull();
     });
 
     it('explains every choice in a tooltip', async () => {

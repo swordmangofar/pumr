@@ -511,6 +511,18 @@ impl McpManager {
             .collect()
     }
 
+    /// True when the exposed tool's own input schema has a `key` property.
+    pub fn declares_argument(&self, exposed: &str, key: &str) -> bool {
+        self.tools.iter().any(|tool| {
+            tool.exposed_name == exposed
+                && tool
+                    .input_schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|properties| properties.contains_key(key))
+        })
+    }
+
     pub async fn call(&self, exposed: &str, arguments: Value) -> Result<(String, bool)> {
         let (server, tool) = self
             .exposed

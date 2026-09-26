@@ -687,6 +687,8 @@ pub enum StreamEvent {
         folders: Vec<String>,
         /// Websites a command contacts that the user can allow.
         hosts: Vec<String>,
+        /// The assistant's one-sentence explanation of why it asks.
+        justification: Option<String>,
     },
     PermissionResolved {
         request_id: String,

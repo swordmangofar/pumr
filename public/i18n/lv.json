@@ -1086,6 +1086,7 @@
       "denyAlways": "Nē, un vienmēr aizliegt"
     },
     "customize": "Pielāgot",
+    "justification": "Kāpēc",
     "keyboardHint": "Nospiediet 1–{{ count }} vai izmantojiet ↑ ↓ un Enter · Esc noraida",
     "url": {
       "queryWarning": "Šī adrese vaicājuma virknē nes daudz datu. Pirms atļaušanas pārliecinieties, ka tajā nav nekā privāta."

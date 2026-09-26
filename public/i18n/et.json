@@ -1086,6 +1086,7 @@
       "denyAlways": "Ei, ja keela alati:"
     },
     "customize": "Kohanda",
+    "justification": "Miks",
     "keyboardHint": "Vajuta 1–{{ count }} või kasuta ↑ ↓ ja Enterit · Esc keelab",
     "url": {
       "queryWarning": "See aadress kannab päringustringis palju andmeid. Enne lubamist veendu, et see ei sisalda midagi privaatset."
