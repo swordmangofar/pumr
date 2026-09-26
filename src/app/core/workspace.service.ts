@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, WritableSignal, computed, inject, signal } from '@angular/core';
 import { Channel } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TranslocoService } from '@jsverse/transloco';
@@ -20,6 +20,7 @@ import {
   QuestionAnswer,
   RevertResult,
   RoutedEvent,
+  RunningTurns,
   SendMessageArgs,
   Session,
   SpendSummary,
@@ -106,6 +107,8 @@ export class WorkspaceService {
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
+  /** Ids of prompts already answered or withdrawn, never to be shown again. */
+  private readonly settledRequests = new Set<string>();
   private readonly draftState = signal<string | null>(null);
   private readonly handoverState = signal<Record<string, boolean>>({});
   private readonly debugSessionState = signal<string | null>(null);
@@ -270,6 +273,9 @@ export class WorkspaceService {
     const active = localStorage.getItem(ACTIVE_KEY);
     const nextActive = active && known.has(active) ? active : (tabs[tabs.length - 1] ?? null);
     this.activeState.set(nextActive);
+    // A webview reload leaves turns running in the backend with nobody
+    // listening; pick them up before the active session renders.
+    await this.resumeRunningTurns();
     if (nextActive) {
       await this.activateSession(nextActive);
     }
@@ -754,9 +760,104 @@ export class WorkspaceService {
     }
     this.setError(args.sessionId, null);
     this.patchSession(args.sessionId, { limitReached: false });
-    this.setStreaming(args.sessionId, true);
-    this.setLiveTools(args.sessionId, []);
+    await this.followTurn(session, (channel) => api.sendMessage(args, channel));
+    return true;
+  }
 
+  /**
+   * Picks up turns that are still running in the backend without a channel in
+   * this page, e.g. after a webview reload: marks them as streaming so Stop
+   * works, restores the prompts they wait on and attaches a fresh channel.
+   */
+  async resumeRunningTurns(): Promise<void> {
+    let running: RunningTurns;
+    try {
+      running = await api.listRunningTurns();
+    } catch {
+      return;
+    }
+    for (const { sessionId, event } of running.permissions) {
+      this.addPrompt(this.permissionState, { ...event, sessionId });
+    }
+    for (const { sessionId, event } of running.questions) {
+      this.addPrompt(this.questionState, { ...event, sessionId });
+    }
+    for (const sessionId of running.sessionIds) {
+      const session = this.sessionsState()[sessionId];
+      if (!session || this.isStreaming(sessionId)) {
+        continue;
+      }
+      for (const agent of this.subAgentsFor(sessionId)) {
+        if (agent.agentStatus === 'running') {
+          this.setStreaming(agent.id, true);
+        }
+      }
+      void this.followTurn(session, (channel) => api.attachSession(sessionId, channel));
+    }
+  }
+
+  /**
+   * Streams a turn's events into the UI until `run` settles, then refreshes
+   * what the turn changed. `run` hands the channel to the backend, either to
+   * start a turn or to attach to one that is already running.
+   */
+  private async followTurn(
+    session: Session,
+    run: (channel: Channel<RoutedEvent>) => Promise<unknown>,
+  ): Promise<void> {
+    const sessionId = session.id;
+    this.setStreaming(sessionId, true);
+    this.setLiveTools(sessionId, []);
+    try {
+      await run(this.turnChannel(session));
+    } catch (error) {
+      if (!this.errorFor(sessionId)) {
+        this.setError(sessionId, String(error));
+        this.sound.play('error');
+      }
+    } finally {
+      this.flushStreamBuffers();
+      this.setLiveTools(sessionId, []);
+      // Keep the session marked as streaming until the post-turn refresh has
+      // finished, otherwise a new send could start and be clobbered by this
+      // still-running `loadMessages`. Refresh failures must not skip the queue
+      // drain below (and must not reject `send`).
+      try {
+        await this.loadMessages(sessionId, true);
+        await this.reloadSessions(session.projectId);
+        await this.reloadProjects();
+        await this.refreshSpend();
+        await this.loadChanges(sessionId);
+        await this.loadRules(session.projectId, sessionId);
+        await this.loadSubAgents(sessionId);
+        await this.editorService.loadWorkspaceEntries(session.projectId, true);
+        const active = this.editorService.activeFileFor(session.projectId);
+        if (active) {
+          await this.loadEditorFile(session.projectId, active);
+        }
+      } catch (error) {
+        console.error('post-send refresh failed', error);
+      } finally {
+        this.endTurn(sessionId);
+      }
+      this.drainQueue(sessionId);
+    }
+  }
+
+  /**
+   * Once a turn is over, none of its subagents run and none of its prompts are
+   * open. Their own closing events may have gone to a channel lost in a reload.
+   */
+  private endTurn(sessionId: string): void {
+    const ids = new Set([sessionId, ...(this.subAgentsState()[sessionId] ?? [])]);
+    for (const id of ids) {
+      this.setStreaming(id, false);
+    }
+    this.dropPrompts((entry) => ids.has(entry.sessionId));
+  }
+
+  /** A channel that applies a turn's streamed events, routed by session id. */
+  private turnChannel(session: Session): Channel<RoutedEvent> {
     const assistantIds: Record<string, string | null> = {};
     const channel = new Channel<RoutedEvent>();
     channel.onmessage = ({ sessionId, event }) => {
@@ -831,22 +932,20 @@ export class WorkspaceService {
           }));
           break;
         case 'permissionRequest':
-          this.permissionState.update((state) => [...state, { ...event, sessionId }]);
-          this.sound.play('permission');
+          if (this.addPrompt(this.permissionState, { ...event, sessionId })) {
+            this.sound.play('permission');
+          }
           break;
         case 'permissionResolved':
-          this.permissionState.update((state) =>
-            state.filter((entry) => entry.requestId !== event.requestId),
-          );
+          this.settleRequest(event.requestId);
           break;
         case 'questionRequest':
-          this.questionState.update((state) => [...state, { ...event, sessionId }]);
-          this.sound.play('permission');
+          if (this.addPrompt(this.questionState, { ...event, sessionId })) {
+            this.sound.play('permission');
+          }
           break;
         case 'questionResolved':
-          this.questionState.update((state) =>
-            state.filter((entry) => entry.requestId !== event.requestId),
-          );
+          this.settleRequest(event.requestId);
           break;
         case 'changes':
           this.flushStreamBuffers();
@@ -903,42 +1002,39 @@ export class WorkspaceService {
           break;
       }
     };
+    return channel;
+  }
 
-    try {
-      await api.sendMessage(args, channel);
-    } catch (error) {
-      if (!this.errorFor(args.sessionId)) {
-        this.setError(args.sessionId, String(error));
-        this.sound.play('error');
-      }
-    } finally {
-      this.flushStreamBuffers();
-      this.setLiveTools(args.sessionId, []);
-      // Keep the session marked as streaming until the post-turn refresh has
-      // finished, otherwise a new send could start and be clobbered by this
-      // still-running `loadMessages`. Refresh failures must not skip the queue
-      // drain below (and must not reject `send`).
-      try {
-        await this.loadMessages(args.sessionId, true);
-        await this.reloadSessions(session.projectId);
-        await this.reloadProjects();
-        await this.refreshSpend();
-        await this.loadChanges(args.sessionId);
-        await this.loadRules(session.projectId, args.sessionId);
-        await this.loadSubAgents(args.sessionId);
-        await this.editorService.loadWorkspaceEntries(session.projectId, true);
-        const active = this.editorService.activeFileFor(session.projectId);
-        if (active) {
-          await this.loadEditorFile(session.projectId, active);
-        }
-      } catch (error) {
-        console.error('post-send refresh failed', error);
-      } finally {
-        this.setStreaming(args.sessionId, false);
-      }
-      this.drainQueue(args.sessionId);
+  /** Shows a prompt unless it is already shown or was settled; `true` if added. */
+  private addPrompt<T extends { requestId: string }>(
+    prompts: WritableSignal<T[]>,
+    prompt: T,
+  ): boolean {
+    if (
+      this.settledRequests.has(prompt.requestId) ||
+      prompts().some((entry) => entry.requestId === prompt.requestId)
+    ) {
+      return false;
     }
+    prompts.update((state) => [...state, prompt]);
     return true;
+  }
+
+  /**
+   * Removes an answered or withdrawn prompt. The id is remembered because a
+   * re-attached turn can replay a prompt after it was resolved.
+   */
+  private settleRequest(requestId: string): void {
+    this.settledRequests.add(requestId);
+    this.dropPrompts((entry) => entry.requestId === requestId);
+  }
+
+  /** Removes matching permission prompts and questions. */
+  private dropPrompts(drop: (entry: PendingPermission | PendingQuestion) => boolean): void {
+    const keep = <T extends PendingPermission | PendingQuestion>(state: T[]): T[] =>
+      state.some(drop) ? state.filter((entry) => !drop(entry)) : state;
+    this.permissionState.update(keep);
+    this.questionState.update(keep);
   }
 
   async stop(sessionId: string): Promise<void> {
@@ -978,14 +1074,12 @@ export class WorkspaceService {
     if (decision === 'allow_always' || decision === 'deny_always') {
       await this.settings.reload();
     }
-    this.permissionState.update((state) =>
-      state.filter((entry) => entry.requestId !== request.requestId),
-    );
+    this.settleRequest(request.requestId);
   }
 
   async resolveQuestion(requestId: string, answers: QuestionAnswer[] | null): Promise<void> {
     await api.resolveQuestion(requestId, answers);
-    this.questionState.update((state) => state.filter((entry) => entry.requestId !== requestId));
+    this.settleRequest(requestId);
   }
 
   async updateSession(args: UpdateSessionArgs): Promise<void> {
@@ -1315,6 +1409,8 @@ export class WorkspaceService {
 
   private async activateSession(sessionId: string): Promise<void> {
     const session = this.sessionsState()[sessionId];
+    // Cheap safety net for a turn that started after the last resume.
+    void this.resumeRunningTurns();
     this.diffState.set(null);
     if (session) {
       this.gitService.resetView(session.projectId);

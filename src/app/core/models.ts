@@ -787,6 +787,16 @@ export interface PendingQuestion extends QuestionRequestEvent {
   sessionId: string;
 }
 
+/**
+ * Turns still running in the backend and the prompts they wait on, so a
+ * webview that reloaded mid-turn can pick them up again.
+ */
+export interface RunningTurns {
+  sessionIds: string[];
+  permissions: { sessionId: string; event: PermissionRequestEvent }[];
+  questions: { sessionId: string; event: QuestionRequestEvent }[];
+}
+
 export interface CreateSessionArgs {
   projectId: string;
   title?: string | null;
