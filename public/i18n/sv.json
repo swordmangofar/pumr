@@ -71,8 +71,12 @@
     "unstage": "Avstagea",
     "stageAll": "Stagea alla",
     "unstageAll": "Avstagea alla",
+    "stageSelected": "Stagea {{ count }} valda",
+    "unstageSelected": "Avstagea {{ count }} valda",
     "discard": "Kasta",
     "discardConfirm": "Ignorera ändringar i \"{{ path }}\"? Detta kan inte ångras.",
+    "discardSelected": "Kassera {{ count }} filer",
+    "discardSelectedConfirm": "Kassera ändringar i {{ count }} filer? Detta kan inte ångras.",
     "blame": "Blame",
     "blameEmpty": "Ingen blame-information tillgänglig.",
     "ignore": "Lägg till i .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} pågår",
       "files": "{{ count }} filer med konflikter",
       "continue": "Fortsätt",
-      "abort": "Avbryt"
+      "abort": "Avbryt",
+      "resolveFirst": "Lös först alla konflikter och köa filerna (stage)."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autentisering misslyckades. Kontrollera dina Git-uppgifter.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Byt till den nya grenen",
       "confirm": "Bekräfta",
       "mergeConfirm": "Sammanfoga '{{branch}}' in i '{{current}}'?",
+      "rebaseConfirm": "Rebasa '{{current}}' på '{{branch}}'? Det skriver om commits i '{{current}}'.",
       "deleteConfirm": "Ta bort grenen '{{branch}}'? Detta kan inte ångras.",
       "deleteRemoteConfirm": "Ta bort fjärrgrenen '{{branch}}'? Detta påverkar fjärrarkivet.",
+      "forceDeleteConfirm": "Grenen '{{branch}}' är inte helt sammanfogad. Ta bort den ändå? Dess osammanfogade commits går förlorade.",
       "rebaseHint": "Ordna om commits och välj en åtgärd för var och en. Rebasen körs från äldst till nyast.",
-      "nothingToRebase": "Inga commits att rebasa."
+      "nothingToRebase": "Inga commits att rebasa.",
+      "rebaseActions": {
+        "pick": "Behåll (pick)",
+        "squash": "Slå ihop (squash)",
+        "fixup": "Infoga (fixup)",
+        "drop": "Släpp (drop)"
+      },
+      "rebaseSquashFirst": "Den första commiten kan inte slås ihop (squash eller fixup): det finns ingen tidigare commit att kombinera den med.",
+      "moveUp": "Flytta upp",
+      "moveDown": "Flytta ned"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Inga steg matchar de aktuella filtren.",
     "view": {
       "timeline": "Tidslinje",
-      "branches": "Grenar"
+      "branches": "Grenar",
+      "permissions": "Behörigheter"
     },
     "filters": {
       "type": "Typ",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Åsidosätt session",
       "default": "Standardinställningar"
+    },
+    "permissions": {
+      "empty": "Inga behörighetsbeslut har registrerats för den här chatten ännu.",
+      "clear": "Rensa logg",
+      "clearConfirm": "Klicka igen för att rensa",
+      "allowed": "Tillåten",
+      "denied": "Nekad",
+      "why": "Varför:",
+      "rule": "Regel:",
+      "filters": {
+        "auto": "Tillåten utan att fråga",
+        "asked": "Frågad",
+        "denied": "Nekad"
+      },
+      "by": {
+        "auto": "Automatiskt",
+        "rule": "Neka-regel",
+        "user": "Du",
+        "grant": "Täckt av en ny behörighet",
+        "cascade": "Nekad tillsammans med en annan förfrågan",
+        "stopped": "Stoppad",
+        "timeout": "Tidsgränsen nådd",
+        "cancelled": "Avbruten"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Lägger till vägledning om att skriva fokuserade, deterministiska tester och köra dem innan du avslutar.",
     "architecturePrompt": "Mjukvaruarkitektur",
     "architecturePromptHint": "Lägger till vägledning om modulgränser, ansvar och underhållbar design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 inaktiverar budgetvisningen.",
     "language": "Språk",
     "replyLanguage": "Svarsspråk",
     "replyLanguageDefault": "Standard (modellens språk)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Hur många på varandra följande verktygssamtal agenten kan göra innan den pausar och ber dig fortsätta. Gränsen är en säkerhetsventil: den stoppar en modell som fastnar i en slinga från att köra för evigt och bränna polletter. 35 är en bra standard; höj den för långa uppgifter i flera steg.",
     "autoContinueAllSessions": "Auto-fortsätt alla sessioner",
     "autoContinueAllSessionsHint": "När en session når gränsen för verktygsanrop, fortsätt automatiskt istället för att pausa. Detta tar bort öglans skyddsnät, så ett medel som har fastnat kan springa tills du stoppar det. Du kan också växla detta från chatten när en gräns nås.",
+    "subagentModel": "Subagentmodell",
+    "subagentModelHint": "Modell som används för subagenter. Lämna tom för att använda sessionens modell.",
+    "compactionModel": "Kompakteringsmodell",
+    "compactionModelHint": "Modell som används för att sammanfatta långa konversationer. Lämna tom för att använda sessionens modell.",
+    "promptCaching": "Promptcache",
+    "promptCachingHint": "Markera det stabila promptprefixet som cachebart så att leverantörer som stöder cache debiterar cachade indatatoken billigare.",
+    "mcpProgressiveDisclosure": "Progressiv visning av MCP-verktyg",
+    "mcpProgressiveDisclosureHint": "När många MCP-verktyg är anslutna, visa ett tool_search/mcp_invoke-par i stället för att bädda in varje schema för att spara kontext. Små verktygsuppsättningar bäddas alltid in.",
     "fileAccessRules": "Regler för filåtkomst",
     "fileAccessRulesHint": "Kontrollera vilka filer assistenten kan upptäcka och läsa. Användarundantag vinner alltid över alla regler nedan.",
     "ignoreGitignored": "Ignorera filer listade i .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Inga blockerade kommandon.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + underkommando",
       "programFlags": "Program + flaggor",
       "exact": "Exakt"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Inga kommandoregler ännu. Använd \"tillåt alltid\" i en behörighetsfråga för att skapa en.",
     "websiteRules": "Webbplatser",
-    "websiteRulesHint": "Webbplatser som assistenten får besöka. Neka-regler vinner över tillåt-regler; en vanlig domän omfattar även dess underdomäner. Använd \"tillåt alltid\" eller \"neka alltid\" i en behörighetsfråga för att skapa en.",
+    "websiteRulesHint": "Webbplatser som assistenten får besöka med sina webbverktyg eller med kommandon som curl, git och ssh. Neka-regler vinner över tillåt-regler; en vanlig domän omfattar även dess underdomäner. Använd \"tillåt alltid\" eller \"neka alltid\" i en behörighetsfråga för att skapa en.",
     "permissionPrompts": "Behörighetsfrågor",
     "permissionPromptsHint": "Välj vad huvudknappen för tillåtelse gör som standard. Tillåt en gång godkänner en enskild begäran; tillåt för denna session kommer ihåg mappåtkomst tills appen startas om.",
+    "autoApprove": "Automatiskt godkännande",
+    "autoApproveHint": "Hoppar över frågor för arbete som assistenten kan bevisa är säkert. Farliga kommandon, inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, sökvägar utanför projektet och känsliga filer frågar alltid.",
+    "autoApproveReadOnly": "Skrivskyddade kommandon",
+    "autoApproveReadOnlyHint": "Tillåt inspektionskommandon som ls, grep och git status utan att fråga.",
+    "autoApprovePackageScripts": "Pakethanterare och byggverktyg",
+    "autoApprovePackageScriptsHint": "Tillåt pnpm, npm, yarn, bun, ng, make och liknande verktyg när inget pekar utanför projektet.",
+    "autoApproveProjectExecutables": "Projektets körbara filer",
+    "autoApproveProjectExecutablesHint": "Tillåt körbara filer i projektet, som ./node_modules/.bin/ng, utan att fråga varje gång.",
+    "autoApproveProjectCommands": "Alla kommandon i projektet",
+    "autoApproveProjectCommandsHint": "Tillåt alla ofarliga kommandon vars sökvägar stannar inom projektet. Farliga kommandon, inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, känsliga filer och allt utanför frågar fortfarande.",
+    "permissionPreset": {
+      "strict": "Strikt",
+      "strictHint": "Bara kommandon som enbart läser körs utan att fråga.",
+      "balanced": "Balanserad",
+      "balancedHint": "Skrivskyddade kommandon, pakethanterare, byggverktyg och projektets körbara filer körs utan att fråga.",
+      "autonomous": "Autonom",
+      "autonomousHint": "Varje ofarligt kommando inom projektet körs utan att fråga.",
+      "custom": "Anpassad",
+      "autonomousWarning": "Autonom litar på det här projektet: dess skript, Makefiles och körbara filer kan göra vad som helst utan att fråga. Inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, farliga kommandon och allt utanför projektet frågar fortfarande.",
+      "confirm": "Använd Autonom"
+    },
     "noAllowedWebsites": "Inga alltid-tillåtna webbplatser ännu.",
     "noDeniedWebsites": "Inga alltid-nekade webbplatser ännu.",
     "websitePlaceholder": "t.ex. docs.rs eller *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Mapp"
     },
     "allowAlways": "Tillåt alltid",
-    "addFolder": "Lägg till mapp permanent",
     "siteRuleLabel": "Webbplatsregel (domän eller glob)",
     "siteRuleHint": "Till exempel: docs.rs tillåter den webbplatsen, *.github.com tillåter alla dess underdomäner.",
-    "segment": {
-      "allowed": "Tillåtet",
-      "needsApproval": "Kräver godkännande"
-    },
+    "siteRuleInvalid": "Den här regeln omfattar inte {{ host }} eller är för bred, så {{ host }} sparas i stället.",
     "risk": {
       "low": "Låg",
       "medium": "Medel",
+      "network": "Nätverk",
       "high": "Hög",
       "danger": "Fara"
     },
@@ -994,7 +1066,39 @@
       "title": "Regelomfattning",
       "hint": "Välj hur brett regeln gäller."
     },
-    "allowChat": "Tillåt i denna chatt"
+    "folderScope": {
+      "title": "Tillåt mapp",
+      "hint": "Lägger till mappen och allt under den bland de alltid tillåtna mapparna.",
+      "option": "Mapp + undermappar"
+    },
+    "hostScope": {
+      "title": "Tillåt webbplats",
+      "hint": "Lägger till webbplatsen och dess underdomäner bland de tillåtna webbplatserna.",
+      "option": "Webbplats + underdomäner"
+    },
+    "allowChat": "Tillåt i denna chatt",
+    "option": {
+      "yes": "Ja",
+      "chat": "Ja, och fråga inte igen i den här chatten om",
+      "session": "Ja, och fråga inte igen före omstart om",
+      "always": "Ja, och tillåt alltid",
+      "no": "Nej",
+      "denyAlways": "Nej, och neka alltid"
+    },
+    "customize": "Anpassa",
+    "justification": "Varför",
+    "keyboardHint": "Tryck 1–{{ count }} eller använd ↑ ↓ och Enter · Esc nekar",
+    "url": {
+      "queryWarning": "Den här adressen innehåller mycket data i sin frågesträng. Kontrollera att den inte innehåller något privat innan du tillåter den."
+    },
+    "tooltip": {
+      "deny": "Neka den här förfrågan och alla andra väntande förfrågningar i den här chatten.",
+      "denyAlways": "Neka och spara en neka-regel i dina inställningar. Andra väntande förfrågningar i den här chatten nekas också.",
+      "allowOnce": "Tillåt bara den här förfrågan.",
+      "allowSession": "Kommer ihåg i alla chattar tills appen startas om.",
+      "allowChat": "Kommandoregler kommer ihåg för den här chatten och dess underagenter; mappar och webbplatser tills appen startas om.",
+      "allowAlways": "Sparas i dina inställningar och gäller alla chattar."
+    }
   },
   "question": {
     "title": "Fråga",
@@ -1044,6 +1148,8 @@
     "installing": "Installerar...",
     "uninstall": "Avinstallera",
     "addFolder": "Lägg till mapp",
-    "noFolders": "Inga mappar tillagda ännu."
+    "noFolders": "Inga mappar tillagda ännu.",
+    "binaryFile": "Binär fil – ingen förhandsvisning tillgänglig.",
+    "fileTooLarge": "Filen är för stor för att förhandsvisas."
   }
 }

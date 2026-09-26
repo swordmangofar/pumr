@@ -456,6 +456,40 @@ impl McpManager {
         &self.tools
     }
 
+    /// Ranks MCP tools against a natural-language query over their server,
+    /// name and description. Returns the best matches first, up to `limit`.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<&McpToolInfo> {
+        let terms: Vec<String> = query
+            .to_lowercase()
+            .split_whitespace()
+            .filter(|term| !term.is_empty())
+            .map(str::to_string)
+            .collect();
+        if terms.is_empty() {
+            return Vec::new();
+        }
+        let mut scored: Vec<(i32, &McpToolInfo)> = self
+            .tools
+            .iter()
+            .filter_map(|tool| {
+                let name = tool.name.to_lowercase();
+                let haystack =
+                    format!("{} {} {}", tool.server, tool.name, tool.description).to_lowercase();
+                let mut score = 0i32;
+                for term in &terms {
+                    if name.contains(term) {
+                        score += 3;
+                    } else if haystack.contains(term) {
+                        score += 1;
+                    }
+                }
+                (score > 0).then_some((score, tool))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.into_iter().take(limit).map(|(_, tool)| tool).collect()
+    }
+
     pub fn schemas(&self) -> Vec<Value> {
         self.tools
             .iter()
@@ -475,6 +509,18 @@ impl McpManager {
                 })
             })
             .collect()
+    }
+
+    /// True when the exposed tool's own input schema has a `key` property.
+    pub fn declares_argument(&self, exposed: &str, key: &str) -> bool {
+        self.tools.iter().any(|tool| {
+            tool.exposed_name == exposed
+                && tool
+                    .input_schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|properties| properties.contains_key(key))
+        })
     }
 
     pub async fn call(&self, exposed: &str, arguments: Value) -> Result<(String, bool)> {

@@ -861,10 +861,7 @@ export class Sidebar {
     if (!session) {
       return;
     }
-    const deleted = await this.confirmAndDelete(session);
-    if (deleted) {
-      this.focusedSessionId.set(null);
-    }
+    await this.confirmAndDelete(session);
   }
 
   private async confirmAndDelete(session: Session): Promise<boolean> {
@@ -878,13 +875,32 @@ export class Sidebar {
     if (!confirmed) {
       return false;
     }
+    const wasFocused = this.focusedSession()?.id === session.id;
+    const wasActive = this.workspace.activeSessionId() === session.id;
+    const fallback = this.adjacentVisibleSessionId(session);
     try {
       await this.workspace.deleteSession(session.id);
+      if (wasActive && fallback) {
+        this.workspace.openTab(fallback);
+      }
+      if (wasFocused) {
+        this.focusedSessionId.set(fallback);
+      }
       return true;
     } catch (error) {
       console.error(error);
       return false;
     }
+  }
+
+  /** Session shown directly above `session` (or below when it is the first row). */
+  private adjacentVisibleSessionId(session: Session): string | null {
+    const sessions = this.visibleSessions();
+    const index = sessions.findIndex((entry) => entry.id === session.id);
+    if (index === -1) {
+      return null;
+    }
+    return sessions[index - 1]?.id ?? sessions[index + 1]?.id ?? null;
   }
 
   private isEditableTarget(target: EventTarget | null): boolean {

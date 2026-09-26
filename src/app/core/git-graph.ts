@@ -70,8 +70,11 @@ interface LaneAssignment {
 export function buildGitGraph(commits: GitCommit[], tips: string[] = []): GitGraph {
   const lanes: Lane[] = [];
   const seeded = new Set<string>();
+  // A tip outside the loaded page never appears, so its lane would stay open
+  // forever and push every other lane to the right.
+  const listed = new Set(commits.map((commit) => commit.hash));
   for (const tip of tips) {
-    if (!tip || seeded.has(tip)) {
+    if (!tip || seeded.has(tip) || !listed.has(tip)) {
       continue;
     }
     seeded.add(tip);
@@ -183,4 +186,26 @@ export function buildGitGraph(commits: GitCommit[], tips: string[] = []): GitGra
   });
 
   return { rows, width };
+}
+
+/**
+ * A single-lane graph for filtered lists (search results, file history). Their
+ * commits' parents are mostly not in the list, so the lane graph would open a
+ * lane per commit that never closes.
+ */
+export function linearGitGraph(commits: GitCommit[]): GitGraph {
+  const x = LANE_OFFSET + GIT_GRAPH_LANE_WIDTH / 2;
+  const centerY = GIT_GRAPH_ROW_HEIGHT / 2;
+  const color = gitLaneColor(0);
+  const rows = commits.map((commit, index) => {
+    const paths: GitGraphPath[] = [];
+    if (index > 0) {
+      paths.push({ d: `M ${x} 0 L ${x} ${centerY}`, color });
+    }
+    if (index < commits.length - 1) {
+      paths.push({ d: `M ${x} ${centerY} L ${x} ${GIT_GRAPH_ROW_HEIGHT}`, color });
+    }
+    return { commit, nodeX: x, nodeColor: color, paths };
+  });
+  return { rows, width: LANE_OFFSET * 2 + GIT_GRAPH_LANE_WIDTH };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGitGraph } from './git-graph';
+import { GIT_GRAPH_MAX_LANES, buildGitGraph, linearGitGraph } from './git-graph';
 import { GitCommit } from './models';
 
 function commit(hash: string, parents: string[] = [], refs: string[] = []): GitCommit {
@@ -45,5 +45,30 @@ describe('buildGitGraph', () => {
       ['newer', 'older'],
     );
     expect(graph.rows[0].nodeX).toBeLessThan(graph.rows[1].nodeX);
+  });
+
+  it('ignores branch tips that are not in the list', () => {
+    const unlisted = Array.from({ length: 10 }, (_, index) => `old-${index}`);
+    const graph = buildGitGraph([commit('c', ['b']), commit('b', ['a']), commit('a')], unlisted);
+    const single = buildGitGraph([commit('c', ['b']), commit('b', ['a']), commit('a')]);
+    expect(graph.rows.map((row) => row.nodeX)).toEqual(single.rows.map((row) => row.nodeX));
+    expect(graph.width).toBe(single.width);
+  });
+});
+
+describe('linearGitGraph', () => {
+  it('keeps filtered commits on one lane regardless of their parents', () => {
+    const commits = Array.from({ length: 30 }, (_, index) =>
+      commit(`c${index}`, [`missing-parent-${index}`]),
+    );
+    const lanes = buildGitGraph(commits);
+    const linear = linearGitGraph(commits);
+
+    expect(lanes.width).toBeGreaterThan(linear.width);
+    expect(new Set(lanes.rows.map((row) => row.nodeX)).size).toBe(GIT_GRAPH_MAX_LANES);
+    expect(new Set(linear.rows.map((row) => row.nodeX)).size).toBe(1);
+    expect(linear.rows[0].paths).toHaveLength(1);
+    expect(linear.rows[29].paths).toHaveLength(1);
+    expect(linear.rows[10].paths).toHaveLength(2);
   });
 });

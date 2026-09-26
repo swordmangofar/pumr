@@ -3,12 +3,14 @@ import {
   Component,
   ElementRef,
   OnDestroy,
+  computed,
   effect,
   inject,
   input,
   output,
   viewChild,
 } from '@angular/core';
+import { TranslocoPipe } from '@jsverse/transloco';
 import { MonacoApi as BaseMonacoApi, MonacoService } from '../core/monaco.service';
 import { ThemeService } from '../core/theme.service';
 import { FileDiff } from '../core/models';
@@ -40,13 +42,29 @@ interface MonacoApi extends BaseMonacoApi {
 @Component({
   selector: 'app-diff-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<div #container class="h-full w-full"></div>`,
+  imports: [TranslocoPipe],
+  template: `
+    <div class="relative h-full w-full">
+      <div #container class="h-full w-full" [class.invisible]="placeholder()"></div>
+      @if (placeholder(); as key) {
+        <div class="absolute inset-0 flex items-center justify-center p-4">
+          <p class="text-sm text-mist/40">{{ key | transloco }}</p>
+        </div>
+      }
+    </div>
+  `,
 })
 export class DiffView implements OnDestroy {
   readonly diff = input.required<FileDiff | null>();
   readonly sideBySide = input<boolean>(false);
   readonly editable = input<boolean>(false);
   readonly contentChange = output<string>();
+
+  /** Binary and oversized files arrive without content; say so instead. */
+  protected readonly placeholder = computed(() => {
+    const diff = this.diff();
+    return diff?.binary ? 'common.binaryFile' : diff?.tooLarge ? 'common.fileTooLarge' : null;
+  });
 
   private readonly monacoService = inject(MonacoService);
   private readonly themeService = inject(ThemeService);

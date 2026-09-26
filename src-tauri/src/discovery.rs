@@ -1,6 +1,6 @@
 use crate::mcp::McpServerConfig;
 use crate::models::{
-    McpCandidate, McpServerRef, McpServerState, SkillCandidate, SkillRef, SkillState,
+    McpCandidate, McpServerRef, McpServerState, SkillCandidate, SkillEntry, SkillRef, SkillState,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -281,6 +281,66 @@ pub fn discover_skills(
     }
 
     candidates
+}
+
+/// Flattens discovered skills into a catalogue of enabled entries with their
+/// description, so the agent can be told what it may load on demand.
+pub fn skill_catalog(
+    folders: &[String],
+    disabled: &[String],
+    disabled_skills: &[SkillRef],
+    auto: bool,
+    installed: &[PathBuf],
+) -> Vec<SkillEntry> {
+    let mut entries: Vec<SkillEntry> = Vec::new();
+    for candidate in discover_skills(folders, disabled, disabled_skills, auto, installed) {
+        if !candidate.enabled {
+            continue;
+        }
+        let root = PathBuf::from(&candidate.path);
+        for skill in candidate.skills {
+            if !skill.enabled {
+                continue;
+            }
+            let directory = if root.join("SKILL.md").is_file() {
+                root.clone()
+            } else {
+                root.join(&skill.name)
+            };
+            let description = read_skill_description(&directory.join("SKILL.md"));
+            entries.push(SkillEntry {
+                name: skill.name,
+                description,
+                path: directory.to_string_lossy().to_string(),
+            });
+        }
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.dedup_by(|a, b| a.name == b.name);
+    entries
+}
+
+/// Reads a skill's one-line description from its YAML frontmatter, falling back
+/// to the first non-empty line.
+fn read_skill_description(file: &Path) -> String {
+    let Ok(content) = std::fs::read_to_string(file) else {
+        return String::new();
+    };
+    if let Some(rest) = content.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            for line in rest[..end].lines() {
+                if let Some(value) = line.strip_prefix("description:") {
+                    return value.trim().trim_matches('"').to_string();
+                }
+            }
+        }
+    }
+    content
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 fn skill_candidate(

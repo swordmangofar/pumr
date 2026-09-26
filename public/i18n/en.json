@@ -71,8 +71,12 @@
     "unstage": "Unstage",
     "stageAll": "Stage all",
     "unstageAll": "Unstage all",
+    "stageSelected": "Stage {{ count }} selected",
+    "unstageSelected": "Unstage {{ count }} selected",
     "discard": "Discard",
     "discardConfirm": "Discard changes to \"{{ path }}\"? This cannot be undone.",
+    "discardSelected": "Discard {{ count }} files",
+    "discardSelectedConfirm": "Discard changes to {{ count }} files? This cannot be undone.",
     "blame": "Blame",
     "blameEmpty": "No blame information available.",
     "ignore": "Add to .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} in progress",
       "files": "{{ count }} conflicted files",
       "continue": "Continue",
-      "abort": "Abort"
+      "abort": "Abort",
+      "resolveFirst": "Resolve and stage all conflicted files first."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Authentication failed. Check your Git credentials.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Checkout the new branch",
       "confirm": "Confirm",
       "mergeConfirm": "Merge '{{branch}}' into '{{current}}'?",
+      "rebaseConfirm": "Rebase '{{current}}' onto '{{branch}}'? This rewrites the commits of '{{current}}'.",
       "deleteConfirm": "Delete branch '{{branch}}'? This cannot be undone.",
       "deleteRemoteConfirm": "Delete remote branch '{{branch}}'? This affects the remote repository.",
+      "forceDeleteConfirm": "Branch '{{branch}}' is not fully merged. Delete it anyway? Its unmerged commits will be lost.",
       "rebaseHint": "Reorder commits and choose an action for each. The rebase runs from oldest to newest.",
-      "nothingToRebase": "No commits to rebase."
+      "nothingToRebase": "No commits to rebase.",
+      "rebaseActions": {
+        "pick": "Pick",
+        "squash": "Squash",
+        "fixup": "Fixup",
+        "drop": "Drop"
+      },
+      "rebaseSquashFirst": "The first commit cannot be squashed or fixed up: there is no earlier commit to combine it with.",
+      "moveUp": "Move up",
+      "moveDown": "Move down"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "No steps match the current filters.",
     "view": {
       "timeline": "Timeline",
-      "branches": "Branches"
+      "branches": "Branches",
+      "permissions": "Permissions"
     },
     "filters": {
       "type": "Type",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Session override",
       "default": "Default settings"
+    },
+    "permissions": {
+      "empty": "No permission decisions recorded for this chat yet.",
+      "clear": "Clear log",
+      "clearConfirm": "Click again to clear",
+      "allowed": "Allowed",
+      "denied": "Denied",
+      "why": "Why:",
+      "rule": "Rule:",
+      "filters": {
+        "auto": "Allowed without asking",
+        "asked": "Asked",
+        "denied": "Denied"
+      },
+      "by": {
+        "auto": "Automatic",
+        "rule": "Deny rule",
+        "user": "You",
+        "grant": "Covered by a new grant",
+        "cascade": "Denied with another request",
+        "stopped": "Stopped",
+        "timeout": "Timed out",
+        "cancelled": "Cancelled"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Adds guidance on writing focused, deterministic tests and running them before finishing.",
     "architecturePrompt": "Software architecture",
     "architecturePromptHint": "Adds guidance on module boundaries, responsibilities and maintainable design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 disables the budget display.",
     "language": "Language",
     "replyLanguage": "Response language",
     "replyLanguageDefault": "Default (model language)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "How many consecutive tool calls the agent may make before it pauses and asks you to continue. The limit is a safety valve: it stops a model that gets stuck in a loop from running forever and burning tokens. 35 is a good default; raise it for long, multi-step tasks.",
     "autoContinueAllSessions": "Auto-continue all sessions",
     "autoContinueAllSessionsHint": "When a session reaches the tool-call limit, keep going automatically instead of pausing. This removes the loop safety net, so a stuck agent may run until you stop it. You can also toggle this from the chat when a limit is reached.",
+    "subagentModel": "Subagent model",
+    "subagentModelHint": "Model used for subagents. Leave empty to use the session's model.",
+    "compactionModel": "Compaction model",
+    "compactionModelHint": "Model used to summarise long conversations. Leave empty to use the session's model.",
+    "promptCaching": "Prompt caching",
+    "promptCachingHint": "Mark the stable prompt prefix as cacheable so providers that support caching bill cached input tokens at a lower rate.",
+    "mcpProgressiveDisclosure": "Progressive MCP tool disclosure",
+    "mcpProgressiveDisclosureHint": "When many MCP tools are connected, expose a tool_search/mcp_invoke pair instead of inlining every schema to save context. Small tool sets are always inlined.",
     "fileAccessRules": "File access rules",
     "fileAccessRulesHint": "Control which files the assistant may discover and read. User exemptions always win over every rule below.",
     "ignoreGitignored": "Ignore files listed in .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "No blocked commands.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + subcommand",
       "programFlags": "Program + flags",
       "exact": "Exact"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "No command rules yet. Use \"allow always\" in a permission prompt to create one.",
     "websiteRules": "Websites",
-    "websiteRulesHint": "Websites the assistant may visit. Deny rules win over allow rules; a plain domain also covers its subdomains. Use \"allow always\" or \"deny always\" in a permission prompt to create one.",
+    "websiteRulesHint": "Websites the assistant may visit, with its web tools or with commands such as curl, git and ssh. Deny rules win over allow rules; a plain domain also covers its subdomains. Use \"allow always\" or \"deny always\" in a permission prompt to create one.",
     "permissionPrompts": "Permission prompts",
     "permissionPromptsHint": "Choose what the main allow button does by default. Allow once approves a single request; allow for this session remembers folder access until the app restarts.",
+    "autoApprove": "Automatic approval",
+    "autoApproveHint": "Skip prompts for work the assistant can prove is safe. Dangerous commands, inline code, package downloads, websites that are not allowed yet, paths outside the project and sensitive files always ask.",
+    "autoApproveReadOnly": "Read-only commands",
+    "autoApproveReadOnlyHint": "Allow inspection commands such as ls, grep and git status without asking.",
+    "autoApprovePackageScripts": "Package managers and build runners",
+    "autoApprovePackageScriptsHint": "Allow pnpm, npm, yarn, bun, ng, make and similar tools when nothing points outside the project.",
+    "autoApproveProjectExecutables": "Project executables",
+    "autoApproveProjectExecutablesHint": "Allow executables inside the project, such as ./node_modules/.bin/ng, without asking every time.",
+    "autoApproveProjectCommands": "All commands inside the project",
+    "autoApproveProjectCommandsHint": "Allow any non-dangerous command whose paths stay inside the project. Dangerous commands, inline code, package downloads, websites that are not allowed yet, sensitive files and anything outside still ask.",
+    "permissionPreset": {
+      "strict": "Strict",
+      "strictHint": "Only read-only commands run without asking.",
+      "balanced": "Balanced",
+      "balancedHint": "Read-only commands, package managers, build runners and project executables run without asking.",
+      "autonomous": "Autonomous",
+      "autonomousHint": "Every non-dangerous command inside the project runs without asking.",
+      "custom": "Custom",
+      "autonomousWarning": "Autonomous trusts this project: its scripts, Makefiles and executables can do anything without a prompt. Inline code, package downloads, websites that are not allowed yet, dangerous commands and anything outside the project still ask.",
+      "confirm": "Use Autonomous"
+    },
     "noAllowedWebsites": "No always-allowed websites yet.",
     "noDeniedWebsites": "No always-denied websites yet.",
     "websitePlaceholder": "e.g. docs.rs or *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Folder"
     },
     "allowAlways": "Allow always",
-    "addFolder": "Add folder permanently",
     "siteRuleLabel": "Website rule (domain or glob)",
     "siteRuleHint": "For example: docs.rs allows that site, *.github.com allows all its subdomains.",
-    "segment": {
-      "allowed": "Allowed",
-      "needsApproval": "Needs approval"
-    },
+    "siteRuleInvalid": "This rule doesn't cover {{ host }} or is too broad, so {{ host }} will be saved instead.",
     "risk": {
       "low": "Low",
       "medium": "Medium",
+      "network": "Network",
       "high": "High",
       "danger": "Danger"
     },
@@ -994,7 +1066,39 @@
       "title": "Rule scope",
       "hint": "Choose how broadly this rule applies."
     },
-    "allowChat": "Allow in this chat"
+    "folderScope": {
+      "title": "Whitelist folder",
+      "hint": "Adds the folder and everything below it to the always-allowed folders.",
+      "option": "Folder + subfolders"
+    },
+    "hostScope": {
+      "title": "Allow website",
+      "hint": "Adds the website and its subdomains to the allowed websites.",
+      "option": "Website + subdomains"
+    },
+    "allowChat": "Allow in this chat",
+    "option": {
+      "yes": "Yes",
+      "chat": "Yes, and don't ask again in this chat for",
+      "session": "Yes, and don't ask again until restart for",
+      "always": "Yes, and always allow",
+      "no": "No",
+      "denyAlways": "No, and always deny"
+    },
+    "customize": "Customize",
+    "justification": "Why",
+    "keyboardHint": "Press 1–{{ count }} or use ↑ ↓ and Enter · Esc denies",
+    "url": {
+      "queryWarning": "This address carries a lot of data in its query string. Make sure it contains nothing private before you allow it."
+    },
+    "tooltip": {
+      "deny": "Deny this request and every other request waiting in this chat.",
+      "denyAlways": "Deny and save a deny rule to your settings. Other requests waiting in this chat are denied too.",
+      "allowOnce": "Allow only this request.",
+      "allowSession": "Remembered in every chat until the app restarts.",
+      "allowChat": "Command rules are remembered for this chat and its subagents; folders and websites until the app restarts.",
+      "allowAlways": "Saved to your settings and applies to every chat."
+    }
   },
   "question": {
     "title": "Question",
@@ -1044,6 +1148,8 @@
     "installing": "Installing…",
     "uninstall": "Uninstall",
     "addFolder": "Add folder",
-    "noFolders": "No folders added yet."
+    "noFolders": "No folders added yet.",
+    "binaryFile": "Binary file – no preview available.",
+    "fileTooLarge": "This file is too large to preview."
   }
 }

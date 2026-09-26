@@ -4,7 +4,8 @@ use crate::error::Result;
 use crate::git::ShadowRepo;
 use crate::mcp::McpManager;
 use crate::models::{
-    Attachment, CommandRule, EventSink, FileChange, Message, RoutedEvent, StreamEvent, ToolCallRecord,
+    Attachment, CommandRule, EventSink, FileChange, Message, RoutedEvent, SkillEntry, StreamEvent,
+    ToolCallRecord,
 };
 use crate::permissions::{FileIgnoreConfig, LivePermissions};
 use crate::processes::ProcessRegistry;
@@ -29,6 +30,9 @@ pub struct TurnRequest {
     pub provider: Option<String>,
     pub system_prompt: String,
     pub session_id: String,
+    /// The root session of this conversation. Subagents inherit their parent's
+    /// value so session grants ("allow in this chat") are shared across them.
+    pub conversation_id: String,
     pub project_id: String,
     pub depth: usize,
     pub project_root: PathBuf,
@@ -51,6 +55,18 @@ pub struct TurnRequest {
     pub resume: bool,
     /// Planning modes disable the write/edit tools so the agent can only plan.
     pub plan_only: bool,
+    /// Read-only modes keep `bash` but disable `write`/`edit`.
+    pub read_only: bool,
+    /// When true, large MCP schemas are deferred behind `tool_search`/`mcp_invoke`.
+    pub mcp_progressive_disclosure: bool,
+    /// Discovered skills advertised to the agent and loadable via the `skill` tool.
+    pub skills: Vec<SkillEntry>,
+    /// Whether to mark the stable prompt prefix as cacheable.
+    pub prompt_caching: bool,
+    /// Model for subagents, already resolved to the session model when unset.
+    pub subagent_model: String,
+    /// Model for history compaction, already resolved to the session model.
+    pub compaction_model: String,
     pub cancel: CancellationToken,
 }
 
@@ -101,6 +117,9 @@ pub async fn run_turn(
     let mut final_cancelled = false;
     let mut limit_reached = false;
     let max_iterations = request.max_tool_iterations.max(1);
+    // Carries the rolling compaction summary across iterations of this turn so
+    // the dropped prefix is summarised at most once per turn.
+    let mut summary_cache: Option<(usize, String)> = None;
 
     loop {
         iterations += 1;
@@ -129,7 +148,19 @@ pub async fn run_turn(
             message: placeholder.clone(),
         });
 
-        let history = build_history(deps, &request, &tool_schemas)?;
+        let history = build_history(deps, &request, &tool_schemas, &mut summary_cache).await?;
+        {
+            let (used, budget, system_tokens, history_tokens, tool_schema_tokens, tool_output_tokens) =
+                context_usage(&history, request.context_length, &tool_schemas);
+            emit(StreamEvent::ContextUsage {
+                used_tokens: used,
+                budget_tokens: budget,
+                system_tokens,
+                history_tokens,
+                tool_schema_tokens,
+                tool_output_tokens,
+            });
+        }
         let routing = request
             .provider
             .as_deref()
@@ -158,6 +189,7 @@ pub async fn run_turn(
                 routing,
                 request.fallback_pricing,
                 &tool_schemas,
+                request.prompt_caching,
                 request.cancel.clone(),
                 &mut |chunk| match chunk {
                     ChatChunk::Delta(text) => {
@@ -174,6 +206,7 @@ pub async fn run_turn(
                             prompt_tokens: chunk_usage.prompt_tokens,
                             completion_tokens: chunk_usage.completion_tokens,
                             cached_tokens: chunk_usage.cached_tokens,
+                            cache_write_tokens: chunk_usage.cache_write_tokens,
                             cost: chunk_usage.cost,
                         });
                     }
@@ -236,6 +269,14 @@ pub async fn run_turn(
             final_cancelled = true;
             break;
         }
+
+        // Surface edits in the changed-files panel as they happen instead of
+        // only once the whole turn has finished.
+        if tool_calls.iter().any(|call| may_mutate_workspace(&call.name)) {
+            if let Some(changes) = preview_changes(deps, &request) {
+                emit(StreamEvent::Changes { changes });
+            }
+        }
     }
 
     if final_message.is_none() {
@@ -267,12 +308,31 @@ pub async fn run_turn(
 /// tools at the maximum subagent depth.
 fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
     let mut tool_schemas = tools::tool_schemas();
-    tool_schemas.extend(deps.mcp.schemas());
+    let mcp_schemas = deps.mcp.schemas();
+    if should_defer_mcp(request, &mcp_schemas) {
+        // Inline the two discovery tools instead of every MCP schema.
+        tool_schemas.push(tools::tool_search_schema());
+        tool_schemas.push(tools::mcp_invoke_schema());
+    } else {
+        // MCP tools always ask before running, so the model must say why.
+        tool_schemas.extend(mcp_schemas.into_iter().map(|mut schema| {
+            tools::add_reason_argument(&mut schema, true);
+            schema
+        }));
+    }
     if request.plan_only {
         tool_schemas.retain(|schema| {
             !matches!(
                 schema.pointer("/function/name").and_then(Value::as_str),
                 Some("write") | Some("edit") | Some("bash")
+            )
+        });
+    }
+    if request.read_only {
+        tool_schemas.retain(|schema| {
+            !matches!(
+                schema.pointer("/function/name").and_then(Value::as_str),
+                Some("write") | Some("edit")
             )
         });
     }
@@ -284,12 +344,34 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
             )
         });
     }
+    if !request.skills.is_empty() {
+        tool_schemas.push(tools::skill_schema());
+    }
     tool_schemas
 }
 
-/// Runs the tool calls the model requested, executing `task` calls as parallel
-/// subagents and the rest inline. Returns `true` when the turn was cancelled
-/// part-way through.
+/// Decides whether MCP schemas should be deferred behind `tool_search`. Only
+/// large schema sets (roughly >10% of the context window, with a floor) are
+/// deferred, so small setups keep the simpler inline behaviour.
+fn should_defer_mcp(request: &TurnRequest, mcp_schemas: &[Value]) -> bool {
+    if !request.mcp_progressive_disclosure
+        || mcp_schemas.is_empty()
+        || request.context_length <= 0
+    {
+        return false;
+    }
+    let estimated: usize = mcp_schemas
+        .iter()
+        .map(|schema| estimate_tokens(&schema.to_string()))
+        .sum();
+    let threshold = (request.context_length as usize / 10).max(4_000);
+    estimated > threshold
+}
+
+/// Runs the tool calls the model requested. Read-only calls (`read`, `glob`,
+/// `grep`, `ls`, `webfetch`, `websearch`) run concurrently in bounded batches,
+/// while mutating calls and `bash` stay serial and ordered. `task` calls run as
+/// parallel subagents. Returns `true` when the turn was cancelled part-way.
 async fn execute_tool_calls(
     deps: &TurnDeps,
     request: &TurnRequest,
@@ -297,12 +379,6 @@ async fn execute_tool_calls(
     tool_calls: &[ToolCallRecord],
     emit: &impl Fn(StreamEvent),
 ) -> Result<bool> {
-    let mut pending_agents: Vec<(
-        ToolCallRecord,
-        tokio::task::JoinHandle<ToolOutcome>,
-        std::time::Instant,
-    )> = Vec::new();
-    let mut cancelled = false;
     for call in tool_calls {
         emit(StreamEvent::ToolStart {
             call_id: call.id.clone(),
@@ -310,17 +386,28 @@ async fn execute_tool_calls(
             summary: summarize(request, &call.name, &call.arguments),
             arguments: call.arguments.clone(),
         });
+    }
 
-        // A cancelled turn must still leave a tool output for every requested
-        // call, otherwise the stored transcript is invalid for strict providers
-        // (Azure/OpenAI reject calls without a matching output).
-        if request.cancel.is_cancelled() {
-            cancelled = true;
+    // A cancelled turn must still leave a tool output for every requested call,
+    // otherwise the stored transcript is invalid for strict providers
+    // (Azure/OpenAI reject calls without a matching output).
+    if request.cancel.is_cancelled() {
+        for call in tool_calls {
             let outcome = ToolOutcome::error("Tool call cancelled before it ran.");
             record_tool_outcome(deps, request, call, &outcome, 0, emit)?;
-            continue;
         }
+        return Ok(true);
+    }
 
+    let mut subagents: Vec<(
+        usize,
+        tokio::task::JoinHandle<ToolOutcome>,
+        std::time::Instant,
+    )> = Vec::new();
+    let mut read_only: Vec<(usize, &ToolCallRecord)> = Vec::new();
+    let mut serial: Vec<(usize, &ToolCallRecord)> = Vec::new();
+
+    for (index, call) in tool_calls.iter().enumerate() {
         if call.name == "task" {
             let arguments: Value =
                 serde_json::from_str(&call.arguments).unwrap_or_else(|_| json!({}));
@@ -331,34 +418,70 @@ async fn execute_tool_calls(
             let handle = tokio::spawn(async move {
                 run_subagent(&deps_owned, &request_owned, arguments, sink_owned).await
             });
-            pending_agents.push((call.clone(), handle, started));
+            subagents.push((index, handle, started));
+        } else if is_read_only_tool(&call.name) {
+            read_only.push((index, call));
         } else {
-            let started = std::time::Instant::now();
-            let outcome = execute_call(deps, request, call, sink).await;
-            let duration_ms = started.elapsed().as_millis() as i64;
-            record_tool_outcome(deps, request, call, &outcome, duration_ms, emit)?;
-            // A tool that observed the cancellation (e.g. a long grep) reports it
-            // through the token, not this loop's pre-check. Surface it so the turn
-            // stops instead of asking the model for another iteration.
-            if request.cancel.is_cancelled() {
-                cancelled = true;
-            }
+            serial.push((index, call));
         }
     }
 
-    for (call, handle, started) in pending_agents {
+    // Read-only calls are independent, so run them concurrently in small
+    // batches while keeping per-call timing for the transcript.
+    let mut results: Vec<(usize, ToolOutcome, i64)> = Vec::new();
+    for batch in read_only.chunks(READ_ONLY_CONCURRENCY) {
+        let futures = batch.iter().map(|(index, call)| {
+            let index = *index;
+            async move {
+                let started = std::time::Instant::now();
+                let outcome = execute_call(deps, request, call, sink).await;
+                let duration_ms = started.elapsed().as_millis() as i64;
+                (index, outcome, duration_ms)
+            }
+        });
+        results.extend(futures_util::future::join_all(futures).await);
+    }
+
+    // Writes, edits and bash run serially in the order the model requested.
+    for (index, call) in serial {
+        let started = std::time::Instant::now();
+        let outcome = execute_call(deps, request, call, sink).await;
+        let duration_ms = started.elapsed().as_millis() as i64;
+        results.push((index, outcome, duration_ms));
+    }
+
+    // Subagents were spawned above; collect their reports now.
+    for (index, handle, started) in subagents {
         let outcome = match handle.await {
             Ok(outcome) => outcome,
             Err(error) => ToolOutcome::error(format!("Subagent failed: {error}")),
         };
         let duration_ms = started.elapsed().as_millis() as i64;
-        record_tool_outcome(deps, request, &call, &outcome, duration_ms, emit)?;
+        results.push((index, outcome, duration_ms));
+    }
+
+    // Persist and emit in the original call order so the transcript stays stable.
+    results.sort_by_key(|(index, _, _)| *index);
+    let mut cancelled = false;
+    for (index, outcome, duration_ms) in results {
+        record_tool_outcome(deps, request, &tool_calls[index], &outcome, duration_ms, emit)?;
         if request.cancel.is_cancelled() {
             cancelled = true;
         }
     }
     Ok(cancelled)
 }
+
+/// Read-only tools never mutate the workspace and can safely run concurrently.
+fn is_read_only_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "read" | "glob" | "grep" | "ls" | "webfetch" | "websearch" | "tool_search" | "skill"
+    )
+}
+
+/// Upper bound on concurrent read-only tool executions per batch.
+const READ_ONLY_CONCURRENCY: usize = 8;
 
 /// Persists a tool result and emits the matching stream event. Shared by the
 /// inline and subagent paths so both stay in sync.
@@ -472,11 +595,12 @@ fn run_subagent<'a>(
 
         let child_request = TurnRequest {
             api_key: request.api_key.clone(),
-            model: request.model.clone(),
+            model: request.subagent_model.clone(),
             reasoning_effort: request.reasoning_effort.clone(),
             provider: request.provider.clone(),
             system_prompt: child_system_prompt,
             session_id: child.id.clone(),
+            conversation_id: request.conversation_id.clone(),
             project_id: request.project_id.clone(),
             depth: request.depth + 1,
             project_root: request.project_root.clone(),
@@ -491,6 +615,12 @@ fn run_subagent<'a>(
             base_commit,
             resume: false,
             plan_only: request.plan_only,
+            read_only: request.read_only,
+            mcp_progressive_disclosure: request.mcp_progressive_disclosure,
+            skills: request.skills.clone(),
+            prompt_caching: request.prompt_caching,
+            subagent_model: request.subagent_model.clone(),
+            compaction_model: request.compaction_model.clone(),
             cancel: request.cancel.clone(),
         };
 
@@ -569,14 +699,23 @@ fn provider_routing(provider: &str) -> Option<ProviderRouting> {
     }
 }
 
-fn build_history(
+async fn build_history(
     deps: &TurnDeps,
     request: &TurnRequest,
     tool_schemas: &[Value],
+    summary_cache: &mut Option<(usize, String)>,
 ) -> Result<Vec<ChatMessage>> {
     let messages = deps
         .db
         .list_messages_limited(&request.session_id, request.context_message_limit)?;
+    // The window above only covers the newest messages, so a long tool loop can
+    // push the user's prompt out of view. Keep the latest prompt aside and put it
+    // back if the window, trimming or compaction dropped it — otherwise the model
+    // sees no user turn at all and asks what to work on.
+    let latest_user = deps.db.latest_user_message(&request.session_id)?;
+    let latest_user_content = latest_user.as_ref().and_then(|message| {
+        user_content(&message.content, &message.attachments, &message.context)
+    });
 
     let mut history = vec![ChatMessage::text("system", request.system_prompt.clone())];
     for message in messages {
@@ -625,8 +764,26 @@ fn build_history(
         .iter()
         .map(|schema| estimate_tokens(&schema.to_string()))
         .sum();
-    let history = trim_to_budget(history, request.context_length, overhead);
-    Ok(sanitize(history))
+    let history = compact_history(deps, request, history, overhead, summary_cache).await;
+    let mut history = sanitize(history);
+    anchor_latest_user(&mut history, latest_user_content);
+    Ok(history)
+}
+
+/// Re-anchors the user's most recent prompt after trimming or compaction dropped
+/// it, so the model always has an instruction even on a resumed turn. A prompt
+/// already present (or an empty one) is left untouched; the re-anchored message
+/// goes directly after the system prompt to keep chronological order.
+fn anchor_latest_user(history: &mut Vec<ChatMessage>, latest_user: Option<Value>) {
+    let Some(content) = latest_user else {
+        return;
+    };
+    let present = history
+        .iter()
+        .any(|message| message.role == "user" && message.content == content);
+    if !present && !history.is_empty() {
+        history.insert(1, ChatMessage::parts("user", content));
+    }
 }
 
 /// Rough token estimate. ASCII text averages ~4 characters per token while
@@ -797,6 +954,173 @@ fn trim_to_budget(
     history
 }
 
+const COMPACTION_SYSTEM_PROMPT: &str = "You compress conversation history for a coding agent. Summarise the transcript so a future agent can continue without re-reading it. Preserve: the user's goal, decisions and constraints, files touched (paths), key findings, commands run and their outcomes, and any unresolved problems. Drop greetings, repetition and raw tool output. Be concise and factual; use short bullet points. Output only the summary.";
+
+/// Fits `history` to the model's context window, summarising the prefix it is
+/// about to drop with a model call so decisions and findings survive. Falls
+/// back to plain drop-oldest trimming when summarisation is unavailable.
+async fn compact_history(
+    deps: &TurnDeps,
+    request: &TurnRequest,
+    history: Vec<ChatMessage>,
+    overhead: usize,
+    summary_cache: &mut Option<(usize, String)>,
+) -> Vec<ChatMessage> {
+    let Some(budget) = context_token_budget(request.context_length, overhead) else {
+        return history;
+    };
+    if history.is_empty() {
+        return history;
+    }
+    let total: usize = history.iter().map(message_token_estimate).sum();
+    if total <= budget {
+        return history;
+    }
+
+    // Mirror trim_to_budget's drop cursor so we summarise exactly the prefix
+    // that would otherwise be discarded.
+    let mut drop_end = 1;
+    let mut running = total;
+    while history.len() - drop_end > 1 && running > budget {
+        running -= message_token_estimate(&history[drop_end]);
+        drop_end += 1;
+    }
+    if drop_end > 1 {
+        let dropped = history[1..drop_end].to_vec();
+        if let Some(summary) = summarize_prefix(deps, request, &dropped, summary_cache).await {
+            let mut rebuilt: Vec<ChatMessage> = Vec::with_capacity(history.len() - drop_end + 2);
+            rebuilt.push(history[0].clone());
+            rebuilt.push(ChatMessage::text(
+                "user",
+                format!("(Summary of earlier conversation)\n{summary}"),
+            ));
+            rebuilt.extend(history[drop_end..].iter().cloned());
+            return trim_to_budget(rebuilt, request.context_length, overhead);
+        }
+    }
+    trim_to_budget(history, request.context_length, overhead)
+}
+
+/// Summarises the dropped prefix with the compaction model. The result is
+/// cached per turn keyed by how many messages it covered, so a growing drop
+/// set is only summarised again when it actually grows.
+async fn summarize_prefix(
+    deps: &TurnDeps,
+    request: &TurnRequest,
+    dropped: &[ChatMessage],
+    cache: &mut Option<(usize, String)>,
+) -> Option<String> {
+    if request.cancel.is_cancelled() {
+        return None;
+    }
+    let tokens: usize = dropped.iter().map(message_token_estimate).sum();
+    if tokens < 500 {
+        return None;
+    }
+    if let Some((count, summary)) = cache.as_ref() {
+        if *count >= dropped.len() {
+            return Some(summary.clone());
+        }
+    }
+    let transcript = render_transcript(dropped);
+    if transcript.trim().is_empty() {
+        return None;
+    }
+    let mut summary = String::new();
+    let result = deps
+        .client
+        .stream_chat(
+            &request.api_key,
+            &request.compaction_model,
+            vec![
+                ChatMessage::text("system", COMPACTION_SYSTEM_PROMPT),
+                ChatMessage::text(
+                    "user",
+                    format!("# Conversation to summarize\n\n{transcript}"),
+                ),
+            ],
+            None,
+            None,
+            request.fallback_pricing,
+            &[],
+            false,
+            request.cancel.clone(),
+            &mut |chunk| {
+                if let ChatChunk::Delta(text) = chunk {
+                    summary.push_str(&text);
+                }
+            },
+        )
+        .await;
+    if result.is_ok() && !summary.trim().is_empty() {
+        *cache = Some((dropped.len(), summary.clone()));
+        Some(summary)
+    } else {
+        None
+    }
+}
+
+/// Renders a compact, role-tagged transcript for the compactor.
+fn render_transcript(messages: &[ChatMessage]) -> String {
+    let mut output = String::new();
+    for message in messages {
+        let text = truncate_text(&content_to_text(&message.content), 2_000);
+        if text.trim().is_empty() && message.tool_calls.is_none() {
+            continue;
+        }
+        match message.role.as_str() {
+            "assistant" => output.push_str("Assistant: "),
+            "tool" => output.push_str("Tool result: "),
+            _ => output.push_str("User: "),
+        }
+        output.push_str(&text);
+        if let Some(calls) = message.tool_calls.as_ref().and_then(Value::as_array) {
+            let names = calls
+                .iter()
+                .filter_map(|call| {
+                    call.pointer("/function/name").and_then(Value::as_str)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !names.is_empty() {
+                output.push_str(&format!(" [called: {names}]"));
+            }
+        }
+        output.push('\n');
+    }
+    truncate_text(&output, 24_000)
+}
+
+/// Breaks the next request's estimated input tokens into system prompt, history,
+/// tool schemas and tool output, plus the derived input budget.
+fn context_usage(
+    history: &[ChatMessage],
+    context_length: i64,
+    tool_schemas: &[Value],
+) -> (i64, i64, i64, i64, i64, i64) {
+    let tool_schema_tokens: usize = tool_schemas
+        .iter()
+        .map(|schema| estimate_tokens(&schema.to_string()))
+        .sum();
+    let system_tokens = history.first().map(message_token_estimate).unwrap_or(0);
+    let history_tokens: usize = history.iter().skip(1).map(message_token_estimate).sum();
+    let tool_output_tokens: usize = history
+        .iter()
+        .filter(|message| message.role == "tool")
+        .map(message_token_estimate)
+        .sum();
+    let used = system_tokens + history_tokens + tool_schema_tokens;
+    let budget = context_token_budget(context_length, tool_schema_tokens).unwrap_or(0);
+    (
+        used as i64,
+        budget as i64,
+        system_tokens as i64,
+        history_tokens as i64,
+        tool_schema_tokens as i64,
+        tool_output_tokens as i64,
+    )
+}
+
 fn user_content(text: &str, attachments: &[Attachment], context: &str) -> Option<Value> {
     if attachments.is_empty() && context.trim().is_empty() {
         return (!text.is_empty()).then(|| Value::String(text.to_string()));
@@ -949,6 +1273,7 @@ async fn execute_call(
         project_root: request.project_root.clone(),
         file_ignore: request.file_ignore.clone(),
         session_id: request.session_id.clone(),
+        conversation_id: request.conversation_id.clone(),
         shadow: deps.shadow.clone(),
         processes: deps.processes.clone(),
         broker: deps.broker.clone(),
@@ -956,10 +1281,41 @@ async fn execute_call(
         permissions: deps.permissions.clone(),
         http: deps.http.clone(),
         mcp: Some(deps.mcp.clone()),
+        skills: request.skills.clone(),
+        justification: None,
         cancel: request.cancel.clone(),
         emit: sink.clone(),
     };
     tools::execute(&mut runtime, &call.name, &arguments).await
+}
+
+/// True when a tool call may have touched the workspace, so the live change
+/// set is worth recomputing.
+fn may_mutate_workspace(name: &str) -> bool {
+    !is_read_only_tool(name) && !matches!(name, "question" | "todowrite" | "todoread")
+}
+
+/// Computes this session's change set as it stands mid-turn, without
+/// persisting it or advancing the finalize boundary. Lets the changed-files
+/// panel update while the agent is still working; `finalize_changes` still
+/// freezes the authoritative record at the end of the turn.
+fn preview_changes(deps: &TurnDeps, request: &TurnRequest) -> Option<Vec<FileChange>> {
+    let (existing, last_commit) = match deps.db.session_changes_record(&request.session_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => (Vec::new(), None),
+        Err(_) => return None,
+    };
+    let from = if request.resume {
+        last_commit.unwrap_or_else(|| request.base_commit.clone())
+    } else {
+        request.base_commit.clone()
+    };
+    let increment = deps
+        .shadow
+        .changes_since(&from)
+        .or_else(|_| deps.shadow.changes_since(&request.base_commit))
+        .ok()?;
+    Some(merge_file_changes(existing, increment))
 }
 
 fn finalize_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
@@ -1139,6 +1495,35 @@ mod tests {
     }
 
     #[test]
+    fn bench_history_helpers_scale() {
+        // Exercises the hot history path on a large transcript so algorithmic
+        // blow-ups (e.g. quadratic trimming) fail this coarse budget.
+        let start = std::time::Instant::now();
+        let mut history = vec![ChatMessage::text("system", "s".repeat(2_000))];
+        for index in 0..2_000 {
+            history.push(ChatMessage::text(
+                "user",
+                format!("message {index} {}", "x".repeat(500)),
+            ));
+            history.push(ChatMessage::assistant_tool_calls(
+                String::new(),
+                calls(&["c"]),
+            ));
+            history.push(ChatMessage::tool_result("c", "y".repeat(2_000)));
+        }
+        let trimmed = trim_to_budget(history, 128_000, 0);
+        assert!(!trimmed.is_empty());
+        let sanitized = sanitize(trimmed);
+        assert!(!sanitized.is_empty());
+        let elapsed = start.elapsed();
+        println!("bench_history_helpers_scale: {elapsed:?}");
+        assert!(
+            elapsed.as_secs() < 5,
+            "history helpers regressed: {elapsed:?}"
+        );
+    }
+
+    #[test]
     fn merge_accumulates_additions_and_keeps_added_status() {
         let merged = merge_file_changes(
             vec![change("src/new.ts", 3, 0, "A")],
@@ -1306,5 +1691,30 @@ mod tests {
         assert_eq!(sanitized.len(), 2);
         assert!(sanitized[1].tool_calls.is_none());
         assert_eq!(content_to_text(&sanitized[1].content), "partial answer");
+    }
+
+    #[test]
+    fn anchor_latest_user_restores_a_dropped_prompt() {
+        let mut history = vec![
+            ChatMessage::text("system", "sys"),
+            ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])),
+            ChatMessage::tool_result("a", "result"),
+        ];
+        anchor_latest_user(&mut history, Some(json!("the original question")));
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[1].role, "user");
+        assert_eq!(content_to_text(&history[1].content), "the original question");
+    }
+
+    #[test]
+    fn anchor_latest_user_leaves_an_existing_prompt_untouched() {
+        let mut history = vec![
+            ChatMessage::text("system", "sys"),
+            ChatMessage::text("user", "the original question"),
+            ChatMessage::text("assistant", "answer"),
+        ];
+        anchor_latest_user(&mut history, Some(json!("the original question")));
+        assert_eq!(history.len(), 3);
+        assert_eq!(content_to_text(&history[1].content), "the original question");
     }
 }

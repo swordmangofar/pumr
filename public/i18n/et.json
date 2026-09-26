@@ -71,8 +71,12 @@
     "unstage": "Eemalda valmistamisest",
     "stageAll": "Valmista kõik",
     "unstageAll": "Eemalda kõik",
+    "stageSelected": "Valmista {{ count }} valitud",
+    "unstageSelected": "Eemalda valmistamisest {{ count }} valitud",
     "discard": "Hülga",
     "discardConfirm": "Kas loobuda muudatustest failis „{{ path }}“? Seda ei saa tagasi võtta.",
+    "discardSelected": "Loobu {{ count }} failist",
+    "discardSelectedConfirm": "Kas loobuda {{ count }} faili muudatustest? Seda ei saa tagasi võtta.",
     "blame": "Blame",
     "blameEmpty": "Blame-teave pole saadaval.",
     "ignore": "Lisa .gitignore'i",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} on pooleli",
       "files": "{{ count }} konfliktiga faili",
       "continue": "Jätka",
-      "abort": "Katkesta"
+      "abort": "Katkesta",
+      "resolveFirst": "Lahenda esmalt kõik konfliktid ja lisa failid stage'i."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autentimine ebaõnnestus. Kontrolli Giti mandaate.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Vaheta uue haru peale",
       "confirm": "Kinnita",
       "mergeConfirm": "Ühendada '{{branch}}' haruga '{{current}}'?",
+      "rebaseConfirm": "Kas teha haru '{{current}}' rebase '{{branch}}' peale? See kirjutab haru '{{current}}' commitid ümber.",
       "deleteConfirm": "Kustutada haru '{{branch}}'? Seda ei saa tagasi võtta.",
       "deleteRemoteConfirm": "Kustutada kaugharu '{{branch}}'? See mõjutab kaugset hoidlat.",
+      "forceDeleteConfirm": "Haru '{{branch}}' pole täielikult ühendatud. Kas kustutada see siiski? Selle ühendamata commitid lähevad kaotsi.",
       "rebaseHint": "Järjesta commitid ümber ja vali igaühele toiming. Rebase kulgeb vanimast uusimani.",
-      "nothingToRebase": "Rebase'imiseks commite pole."
+      "nothingToRebase": "Rebase'imiseks commite pole.",
+      "rebaseActions": {
+        "pick": "Säilita (pick)",
+        "squash": "Ühenda (squash)",
+        "fixup": "Sulanda (fixup)",
+        "drop": "Loobu (drop)"
+      },
+      "rebaseSquashFirst": "Esimest commitit ei saa ühendada (squash ega fixup): pole varasemat commitit, millega seda kombineerida.",
+      "moveUp": "Liiguta üles",
+      "moveDown": "Liiguta alla"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Ükski samm ei vasta praegustele filtritele.",
     "view": {
       "timeline": "Ajatelg",
-      "branches": "Harud"
+      "branches": "Harud",
+      "permissions": "Õigused"
     },
     "filters": {
       "type": "Tüüp",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Seansi alistamine",
       "default": "Vaikesätted"
+    },
+    "permissions": {
+      "empty": "Selle vestluse kohta pole veel ühtegi õiguste otsust salvestatud.",
+      "clear": "Tühjenda logi",
+      "clearConfirm": "Tühjendamiseks klõpsa uuesti",
+      "allowed": "Lubatud",
+      "denied": "Keelatud",
+      "why": "Põhjus:",
+      "rule": "Reegel:",
+      "filters": {
+        "auto": "Lubatud küsimata",
+        "asked": "Küsitud",
+        "denied": "Keelatud"
+      },
+      "by": {
+        "auto": "Automaatne",
+        "rule": "Keelureegel",
+        "user": "Sina",
+        "grant": "Kaetud uue loaga",
+        "cascade": "Keelatud koos teise taotlusega",
+        "stopped": "Peatatud",
+        "timeout": "Aeg sai läbi",
+        "cancelled": "Tühistatud"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Lisab juhiseid keskendunud ja deterministlike testide kirjutamiseks ning nende käivitamiseks enne lõpetamist.",
     "architecturePrompt": "Tarkvaraarhitektuur",
     "architecturePromptHint": "Lisab juhiseid moodulite piiride, vastutuste ja hooldatava disaini kohta.",
-    "budget": "Eelarve (USD)",
-    "budgetHint": "0 lülitab eelarve kuvamise välja.",
     "language": "Keel",
     "replyLanguage": "Vastuse keel",
     "replyLanguageDefault": "Vaikimisi (mudeli keel)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Mitu järjestikust tööriistakõnet võib agent teha, enne kui ta peatab ja palub teil jätkata. Piiriks on kaitseklapp: see takistab ahelasse takerdunud mudelil igaveseks töötamast ja žetoonide põletamisest. 35 on hea vaikeväärtus; tõsta seda pikkade mitmeastmeliste ülesannete jaoks.",
     "autoContinueAllSessions": "Jätkake kõiki seansse automaatselt",
     "autoContinueAllSessionsHint": "Kui seanss jõuab tööriistakõnede limiidini, jätkake peatamise asemel automaatselt. See eemaldab silmuse kaitsevõrgu, nii et kinnijäänud aine võib töötada, kuni selle peatate. Kui limiit on täis, saate selle ka vestlusest välja lülitada.",
+    "subagentModel": "Subagendi mudel",
+    "subagentModelHint": "Subagentide jaoks kasutatav mudel. Jäta tühjaks, et kasutada sessiooni mudelit.",
+    "compactionModel": "Kompakteerimise mudel",
+    "compactionModelHint": "Pikkade vestluste kokkuvõtmiseks kasutatav mudel. Jäta tühjaks, et kasutada sessiooni mudelit.",
+    "promptCaching": "Promptide vahemällu salvestamine",
+    "promptCachingHint": "Märgi stabiilne prompti eesliide vahemällu salvestatavaks, et vahemälu toetavad pakkujad arvestaksid vahemällu salvestatud sisendtokensid odavamalt.",
+    "mcpProgressiveDisclosure": "MCP-tööriistade järkjärguline avaldamine",
+    "mcpProgressiveDisclosureHint": "Kui ühendatud on palju MCP-tööriistu, näita paari tool_search/mcp_invoke, selle asemel et iga skeemi lisada, säästes konteksti. Väikesed tööriistakomplektid lisatakse alati.",
     "fileAccessRules": "Failile juurdepääsu reeglid",
     "fileAccessRulesHint": "Saate juhtida, milliseid faile assistent võib avastada ja lugeda. Kasutajate erandid võidavad alati kõik alltoodud reeglid.",
     "ignoreGitignored": "Ignoreeri .gitignore'is loetletud faile",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Blokeeritud käske pole.",
     "scope": {
       "program": "Programm",
+      "subcommand": "Programm + alamkäsk",
       "programFlags": "Programm + lipud",
       "exact": "Täpne"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Käskude reegleid veel pole. Kasutage õiguste küsimuses „luba alati“, et üks luua.",
     "websiteRules": "Veebisaidid",
-    "websiteRulesHint": "Veebisaidid, mida assistent võib külastada. Keelureeglid on lubamisreeglitest ülekaalus; lihtdomeen katab ka selle alamdomeenid. Kasutage õiguste küsimuses „luba alati“ või „keela alati“, et üks luua.",
+    "websiteRulesHint": "Veebisaidid, mida assistent võib külastada oma veebitööriistadega või käskudega nagu curl, git ja ssh. Keelureeglid on lubamisreeglitest ülekaalus; lihtdomeen katab ka selle alamdomeenid. Kasutage õiguste küsimuses „luba alati“ või „keela alati“, et üks luua.",
     "permissionPrompts": "Õiguste küsimused",
     "permissionPromptsHint": "Vali, mida peamine lubamise nupp vaikimisi teeb. Luba üks kord kinnitab ühe taotluse; luba selle seansi jaoks jätab kaustale juurdepääsu meelde kuni rakenduse taaskäivitumiseni.",
+    "autoApprove": "Automaatne kinnitamine",
+    "autoApproveHint": "Jätab vahele küsimused töö puhul, mille assistent suudab tõestada ohutuks. Ohtlikud käsud, tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, väljaspool projekti asuvad teed ja tundlikud failid küsivad alati.",
+    "autoApproveReadOnly": "Ainult lugemise käsud",
+    "autoApproveReadOnlyHint": "Lubab kontrollkäske nagu ls, grep ja git status ilma küsimata.",
+    "autoApprovePackageScripts": "Paketihaldurid ja ehitustööriistad",
+    "autoApprovePackageScriptsHint": "Lubab pnpm, npm, yarn, bun, ng, make jm tööriistu, kui miski ei osuta väljapoole projekti.",
+    "autoApproveProjectExecutables": "Projekti käivitatavad failid",
+    "autoApproveProjectExecutablesHint": "Lubab projekti sees olevaid käivitatavaid faile, näiteks ./node_modules/.bin/ng, ilma iga kord küsima.",
+    "autoApproveProjectCommands": "Kõik käsud projekti sees",
+    "autoApproveProjectCommandsHint": "Lubab iga ohutu käsu, mille teed jäävad projekti sisse. Ohtlikud käsud, tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, tundlikud failid ja kõik väljaspool küsivad endiselt.",
+    "permissionPreset": {
+      "strict": "Range",
+      "strictHint": "Küsimata töötavad ainult käsud, mis ainult loevad.",
+      "balanced": "Tasakaalus",
+      "balancedHint": "Ainult lugevad käsud, paketihaldurid, ehitustööriistad ja projekti käivitatavad failid töötavad küsimata.",
+      "autonomous": "Autonoomne",
+      "autonomousHint": "Iga ohutu käsk projekti sees töötab küsimata.",
+      "custom": "Kohandatud",
+      "autonomousWarning": "Autonoomne režiim usaldab seda projekti: selle skriptid, Makefile'id ja käivitatavad failid võivad küsimata teha mida tahes. Tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, ohtlikud käsud ja kõik väljaspool projekti küsivad endiselt.",
+      "confirm": "Kasuta autonoomset režiimi"
+    },
     "noAllowedWebsites": "Alati lubatud veebisaite veel pole.",
     "noDeniedWebsites": "Alati keelatud veebisaite veel pole.",
     "websitePlaceholder": "nt docs.rs või *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Kaust"
     },
     "allowAlways": "Luba alati",
-    "addFolder": "Lisa kaust jäädavalt",
     "siteRuleLabel": "Veebisaidi reegel (domeen või glob)",
     "siteRuleHint": "Näiteks: docs.rs lubab seda saiti, *.github.com lubab kõiki selle alamdomeene.",
-    "segment": {
-      "allowed": "Lubatud",
-      "needsApproval": "Vajab kinnitust"
-    },
+    "siteRuleInvalid": "See reegel ei kata hosti {{ host }} või on liiga lai, seega salvestatakse selle asemel {{ host }}.",
     "risk": {
       "low": "Madal",
       "medium": "Keskmine",
+      "network": "Võrk",
       "high": "Kõrge",
       "danger": "Oht"
     },
@@ -994,7 +1066,39 @@
       "title": "Reegli ulatus",
       "hint": "Vali, kui laialt reegel kehtib."
     },
-    "allowChat": "Luba selles vestluses"
+    "folderScope": {
+      "title": "Luba kaust",
+      "hint": "Lisab kausta ja kõik selle sisu alati lubatud kaustade hulka.",
+      "option": "Kaust + alamkaustad"
+    },
+    "hostScope": {
+      "title": "Luba veebisait",
+      "hint": "Lisab veebisaidi ja selle alamdomeenid lubatud veebisaitide hulka.",
+      "option": "Veebisait + alamdomeenid"
+    },
+    "allowChat": "Luba selles vestluses",
+    "option": {
+      "yes": "Jah",
+      "chat": "Jah, ja ära küsi selles vestluses enam:",
+      "session": "Jah, ja ära küsi enne taaskäivitust enam:",
+      "always": "Jah, ja luba alati:",
+      "no": "Ei",
+      "denyAlways": "Ei, ja keela alati:"
+    },
+    "customize": "Kohanda",
+    "justification": "Miks",
+    "keyboardHint": "Vajuta 1–{{ count }} või kasuta ↑ ↓ ja Enterit · Esc keelab",
+    "url": {
+      "queryWarning": "See aadress kannab päringustringis palju andmeid. Enne lubamist veendu, et see ei sisalda midagi privaatset."
+    },
+    "tooltip": {
+      "deny": "Keela see taotlus ja kõik teised selles vestluses ootavad taotlused.",
+      "denyAlways": "Keela ja salvesta seadetesse keelureegel. Ka teised selles vestluses ootavad taotlused keelatakse.",
+      "allowOnce": "Luba ainult see taotlus.",
+      "allowSession": "Jäetakse meelde kõigis vestlustes kuni rakenduse taaskäivitamiseni.",
+      "allowChat": "Käsureegleid mäletatakse selles vestluses ja selle alamagentides; kaustu ja veebisaite kuni rakenduse taaskäivitamiseni.",
+      "allowAlways": "Salvestatakse seadetesse ja kehtib kõigis vestlustes."
+    }
   },
   "question": {
     "title": "Küsimus",
@@ -1044,6 +1148,8 @@
     "installing": "Installimine…",
     "uninstall": "Desinstalli",
     "addFolder": "Lisa kaust",
-    "noFolders": "Kaustu pole veel lisatud."
+    "noFolders": "Kaustu pole veel lisatud.",
+    "binaryFile": "Binaarfail – eelvaade pole saadaval.",
+    "fileTooLarge": "See fail on eelvaate jaoks liiga suur."
   }
 }

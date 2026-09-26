@@ -71,8 +71,12 @@
     "unstage": "Ukini pripremu",
     "stageAll": "Pripremi sve",
     "unstageAll": "Ukini pripremu svega",
+    "stageSelected": "Pripremi {{ count }} odabranih",
+    "unstageSelected": "Ukloni {{ count }} odabranih iz pripreme",
     "discard": "Odbaci",
     "discardConfirm": "Odbaciti promjene u „{{ path }}“? To se ne može poništiti.",
+    "discardSelected": "Odbaci {{ count }} datoteka",
+    "discardSelectedConfirm": "Odbaciti promjene u {{ count }} datoteka? To se ne može poništiti.",
     "blame": "Blame",
     "blameEmpty": "Nema dostupnih blame informacija.",
     "ignore": "Dodaj u .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} je u tijeku",
       "files": "{{ count }} datoteka s sukobima",
       "continue": "Nastavi",
-      "abort": "Prekini"
+      "abort": "Prekini",
+      "resolveFirst": "Najprije riješite sve sukobe i pripremite datoteke (stage)."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Autentifikacija nije uspjela. Provjerite Git vjerodajnice.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Prebaci na novu granu",
       "confirm": "Potvrdi",
       "mergeConfirm": "Spojiti '{{branch}}' u '{{current}}'?",
+      "rebaseConfirm": "Napraviti rebase grane '{{current}}' na '{{branch}}'? Time se prepisuju commitovi grane '{{current}}'.",
       "deleteConfirm": "Izbrisati granu '{{branch}}'? Ovo se ne može poništiti.",
       "deleteRemoteConfirm": "Izbrisati udaljenu granu '{{branch}}'? To utječe na udaljeni repozitorij.",
+      "forceDeleteConfirm": "Grana '{{branch}}' nije u potpunosti spojena. Ipak je izbrisati? Njezini nespojeni commitovi bit će izgubljeni.",
       "rebaseHint": "Preuredi commitove i odaberi radnju za svaki. Rebase ide od najstarijeg prema najnovijem.",
-      "nothingToRebase": "Nema commitova za rebase."
+      "nothingToRebase": "Nema commitova za rebase.",
+      "rebaseActions": {
+        "pick": "Zadrži (pick)",
+        "squash": "Spoji (squash)",
+        "fixup": "Uklopi (fixup)",
+        "drop": "Odbaci (drop)"
+      },
+      "rebaseSquashFirst": "Prvi commit ne može se spojiti (squash ili fixup): ne postoji raniji commit s kojim bi se kombinirao.",
+      "moveUp": "Pomakni gore",
+      "moveDown": "Pomakni dolje"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Nijedan korak ne odgovara trenutnim filtrima.",
     "view": {
       "timeline": "Vremenska crta",
-      "branches": "Grane"
+      "branches": "Grane",
+      "permissions": "Dopuštenja"
     },
     "filters": {
       "type": "Tip",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Nadjačavanje sesije",
       "default": "Zadane postavke"
+    },
+    "permissions": {
+      "empty": "Za ovaj razgovor još nisu zabilježene odluke o dopuštenjima.",
+      "clear": "Očisti zapis",
+      "clearConfirm": "Kliknite ponovno za brisanje",
+      "allowed": "Dopušteno",
+      "denied": "Odbijeno",
+      "why": "Razlog:",
+      "rule": "Pravilo:",
+      "filters": {
+        "auto": "Dopušteno bez pitanja",
+        "asked": "Upitano",
+        "denied": "Odbijeno"
+      },
+      "by": {
+        "auto": "Automatski",
+        "rule": "Pravilo zabrane",
+        "user": "Vi",
+        "grant": "Pokriveno novim dopuštenjem",
+        "cascade": "Odbijeno s drugim zahtjevom",
+        "stopped": "Zaustavljeno",
+        "timeout": "Isteklo vrijeme",
+        "cancelled": "Otkazano"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Dodaje smjernice o pisanju fokusiranih, determinističkih testova i njihovom pokretanju prije završetka.",
     "architecturePrompt": "Softverska arhitektura",
     "architecturePromptHint": "Dodaje smjernice o granicama modula, odgovornostima i održivom dizajnu.",
-    "budget": "Proračun (USD)",
-    "budgetHint": "0 onemogućuje prikaz proračuna.",
     "language": "Jezik",
     "replyLanguage": "Jezik odgovora",
     "replyLanguageDefault": "Zadano (jezik modela)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Koliko uzastopnih poziva alata agent može napraviti prije nego što zaustavi i zatraži od vas da nastavite. Ograničenje je sigurnosni ventil: zaustavlja model koji zaglavi u petlji da zauvijek radi i spaljuje žetone. 35 je dobra zadana vrijednost; podignite ga za duge zadatke u više koraka.",
     "autoContinueAllSessions": "Automatski nastavak svih sesija",
     "autoContinueAllSessionsHint": "Kada sesija dosegne ograničenje poziva alata, nastavite automatski umjesto pauziranja. Time se uklanja zaštitna mreža petlje, tako da zaglavljeni agent može raditi dok ga ne zaustavite. Ovo također možete isključiti iz chata kada se dosegne ograničenje.",
+    "subagentModel": "Model za podagente",
+    "subagentModelHint": "Model koji se koristi za podagente. Ostavite prazno za model sesije.",
+    "compactionModel": "Model kompresije",
+    "compactionModelHint": "Model koji se koristi za sažimanje dugih razgovora. Ostavite prazno za model sesije.",
+    "promptCaching": "Predmemoriranje upita",
+    "promptCachingHint": "Označite stabilni prefiks upita kao predmemoriran kako bi pružatelji koji podržavaju predmemoriju naplaćivali predmemorirane ulazne tokene jeftinije.",
+    "mcpProgressiveDisclosure": "Postupno otkrivanje MCP alata",
+    "mcpProgressiveDisclosureHint": "Kada je povezano mnogo MCP alata, prikažite par tool_search/mcp_invoke umjesto ugrađivanja svake sheme radi uštede konteksta. Mali skupovi alata uvijek se ugrađuju.",
     "fileAccessRules": "Pravila pristupa datotekama",
     "fileAccessRulesHint": "Kontrolirajte koje datoteke pomoćnik može otkriti i pročitati. Izuzeća korisnika uvijek pobjeđuju sva pravila u nastavku.",
     "ignoreGitignored": "Ignorirajte datoteke navedene u .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Nema blokiranih naredbi.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + podnaredba",
       "programFlags": "Program + zastavice",
       "exact": "Točno"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Još nema pravila naredbi. Upotrijebite \"dopusti uvijek\" u zahtjevu za dopuštenje da biste ga stvorili.",
     "websiteRules": "Web-lokacije",
-    "websiteRulesHint": "Web-lokacije koje asistent može posjetiti. Pravila zabrane imaju prednost pred pravilima dopuštenja; samo domena pokriva i njezine poddomene. Upotrijebite \"dopusti uvijek\" ili \"zabrani uvijek\" u zahtjevu za dopuštenje da biste ga stvorili.",
+    "websiteRulesHint": "Web-lokacije koje asistent može posjetiti svojim web-alatima ili naredbama poput curl, git i ssh. Pravila zabrane imaju prednost pred pravilima dopuštenja; samo domena pokriva i njezine poddomene. Upotrijebite \"dopusti uvijek\" ili \"zabrani uvijek\" u zahtjevu za dopuštenje da biste ga stvorili.",
     "permissionPrompts": "Zahtjevi za dopuštenje",
     "permissionPromptsHint": "Odaberi što glavni gumb za dopuštenje radi prema zadanim postavkama. Dopusti jednom odobrava jedan zahtjev; dopusti za ovu sesiju pamti pristup mapi do ponovnog pokretanja aplikacije.",
+    "autoApprove": "Automatsko odobrenje",
+    "autoApproveHint": "Preskače upite za posao koji asistent može dokazati sigurnim. Opasne naredbe, ugrađeni kod, preuzimanja paketa, još nedopuštene web-stranice, putanje izvan projekta i osjetljive datoteke uvijek pitaju.",
+    "autoApproveReadOnly": "Naredbe samo za čitanje",
+    "autoApproveReadOnlyHint": "Dopušta inspekcijske naredbe poput ls, grep i git status bez pitanja.",
+    "autoApprovePackageScripts": "Upravitelji paketima i alati za build",
+    "autoApprovePackageScriptsHint": "Dopušta pnpm, npm, yarn, bun, ng, make i slične alate kada ništa ne pokazuje izvan projekta.",
+    "autoApproveProjectExecutables": "Izvršne datoteke projekta",
+    "autoApproveProjectExecutablesHint": "Dopušta izvršne datoteke unutar projekta, poput ./node_modules/.bin/ng, bez pitanja svaki put.",
+    "autoApproveProjectCommands": "Sve naredbe unutar projekta",
+    "autoApproveProjectCommandsHint": "Dopušta svaku neopasnu naredbu čije putanje ostaju unutar projekta. Opasne naredbe, ugrađeni kod, preuzimanja paketa, još nedopuštene web-stranice, osjetljive datoteke i sve izvan i dalje pitaju.",
+    "permissionPreset": {
+      "strict": "Strogo",
+      "strictHint": "Bez pitanja se izvode samo naredbe koje samo čitaju.",
+      "balanced": "Uravnoteženo",
+      "balancedHint": "Naredbe samo za čitanje, upravitelji paketa, alati za izgradnju i izvršne datoteke projekta izvode se bez pitanja.",
+      "autonomous": "Autonomno",
+      "autonomousHint": "Svaka neopasna naredba unutar projekta izvodi se bez pitanja.",
+      "custom": "Prilagođeno",
+      "autonomousWarning": "Autonomni način vjeruje ovom projektu: njegove skripte, Makefile datoteke i izvršne datoteke mogu učiniti bilo što bez pitanja. Ugrađeni kod, preuzimanja paketa, još nedopuštene web-stranice, opasne naredbe i sve izvan projekta i dalje pitaju.",
+      "confirm": "Koristi autonomni način"
+    },
     "noAllowedWebsites": "Još nema uvijek dopuštenih web-lokacija.",
     "noDeniedWebsites": "Još nema uvijek zabranjenih web-lokacija.",
     "websitePlaceholder": "npr. docs.rs ili *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Mapa"
     },
     "allowAlways": "Dopusti uvijek",
-    "addFolder": "Trajno dodaj mapu",
     "siteRuleLabel": "Pravilo web-lokacije (domena ili glob)",
     "siteRuleHint": "Na primjer: docs.rs dopušta tu lokaciju, *.github.com dopušta sve njezine poddomene.",
-    "segment": {
-      "allowed": "Dopušteno",
-      "needsApproval": "Zahtijeva odobrenje"
-    },
+    "siteRuleInvalid": "Ovo pravilo ne pokriva {{ host }} ili je preširoko, pa će se umjesto njega spremiti {{ host }}.",
     "risk": {
       "low": "Nisko",
       "medium": "Srednje",
+      "network": "Mreža",
       "high": "Visoko",
       "danger": "Opasnost"
     },
@@ -994,7 +1066,39 @@
       "title": "Opseg pravila",
       "hint": "Odaberi koliko široko pravilo vrijedi."
     },
-    "allowChat": "Dopusti u ovom razgovoru"
+    "folderScope": {
+      "title": "Dopusti mapu",
+      "hint": "Dodaje mapu i sve unutar nje u uvijek dopuštene mape.",
+      "option": "Mapa + podmape"
+    },
+    "hostScope": {
+      "title": "Dopusti web-stranicu",
+      "hint": "Dodaje web-stranicu i njezine poddomene u dopuštene web-stranice.",
+      "option": "Web-stranica + poddomene"
+    },
+    "allowChat": "Dopusti u ovom razgovoru",
+    "option": {
+      "yes": "Da",
+      "chat": "Da, i ne pitaj više u ovom razgovoru za",
+      "session": "Da, i ne pitaj više do ponovnog pokretanja za",
+      "always": "Da, i uvijek dopusti",
+      "no": "Ne",
+      "denyAlways": "Ne, i uvijek zabrani"
+    },
+    "customize": "Prilagodi",
+    "justification": "Zašto",
+    "keyboardHint": "Pritisnite 1–{{ count }} ili upotrijebite ↑ ↓ i Enter · Esc odbija",
+    "url": {
+      "queryWarning": "Ova adresa nosi mnogo podataka u svom upitu. Prije dopuštanja provjerite da ne sadrži ništa privatno."
+    },
+    "tooltip": {
+      "deny": "Odbij ovaj zahtjev i sve ostale zahtjeve koji čekaju u ovom razgovoru.",
+      "denyAlways": "Odbij i spremi pravilo zabrane u postavke. Ostali zahtjevi koji čekaju u ovom razgovoru također se odbijaju.",
+      "allowOnce": "Dopusti samo ovaj zahtjev.",
+      "allowSession": "Pamti se u svim razgovorima dok se aplikacija ne pokrene ponovno.",
+      "allowChat": "Pravila naredbi pamte se za ovaj razgovor i njegove podagente; mape i web-stranice do ponovnog pokretanja aplikacije.",
+      "allowAlways": "Sprema se u postavke i vrijedi za sve razgovore."
+    }
   },
   "question": {
     "title": "Pitanje",
@@ -1044,6 +1148,8 @@
     "installing": "Instaliranje...",
     "uninstall": "Deinstaliraj",
     "addFolder": "Dodaj mapu",
-    "noFolders": "Još nije dodana nijedna mapa."
+    "noFolders": "Još nije dodana nijedna mapa.",
+    "binaryFile": "Binarna datoteka – pregled nije dostupan.",
+    "fileTooLarge": "Ova je datoteka prevelika za pregled."
   }
 }

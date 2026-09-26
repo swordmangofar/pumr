@@ -2,39 +2,18 @@ use crate::agent::{self, TurnDeps, TurnRequest};
 use crate::config::{self, Settings};
 use crate::db::NewMessage;
 use crate::error::{AppError, Result};
-use crate::git::{
-    git_branch_create as branch_create_worktree, git_branch_delete as branch_delete_worktree,
-    git_branch_rename as branch_rename_worktree, git_checkout as checkout_worktree,
-    git_clone as clone_repository, git_commit as commit_worktree, git_discard as discard_worktree,
-    git_fast_forward as fast_forward_worktree, git_fetch as fetch_worktree,
-    git_ignore as ignore_worktree, git_init as init_worktree, git_merge as merge_worktree,
-    git_operation_abort as abort_operation_worktree,
-    git_operation_continue as continue_operation_worktree, git_pull as pull_worktree,
-    git_pull_request_url as pull_request_url_worktree, git_push as push_worktree,
-    git_push_branch as push_branch_worktree, git_rebase as rebase_worktree,
-    git_rebase_interactive as rebase_interactive_worktree,
-    git_set_upstream as set_upstream_worktree, git_stage as stage_worktree,
-    git_stash_apply as stash_apply_worktree, git_stash_drop as stash_drop_worktree,
-    git_stash_pop as stash_pop_worktree, git_stash_push as stash_push_worktree,
-    git_submodule_update as submodule_update_worktree, git_tag_create as tag_create_worktree,
-    git_tag_delete as tag_delete_worktree, git_tag_push as tag_push_worktree,
-    git_unstage as unstage_worktree, project_blame, project_branches, project_commit_detail,
-    project_commit_file_diff, project_commits, project_file_diff, project_git_info,
-    project_git_status, project_rebase_commits, project_remotes,
-    reveal_path as reveal_path_worktree, ShadowRepo,
-};
+use crate::git::{self, language_for, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::mentions;
 use crate::models::{
-    Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine, GitBranch,
-    GitCommit,
-    GitCommitDetail, GitInfo, GitStatus, Mention, Message, ModelInfo, PermissionDecision,
-    ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer, RoutedEvent, Session,
-    SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
+    Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine,
+    GitCommit, GitCommitDetail, GitInfo, GitRefs, GitStatus, Mention, Message, ModelInfo,
+    PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
+    RoutedEvent, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry, WorkspaceFile,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::openrouter::{ChatChunk, ChatMessage};
-use crate::state::AppState;
+use crate::state::{AppState, SendClaim};
 use crate::tools::ToolRuntime;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
@@ -202,7 +181,13 @@ pub fn add_project(state: State<'_, AppState>, path: String) -> Result<Project> 
 
 #[tauri::command]
 pub fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<()> {
-    state.db.remove_project(&project_id)
+    state.db.remove_project(&project_id)?;
+    // The shadow repository keeps a copy of every snapshot; nothing refers to
+    // it once the project is gone.
+    if let Err(error) = git::remove_shadow(&state.data_dir, &project_id) {
+        log::warn!("could not remove shadow repository of {project_id}: {error}");
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -334,11 +319,18 @@ pub fn list_messages(state: State<'_, AppState>, session_id: String) -> Result<V
 }
 
 #[tauri::command]
-pub fn get_spend(state: State<'_, AppState>, session_id: Option<String>) -> Result<SpendSummary> {
-    let settings = state.settings();
-    state
-        .db
-        .spend(session_id.as_deref(), settings.model.budget_usd)
+pub async fn get_spend(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+) -> Result<SpendSummary> {
+    let mut summary = state.db.spend(session_id.as_deref())?;
+    if let Some(info) = state.key_info().await {
+        if let Some(limit) = info.limit {
+            summary.budget_usd = limit;
+            summary.remaining_usd = info.limit_remaining.map(|remaining| remaining.max(0.0));
+        }
+    }
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -589,8 +581,8 @@ fn select_command_rules(
         }
     }
     // Missing segment selections use only backend-owned exact options, never
-    // the display suggestion. Unscoped commands cannot create allow grants;
-    // command_rules_for_decision handles their deny-only fallback separately.
+    // the display suggestion. An unscoped command offers its whole line as an
+    // exact option, so allow and deny can both remember it without widening.
     for option in options {
         if option.kind == CommandScopeKind::Exact {
             if let CommandRule::Exact(command) = &option.rule {
@@ -700,15 +692,14 @@ mod permission_rule_tests {
     }
 
     #[test]
-    fn commands_without_scopes_cannot_select_renderer_rules() {
-        let scopes = options("echo $(whoami)");
-        assert!(scopes.is_empty());
+    fn empty_scope_options_cannot_select_renderer_rules() {
+        let scopes: Vec<CommandScopeOption> = Vec::new();
         assert!(select_command_rules(&scopes, vec![]).is_empty());
         assert!(select_command_rules(&scopes, vec![CommandRule::Glob("echo *".into())]).is_empty());
     }
 
     #[test]
-    fn unscoped_shell_deny_remembers_only_the_original_exact_command() {
+    fn unscoped_shell_command_offers_only_its_exact_line() {
         let command = r#"echo "$(whoami)""#;
         let pending = crate::broker::PendingPrompt {
             kind: "command".into(),
@@ -716,15 +707,37 @@ mod permission_rule_tests {
             folder: None,
             suggested_rule: Some("echo *".into()),
             scope_options: options(command),
+            folders: Vec::new(),
+            hosts: Vec::new(),
+            url: None,
             session_id: "chat".into(),
+            grant_session_id: "chat".into(),
         };
-        assert!(pending.scope_options.is_empty());
+        // The only offered scope is the byte-identical whole line.
+        assert_eq!(
+            pending.scope_options,
+            vec![CommandScopeOption {
+                kind: CommandScopeKind::Exact,
+                rule: CommandRule::Exact(command.into()),
+            }],
+        );
+        // A submitted rule the backend did not offer is dropped; the exact
+        // whole-line fallback is remembered for deny and allow alike.
+        for decision in ["deny_always", "allow_always", "allow_session"] {
+            assert_eq!(
+                command_rules_for_decision(
+                    &pending,
+                    decision,
+                    vec![CommandRule::Glob("echo *".into())],
+                ),
+                vec![CommandRule::Exact(command.into())],
+            );
+        }
         let denied = command_rules_for_decision(
             &pending,
             "deny_always",
             vec![CommandRule::Glob("*".into())],
         );
-        assert_eq!(denied, vec![CommandRule::Exact(command.into())]);
         assert!(matches!(
             evaluate_command(
                 command,
@@ -743,24 +756,25 @@ mod permission_rule_tests {
             &[],
             &[],
             &denied,
-        ).is_ask());
-        for decision in ["allow_always", "allow_session", "allow_once", "deny"] {
-            assert!(command_rules_for_decision(
-                &pending,
-                decision,
-                vec![CommandRule::Glob("echo *".into())],
-            ).is_empty());
-        }
+        )
+        .is_ask());
 
-        let mut mcp = pending.clone();
-        mcp.suggested_rule = None;
+        // An MCP prompt carries no command and no scopes, so nothing is
+        // remembered for it.
+        let mcp = crate::broker::PendingPrompt {
+            kind: "command".into(),
+            command: None,
+            folder: None,
+            suggested_rule: None,
+            scope_options: Vec::new(),
+            folders: Vec::new(),
+            hosts: Vec::new(),
+            url: None,
+            session_id: "chat".into(),
+            grant_session_id: "chat".into(),
+        };
         for decision in ["deny_always", "allow_always", "allow_session"] {
             assert!(command_rules_for_decision(&mcp, decision, vec![]).is_empty());
-        }
-        let mut missing_command = pending.clone();
-        for command in [None, Some("  ".into())] {
-            missing_command.command = command;
-            assert!(command_rules_for_decision(&missing_command, "deny_always", vec![]).is_empty());
         }
         let mut other_kind = pending;
         other_kind.kind = "web".into();
@@ -776,7 +790,9 @@ pub fn resolve_permission(
     rules: Option<Vec<String>>,
     command_rules: Option<Vec<CommandRule>>,
     folder: Option<String>,
+    folders: Option<Vec<String>>,
     prompt_kind: Option<String>,
+    hosts: Option<Vec<String>>,
 ) -> Result<()> {
     // Never act on a decision that does not match a prompt the backend is
     // actually waiting on. This stops a renderer from persisting an allow rule
@@ -784,31 +800,77 @@ pub fn resolve_permission(
     let Some(pending) = state.broker.pending_prompt(&request_id) else {
         return Ok(());
     };
-    // The renderer's `folder` is intentionally ignored: the backend persists
-    // only the folder it proposed, so a renderer cannot widen access.
+    // The renderer's `folder`/`folders` are intentionally ignored as grants: the
+    // backend persists only the folders it proposed, so a renderer cannot widen
+    // access. `folders` is intersected with what the prompt offered below.
     let _ = (prompt_kind, folder);
     let allowed = decision != "deny" && decision != "deny_always";
     let is_web = pending.kind.starts_with("web");
     let is_command = pending.kind == "command";
     let chosen_rules =
         command_rules_for_decision(&pending, &decision, command_rules.unwrap_or_default());
-    // Website rules remain strings, but only the backend's proposed host may
-    // be saved. Command decision metadata is display-only, not a grant.
-    let _ = rules;
+    // Only folders this prompt actually offered can be whitelisted. Deduplicate
+    // while preserving the backend order.
+    let mut chosen_folders: Vec<String> = Vec::new();
+    for candidate in folders.unwrap_or_default() {
+        let candidate = candidate.trim().to_string();
+        if candidate.is_empty() {
+            continue;
+        }
+        if pending.folders.iter().any(|folder| folder == &candidate)
+            && !chosen_folders.contains(&candidate)
+        {
+            chosen_folders.push(candidate);
+        }
+    }
+    // Websites a command prompt offered, intersected like folders.
+    let mut chosen_hosts: Vec<String> = Vec::new();
+    for candidate in hosts.unwrap_or_default() {
+        let candidate = candidate.trim().to_lowercase();
+        if pending.hosts.iter().any(|host| host == &candidate) && !chosen_hosts.contains(&candidate)
+        {
+            chosen_hosts.push(candidate);
+        }
+    }
+    // A website prompt saves the rule the user edited only while it still
+    // covers the requested host (and, to allow, stays narrow); otherwise the
+    // backend's proposed host. Command decision metadata is display-only.
     let rule = if is_command {
         chosen_rules.first().map(|rule| rule.value().to_string())
     } else {
-        pending
-            .suggested_rule
+        let requested_host = pending
+            .url
             .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
+            .and_then(|url| reqwest::Url::parse(url).ok())
+            .and_then(|url| url.host_str().map(str::to_string));
+        let edited = rules
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+            .map(|rule| rule.trim().to_lowercase())
+            .filter(|rule| {
+                is_web
+                    && requested_host.as_deref().is_some_and(|host| {
+                        crate::permissions::website_rule_fits(rule, host, allowed)
+                    })
+            });
+        edited.or_else(|| {
+            pending
+                .suggested_rule
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
     };
     let folder = pending
         .folder
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    // Whether this decision granted anything reusable (a rule, folder or
+    // website). Queued prompts the grant covers are then auto-resolved, like
+    // opencode's "always" reply approving every pending request it matches.
+    let mut grants_applied = false;
     if is_web {
         let mut settings = state.settings();
         let mut changed = false;
@@ -838,7 +900,14 @@ pub fn resolve_permission(
                 }
             }
         }
+        if allowed && decision == "allow_session" {
+            if let Some(rule) = &rule {
+                state.permissions.add_session_website(rule);
+                grants_applied = true;
+            }
+        }
         if changed {
+            grants_applied = true;
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
         }
@@ -869,24 +938,57 @@ pub fn resolve_permission(
                 changed = true;
             }
         }
+        for candidate in &chosen_folders {
+            if !settings
+                .permissions
+                .extra_folders
+                .iter()
+                .any(|entry| entry == candidate)
+            {
+                settings.permissions.extra_folders.push(candidate.clone());
+                changed = true;
+            }
+        }
+        for host in &chosen_hosts {
+            if !settings
+                .permissions
+                .allowed_websites
+                .iter()
+                .any(|entry| entry == host)
+            {
+                settings.permissions.allowed_websites.push(host.clone());
+                changed = true;
+            }
+        }
         if changed {
+            grants_applied = true;
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
         }
     } else if allowed && decision == "allow_session" {
-        // A command granted "in this chat" is remembered for that chat only,
-        // while a folder granted for the session stays available until the app
-        // restarts (including every file and subfolder below it). Neither is
-        // written to settings.
+        // A command granted "in this chat" is remembered for the whole
+        // conversation (root session, shared with subagents) while a folder or
+        // website granted for the session stays available until the app
+        // restarts. None of these are written to settings.
         if is_command {
             for rule in &chosen_rules {
                 state
                     .permissions
-                    .add_session_command_rule(&pending.session_id, rule);
+                    .add_session_command_rule(&pending.grant_session_id, rule);
+                grants_applied = true;
             }
         }
         if let Some(folder) = &folder {
             state.permissions.add_session_folder(folder);
+            grants_applied = true;
+        }
+        for candidate in &chosen_folders {
+            state.permissions.add_session_folder(candidate);
+            grants_applied = true;
+        }
+        for host in &chosen_hosts {
+            state.permissions.add_session_website(host);
+            grants_applied = true;
         }
     } else if !allowed && decision == "deny_always" && is_command {
         // Persist chosen scopes or the backend-owned exact fallback for an
@@ -915,9 +1017,45 @@ pub fn resolve_permission(
             allowed,
             rule,
             folder,
+            decided_by: "user".to_string(),
+            decision: Some(decision.clone()),
         },
     );
+    if !allowed {
+        // opencode's reject cascade: one denial stops the chat's whole pending
+        // batch instead of making the user deny each queued prompt.
+        state
+            .broker
+            .deny_chat(&pending.grant_session_id, &request_id);
+    } else if grants_applied {
+        // A fresh grant (rule, folder or website) covers other queued prompts
+        // of this chat; resolve them without asking again.
+        state
+            .broker
+            .auto_resolve(&pending.grant_session_id, &state.permissions);
+    }
     Ok(())
+}
+
+/// The newest permission decisions of one chat (or of all chats), newest first.
+#[tauri::command]
+pub fn list_permission_audit(
+    state: State<'_, AppState>,
+    conversation_id: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::models::PermissionAuditEntry>> {
+    state
+        .db
+        .list_permission_audit(conversation_id.as_deref(), limit.unwrap_or(500).min(5_000))
+}
+
+/// Deletes the permission history of one chat, or all of it.
+#[tauri::command]
+pub fn clear_permission_audit(
+    state: State<'_, AppState>,
+    conversation_id: Option<String>,
+) -> Result<()> {
+    state.db.clear_permission_audit(conversation_id.as_deref())
 }
 
 #[tauri::command]
@@ -1047,9 +1185,7 @@ pub fn stop_process(state: State<'_, AppState>, process_id: String) -> Result<()
 
 #[tauri::command]
 pub async fn get_git_info(state: State<'_, AppState>, project_id: String) -> Result<GitInfo> {
-    let project = state.db.get_project(&project_id)?;
-    let root = PathBuf::from(project.path);
-    blocking(move || Ok(project_git_info(&root))).await
+    in_project(&state, &project_id, |root| Ok(git::project_git_info(root))).await
 }
 
 fn project_root(state: &AppState, project_id: &str) -> Result<PathBuf> {
@@ -1057,7 +1193,9 @@ fn project_root(state: &AppState, project_id: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(project.path))
 }
 
-/// Runs a potentially long, network-bound git operation off the main thread.
+/// Runs blocking work (git processes, hooks, network, large work trees) on a
+/// worker thread. Tauri runs synchronous commands on the main thread, where
+/// they would freeze the window until they return.
 async fn blocking<T, F>(operation: F) -> Result<T>
 where
     F: FnOnce() -> Result<T> + Send + 'static,
@@ -1068,19 +1206,24 @@ where
         .map_err(|error| AppError::msg(error.to_string()))?
 }
 
-#[tauri::command]
-pub async fn get_git_status(state: State<'_, AppState>, project_id: String) -> Result<GitStatus> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || project_git_status(&root)).await
+/// Runs a git operation on a project's work tree off the main thread.
+async fn in_project<T, F>(state: &AppState, project_id: &str, operation: F) -> Result<T>
+where
+    F: FnOnce(&Path) -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let root = project_root(state, project_id)?;
+    blocking(move || operation(&root)).await
 }
 
 #[tauri::command]
-pub async fn get_git_branches(
-    state: State<'_, AppState>,
-    project_id: String,
-) -> Result<Vec<GitBranch>> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || Ok(project_branches(&root))).await
+pub async fn get_git_status(state: State<'_, AppState>, project_id: String) -> Result<GitStatus> {
+    in_project(&state, &project_id, git::project_git_status).await
+}
+
+#[tauri::command]
+pub async fn get_git_refs(state: State<'_, AppState>, project_id: String) -> Result<GitRefs> {
+    in_project(&state, &project_id, git::project_git_refs).await
 }
 
 #[tauri::command]
@@ -1092,10 +1235,9 @@ pub async fn get_git_commits(
     skip: Option<usize>,
     limit: Option<usize>,
 ) -> Result<Vec<GitCommit>> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || {
-        project_commits(
-            &root,
+    in_project(&state, &project_id, move |root| {
+        git::project_commits(
+            root,
             query.as_deref(),
             path.as_deref(),
             skip.unwrap_or(0),
@@ -1111,8 +1253,10 @@ pub async fn get_git_commit(
     project_id: String,
     hash: String,
 ) -> Result<GitCommitDetail> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || project_commit_detail(&root, &hash)).await
+    in_project(&state, &project_id, move |root| {
+        git::project_commit_detail(root, &hash)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1122,8 +1266,10 @@ pub async fn get_git_commit_file_diff(
     hash: String,
     path: String,
 ) -> Result<FileDiff> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || project_commit_file_diff(&root, &hash, &path)).await
+    in_project(&state, &project_id, move |root| {
+        git::project_commit_file_diff(root, &hash, &path)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1133,34 +1279,72 @@ pub async fn get_git_file_diff(
     path: String,
     staged: bool,
 ) -> Result<FileDiff> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || project_file_diff(&root, &path, staged)).await
+    in_project(&state, &project_id, move |root| {
+        git::project_file_diff(root, &path, staged)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_stage(
+pub async fn git_stage(
     state: State<'_, AppState>,
     project_id: String,
     path: Option<String>,
 ) -> Result<()> {
-    let root = project_root(&state, &project_id)?;
-    stage_worktree(&root, path.as_deref())
+    in_project(&state, &project_id, move |root| {
+        git::git_stage(root, path.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_unstage(
+pub async fn git_unstage(
     state: State<'_, AppState>,
     project_id: String,
     path: Option<String>,
 ) -> Result<()> {
-    let root = project_root(&state, &project_id)?;
-    unstage_worktree(&root, path.as_deref())
+    in_project(&state, &project_id, move |root| {
+        git::git_unstage(root, path.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_discard(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
-    let root = project_root(&state, &project_id)?;
-    discard_worktree(&root, &path)
+pub async fn git_stage_paths(
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::git_stage_paths(root, &paths)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_unstage_paths(
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::git_unstage_paths(root, &paths)
+    })
+    .await
+}
+
+/// Discards unstaged changes; the one command for single files and selections,
+/// so both behave the same.
+#[tauri::command]
+pub async fn git_discard_paths(
+    state: State<'_, AppState>,
+    project_id: String,
+    paths: Vec<String>,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::git_discard_paths(root, &paths)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1169,54 +1353,71 @@ pub async fn get_git_blame(
     project_id: String,
     path: String,
 ) -> Result<Vec<GitBlameLine>> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || project_blame(&root, &path)).await
+    in_project(&state, &project_id, move |root| {
+        git::project_blame(root, &path)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_ignore(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
-    let root = project_root(&state, &project_id)?;
-    ignore_worktree(&root, &path)
+pub async fn git_ignore(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::git_ignore(root, &path)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn reveal_path(state: State<'_, AppState>, project_id: String, path: String) -> Result<()> {
-    let root = project_root(&state, &project_id)?;
-    reveal_path_worktree(&root, &path)
+pub async fn reveal_path(
+    state: State<'_, AppState>,
+    project_id: String,
+    path: String,
+) -> Result<()> {
+    in_project(&state, &project_id, move |root| {
+        git::reveal_path(root, &path)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_commit(
+pub async fn git_commit(
     state: State<'_, AppState>,
     project_id: String,
     message: String,
     amend: bool,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    commit_worktree(&root, &message, amend)
+    in_project(&state, &project_id, move |root| {
+        git::git_commit(root, &message, amend)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_checkout(
+pub async fn git_checkout(
     state: State<'_, AppState>,
     project_id: String,
     branch: String,
     track: Option<bool>,
     local_branch: Option<String>,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    checkout_worktree(
-        &root,
-        &branch,
-        track.unwrap_or(false),
-        local_branch.as_deref(),
-    )
+    in_project(&state, &project_id, move |root| {
+        git::git_checkout(
+            root,
+            &branch,
+            track.unwrap_or(false),
+            local_branch.as_deref(),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn git_fetch(state: State<'_, AppState>, project_id: String) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || fetch_worktree(&root)).await
+    in_project(&state, &project_id, git::git_fetch).await
 }
 
 #[tauri::command]
@@ -1225,23 +1426,15 @@ pub async fn git_pull(
     project_id: String,
     strategy: Option<String>,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || pull_worktree(&root, strategy.as_deref())).await
+    in_project(&state, &project_id, move |root| {
+        git::git_pull(root, strategy.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn git_push(state: State<'_, AppState>, project_id: String) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || push_worktree(&root)).await
-}
-
-#[tauri::command]
-pub async fn get_git_remotes(
-    state: State<'_, AppState>,
-    project_id: String,
-) -> Result<Vec<String>> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || Ok(project_remotes(&root))).await
+    in_project(&state, &project_id, git::git_push).await
 }
 
 #[tauri::command]
@@ -1249,22 +1442,35 @@ pub async fn git_fast_forward(
     state: State<'_, AppState>,
     project_id: String,
     branch: String,
-    upstream: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || fast_forward_worktree(&root, &branch, &upstream)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_fast_forward(root, &branch)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_merge(state: State<'_, AppState>, project_id: String, branch: String) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    merge_worktree(&root, &branch)
+pub async fn git_merge(
+    state: State<'_, AppState>,
+    project_id: String,
+    branch: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| {
+        git::git_merge(root, &branch)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_rebase(state: State<'_, AppState>, project_id: String, onto: String) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    rebase_worktree(&root, &onto)
+pub async fn git_rebase(
+    state: State<'_, AppState>,
+    project_id: String,
+    onto: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| {
+        git::git_rebase(root, &onto)
+    })
+    .await
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1275,18 +1481,20 @@ pub struct RebaseTodoEntry {
 }
 
 #[tauri::command]
-pub fn git_rebase_interactive(
+pub async fn git_rebase_interactive(
     state: State<'_, AppState>,
     project_id: String,
     onto: String,
     todo: Vec<RebaseTodoEntry>,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
     let entries: Vec<(String, String)> = todo
         .into_iter()
         .map(|entry| (entry.action, entry.hash))
         .collect();
-    rebase_interactive_worktree(&root, &onto, &entries)
+    in_project(&state, &project_id, move |root| {
+        git::git_rebase_interactive(root, &onto, &entries)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1295,65 +1503,78 @@ pub async fn get_git_rebase_commits(
     project_id: String,
     onto: String,
 ) -> Result<Vec<GitCommit>> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || project_rebase_commits(&root, &onto)).await
+    in_project(&state, &project_id, move |root| {
+        git::project_rebase_commits(root, &onto)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_branch_create(
+pub async fn git_branch_create(
     state: State<'_, AppState>,
     project_id: String,
     name: String,
     start_point: Option<String>,
     checkout: bool,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    branch_create_worktree(&root, &name, start_point.as_deref(), checkout)
+    in_project(&state, &project_id, move |root| {
+        git::git_branch_create(root, &name, start_point.as_deref(), checkout)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_tag_create(
+pub async fn git_tag_create(
     state: State<'_, AppState>,
     project_id: String,
     name: String,
     target: Option<String>,
     message: Option<String>,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    tag_create_worktree(&root, &name, target.as_deref(), message.as_deref())
+    in_project(&state, &project_id, move |root| {
+        git::git_tag_create(root, &name, target.as_deref(), message.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_branch_rename(
+pub async fn git_branch_rename(
     state: State<'_, AppState>,
     project_id: String,
     from: String,
     to: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    branch_rename_worktree(&root, &from, &to)
+    in_project(&state, &project_id, move |root| {
+        git::git_branch_rename(root, &from, &to)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_branch_delete(
+pub async fn git_branch_delete(
     state: State<'_, AppState>,
     project_id: String,
     branch: String,
     remote: bool,
+    force: Option<bool>,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    branch_delete_worktree(&root, &branch, remote)
+    in_project(&state, &project_id, move |root| {
+        git::git_branch_delete(root, &branch, remote, force.unwrap_or(false))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_set_upstream(
+pub async fn git_set_upstream(
     state: State<'_, AppState>,
     project_id: String,
     branch: String,
     upstream: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    set_upstream_worktree(&root, &branch, &upstream)
+    in_project(&state, &project_id, move |root| {
+        git::git_set_upstream(root, &branch, &upstream)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1364,8 +1585,10 @@ pub async fn git_push_branch(
     remote: String,
     set_upstream: bool,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || push_branch_worktree(&root, &branch, &remote, set_upstream)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_push_branch(root, &branch, &remote, set_upstream)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1374,14 +1597,22 @@ pub async fn git_operation_abort(
     project_id: String,
     operation: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || abort_operation_worktree(&root, &operation)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_operation_abort(root, &operation)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_operation_continue(state: State<'_, AppState>, project_id: String) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    continue_operation_worktree(&root)
+pub async fn git_operation_continue(
+    state: State<'_, AppState>,
+    project_id: String,
+    operation: String,
+) -> Result<String> {
+    in_project(&state, &project_id, move |root| {
+        git::git_operation_continue(root, &operation)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1391,57 +1622,62 @@ pub async fn git_stash_push(
     message: Option<String>,
     include_untracked: bool,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || stash_push_worktree(&root, message.as_deref(), include_untracked)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_stash_push(root, message.as_deref(), include_untracked)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_stash_apply(
+pub async fn git_stash_apply(
     state: State<'_, AppState>,
     project_id: String,
     stash: String,
+    hash: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    stash_apply_worktree(&root, &stash)
+    in_project(&state, &project_id, move |root| {
+        git::git_stash_apply(root, &stash, &hash)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_stash_pop(
+pub async fn git_stash_pop(
     state: State<'_, AppState>,
     project_id: String,
     stash: String,
+    hash: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    stash_pop_worktree(&root, &stash)
+    in_project(&state, &project_id, move |root| {
+        git::git_stash_pop(root, &stash, &hash)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_stash_drop(
+pub async fn git_stash_drop(
     state: State<'_, AppState>,
     project_id: String,
     stash: String,
+    hash: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    stash_drop_worktree(&root, &stash)
+    in_project(&state, &project_id, move |root| {
+        git::git_stash_drop(root, &stash, &hash)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_init(state: State<'_, AppState>, project_id: String) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    init_worktree(&root)
+pub async fn git_init(state: State<'_, AppState>, project_id: String) -> Result<String> {
+    in_project(&state, &project_id, git::git_init).await
 }
 
 #[tauri::command]
 pub async fn git_clone(state: State<'_, AppState>, url: String, path: String) -> Result<Project> {
     let destination = PathBuf::from(&path);
-    let result = blocking({
-        let url = url.clone();
-        let destination = destination.clone();
-        move || clone_repository(&url, &destination)
-    })
-    .await?;
+    let target = destination.clone();
+    blocking(move || git::git_clone(&url, &target)).await?;
     let canonical = destination.canonicalize().unwrap_or(destination);
-    let _ = result;
     state.db.upsert_project(&canonical.to_string_lossy())
 }
 
@@ -1451,8 +1687,10 @@ pub async fn git_tag_delete(
     project_id: String,
     name: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || tag_delete_worktree(&root, &name)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_tag_delete(root, &name)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1462,8 +1700,10 @@ pub async fn git_tag_push(
     remote: String,
     name: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || tag_push_worktree(&root, &remote, &name)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_tag_push(root, &remote, &name)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1472,19 +1712,23 @@ pub async fn git_submodule_update(
     project_id: String,
     path: Option<String>,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    blocking(move || submodule_update_worktree(&root, path.as_deref())).await
+    in_project(&state, &project_id, move |root| {
+        git::git_submodule_update(root, path.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn git_pull_request_url(
+pub async fn git_pull_request_url(
     state: State<'_, AppState>,
     project_id: String,
     remote: String,
     branch: String,
 ) -> Result<String> {
-    let root = project_root(&state, &project_id)?;
-    pull_request_url_worktree(&root, &remote, &branch)
+    in_project(&state, &project_id, move |root| {
+        git::git_pull_request_url(root, &remote, &branch)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1578,52 +1822,38 @@ fn open_shadow(state: &AppState, project_id: &str) -> Result<Arc<ShadowRepo>> {
     )?))
 }
 
+/// Resolving a session's changes can stage the whole project in the shadow
+/// repository, so it runs off the main thread.
 #[tauri::command]
-pub fn get_session_changes(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<Vec<FileChange>> {
-    session_changes_resolved(&state, &session_id)
+pub async fn get_session_changes(app: AppHandle, session_id: String) -> Result<Vec<FileChange>> {
+    blocking(move || session_changes_resolved(&app.state::<AppState>(), &session_id)).await
 }
 
 #[tauri::command]
-pub fn get_file_diff(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-) -> Result<FileDiff> {
-    let session = state.db.get_session(&session_id)?;
+pub async fn get_file_diff(app: AppHandle, session_id: String, path: String) -> Result<FileDiff> {
+    blocking(move || session_file_diff(&app.state::<AppState>(), &session_id, &path)).await
+}
+
+fn session_file_diff(state: &AppState, session_id: &str, path: &str) -> Result<FileDiff> {
+    let session = state.db.get_session(session_id)?;
     let project = state.db.get_project(&session.project_id)?;
-    let base = state.db.session_base_commit(&session_id)?;
-    let change = session_changes_resolved(&state, &session_id)?
+    let base = state.db.session_base_commit(session_id)?;
+    let change = session_changes_resolved(state, session_id)?
         .into_iter()
         .find(|change| change.path == path);
-    let (old_content, additions, deletions, status) = match base {
-        Some(base) => {
-            let shadow = open_shadow(&state, &session.project_id)?;
-            (
-                shadow.file_at(&base, &path).unwrap_or_default(),
-                change.as_ref().map(|change| change.additions).unwrap_or(0),
-                change.as_ref().map(|change| change.deletions).unwrap_or(0),
-                change
-                    .map(|change| change.status)
-                    .unwrap_or_else(|| "M".to_string()),
-            )
-        }
-        None => (String::new(), 0, 0, "M".to_string()),
+    let old = match base {
+        Some(base) => open_shadow(state, &session.project_id)?.side_at(&base, path),
+        None => git::DiffSide::Missing,
     };
-    let absolute = crate::permissions::resolve_inside_project(Path::new(&project.path), &path)
-        .ok_or_else(|| AppError::msg("path is outside the project"))?;
-    let new_content = std::fs::read_to_string(&absolute).unwrap_or_default();
-    Ok(FileDiff {
-        path: path.clone(),
-        old_content,
-        new_content,
-        language: language_for(&path).to_string(),
-        additions,
-        deletions,
-        status,
-    })
+    let entry = git::project_entry(Path::new(&project.path), path)?;
+    let mut diff = git::build_file_diff(path, old, git::worktree_side(&entry));
+    // Keep the counts and status the session's change list shows.
+    if let Some(change) = change {
+        diff.additions = change.additions;
+        diff.deletions = change.deletions;
+        diff.status = change.status;
+    }
+    Ok(diff)
 }
 
 #[tauri::command]
@@ -1750,13 +1980,26 @@ fn session_changes_resolved(state: &AppState, session_id: &str) -> Result<Vec<Fi
     Ok(changes)
 }
 
+/// Restoring files stages and checks out the whole project in the shadow
+/// repository, so it runs off the main thread.
 #[tauri::command]
-pub fn revert_to_message(
-    state: State<'_, AppState>,
+pub async fn revert_to_message(
+    app: AppHandle,
     message_id: String,
     restore_files: bool,
 ) -> Result<RevertResult> {
-    let message = state.db.get_message(&message_id)?;
+    blocking(move || {
+        revert_to_message_blocking(&app.state::<AppState>(), &message_id, restore_files)
+    })
+    .await
+}
+
+fn revert_to_message_blocking(
+    state: &AppState,
+    message_id: &str,
+    restore_files: bool,
+) -> Result<RevertResult> {
+    let message = state.db.get_message(message_id)?;
     if message.role != "user" {
         return Err(AppError::msg("Only user prompts can be reverted to."));
     }
@@ -1764,7 +2007,7 @@ pub fn revert_to_message(
     let mut restored = Vec::new();
     if restore_files {
         if let Some(base) = message.base_commit.as_deref() {
-            let shadow = open_shadow(&state, &session.project_id)?;
+            let shadow = open_shadow(state, &session.project_id)?;
             restored = shadow.restore_to(base)?;
         }
     }
@@ -1781,6 +2024,63 @@ pub fn revert_to_message(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
+    state: State<'_, AppState>,
+    session_id: String,
+    content: String,
+    model: String,
+    reasoning_effort: Option<String>,
+    provider: Option<String>,
+    attachments: Option<Vec<Attachment>>,
+    mentions: Option<Vec<Mention>>,
+    resume: Option<bool>,
+    request_id: Option<String>,
+    channel: Channel<RoutedEvent>,
+) -> Result<Message> {
+    // Tauri delivers an invoke again when its IPC fetch fails (a webview
+    // reload mid-turn does that). The repeat waits for the original instead of
+    // starting a second turn, which would cancel the running one and resolve
+    // its pending permission prompts as denied.
+    let publish = match request_id.as_deref().map(|id| state.sends.claim(id)) {
+        Some(SendClaim::Duplicate(mut original)) => {
+            let outcome = original
+                .wait_for(Option::is_some)
+                .await
+                .ok()
+                .and_then(|outcome| (*outcome).clone());
+            return match outcome {
+                Some(outcome) => outcome.map_err(AppError::msg),
+                None => Err(AppError::msg(
+                    "The original request ended without a result.",
+                )),
+            };
+        }
+        Some(SendClaim::First(publish)) => Some(publish),
+        None => None,
+    };
+    let result = run_send_message(
+        state,
+        session_id,
+        content,
+        model,
+        reasoning_effort,
+        provider,
+        attachments,
+        mentions,
+        resume,
+        channel,
+    )
+    .await;
+    if let Some(publish) = publish {
+        publish.send_replace(Some(match &result {
+            Ok(message) => Ok(message.clone()),
+            Err(error) => Err(error.to_string()),
+        }));
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_send_message(
     state: State<'_, AppState>,
     session_id: String,
     content: String,
@@ -1843,8 +2143,26 @@ pub async fn send_message(
     } else {
         Vec::new()
     };
-    let system_prompt =
-        build_system_prompt(&setup.settings, &setup.session, &mode, &mcp_manager, &rules);
+    let skills = if mode.include_global_prompts {
+        crate::discovery::skill_catalog(
+            &setup.settings.integrations.skill_folders,
+            &setup.settings.integrations.skills_disabled,
+            &setup.settings.integrations.skills_disabled_items,
+            setup.settings.integrations.skills_auto_discovery,
+            &state.marketplace.installed_skill_dirs(),
+        )
+    } else {
+        Vec::new()
+    };
+    let system_prompt = build_system_prompt(
+        &setup.settings,
+        &setup.session,
+        &mode,
+        &mcp_manager,
+        &rules,
+        &skills,
+        &setup.project_root,
+    );
 
     let cached_model = state
         .cached_models()
@@ -1867,6 +2185,11 @@ pub async fn send_message(
         provider: setup.selected_provider,
         system_prompt,
         session_id: session_id.clone(),
+        conversation_id: setup
+            .session
+            .parent_session_id
+            .clone()
+            .unwrap_or_else(|| session_id.clone()),
         project_id: setup.project.id.clone(),
         depth: 0,
         project_root: setup.project_root,
@@ -1888,6 +2211,24 @@ pub async fn send_message(
         base_commit: setup.base_commit,
         resume: setup.resume,
         plan_only: mode.plan_only,
+        read_only: mode.read_only,
+        mcp_progressive_disclosure: setup.settings.integrations.mcp_progressive_disclosure,
+        skills,
+        prompt_caching: setup.settings.model.prompt_caching,
+        subagent_model: setup
+            .settings
+            .model
+            .subagent_model
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| model.clone()),
+        compaction_model: setup
+            .settings
+            .model
+            .compaction_model
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| model.clone()),
         cancel,
     };
     let deps = TurnDeps {
@@ -2075,12 +2416,15 @@ async fn assemble_turn_context(
             permissions: state.permissions.clone(),
             file_ignore,
             session_id: session_id.to_string(),
+            conversation_id: session_id.to_string(),
             shadow,
             processes: state.processes.clone(),
             broker: state.broker.clone(),
             questions: state.questions.clone(),
             http: state.http.clone(),
             mcp: None,
+            skills: Vec::new(),
+            justification: None,
             cancel,
             emit: sink.clone(),
         };
@@ -2154,6 +2498,7 @@ async fn assemble_turn_context(
                                 cwd: std::env::current_dir()
                                     .ok()
                                     .map(|path| path.canonicalize().unwrap_or(path)),
+                                project_root: project_root.to_path_buf(),
                                 title: format!("Start MCP server '{}'?", config.name),
                                 detail: format!(
                                     "The assistant wants to start MCP server '{}' configured in {}.",
@@ -2167,6 +2512,10 @@ async fn assemble_turn_context(
                                 segments: Vec::new(),
                                 risk: None,
                                 scope_options: Vec::new(),
+                                folders: Vec::new(),
+                                hosts: Vec::new(),
+                                grant_session_id: session_id.to_string(),
+                                justification: None,
                             },
                             &approval_cancel,
                             session_id,
@@ -2246,6 +2595,8 @@ fn build_system_prompt(
     mode: &config::Mode,
     mcp_manager: &McpManager,
     rules: &[ProjectRule],
+    skills: &[crate::models::SkillEntry],
+    project_root: &Path,
 ) -> String {
     let mut system_prompt = session
         .system_prompt
@@ -2317,6 +2668,8 @@ fn build_system_prompt(
         system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
     }
 
+    system_prompt.push_str(&environment_section(project_root));
+
     if !rules.is_empty() {
         system_prompt.push_str("\n\n# Project rules\n");
         system_prompt.push_str(
@@ -2343,7 +2696,32 @@ fn build_system_prompt(
         }
     }
 
+    if !skills.is_empty() {
+        system_prompt.push_str("\n\n# Skills\n");
+        system_prompt.push_str(
+            "The following skills are available. When one applies to the user's request, call the `skill` tool with its name to load the full instructions before proceeding. Do not load a skill that is not relevant.\n",
+        );
+        for skill in skills {
+            let description = skill.description.trim();
+            if description.is_empty() {
+                system_prompt.push_str(&format!("\n- {}", skill.name));
+            } else {
+                system_prompt.push_str(&format!("\n- {}: {}", skill.name, description));
+            }
+        }
+    }
+
     system_prompt
+}
+
+/// Tells the model where it runs, so it does not probe the filesystem with
+/// guessed paths (`cd /Users/*/project || cd ../project; pwd`) that only
+/// trigger permission prompts.
+fn environment_section(project_root: &Path) -> String {
+    format!(
+        "\n\n# Environment\n- Project root: {}\n- bash commands already run in the project root unless you pass `cwd`; do not `cd` into it or probe for it with `pwd`/`ls`.\n- Relative paths in tools resolve against the project root. Paths outside it require user approval.",
+        project_root.display()
+    )
 }
 
 const HANDOVER_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The current working session is being handed off to a fresh session. Write a self-contained handover briefing that lets the next assistant continue seamlessly. Cover, when relevant:\n- The user's overall goal and any constraints or decisions already made.\n- What has been completed so far, with concrete file paths and key changes.\n- The current state of the work: what works, what is untested, what is still in progress.\n- Important commands, findings, errors or gotchas discovered.\n- Open questions or decisions that still need the user.\n- Clear next steps.\nWrite it as a message from the user to the new assistant and begin by stating the goal. Use concise bullet points. Output only the briefing and do not call any tools.";
@@ -2402,6 +2780,7 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
             None,
             fallback_pricing,
             &[],
+            false,
             cancel,
             &mut |chunk| {
                 if let ChatChunk::Delta(text) = chunk {
@@ -2492,41 +2871,4 @@ fn truncate_title(content: &str) -> String {
         .chars()
         .take(60)
         .collect()
-}
-
-fn language_for(path: &str) -> &'static str {
-    let extension = Path::new(path)
-        .extension()
-        .map(|extension| extension.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    match extension.as_str() {
-        "ts" => "typescript",
-        "tsx" => "typescript",
-        "js" | "mjs" | "cjs" => "javascript",
-        "jsx" => "javascript",
-        "json" | "jsonc" => "json",
-        "rs" => "rust",
-        "py" => "python",
-        "rb" => "ruby",
-        "go" => "go",
-        "java" => "java",
-        "kt" => "kotlin",
-        "swift" => "swift",
-        "c" | "h" => "c",
-        "cpp" | "cc" | "hpp" | "hh" => "cpp",
-        "cs" => "csharp",
-        "php" => "php",
-        "html" | "htm" => "html",
-        "css" => "css",
-        "scss" => "scss",
-        "less" => "less",
-        "md" | "markdown" => "markdown",
-        "toml" => "ini",
-        "yaml" | "yml" => "yaml",
-        "sh" | "bash" | "zsh" => "shell",
-        "sql" => "sql",
-        "xml" => "xml",
-        "dockerfile" => "dockerfile",
-        _ => "plaintext",
-    }
 }

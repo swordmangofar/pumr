@@ -1,4 +1,5 @@
 import { Injectable, computed, signal } from '@angular/core';
+import { isMacPlatform } from './hotkeys';
 import {
   CUSTOM_THEME_ID,
   CustomTheme,
@@ -24,6 +25,8 @@ export class ThemeService {
   readonly highContrast = signal<boolean>(this.readCached(CONTRAST_KEY, 'false') === 'true');
 
   init(): void {
+    // Lets styles.css keep macOS-only font smoothing off the other platforms.
+    document.documentElement.dataset['platform'] = isMacPlatform() ? 'mac' : 'other';
     this.apply(this.activeId());
     this.applyContrast(this.highContrast());
     this.applyGlassOpacity(1);

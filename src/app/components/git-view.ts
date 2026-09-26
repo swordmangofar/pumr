@@ -1,23 +1,46 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { confirm } from '@tauri-apps/plugin-dialog';
-import { GitCommit, GitPullStrategy } from '../core/models';
-import { GIT_GRAPH_RADIUS, GIT_GRAPH_ROW_HEIGHT, buildGitGraph } from '../core/git-graph';
+import { confirmWarning } from '../core/confirm-warning';
+import { FileChange, GitCommit, GitOperation, GitPullStrategy } from '../core/models';
+import {
+  GIT_GRAPH_RADIUS,
+  GIT_GRAPH_ROW_HEIGHT,
+  buildGitGraph,
+  linearGitGraph,
+} from '../core/git-graph';
 import { WorkspaceService } from '../core/workspace.service';
 import { GitService } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
 import { GitFileMenu } from './git-file-menu';
-
 import { TypedInput } from './typed-input';
+
+/** Fixed height of a changed-file row, shared by the list and its spacers. */
+const FILE_ROW_HEIGHT = 30;
+/** Extra rows rendered above and below the viewport to smooth fast scrolling. */
+const FILE_OVERSCAN = 8;
+/** Initial viewport estimate before the first scroll event reports the real size. */
+const FILE_VIEWPORT_FALLBACK = 1600;
+
+interface VirtualRow {
+  change: FileChange;
+  index: number;
+}
+
+interface VirtualWindow {
+  rows: VirtualRow[];
+  top: number;
+  bottom: number;
+}
 
 @Component({
   selector: 'app-git-view',
@@ -41,9 +64,11 @@ import { TypedInput } from './typed-input';
             <circle cx="12" cy="6.5" r="1.6" />
             <path d="M4 5.1v5.8M5.6 6.5h2.9a2 2 0 0 0 2-2v-.4" />
           </svg>
-          <span class="truncate text-[13px] font-semibold text-mist">
-            {{ status()?.branch ?? ('git.detached' | transloco) }}
-          </span>
+          @if (status(); as current) {
+            <span class="truncate text-[13px] font-semibold text-mist">
+              {{ current.branch ?? ('git.detached' | transloco) }}
+            </span>
+          }
           @if (status()?.upstream; as upstream) {
             <span class="shrink-0 text-[11px] text-mist/30">{{ upstream }}</span>
           }
@@ -177,25 +202,31 @@ import { TypedInput } from './typed-input';
           <div
             class="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300"
           >
-            <span>{{ 'git.conflict.banner' | transloco: { operation: op } }}</span>
+            <span>{{
+              'git.conflict.banner'
+                | transloco: { operation: (operationLabels[op] | transloco) }
+            }}</span>
             @if (conflicted().length > 0) {
               <span class="text-amber-300/70">{{
                 'git.conflict.files' | transloco: { count: conflicted().length }
               }}</span>
             }
             <div class="ml-auto flex items-center gap-1">
-              @if (op === 'rebase') {
-                <button
-                  type="button"
-                  class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10"
-                  (click)="continueOperation()"
-                >
-                  {{ 'git.conflict.continue' | transloco }}
-                </button>
-              }
               <button
                 type="button"
-                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10"
+                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10 disabled:opacity-40"
+                [disabled]="busy() || conflicted().length > 0"
+                [attr.title]="
+                  conflicted().length > 0 ? ('git.conflict.resolveFirst' | transloco) : null
+                "
+                (click)="continueOperation()"
+              >
+                {{ 'git.conflict.continue' | transloco }}
+              </button>
+              <button
+                type="button"
+                class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-amber-200 transition-colors hover:bg-white/10 disabled:opacity-40"
+                [disabled]="busy()"
                 (click)="abortOperation()"
               >
                 {{ 'git.conflict.abort' | transloco }}
@@ -490,84 +521,109 @@ import { TypedInput } from './typed-input';
                   <span class="ml-1 text-mist/25">{{ unstaged().length }}</span>
                 </span>
                 @if (unstaged().length > 0) {
-                  <button
-                    type="button"
-                    class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                    (click)="stageAll()"
-                  >
-                    {{ 'git.stageAll' | transloco }}
-                  </button>
-                }
-              </header>
-              <div class="min-h-0 flex-1 overflow-y-auto">
-                @for (change of unstaged(); track change.path) {
-                  <div
-                    class="group flex items-center gap-2 px-3 py-1.5 text-[13px] transition-colors hover:bg-white/5"
-                    [class]="
-                      isSelected(change.path, false) ? 'bg-accent/10 text-white' : 'text-mist/70'
-                    "
-                    (contextmenu)="openFileMenu($event, change.path, false)"
-                  >
+                  <div class="flex items-center gap-1">
+                    @if (markedUnstaged().length > 1) {
+                      <button
+                        type="button"
+                        class="rounded-md bg-accent/15 px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25"
+                        (click)="stageMarked()"
+                      >
+                        {{ 'git.stageSelected' | transloco: { count: markedUnstaged().length } }}
+                      </button>
+                    }
                     <button
                       type="button"
-                      class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                      (click)="select(change.path, false)"
+                      class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                      (click)="stageAll()"
                     >
-                      <app-change-status-icon [status]="change.status" />
-                      <app-file-icon [name]="baseName(change.path)" />
-                      <span class="min-w-0 flex-1 truncate font-mono text-xs">{{
-                        change.path
-                      }}</span>
-                      @if (change.additions > 0) {
-                        <span class="shrink-0 text-[10px] text-emerald-400"
-                          >+{{ change.additions }}</span
-                        >
-                      }
-                      @if (change.deletions > 0) {
-                        <span class="shrink-0 text-[10px] text-rose-400"
-                          >-{{ change.deletions }}</span
-                        >
-                      }
+                      {{ 'git.stageAll' | transloco }}
                     </button>
+                  </div>
+                }
+              </header>
+              <div
+                class="min-h-0 flex-1 overflow-y-auto focus:outline-none"
+                tabindex="0"
+                data-git-list
+                (keydown)="onFileKeydown($event, false)"
+                (scroll)="onListScroll($event, false)"
+              >
+                @if (unstaged().length === 0) {
+                  <p class="px-3 pb-3 text-xs text-mist/30">{{ 'git.noChanges' | transloco }}</p>
+                } @else {
+                  <div [style.height.px]="unstagedWindow().top"></div>
+                  @for (row of unstagedWindow().rows; track row.change.path) {
                     <div
-                      class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                      class="group flex items-center gap-2 px-3 text-[13px] transition-colors hover:bg-white/5"
+                      [style.height.px]="fileRowHeight"
+                      [class]="
+                        isMarked(row.change.path, false) || isSelected(row.change.path, false)
+                          ? 'bg-accent/10 text-white'
+                          : 'text-mist/70'
+                      "
+                      [attr.data-git-file]="fileKey(row.change.path, false)"
+                      (contextmenu)="openFileMenu($event, row.change.path, false)"
                     >
                       <button
                         type="button"
-                        class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                        [title]="'git.stage' | transloco"
-                        (click)="stage(change.path)"
+                        class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        (click)="onFileClick($event, row.change.path, false)"
                       >
-                        {{ 'git.stage' | transloco }}
+                        <app-change-status-icon [status]="row.change.status" />
+                        <app-file-icon [name]="baseName(row.change.path)" />
+                        <span class="min-w-0 flex-1 truncate font-mono text-xs">{{
+                          row.change.path
+                        }}</span>
+                        @if (row.change.additions > 0) {
+                          <span class="shrink-0 text-[10px] text-emerald-400"
+                            >+{{ row.change.additions }}</span
+                          >
+                        }
+                        @if (row.change.deletions > 0) {
+                          <span class="shrink-0 text-[10px] text-rose-400"
+                            >-{{ row.change.deletions }}</span
+                          >
+                        }
                       </button>
-                      <button
-                        type="button"
-                        class="flex h-6 w-6 items-center justify-center rounded-md text-mist/40 transition-colors hover:bg-white/10 hover:text-rose-400"
-                        [title]="'git.discard' | transloco"
-                        (click)="discard(change.path)"
+                      <div
+                        class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
                       >
-                        <svg
-                          viewBox="0 0 16 16"
-                          class="h-3.5 w-3.5"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.4"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
+                        <button
+                          type="button"
+                          class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                          [title]="'git.stage' | transloco"
+                          (click)="stage(row.change.path)"
                         >
-                          <path d="M3 4.5h10" />
-                          <path
-                            d="M6 4.5V3.25A1.25 1.25 0 0 1 7.25 2h1.5A1.25 1.25 0 0 1 10 3.25V4.5"
-                          />
-                          <path
-                            d="M4.5 4.5l.6 8.1a1.25 1.25 0 0 0 1.25 1.15h3.3a1.25 1.25 0 0 0 1.25-1.15l.6-8.1"
-                          />
-                        </svg>
-                      </button>
+                          {{ 'git.stage' | transloco }}
+                        </button>
+                        <button
+                          type="button"
+                          class="flex h-6 w-6 items-center justify-center rounded-md text-mist/40 transition-colors hover:bg-white/10 hover:text-rose-400"
+                          [title]="'git.discard' | transloco"
+                          (click)="discard(row.change.path)"
+                        >
+                          <svg
+                            viewBox="0 0 16 16"
+                            class="h-3.5 w-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.4"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="M3 4.5h10" />
+                            <path
+                              d="M6 4.5V3.25A1.25 1.25 0 0 1 7.25 2h1.5A1.25 1.25 0 0 1 10 3.25V4.5"
+                            />
+                            <path
+                              d="M4.5 4.5l.6 8.1a1.25 1.25 0 0 0 1.25 1.15h3.3a1.25 1.25 0 0 0 1.25-1.15l.6-8.1"
+                            />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                } @empty {
-                  <p class="px-3 pb-3 text-xs text-mist/30">{{ 'git.noChanges' | transloco }}</p>
+                  }
+                  <div [style.height.px]="unstagedWindow().bottom"></div>
                 }
               </div>
             </section>
@@ -579,60 +635,85 @@ import { TypedInput } from './typed-input';
                   <span class="ml-1 text-mist/25">{{ staged().length }}</span>
                 </span>
                 @if (staged().length > 0) {
-                  <button
-                    type="button"
-                    class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                    (click)="unstageAll()"
-                  >
-                    {{ 'git.unstageAll' | transloco }}
-                  </button>
-                }
-              </header>
-              <div class="min-h-0 flex-1 overflow-y-auto">
-                @for (change of staged(); track change.path) {
-                  <div
-                    class="group flex items-center gap-2 px-3 py-1.5 text-[13px] transition-colors hover:bg-white/5"
-                    [class]="
-                      isSelected(change.path, true) ? 'bg-accent/10 text-white' : 'text-mist/70'
-                    "
-                    (contextmenu)="openFileMenu($event, change.path, true)"
-                  >
+                  <div class="flex items-center gap-1">
+                    @if (markedStaged().length > 1) {
+                      <button
+                        type="button"
+                        class="rounded-md bg-accent/15 px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25"
+                        (click)="unstageMarked()"
+                      >
+                        {{ 'git.unstageSelected' | transloco: { count: markedStaged().length } }}
+                      </button>
+                    }
                     <button
                       type="button"
-                      class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                      (click)="select(change.path, true)"
+                      class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                      (click)="unstageAll()"
                     >
-                      <app-change-status-icon [status]="change.status" />
-                      <app-file-icon [name]="baseName(change.path)" />
-                      <span class="min-w-0 flex-1 truncate font-mono text-xs">{{
-                        change.path
-                      }}</span>
-                      @if (change.additions > 0) {
-                        <span class="shrink-0 text-[10px] text-emerald-400"
-                          >+{{ change.additions }}</span
-                        >
-                      }
-                      @if (change.deletions > 0) {
-                        <span class="shrink-0 text-[10px] text-rose-400"
-                          >-{{ change.deletions }}</span
-                        >
-                      }
+                      {{ 'git.unstageAll' | transloco }}
                     </button>
+                  </div>
+                }
+              </header>
+              <div
+                class="min-h-0 flex-1 overflow-y-auto focus:outline-none"
+                tabindex="0"
+                data-git-list
+                (keydown)="onFileKeydown($event, true)"
+                (scroll)="onListScroll($event, true)"
+              >
+                @if (staged().length === 0) {
+                  <p class="px-3 pb-3 text-xs text-mist/30">{{ 'git.noStaged' | transloco }}</p>
+                } @else {
+                  <div [style.height.px]="stagedWindow().top"></div>
+                  @for (row of stagedWindow().rows; track row.change.path) {
                     <div
-                      class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                      class="group flex items-center gap-2 px-3 text-[13px] transition-colors hover:bg-white/5"
+                      [style.height.px]="fileRowHeight"
+                      [class]="
+                        isMarked(row.change.path, true) || isSelected(row.change.path, true)
+                          ? 'bg-accent/10 text-white'
+                          : 'text-mist/70'
+                      "
+                      [attr.data-git-file]="fileKey(row.change.path, true)"
+                      (contextmenu)="openFileMenu($event, row.change.path, true)"
                     >
                       <button
                         type="button"
-                        class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                        [title]="'git.unstage' | transloco"
-                        (click)="unstage(change.path)"
+                        class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        (click)="onFileClick($event, row.change.path, true)"
                       >
-                        {{ 'git.unstage' | transloco }}
+                        <app-change-status-icon [status]="row.change.status" />
+                        <app-file-icon [name]="baseName(row.change.path)" />
+                        <span class="min-w-0 flex-1 truncate font-mono text-xs">{{
+                          row.change.path
+                        }}</span>
+                        @if (row.change.additions > 0) {
+                          <span class="shrink-0 text-[10px] text-emerald-400"
+                            >+{{ row.change.additions }}</span
+                          >
+                        }
+                        @if (row.change.deletions > 0) {
+                          <span class="shrink-0 text-[10px] text-rose-400"
+                            >-{{ row.change.deletions }}</span
+                          >
+                        }
                       </button>
+                      <div
+                        class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                      >
+                        <button
+                          type="button"
+                          class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                          [title]="'git.unstage' | transloco"
+                          (click)="unstage(row.change.path)"
+                        >
+                          {{ 'git.unstage' | transloco }}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                } @empty {
-                  <p class="px-3 pb-3 text-xs text-mist/30">{{ 'git.noStaged' | transloco }}</p>
+                  }
+                  <div [style.height.px]="stagedWindow().bottom"></div>
                 }
               </div>
             </section>
@@ -724,6 +805,7 @@ import { TypedInput } from './typed-input';
     @if (fileMenu(); as menu) {
       <app-git-file-menu
         [path]="menu.path"
+        [paths]="menu.paths"
         [staged]="menu.staged"
         [x]="menu.x"
         [y]="menu.y"
@@ -738,18 +820,26 @@ export class GitView {
   private readonly transloco = inject(TranslocoService);
 
   protected readonly project = this.workspace.activeProject;
-  protected readonly status = this.workspace.activeGitStatus;
-  protected readonly busy = this.workspace.gitBusy;
-  protected readonly message = this.workspace.gitMessage;
-  protected readonly error = this.workspace.gitError;
-  protected readonly diff = this.workspace.gitDiff;
-  protected readonly view = this.workspace.gitView;
-  protected readonly selectedBranch = this.workspace.selectedGitBranch;
-  protected readonly commits = this.workspace.gitCommits;
-  protected readonly commitsLoading = this.workspace.gitCommitsLoading;
-  protected readonly selectedCommit = this.workspace.selectedGitCommit;
-  protected readonly commitDetail = this.workspace.gitCommitDetail;
-  protected readonly commitFileDiff = this.workspace.gitCommitFileDiff;
+  private readonly gitState = this.git.scope(() => this.project()?.id ?? null);
+  protected readonly status = this.gitState.status;
+  protected readonly busy = this.gitState.busy;
+  protected readonly message = this.gitState.message;
+  protected readonly error = this.gitState.error;
+  protected readonly diff = this.gitState.diff;
+  protected readonly view = this.gitState.view;
+  protected readonly selectedBranch = this.gitState.selectedBranch;
+  protected readonly commits = this.gitState.commits;
+  protected readonly commitsLoading = this.gitState.commitsLoading;
+  protected readonly selectedCommit = this.gitState.selectedCommit;
+  protected readonly commitDetail = this.gitState.commitDetail;
+  protected readonly commitFileDiff = this.gitState.commitFileDiff;
+  protected readonly commitPath = this.gitState.commitPath;
+  protected readonly operationLabels: Record<GitOperation, string> = {
+    merge: 'git.operation.merge',
+    rebase: 'git.operation.rebase',
+    'cherry-pick': 'git.operation.cherryPick',
+    revert: 'git.operation.revert',
+  };
 
   protected readonly subject = signal('');
   protected readonly description = signal('');
@@ -757,24 +847,39 @@ export class GitView {
   protected readonly detailTab = signal<'commit' | 'changes'>('commit');
   protected readonly selectedCommitFile = signal<string | null>(null);
   protected readonly searchTerm = signal('');
+  protected readonly markedKeys = signal<ReadonlySet<string>>(new Set());
+  protected readonly anchorKey = signal<string | null>(null);
+  protected readonly cursorKey = signal<string | null>(null);
+  protected readonly unstagedScrollTop = signal(0);
+  protected readonly stagedScrollTop = signal(0);
+  protected readonly unstagedViewport = signal(FILE_VIEWPORT_FALLBACK);
+  protected readonly stagedViewport = signal(FILE_VIEWPORT_FALLBACK);
+  protected readonly fileRowHeight = FILE_ROW_HEIGHT;
   protected readonly fileMenu = signal<{
     path: string;
+    paths: string[];
     staged: boolean;
     x: number;
     y: number;
   } | null>(null);
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private dateFormat: { lang: string; format: Intl.DateTimeFormat } | null = null;
 
   constructor() {
     effect(() => {
       const project = this.project();
       if (project) {
         void this.git.loadStatus(project.id);
+        void this.git.loadRefs(project.id);
       }
     });
     effect(() => {
-      const project = this.project();
-      this.searchTerm.set(project ? this.git.commitSearchFor(project.id) : '');
+      this.searchTerm.set(this.gitState.commitSearch());
+    });
+    inject(DestroyRef).onDestroy(() => {
+      if (this.searchTimer) {
+        clearTimeout(this.searchTimer);
+      }
     });
     effect(() => {
       const diff = this.commitFileDiff();
@@ -789,21 +894,47 @@ export class GitView {
         document.querySelector(`[data-git-commit="${hash}"]`)?.scrollIntoView({ block: 'nearest' });
       }, 0);
     });
+    effect(() => {
+      const current = this.markedKeys();
+      if (current.size === 0) {
+        return;
+      }
+      const status = this.status();
+      const valid = new Set<string>();
+      for (const change of status?.unstaged ?? []) {
+        valid.add(this.fileKey(change.path, false));
+      }
+      for (const change of status?.staged ?? []) {
+        valid.add(this.fileKey(change.path, true));
+      }
+      if ([...current].some((key) => !valid.has(key))) {
+        this.markedKeys.set(new Set([...current].filter((key) => valid.has(key))));
+      }
+    });
   }
 
   protected readonly unstaged = computed(() => this.status()?.unstaged ?? []);
   protected readonly staged = computed(() => this.status()?.staged ?? []);
-  protected readonly commitPath = computed(() => {
-    const project = this.project();
-    return project ? this.git.commitPathFor(project.id) : null;
-  });
+  protected readonly unstagedWindow = computed(() =>
+    this.buildWindow(this.unstaged(), this.unstagedScrollTop(), this.unstagedViewport()),
+  );
+  protected readonly stagedWindow = computed(() =>
+    this.buildWindow(this.staged(), this.stagedScrollTop(), this.stagedViewport()),
+  );
+  protected readonly markedUnstaged = computed(() =>
+    this.unstaged().filter((change) => this.isMarked(change.path, false)),
+  );
+  protected readonly markedStaged = computed(() =>
+    this.staged().filter((change) => this.isMarked(change.path, true)),
+  );
   protected readonly ahead = computed(() => this.status()?.ahead ?? 0);
   protected readonly behind = computed(() => this.status()?.behind ?? 0);
-  private readonly branches = this.workspace.activeGitBranches;
   protected readonly branchTips = computed(() => {
     const seen = new Set<string>();
     const tips: string[] = [];
-    const sorted = [...this.branches()].sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+    const sorted = [...this.gitState.refs().branches].sort(
+      (a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0),
+    );
     for (const branch of sorted) {
       if (branch.hash && !seen.has(branch.hash)) {
         seen.add(branch.hash);
@@ -812,14 +943,22 @@ export class GitView {
     }
     return tips;
   });
-  protected readonly graph = computed(() => buildGitGraph(this.commits(), this.branchTips()));
+  /** Search results and file history are not connected histories; draw them flat. */
+  protected readonly graph = computed(() =>
+    this.gitState.commitSearch().trim() || this.commitPath()
+      ? linearGitGraph(this.commits())
+      : buildGitGraph(this.commits(), this.branchTips()),
+  );
   protected readonly rowHeight = GIT_GRAPH_ROW_HEIGHT;
   protected readonly radius = GIT_GRAPH_RADIUS;
+  protected readonly operation = computed(() => this.status()?.operation ?? null);
+  /** A merge can be concluded with nothing new staged; everything else needs staged changes. */
   protected readonly canCommit = computed(
     () =>
-      (this.staged().length > 0 || this.amend()) && this.subject().trim().length > 0,
+      !this.busy() &&
+      (this.staged().length > 0 || this.amend() || this.operation() === 'merge') &&
+      this.subject().trim().length > 0,
   );
-  protected readonly operation = computed(() => this.status()?.operation ?? null);
   protected readonly conflicted = computed(() => this.status()?.conflicted ?? []);
   protected readonly pullStrategy = this.workspace.gitPullStrategy;
 
@@ -837,6 +976,219 @@ export class GitView {
     return !!diff && diff.path === path && diff.staged === staged;
   }
 
+  protected fileKey(path: string, staged: boolean): string {
+    return `${staged ? 's' : 'u'}:${path}`;
+  }
+
+  protected isMarked(path: string, staged: boolean): boolean {
+    return this.markedKeys().has(this.fileKey(path, staged));
+  }
+
+  protected onFileClick(event: MouseEvent, path: string, staged: boolean): void {
+    const key = this.fileKey(path, staged);
+    const anchor = this.anchorKey();
+    if (event.shiftKey && anchor && anchor.charAt(0) === key.charAt(0)) {
+      this.markRange(anchor, key, staged);
+      this.cursorKey.set(key);
+    } else if (event.metaKey || event.ctrlKey) {
+      const next = new Set(this.markedKeys());
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      this.markedKeys.set(next);
+      this.anchorKey.set(key);
+      this.cursorKey.set(key);
+    } else {
+      this.setSingleSelection(key);
+    }
+    this.focusList(event);
+    this.select(path, staged);
+  }
+
+  protected onFileKeydown(event: KeyboardEvent, staged: boolean): void {
+    const list = staged ? this.staged() : this.unstaged();
+    if (list.length === 0) {
+      return;
+    }
+    // Enter and Space on a focused row button activate that button, not the
+    // list shortcut for the marked files.
+    const onButton =
+      event.target !== event.currentTarget && event.target instanceof HTMLButtonElement;
+    if (onButton && (event.key === 'Enter' || event.key === ' ')) {
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      this.markAll(staged);
+      return;
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (staged) {
+        return;
+      }
+      event.preventDefault();
+      void this.discardMarked();
+      return;
+    }
+    const cursor = this.cursorKey();
+    const index = list.findIndex((change) => this.fileKey(change.path, staged) === cursor);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex =
+        index < 0
+          ? delta > 0
+            ? 0
+            : list.length - 1
+          : Math.min(list.length - 1, Math.max(0, index + delta));
+      const nextKey = this.fileKey(list[nextIndex].path, staged);
+      if (event.shiftKey) {
+        let anchor = this.anchorKey();
+        if (!anchor || anchor.charAt(0) !== nextKey.charAt(0)) {
+          anchor = cursor ?? nextKey;
+          this.anchorKey.set(anchor);
+        }
+        this.markRange(anchor, nextKey, staged);
+        this.cursorKey.set(nextKey);
+      } else {
+        this.setSingleSelection(nextKey);
+      }
+      this.select(list[nextIndex].path, staged);
+      this.scrollFileIntoView(nextKey, event.currentTarget as HTMLElement, list, staged);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (staged) {
+        this.unstageMarked();
+      } else {
+        this.stageMarked();
+      }
+    }
+  }
+
+  private setSingleSelection(key: string): void {
+    this.markedKeys.set(new Set([key]));
+    this.anchorKey.set(key);
+    this.cursorKey.set(key);
+  }
+
+  private markAll(staged: boolean): void {
+    const list = staged ? this.staged() : this.unstaged();
+    const next = new Set<string>();
+    for (const change of list) {
+      next.add(this.fileKey(change.path, staged));
+    }
+    this.markedKeys.set(next);
+    this.anchorKey.set(list.length > 0 ? this.fileKey(list[0].path, staged) : null);
+    this.cursorKey.set(
+      list.length > 0 ? this.fileKey(list[list.length - 1].path, staged) : null,
+    );
+  }
+
+  protected async discardMarked(): Promise<void> {
+    const projectId = this.project()?.id;
+    const paths = this.markedUnstaged().map((change) => change.path);
+    if (!projectId || paths.length === 0) {
+      return;
+    }
+    const confirmed = await confirmWarning(
+      paths.length > 1
+        ? this.transloco.translate('git.discardSelectedConfirm', { count: paths.length })
+        : this.transloco.translate('git.discardConfirm', { path: paths[0] }),
+    );
+    if (!confirmed) {
+      return;
+    }
+    await this.git.discardPaths(projectId, paths);
+    this.clearMarked();
+  }
+
+  private focusList(event: Event): void {
+    const target = event.currentTarget as HTMLElement | null;
+    target?.closest<HTMLElement>('[data-git-list]')?.focus({ preventScroll: true });
+  }
+
+  private markRange(fromKey: string, toKey: string, staged: boolean): void {
+    const list = staged ? this.staged() : this.unstaged();
+    const from = list.findIndex((change) => this.fileKey(change.path, staged) === fromKey);
+    const to = list.findIndex((change) => this.fileKey(change.path, staged) === toKey);
+    if (from < 0 || to < 0) {
+      this.markedKeys.set(new Set([toKey]));
+      return;
+    }
+    const start = Math.min(from, to);
+    const end = Math.max(from, to);
+    const next = new Set<string>();
+    for (let i = start; i <= end; i += 1) {
+      next.add(this.fileKey(list[i].path, staged));
+    }
+    this.markedKeys.set(next);
+  }
+
+  private buildWindow(list: FileChange[], scrollTop: number, viewport: number): VirtualWindow {
+    const total = list.length;
+    const start = Math.max(0, Math.floor(scrollTop / FILE_ROW_HEIGHT) - FILE_OVERSCAN);
+    const count = Math.ceil(viewport / FILE_ROW_HEIGHT) + FILE_OVERSCAN * 2;
+    const end = Math.min(total, start + count);
+    const rows: VirtualRow[] = [];
+    for (let i = start; i < end; i += 1) {
+      rows.push({ change: list[i], index: i });
+    }
+    return {
+      rows,
+      top: start * FILE_ROW_HEIGHT,
+      bottom: Math.max(0, (total - end) * FILE_ROW_HEIGHT),
+    };
+  }
+
+  protected onListScroll(event: Event, staged: boolean): void {
+    const element = event.target as HTMLElement;
+    if (staged) {
+      this.stagedScrollTop.set(element.scrollTop);
+      this.stagedViewport.set(element.clientHeight);
+    } else {
+      this.unstagedScrollTop.set(element.scrollTop);
+      this.unstagedViewport.set(element.clientHeight);
+    }
+  }
+
+  private scrollFileIntoView(
+    key: string,
+    container: HTMLElement,
+    list: FileChange[],
+    staged: boolean,
+  ): void {
+    const index = list.findIndex((change) => this.fileKey(change.path, staged) === key);
+    if (index < 0 || !container) {
+      return;
+    }
+    const rowTop = index * FILE_ROW_HEIGHT;
+    const rowBottom = rowTop + FILE_ROW_HEIGHT;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+    if (rowTop < viewTop) {
+      container.scrollTop = rowTop;
+    } else if (rowBottom > viewBottom) {
+      container.scrollTop = rowBottom - container.clientHeight;
+    }
+    if (staged) {
+      this.stagedScrollTop.set(container.scrollTop);
+      this.stagedViewport.set(container.clientHeight);
+    } else {
+      this.unstagedScrollTop.set(container.scrollTop);
+      this.unstagedViewport.set(container.clientHeight);
+    }
+  }
+
+  private clearMarked(): void {
+    this.markedKeys.set(new Set());
+    this.anchorKey.set(null);
+    this.cursorKey.set(null);
+  }
+
   protected select(path: string, staged: boolean): void {
     const projectId = this.project()?.id;
     if (projectId) {
@@ -846,7 +1198,14 @@ export class GitView {
 
   protected openFileMenu(event: MouseEvent, path: string, staged: boolean): void {
     event.preventDefault();
-    this.fileMenu.set({ path, staged, x: event.clientX, y: event.clientY });
+    if (!this.isMarked(path, staged)) {
+      this.setSingleSelection(this.fileKey(path, staged));
+    }
+    const marked = (staged ? this.markedStaged() : this.markedUnstaged()).map(
+      (change) => change.path,
+    );
+    const paths = marked.length > 1 ? marked : [path];
+    this.fileMenu.set({ path, paths, staged, x: event.clientX, y: event.clientY });
   }
 
   protected closeFileMenu(): void {
@@ -922,6 +1281,10 @@ export class GitView {
   }
 
   protected stage(path: string): void {
+    if (this.isMarked(path, false) && this.markedUnstaged().length > 1) {
+      this.stageMarked();
+      return;
+    }
     const projectId = this.project()?.id;
     if (projectId) {
       void this.git.stagePath(projectId, path);
@@ -929,10 +1292,42 @@ export class GitView {
   }
 
   protected unstage(path: string): void {
+    if (this.isMarked(path, true) && this.markedStaged().length > 1) {
+      this.unstageMarked();
+      return;
+    }
     const projectId = this.project()?.id;
     if (projectId) {
       void this.git.unstagePath(projectId, path);
     }
+  }
+
+  protected stageMarked(): void {
+    const projectId = this.project()?.id;
+    const paths = this.markedUnstaged().map((change) => change.path);
+    if (!projectId || paths.length === 0) {
+      return;
+    }
+    if (paths.length === this.unstaged().length) {
+      void this.git.stagePath(projectId, null);
+    } else {
+      void this.git.stagePaths(projectId, paths);
+    }
+    this.clearMarked();
+  }
+
+  protected unstageMarked(): void {
+    const projectId = this.project()?.id;
+    const paths = this.markedStaged().map((change) => change.path);
+    if (!projectId || paths.length === 0) {
+      return;
+    }
+    if (paths.length === this.staged().length) {
+      void this.git.unstagePath(projectId, null);
+    } else {
+      void this.git.unstagePaths(projectId, paths);
+    }
+    this.clearMarked();
   }
 
   protected async discard(path: string): Promise<void> {
@@ -940,20 +1335,8 @@ export class GitView {
     if (!projectId) {
       return;
     }
-    const confirmed = await confirm(
-      this.transloco.translate('git.discardConfirm', { path }),
-      {
-        title: 'pumr',
-        kind: 'warning',
-      },
-    );
-    if (!confirmed) {
-      return;
-    }
-    try {
-      await this.git.discardPath(projectId, path);
-    } catch (error) {
-      console.error(error);
+    if (await confirmWarning(this.transloco.translate('git.discardConfirm', { path }))) {
+      await this.git.discardPaths(projectId, [path]);
     }
   }
 
@@ -989,7 +1372,8 @@ export class GitView {
       return;
     }
     const head = await this.git.headMessage(projectId);
-    if (head) {
+    // The user may have unticked amend or started typing meanwhile.
+    if (head && this.amend() && this.subject().trim().length === 0) {
       this.subject.set(head.subject);
       this.description.set(head.body);
     }
@@ -1014,11 +1398,12 @@ export class GitView {
 
   protected async continueOperation(): Promise<void> {
     const projectId = this.project()?.id;
-    if (!projectId) {
+    const operation = this.operation();
+    if (!projectId || !operation) {
       return;
     }
     try {
-      await this.git.continueOperation(projectId);
+      await this.git.continueOperation(projectId, operation);
     } catch (error) {
       console.error(error);
     }
@@ -1048,10 +1433,15 @@ export class GitView {
     }
   }
 
+  /** Formats a timestamp; the formatter is built once per language, not per row. */
   protected absoluteTime(timestamp: number): string {
-    return new Intl.DateTimeFormat(this.transloco.getActiveLang(), {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(timestamp));
+    const lang = this.transloco.getActiveLang();
+    if (this.dateFormat?.lang !== lang) {
+      this.dateFormat = {
+        lang,
+        format: new Intl.DateTimeFormat(lang, { dateStyle: 'medium', timeStyle: 'short' }),
+      };
+    }
+    return this.dateFormat.format.format(new Date(timestamp));
   }
 }

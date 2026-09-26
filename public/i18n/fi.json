@@ -71,8 +71,12 @@
     "unstage": "Poista valmistelusta",
     "stageAll": "Valmistele kaikki",
     "unstageAll": "Poista kaikki valmistelusta",
+    "stageSelected": "Valmistele {{ count }} valittua",
+    "unstageSelected": "Poista valmistelusta {{ count }} valittua",
     "discard": "Hylkää",
     "discardConfirm": "Hylätäänkö muutokset kohteessa \"{{ path }}\"? Tätä ei voi peruuttaa.",
+    "discardSelected": "Hylkää {{ count }} tiedostoa",
+    "discardSelectedConfirm": "Hylätäänkö muutokset {{ count }} tiedostoon? Tätä ei voi perua.",
     "blame": "Blame",
     "blameEmpty": "Blame-tietoja ei ole saatavilla.",
     "ignore": "Lisää .gitignore-tiedostoon",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} käynnissä",
       "files": "{{ count }} ristiriitaista tiedostoa",
       "continue": "Jatka",
-      "abort": "Keskeytä"
+      "abort": "Keskeytä",
+      "resolveFirst": "Ratkaise ensin kaikki ristiriidat ja lisää tiedostot stageen."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Todennus epäonnistui. Tarkista Git-tunnuksesi.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Vaihda uuteen haaraan",
       "confirm": "Vahvista",
       "mergeConfirm": "Yhdistetäänkö '{{branch}}' haaraan '{{current}}'?",
+      "rebaseConfirm": "Tehdäänkö rebase haarasta '{{current}}' kohteen '{{branch}}' päälle? Tämä kirjoittaa haaran '{{current}}' commitit uudelleen.",
       "deleteConfirm": "Poistetaanko haara '{{branch}}'? Tätä ei voi perua.",
       "deleteRemoteConfirm": "Poistetaanko etähaara '{{branch}}'? Tämä vaikuttaa etävarastoon.",
+      "forceDeleteConfirm": "Haaraa '{{branch}}' ei ole yhdistetty kokonaan. Poistetaanko se silti? Sen yhdistämättömät commitit menetetään.",
       "rebaseHint": "Järjestä commitit uudelleen ja valitse toiminto kullekin. Rebase etenee vanhimmasta uusimpaan.",
-      "nothingToRebase": "Ei commiteja rebasea varten."
+      "nothingToRebase": "Ei commiteja rebasea varten.",
+      "rebaseActions": {
+        "pick": "Säilytä (pick)",
+        "squash": "Yhdistä (squash)",
+        "fixup": "Sulauta (fixup)",
+        "drop": "Pudota (drop)"
+      },
+      "rebaseSquashFirst": "Ensimmäistä committia ei voi yhdistää (squash tai fixup): aiempaa committia, johon sen voisi yhdistää, ei ole.",
+      "moveUp": "Siirrä ylös",
+      "moveDown": "Siirrä alas"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Yksikään vaihe ei vastaa nykyisiä suodattimia.",
     "view": {
       "timeline": "Aikajana",
-      "branches": "Haarat"
+      "branches": "Haarat",
+      "permissions": "Luvat"
     },
     "filters": {
       "type": "Tyyppi",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Istunnon ohitus",
       "default": "Oletusasetukset"
+    },
+    "permissions": {
+      "empty": "Tälle keskustelulle ei ole vielä tallennettu lupapäätöksiä.",
+      "clear": "Tyhjennä loki",
+      "clearConfirm": "Tyhjennä napsauttamalla uudelleen",
+      "allowed": "Sallittu",
+      "denied": "Estetty",
+      "why": "Syy:",
+      "rule": "Sääntö:",
+      "filters": {
+        "auto": "Sallittu kysymättä",
+        "asked": "Kysytty",
+        "denied": "Estetty"
+      },
+      "by": {
+        "auto": "Automaattinen",
+        "rule": "Estosääntö",
+        "user": "Sinä",
+        "grant": "Uuden luvan kattama",
+        "cascade": "Estetty toisen pyynnön mukana",
+        "stopped": "Pysäytetty",
+        "timeout": "Aikakatkaisu",
+        "cancelled": "Peruttu"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Lisää ohjeita keskittyneiden, determinististen testien kirjoittamisesta ja niiden suorittamisesta ennen lopettamista.",
     "architecturePrompt": "Ohjelmistoarkkitehtuuri",
     "architecturePromptHint": "Lisää ohjeita moduulirajoista, vastuista ja ylläpidettävästä suunnittelusta.",
-    "budget": "Budjetti (USD)",
-    "budgetHint": "0 poistaa budjetin näytön käytöstä.",
     "language": "Kieli",
     "replyLanguage": "Vastauskieli",
     "replyLanguageDefault": "Oletus (mallin kieli)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Kuinka monta peräkkäistä työkalukutsua agentti voi tehdä ennen kuin se pysähtyy ja pyytää sinua jatkamaan. Raja on varoventtiili: se estää silmukkaan juuttunutta mallia käymästä ikuisesti ja polttamasta rahakkeita. 35 on hyvä oletusarvo; nosta se pitkiä, monivaiheisia tehtäviä varten.",
     "autoContinueAllSessions": "Jatka automaattisesti kaikkia istuntoja",
     "autoContinueAllSessionsHint": "Kun istunto saavuttaa työkalukutsujen rajan, jatka automaattisesti keskeyttämisen sijaan. Tämä poistaa silmukan suojaverkon, joten juuttunut aine voi toimia, kunnes pysäytät sen. Voit myös vaihtaa tämän chatissa, kun raja saavutetaan.",
+    "subagentModel": "Aliagentin malli",
+    "subagentModelHint": "Alagenteille käytettävä malli. Jätä tyhjäksi käyttääksesi istunnon mallia.",
+    "compactionModel": "Tiivistysmalli",
+    "compactionModelHint": "Pitkien keskustelujen tiivistämiseen käytettävä malli. Jätä tyhjäksi käyttääksesi istunnon mallia.",
+    "promptCaching": "Kehotteiden välimuisti",
+    "promptCachingHint": "Merkitse vakaa kehoteprefiksi välimuistiin tallennettavaksi, jotta välimuistia tukevat tarjoajat veloittavat välimuistiin tallennetut syöttötokenit halvemmalla.",
+    "mcpProgressiveDisclosure": "MCP-työkalujen asteittainen paljastaminen",
+    "mcpProgressiveDisclosureHint": "Kun monta MCP-työkalua on yhdistetty, näytä tool_search/mcp_invoke-pari jokaisen skeeman upottamisen sijaan kontekstin säästämiseksi. Pienet työkalusarjat upotetaan aina.",
     "fileAccessRules": "Tiedostojen käyttösäännöt",
     "fileAccessRulesHint": "Hallitse, mitä tiedostoja avustaja voi löytää ja lukea. Käyttäjien poikkeukset voittaa aina jokaisen alla olevan säännön.",
     "ignoreGitignored": "Ohita .gitignore-tiedostossa luetellut tiedostot",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Ei estettyjä komentoja.",
     "scope": {
       "program": "Ohjelma",
+      "subcommand": "Ohjelma + alikomento",
       "programFlags": "Ohjelma + valitsimet",
       "exact": "Tarkka"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Ei vielä komentosääntöjä. Luo sellainen käyttämällä \"salli aina\" -vaihtoehtoa lupakyselyssä.",
     "websiteRules": "Verkkosivustot",
-    "websiteRulesHint": "Verkkosivustot, joilla avustaja voi vierailla. Estosäännöt voittavat sallintasäännöt; pelkkä verkkotunnus kattaa myös sen aliverkkotunnukset. Luo sellainen käyttämällä \"salli aina\" tai \"estä aina\" -vaihtoehtoa lupakyselyssä.",
+    "websiteRulesHint": "Verkkosivustot, joilla avustaja voi vierailla verkkotyökaluillaan tai komennoilla kuten curl, git ja ssh. Estosäännöt voittavat sallintasäännöt; pelkkä verkkotunnus kattaa myös sen aliverkkotunnukset. Luo sellainen käyttämällä \"salli aina\" tai \"estä aina\" -vaihtoehtoa lupakyselyssä.",
     "permissionPrompts": "Käyttölupakyselyt",
     "permissionPromptsHint": "Valitse, mitä pääasiallinen salli-painike tekee oletusarvoisesti. Salli kerran hyväksyy yhden pyynnön; salli tälle istunnolle muistaa kansiokäytön sovelluksen uudelleenkäynnistykseen asti.",
+    "autoApprove": "Automaattinen hyväksyntä",
+    "autoApproveHint": "Ohittaa kysymykset työstä, jonka avustaja voi todistaa turvalliseksi. Vaaralliset komennot, upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, projektin ulkopuoliset polut ja arkaluontoiset tiedostot kysyvät aina.",
+    "autoApproveReadOnly": "Vain luku -komennot",
+    "autoApproveReadOnlyHint": "Sallii tarkistuskomennot kuten ls, grep ja git status ilman kysymistä.",
+    "autoApprovePackageScripts": "Paketinhallinta- ja build-työkalut",
+    "autoApprovePackageScriptsHint": "Sallii pnpm, npm, yarn, bun, ng, make ja vastaavat työkalut, kun mikään ei osoita projektin ulkopuolelle.",
+    "autoApproveProjectExecutables": "Projektin suoritettavat",
+    "autoApproveProjectExecutablesHint": "Sallii projektin sisällä olevat suoritettavat, kuten ./node_modules/.bin/ng, ilman kysymistä joka kerta.",
+    "autoApproveProjectCommands": "Kaikki komennot projektin sisällä",
+    "autoApproveProjectCommandsHint": "Sallii minkä tahansa vaarattoman komennon, jonka polut pysyvät projektin sisällä. Vaaralliset komennot, upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, arkaluontoiset tiedostot ja kaikki ulkopuolinen kysyvät edelleen.",
+    "permissionPreset": {
+      "strict": "Tiukka",
+      "strictHint": "Vain pelkästään lukevat komennot suoritetaan kysymättä.",
+      "balanced": "Tasapainoinen",
+      "balancedHint": "Vain lukevat komennot, paketinhallinnat, käännöstyökalut ja projektin suoritettavat tiedostot suoritetaan kysymättä.",
+      "autonomous": "Autonominen",
+      "autonomousHint": "Jokainen vaaraton komento projektin sisällä suoritetaan kysymättä.",
+      "custom": "Mukautettu",
+      "autonomousWarning": "Autonominen tila luottaa tähän projektiin: sen skriptit, Makefilet ja suoritettavat tiedostot voivat tehdä mitä tahansa kysymättä. Upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, vaaralliset komennot ja kaikki projektin ulkopuolinen kysyvät edelleen.",
+      "confirm": "Käytä autonomista tilaa"
+    },
     "noAllowedWebsites": "Ei vielä aina sallittuja verkkosivustoja.",
     "noDeniedWebsites": "Ei vielä aina estettyjä verkkosivustoja.",
     "websitePlaceholder": "esim. docs.rs tai *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Kansio"
     },
     "allowAlways": "Salli aina",
-    "addFolder": "Lisää kansio pysyvästi",
     "siteRuleLabel": "Verkkosivustosääntö (verkkotunnus tai glob)",
     "siteRuleHint": "Esimerkiksi: docs.rs sallii kyseisen sivuston, *.github.com sallii kaikki sen aliverkkotunnukset.",
-    "segment": {
-      "allowed": "Sallittu",
-      "needsApproval": "Vaatii hyväksynnän"
-    },
+    "siteRuleInvalid": "Tämä sääntö ei kata osoitetta {{ host }} tai on liian laaja, joten sen sijaan tallennetaan {{ host }}.",
     "risk": {
       "low": "Matala",
       "medium": "Keskitaso",
+      "network": "Verkko",
       "high": "Korkea",
       "danger": "Vaara"
     },
@@ -994,7 +1066,39 @@
       "title": "Säännön laajuus",
       "hint": "Valitse, kuinka laajasti sääntöä sovelletaan."
     },
-    "allowChat": "Salli tässä keskustelussa"
+    "folderScope": {
+      "title": "Salli kansio",
+      "hint": "Lisää kansion ja kaiken sen sisällön aina sallittuihin kansioihin.",
+      "option": "Kansio + alikansiot"
+    },
+    "hostScope": {
+      "title": "Salli verkkosivusto",
+      "hint": "Lisää verkkosivuston ja sen aliverkkotunnukset sallittuihin verkkosivustoihin.",
+      "option": "Verkkosivusto + aliverkkotunnukset"
+    },
+    "allowChat": "Salli tässä keskustelussa",
+    "option": {
+      "yes": "Kyllä",
+      "chat": "Kyllä, äläkä kysy enää tässä keskustelussa:",
+      "session": "Kyllä, äläkä kysy enää ennen uudelleenkäynnistystä:",
+      "always": "Kyllä, ja salli aina:",
+      "no": "Ei",
+      "denyAlways": "Ei, ja estä aina:"
+    },
+    "customize": "Mukauta",
+    "justification": "Miksi",
+    "keyboardHint": "Paina 1–{{ count }} tai käytä ↑ ↓ ja Enter · Esc hylkää",
+    "url": {
+      "queryWarning": "Tämä osoite sisältää paljon tietoa kyselymerkkijonossaan. Varmista ennen sallimista, ettei se sisällä mitään yksityistä."
+    },
+    "tooltip": {
+      "deny": "Estä tämä pyyntö ja kaikki muut tässä keskustelussa odottavat pyynnöt.",
+      "denyAlways": "Estä ja tallenna estosääntö asetuksiin. Myös muut tässä keskustelussa odottavat pyynnöt estetään.",
+      "allowOnce": "Salli vain tämä pyyntö.",
+      "allowSession": "Muistetaan kaikissa keskusteluissa, kunnes sovellus käynnistetään uudelleen.",
+      "allowChat": "Komentosäännöt muistetaan tässä keskustelussa ja sen aliagenteissa; kansiot ja verkkosivustot sovelluksen uudelleenkäynnistykseen asti.",
+      "allowAlways": "Tallennetaan asetuksiin ja koskee kaikkia keskusteluja."
+    }
   },
   "question": {
     "title": "Kysymys",
@@ -1044,6 +1148,8 @@
     "installing": "Asennetaan…",
     "uninstall": "Poista asennus",
     "addFolder": "Lisää kansio",
-    "noFolders": "Kansioita ei ole vielä lisätty."
+    "noFolders": "Kansioita ei ole vielä lisätty.",
+    "binaryFile": "Binääritiedosto – esikatselu ei ole saatavilla.",
+    "fileTooLarge": "Tämä tiedosto on liian suuri esikatseltavaksi."
   }
 }

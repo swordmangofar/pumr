@@ -5,7 +5,7 @@
   "identifier": "dev.pumr.app",
   "build": {
     "frontendDist": "../dist/pumr/browser",
-    "devUrl": "http://localhost:4200",
+    "devUrl": "http://localhost:2500",
     "beforeDevCommand": "pnpm start",
     "beforeBuildCommand": "pnpm build"
   },

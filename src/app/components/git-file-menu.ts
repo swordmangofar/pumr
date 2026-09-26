@@ -8,7 +8,8 @@ import {
   signal,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { confirmWarning } from '../core/confirm-warning';
+import { contextMenuStyle } from '../core/menu-position';
 import { GitBlameLine } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
 import { WorkspaceEditorService } from '../core/workspace-editor.service';
@@ -17,7 +18,6 @@ import { GitService } from '../core/git.service';
 /** Rendered menu footprint, used to keep it inside the viewport. */
 const MENU_WIDTH_PX = 240;
 const MENU_HEIGHT_PX = 320;
-const VIEWPORT_MARGIN_PX = 8;
 
 type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignore' | 'open' | 'reveal';
 
@@ -38,14 +38,14 @@ type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignor
       >
         @if (staged()) {
           <button type="button" class="menu-item" (click)="run('unstage')">
-            {{ 'git.unstage' | transloco }}
+            {{ unstageLabel() | transloco: { count: count() } }}
           </button>
         } @else {
           <button type="button" class="menu-item" (click)="run('stage')">
-            {{ 'git.stage' | transloco }}
+            {{ stageLabel() | transloco: { count: count() } }}
           </button>
           <button type="button" class="menu-item text-rose-400" (click)="run('discard')">
-            {{ 'git.discard' | transloco }}
+            {{ discardLabel() | transloco: { count: count() } }}
           </button>
         }
 
@@ -99,7 +99,9 @@ type FileAction = 'stage' | 'unstage' | 'discard' | 'blame' | 'history' | 'ignor
               <table class="w-full border-collapse font-mono text-[11px]">
                 <tbody>
                   @for (line of blameLines(); track $index) {
-                    <tr class="hover:bg-white/5">
+                    <tr
+                      class="hover:bg-white/5 [contain-intrinsic-size:auto_20px] [content-visibility:auto]"
+                    >
                       <td class="w-16 shrink-0 border-r border-white/5 px-2 py-0.5 text-right text-mist/25">
                         {{ line.line }}
                       </td>
@@ -151,6 +153,7 @@ export class GitFileMenu {
   private readonly transloco = inject(TranslocoService);
 
   readonly path = input.required<string>();
+  readonly paths = input<string[]>([]);
   readonly staged = input.required<boolean>();
   readonly x = input.required<number>();
   readonly y = input.required<number>();
@@ -162,21 +165,23 @@ export class GitFileMenu {
   protected readonly blameError = signal<string | null>(null);
   protected readonly blameLines = signal<GitBlameLine[]>([]);
 
-  protected readonly menuStyle = computed(() => {
-    if (typeof window === 'undefined') {
-      return { left: `${this.x()}px`, top: `${this.y()}px` };
-    }
-    const left = Math.max(
-      VIEWPORT_MARGIN_PX,
-      Math.min(this.x(), window.innerWidth - MENU_WIDTH_PX - VIEWPORT_MARGIN_PX),
-    );
-    const flipY = this.y() > window.innerHeight - MENU_HEIGHT_PX;
-    return {
-      left: `${left}px`,
-      top: flipY ? 'auto' : `${this.y()}px`,
-      bottom: flipY ? `${Math.max(VIEWPORT_MARGIN_PX, window.innerHeight - this.y())}px` : 'auto',
-    };
+  protected readonly count = computed(() => {
+    const paths = this.paths();
+    return paths.length > 1 ? paths.length : 1;
   });
+  protected readonly stageLabel = computed(() =>
+    this.paths().length > 1 ? 'git.stageSelected' : 'git.stage',
+  );
+  protected readonly unstageLabel = computed(() =>
+    this.paths().length > 1 ? 'git.unstageSelected' : 'git.unstage',
+  );
+  protected readonly discardLabel = computed(() =>
+    this.paths().length > 1 ? 'git.discardSelected' : 'git.discard',
+  );
+
+  protected readonly menuStyle = computed(() =>
+    contextMenuStyle(this.x(), this.y(), MENU_WIDTH_PX, MENU_HEIGHT_PX),
+  );
 
   private projectId(): string | null {
     return this.workspace.activeProject()?.id ?? null;
@@ -212,11 +217,19 @@ export class GitFileMenu {
     }
     switch (action) {
       case 'stage':
-        void this.git.stagePath(projectId, this.path());
+        if (this.paths().length > 1) {
+          void this.git.stagePaths(projectId, this.paths());
+        } else {
+          void this.git.stagePath(projectId, this.path());
+        }
         this.close();
         break;
       case 'unstage':
-        void this.git.unstagePath(projectId, this.path());
+        if (this.paths().length > 1) {
+          void this.git.unstagePaths(projectId, this.paths());
+        } else {
+          void this.git.unstagePath(projectId, this.path());
+        }
         this.close();
         break;
       case 'discard':
@@ -245,12 +258,13 @@ export class GitFileMenu {
   }
 
   private async discard(projectId: string): Promise<void> {
-    const confirmed = await confirm(
-      this.transloco.translate('git.discardConfirm', { path: this.path() }),
-      { title: 'pumr', kind: 'warning' },
-    );
-    if (confirmed) {
-      await this.git.discardPath(projectId, this.path());
+    const paths = this.paths().length > 0 ? this.paths() : [this.path()];
+    const message =
+      paths.length > 1
+        ? this.transloco.translate('git.discardSelectedConfirm', { count: paths.length })
+        : this.transloco.translate('git.discardConfirm', { path: this.path() });
+    if (await confirmWarning(message)) {
+      await this.git.discardPaths(projectId, paths);
     }
     this.close();
   }

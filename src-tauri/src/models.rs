@@ -335,6 +335,13 @@ pub struct GitBranch {
     pub current: bool,
     pub remote: bool,
     pub upstream: Option<String>,
+    /// For a remote branch the remote it lives on; for a local branch the
+    /// remote of its upstream.
+    #[serde(default)]
+    pub remote_name: Option<String>,
+    /// The branch name on that remote, without the remote prefix.
+    #[serde(default)]
+    pub remote_branch: Option<String>,
     pub hash: Option<String>,
     pub subject: Option<String>,
     pub timestamp: Option<i64>,
@@ -389,6 +396,18 @@ pub struct GitTag {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitStash {
+    /// `stash@{N}`; shifts when stashes are added or dropped.
+    pub name: String,
+    /// The stash commit, used to check that `name` still points at it.
+    pub hash: String,
+    pub message: String,
+}
+
+/// Working-tree status. Refs live in [`GitRefs`], which only changes on ref
+/// operations and is loaded separately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitStatus {
     pub is_repo: bool,
     pub branch: Option<String>,
@@ -398,17 +417,20 @@ pub struct GitStatus {
     pub behind: i64,
     pub staged: Vec<FileChange>,
     pub unstaged: Vec<FileChange>,
-    pub branches: Vec<GitBranch>,
-    #[serde(default)]
-    pub tags: Vec<GitTag>,
-    #[serde(default)]
-    pub stashes: Vec<String>,
-    #[serde(default)]
-    pub submodules: Vec<String>,
     #[serde(default)]
     pub operation: Option<String>,
     #[serde(default)]
     pub conflicted: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRefs {
+    pub branches: Vec<GitBranch>,
+    pub tags: Vec<GitTag>,
+    pub stashes: Vec<GitStash>,
+    pub submodules: Vec<String>,
+    pub remotes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,6 +451,12 @@ pub struct FileDiff {
     pub additions: i64,
     pub deletions: i64,
     pub status: String,
+    /// Binary files are not sent as text; both contents are empty.
+    #[serde(default)]
+    pub binary: bool,
+    /// Files too large to preview are not sent; both contents are empty.
+    #[serde(default)]
+    pub too_large: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -451,6 +479,45 @@ pub struct PermissionDecision {
     pub rule: Option<String>,
     #[serde(default)]
     pub folder: Option<String>,
+    /// Who decided, for the permission audit log: `user`, `grant` (a new
+    /// grant or deny rule covered the queued prompt), `cascade` (another
+    /// prompt of the chat was denied), `stopped`, `timeout` or `cancelled`.
+    #[serde(default)]
+    pub decided_by: String,
+    /// The user's choice: `allow_once`, `allow_session`, `allow_always`,
+    /// `deny` or `deny_always`.
+    #[serde(default)]
+    pub decision: Option<String>,
+}
+
+/// One recorded permission decision: what was asked or checked, whether it
+/// was allowed, who decided and why.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionAuditEntry {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub created_at: i64,
+    /// The session that asked (may be a subagent).
+    pub session_id: String,
+    /// The chat (root session) the decision belongs to.
+    pub conversation_id: String,
+    /// Prompt kind: `command`, `web`, `websearch`, `folder`, `file`, ...
+    pub kind: String,
+    /// The command line, URL or path.
+    pub subject: String,
+    pub allowed: bool,
+    /// `auto` (no prompt: a rule, an automatic approval or a read-only
+    /// check), `rule` (a deny rule), or who resolved a prompt (see
+    /// [`PermissionDecision::decided_by`]).
+    pub decided_by: String,
+    pub decision: Option<String>,
+    /// Why the command was allowed without asking, or why it asked or was
+    /// denied.
+    pub reason: String,
+    /// The rule that matched or was saved, when there is one.
+    pub rule: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -538,6 +605,17 @@ pub struct SkillRef {
     pub name: String,
 }
 
+/// A discovered skill advertised to the agent as a name + short description.
+/// The full instructions are read on demand by the `skill` tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillEntry {
+    pub name: String,
+    pub description: String,
+    /// Absolute path to the skill directory (containing `SKILL.md`).
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(
     tag = "kind",
@@ -558,7 +636,18 @@ pub enum StreamEvent {
         prompt_tokens: i64,
         completion_tokens: i64,
         cached_tokens: i64,
+        cache_write_tokens: i64,
         cost: f64,
+    },
+    ContextUsage {
+        /// Estimated input tokens that will be sent this iteration.
+        used_tokens: i64,
+        /// Input token budget derived from the model's context window (0 if unknown).
+        budget_tokens: i64,
+        system_tokens: i64,
+        history_tokens: i64,
+        tool_schema_tokens: i64,
+        tool_output_tokens: i64,
     },
     Assistant {
         message: Message,
@@ -593,6 +682,13 @@ pub enum StreamEvent {
         segments: Vec<crate::permissions::CommandSegment>,
         risk: Option<crate::permissions::CommandRisk>,
         scope_options: Vec<crate::permissions::CommandScopeOption>,
+        /// Outside-project directories a command touches that the user can
+        /// whitelist (with everything below them).
+        folders: Vec<String>,
+        /// Websites a command contacts that the user can allow.
+        hosts: Vec<String>,
+        /// The assistant's one-sentence explanation of why it asks.
+        justification: Option<String>,
     },
     PermissionResolved {
         request_id: String,

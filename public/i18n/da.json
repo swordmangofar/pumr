@@ -71,8 +71,12 @@
     "unstage": "Unstage",
     "stageAll": "Stage alle",
     "unstageAll": "Unstage alle",
+    "stageSelected": "Stage {{ count }} valgte",
+    "unstageSelected": "Unstage {{ count }} valgte",
     "discard": "Kassér",
     "discardConfirm": "Kassér ændringer i \"{{ path }}\"? Dette kan ikke fortrydes.",
+    "discardSelected": "Kassér {{ count }} filer",
+    "discardSelectedConfirm": "Kassér ændringer i {{ count }} filer? Dette kan ikke fortrydes.",
     "blame": "Blame",
     "blameEmpty": "Ingen blame-information tilgængelig.",
     "ignore": "Føj til .gitignore",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} i gang",
       "files": "{{ count }} filer med konflikter",
       "continue": "Fortsæt",
-      "abort": "Afbryd"
+      "abort": "Afbryd",
+      "resolveFirst": "Løs først alle konflikter, og stage filerne."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Godkendelse mislykkedes. Tjek dine Git-legitimationsoplysninger.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Skift til den nye gren",
       "confirm": "Bekræft",
       "mergeConfirm": "Flet '{{branch}}' ind i '{{current}}'?",
+      "rebaseConfirm": "Rebase '{{current}}' på '{{branch}}'? Dette omskriver commits i '{{current}}'.",
       "deleteConfirm": "Slet grenen '{{branch}}'? Dette kan ikke fortrydes.",
       "deleteRemoteConfirm": "Slet den fjerne gren '{{branch}}'? Dette påvirker det fjerne repository.",
+      "forceDeleteConfirm": "Grenen '{{branch}}' er ikke fuldt flettet. Slet den alligevel? Dens ikke-flettede commits går tabt.",
       "rebaseHint": "Omarranger commits, og vælg en handling for hver. Rebasen kører fra ældst til nyest.",
-      "nothingToRebase": "Ingen commits at rebase."
+      "nothingToRebase": "Ingen commits at rebase.",
+      "rebaseActions": {
+        "pick": "Behold (pick)",
+        "squash": "Slå sammen (squash)",
+        "fixup": "Indarbejd (fixup)",
+        "drop": "Fjern (drop)"
+      },
+      "rebaseSquashFirst": "Den første commit kan ikke slås sammen (squash eller fixup): der er ingen tidligere commit at kombinere den med.",
+      "moveUp": "Flyt op",
+      "moveDown": "Flyt ned"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Ingen trin matcher de aktuelle filtre.",
     "view": {
       "timeline": "Tidslinje",
-      "branches": "Grene"
+      "branches": "Grene",
+      "permissions": "Tilladelser"
     },
     "filters": {
       "type": "Type",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Tilsidesættelse af session",
       "default": "Standardindstillinger"
+    },
+    "permissions": {
+      "empty": "Der er endnu ikke registreret nogen tilladelsesbeslutninger for denne chat.",
+      "clear": "Ryd log",
+      "clearConfirm": "Klik igen for at rydde",
+      "allowed": "Tilladt",
+      "denied": "Afvist",
+      "why": "Hvorfor:",
+      "rule": "Regel:",
+      "filters": {
+        "auto": "Tilladt uden at spørge",
+        "asked": "Spurgt",
+        "denied": "Afvist"
+      },
+      "by": {
+        "auto": "Automatisk",
+        "rule": "Afvisningsregel",
+        "user": "Dig",
+        "grant": "Dækket af en ny tilladelse",
+        "cascade": "Afvist sammen med en anden anmodning",
+        "stopped": "Stoppet",
+        "timeout": "Tidsgrænse nået",
+        "cancelled": "Annulleret"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Tilføjer vejledning om at skrive fokuserede, deterministiske tests og køre dem, før du afslutter.",
     "architecturePrompt": "Softwarearkitektur",
     "architecturePromptHint": "Tilføjer vejledning om modulgrænser, ansvar og vedligeholdeligt design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 deaktiverer visning af budget.",
     "language": "Sprog",
     "replyLanguage": "Svarssprog",
     "replyLanguageDefault": "Standard (modellens sprog)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Hvor mange på hinanden følgende værktøjsopkald agenten kan foretage, før den holder pause og beder dig om at fortsætte. Grænsen er en sikkerhedsventil: Den forhindrer en model, der sidder fast i en løkke, i at køre for evigt og brænde tokens. 35 er en god standard; hæve den til lange opgaver med flere trin.",
     "autoContinueAllSessions": "Auto-fortsæt alle sessioner",
     "autoContinueAllSessionsHint": "Når en session når grænsen for værktøjsopkald, skal du fortsætte automatisk i stedet for at holde pause. Dette fjerner løkkens sikkerhedsnet, så et fastsiddende middel kan løbe indtil du stopper det. Du kan også slå dette fra chatten, når en grænse er nået.",
+    "subagentModel": "Subagent-model",
+    "subagentModelHint": "Model brugt til subagenter. Lad stå tom for at bruge sessionens model.",
+    "compactionModel": "Komprimeringsmodel",
+    "compactionModelHint": "Model brugt til at opsummere lange samtaler. Lad stå tom for at bruge sessionens model.",
+    "promptCaching": "Prompt-caching",
+    "promptCachingHint": "Markér det stabile prompt-præfiks som cachebart, så udbydere med cache-understøttelse fakturerer cachede input-tokens billigere.",
+    "mcpProgressiveDisclosure": "Progressiv MCP-værktøjsvisning",
+    "mcpProgressiveDisclosureHint": "Når mange MCP-værktøjer er tilsluttet, vis et tool_search/mcp_invoke-par i stedet for at indlejre hvert skema for at spare kontekst. Små værktøjssæt indlejres altid.",
     "fileAccessRules": "Regler for filadgang",
     "fileAccessRulesHint": "Kontroller, hvilke filer assistenten kan opdage og læse. Brugerundtagelser vinder altid over alle nedenstående regler.",
     "ignoreGitignored": "Ignorer filer opført i .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Ingen blokerede kommandoer.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + underkommando",
       "programFlags": "Program + flag",
       "exact": "Præcis"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Ingen kommandoregler endnu. Brug \"tillad altid\" i en tilladelsesprompt for at oprette en.",
     "websiteRules": "Websites",
-    "websiteRulesHint": "Websites, assistenten må besøge. Afvisningsregler vinder over tilladelsesregler; et almindeligt domæne dækker også dets underdomæner. Brug \"tillad altid\" eller \"afvis altid\" i en tilladelsesprompt for at oprette en.",
+    "websiteRulesHint": "Websites, assistenten må besøge med sine webværktøjer eller med kommandoer som curl, git og ssh. Afvisningsregler vinder over tilladelsesregler; et almindeligt domæne dækker også dets underdomæner. Brug \"tillad altid\" eller \"afvis altid\" i en tilladelsesprompt for at oprette en.",
     "permissionPrompts": "Tilladelsesprompter",
     "permissionPromptsHint": "Vælg, hvad hovedknappen for tilladelse gør som standard. Tillad én gang godkender en enkelt anmodning; tillad i denne session husker mappeadgang, indtil appen genstartes.",
+    "autoApprove": "Automatisk godkendelse",
+    "autoApproveHint": "Spring spørgsmål over for arbejde, assistenten kan bevise er sikkert. Farlige kommandoer, indlejret kode, pakkedownloads, websteder, der endnu ikke er tilladt, stier uden for projektet og følsomme filer spørger altid.",
+    "autoApproveReadOnly": "Skrivebeskyttede kommandoer",
+    "autoApproveReadOnlyHint": "Tillad inspektionskommandoer som ls, grep og git status uden at spørge.",
+    "autoApprovePackageScripts": "Pakkestyrere og build-værktøjer",
+    "autoApprovePackageScriptsHint": "Tillad pnpm, npm, yarn, bun, ng, make og lignende værktøjer, når intet peger uden for projektet.",
+    "autoApproveProjectExecutables": "Projektets programmer",
+    "autoApproveProjectExecutablesHint": "Tillad programmer i projektet, såsom ./node_modules/.bin/ng, uden at spørge hver gang.",
+    "autoApproveProjectCommands": "Alle kommandoer i projektet",
+    "autoApproveProjectCommandsHint": "Tillad enhver ufarlig kommando, hvis stier forbliver inde i projektet. Farlige kommandoer, indlejret kode, pakkedownloads, websteder, der endnu ikke er tilladt, følsomme filer og alt udenfor spørger stadig.",
+    "permissionPreset": {
+      "strict": "Streng",
+      "strictHint": "Kun kommandoer, der kun læser, kører uden at spørge.",
+      "balanced": "Afbalanceret",
+      "balancedHint": "Skrivebeskyttede kommandoer, pakkehåndteringer, byggeværktøjer og projektets programmer kører uden at spørge.",
+      "autonomous": "Autonom",
+      "autonomousHint": "Alle ufarlige kommandoer inde i projektet kører uden at spørge.",
+      "custom": "Tilpasset",
+      "autonomousWarning": "Autonom stoler på dette projekt: dets scripts, Makefiles og programmer kan gøre hvad som helst uden at spørge. Indlejret kode, pakkedownloads, websteder, der endnu ikke er tilladt, farlige kommandoer og alt uden for projektet spørger stadig.",
+      "confirm": "Brug Autonom"
+    },
     "noAllowedWebsites": "Ingen altid-tilladte websites endnu.",
     "noDeniedWebsites": "Ingen altid-afviste websites endnu.",
     "websitePlaceholder": "f.eks. docs.rs eller *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Mappe"
     },
     "allowAlways": "Tillad altid",
-    "addFolder": "Tilføj mappe permanent",
     "siteRuleLabel": "Websiteregel (domæne eller glob)",
     "siteRuleHint": "For eksempel: docs.rs tillader dette website, *.github.com tillader alle dets underdomæner.",
-    "segment": {
-      "allowed": "Tilladt",
-      "needsApproval": "Kræver godkendelse"
-    },
+    "siteRuleInvalid": "Denne regel dækker ikke {{ host }} eller er for bred, så {{ host }} gemmes i stedet.",
     "risk": {
       "low": "Lav",
       "medium": "Mellem",
+      "network": "Netværk",
       "high": "Høj",
       "danger": "Fare"
     },
@@ -994,7 +1066,39 @@
       "title": "Regelomfang",
       "hint": "Vælg hvor bredt reglen gælder."
     },
-    "allowChat": "Tillad i denne chat"
+    "folderScope": {
+      "title": "Tillad mappe",
+      "hint": "Føjer mappen og alt indeni til de altid tilladte mapper.",
+      "option": "Mappe + undermapper"
+    },
+    "hostScope": {
+      "title": "Tillad websted",
+      "hint": "Føjer webstedet og dets underdomæner til de tilladte websteder.",
+      "option": "Websted + underdomæner"
+    },
+    "allowChat": "Tillad i denne chat",
+    "option": {
+      "yes": "Ja",
+      "chat": "Ja, og spørg ikke igen i denne chat om",
+      "session": "Ja, og spørg ikke igen før genstart om",
+      "always": "Ja, og tillad altid",
+      "no": "Nej",
+      "denyAlways": "Nej, og afvis altid"
+    },
+    "customize": "Tilpas",
+    "justification": "Hvorfor",
+    "keyboardHint": "Tryk 1–{{ count }} eller brug ↑ ↓ og Enter · Esc afviser",
+    "url": {
+      "queryWarning": "Denne adresse indeholder mange data i sin forespørgselsstreng. Sørg for, at den ikke indeholder noget privat, før du tillader den."
+    },
+    "tooltip": {
+      "deny": "Afvis denne anmodning og alle andre ventende anmodninger i denne chat.",
+      "denyAlways": "Afvis og gem en afvisningsregel i dine indstillinger. Andre ventende anmodninger i denne chat afvises også.",
+      "allowOnce": "Tillad kun denne anmodning.",
+      "allowSession": "Huskes i alle chats, indtil appen genstartes.",
+      "allowChat": "Kommandoregler huskes for denne chat og dens underagenter; mapper og websteder indtil appen genstartes.",
+      "allowAlways": "Gemmes i dine indstillinger og gælder for alle chats."
+    }
   },
   "question": {
     "title": "Spørgsmål",
@@ -1044,6 +1148,8 @@
     "installing": "Installerer...",
     "uninstall": "Afinstaller",
     "addFolder": "Tilføj mappe",
-    "noFolders": "Ingen mapper tilføjet endnu."
+    "noFolders": "Ingen mapper tilføjet endnu.",
+    "binaryFile": "Binær fil – ingen forhåndsvisning tilgængelig.",
+    "fileTooLarge": "Denne fil er for stor til at blive vist."
   }
 }
