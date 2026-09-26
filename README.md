@@ -121,6 +121,9 @@ the backend is a Tauri v2 Rust core.
 - Node.js 24+ and pnpm
 - Rust (stable) via [rustup](https://rustup.rs)
 - Platform toolchain for Tauri v2 (on macOS: Xcode Command Line Tools)
+- Linux AppImage builds bundle the GStreamer plugins WebKitGTK needs for sounds:
+  install `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good` and `gstreamer1.0-alsa`
+  (see `src-tauri/appimage/gstreamer-plugins.txt`)
 
 ### Getting started
 
@@ -162,7 +165,9 @@ src-tauri/src/           Rust core
   config.rs              settings.json + OS keychain
   commands.rs            Tauri IPC surface
 
-src-tauri/appimage/      AppImage GTK plugin for CI: native Wayland, no bundled libwayland
+src-tauri/appimage/      AppImage build for CI: linuxdeploy GTK and GStreamer plugins (native
+                         Wayland, no bundled libwayland), the GStreamer plugins bundled for
+                         sounds, verify.sh to check the result
 ```
 
 Licensed under Apache-2.0.

@@ -1,0 +1,38 @@
+# GStreamer plugins bundled into the AppImage (bundle.linux.appimage.bundleMediaFramework).
+#
+# WebKitGTK plays WebAudio, decodeAudioData() and <audio> through GStreamer. The
+# AppImage ships its own GStreamer core, which cannot load the host's plugins
+# (newer GStreamer/GLib ABI), so the plugins have to come from the build host
+# too. CI copies exactly these files from /usr/lib/<arch>-linux-gnu/gstreamer-1.0
+# (see .github/workflows/installers.yml) and src-tauri/appimage/verify.sh checks
+# that each one is bundled and loads.
+#
+# One plugin file per line; "#" starts a comment.
+
+# queue, tee, capsfilter, typefind, fakesink, ... (libgstreamer1.0-0)
+libgstcoreelements.so
+
+# gstreamer1.0-plugins-base
+libgstapp.so                # appsrc, appsink
+libgstaudioconvert.so       # WebAudio output, decoding
+libgstaudioresample.so      # WebAudio output, decoding
+libgstplayback.so           # playbin3 for <audio>, decodebin for decodeAudioData()
+libgsttypefindfunctions.so  # format detection for decodebin
+libgstvolume.so             # <audio> volume
+libgstgio.so                # giostreamsrc: decodeAudioData() reads from memory
+libgstogg.so                # Ogg container
+libgstvorbis.so             # Vorbis
+libgstopus.so               # Opus
+
+# gstreamer1.0-plugins-good
+libgstautodetect.so         # autoaudiosink, WebKit's default audio sink
+libgstinterleave.so         # deinterleave: decodeAudioData() splits channels
+libgstaudiofx.so            # scaletempo for <audio> pitch preservation
+libgstwavparse.so           # WAV
+libgstaudioparsers.so       # MP3/FLAC parsers
+libgstmpg123.so             # MP3
+libgstflac.so               # FLAC
+libgstpulseaudio.so         # pulsesink: PulseAudio and PipeWire (pipewire-pulse) output
+
+# gstreamer1.0-alsa: fallback output without a sound server
+libgstalsa.so
