@@ -3,7 +3,8 @@ use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, ignored_paths, GitProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
-    EventSink, FileChange, QuestionItem, QuestionOption, RoutedEvent, StreamEvent,
+    EventSink, FileChange, PermissionAuditEntry, PermissionDecision, QuestionItem, QuestionOption,
+    RoutedEvent, SkillEntry, StreamEvent,
 };
 use crate::permissions::{
     self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
@@ -36,12 +37,19 @@ pub struct ToolRuntime {
     pub permissions: Arc<LivePermissions>,
     pub file_ignore: Arc<FileIgnoreConfig>,
     pub session_id: String,
+    /// Root session for the conversation; session grants are keyed by this so
+    /// subagents share the chat's "allow in this chat" rules.
+    pub conversation_id: String,
     pub shadow: Arc<ShadowRepo>,
     pub processes: Arc<ProcessRegistry>,
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
     pub http: reqwest::Client,
     pub mcp: Option<Arc<McpManager>>,
+    /// Catalogue of discovered skills the `skill` tool can load on demand.
+    pub skills: Vec<SkillEntry>,
+    /// The call's `reason` argument, shown in any permission prompt it raises.
+    pub justification: Option<String>,
     pub cancel: CancellationToken,
     pub emit: EventSink,
 }
@@ -86,10 +94,33 @@ impl ToolOutcome {
         }
     }
 
-    fn denied() -> Self {
+    /// Outcome of a permission prompt that did not end in an allow. Only the
+    /// user's own denial is reported as one: a prompt that was cancelled,
+    /// stopped or timed out says so, otherwise the transcript and the model
+    /// (which is told not to retry denied actions) blame the user for it.
+    fn refused(decision: &PermissionDecision) -> Self {
+        let (status, result) = match decision.decided_by.as_str() {
+            "" | "user" => ("denied", "The user denied this action."),
+            "cascade" => (
+                "denied",
+                "Denied because the user denied another permission request from this chat.",
+            ),
+            "grant" => (
+                "denied",
+                "Denied by a deny rule the user added while this request was waiting.",
+            ),
+            "timeout" => (
+                "canceled",
+                "The permission request timed out before the user answered it.",
+            ),
+            _ => (
+                "canceled",
+                "Cancelled before the user answered the permission request.",
+            ),
+        };
         Self {
-            result: "The user denied this action.".to_string(),
-            status: "denied".to_string(),
+            result: result.to_string(),
+            status: status.to_string(),
             changes: Vec::new(),
         }
     }
@@ -103,7 +134,100 @@ impl ToolOutcome {
     }
 }
 
+/// Argument a tool call uses to tell the user, in one sentence, why it needs
+/// the action. Shown in any permission prompt the call raises.
+pub const REASON_ARGUMENT: &str = "reason";
+
+/// Longest justification shown in a permission prompt, in characters.
+const MAX_JUSTIFICATION_CHARS: usize = 300;
+
+/// Built-in tools whose calls can raise a permission prompt, and whether the
+/// model must always explain itself (the tool usually or always asks).
+const PROMPTING_TOOLS: [(&str, bool); 9] = [
+    ("read", false),
+    ("write", false),
+    ("edit", false),
+    ("glob", false),
+    ("grep", false),
+    ("ls", false),
+    ("bash", true),
+    ("webfetch", true),
+    ("websearch", false),
+];
+
+/// Adds the `reason` argument to a tool schema. Leaves schemas that already
+/// declare their own `reason` (an MCP tool's) or take no object untouched.
+pub fn add_reason_argument(schema: &mut Value, required: bool) {
+    let Some(parameters) = schema
+        .pointer_mut("/function/parameters")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if parameters.get("type").and_then(Value::as_str).unwrap_or("object") != "object" {
+        return;
+    }
+    let properties = parameters
+        .entry("properties")
+        .or_insert_with(|| json!({}));
+    let Some(properties) = properties.as_object_mut() else {
+        return;
+    };
+    if properties.contains_key(REASON_ARGUMENT) {
+        return;
+    }
+    properties.insert(
+        REASON_ARGUMENT.to_string(),
+        json!({
+            "type": "string",
+            "description": "One short sentence telling the user why you need this call. It is shown in the permission prompt when the call needs approval, e.g. 'Run the test suite to verify the fix.'"
+        }),
+    );
+    if required {
+        if let Some(list) = parameters
+            .entry("required")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+        {
+            list.push(json!(REASON_ARGUMENT));
+        }
+    }
+}
+
+/// The call's `reason`, whitespace-collapsed and capped so a prompt stays
+/// readable.
+fn justification(reason: Option<&Value>) -> Option<String> {
+    let collapsed = reason?
+        .as_str()?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    if collapsed.chars().count() <= MAX_JUSTIFICATION_CHARS {
+        return Some(collapsed);
+    }
+    let mut capped: String = collapsed.chars().take(MAX_JUSTIFICATION_CHARS - 1).collect();
+    capped.push('…');
+    Some(capped)
+}
+
 pub fn tool_schemas() -> Vec<Value> {
+    let mut schemas = base_tool_schemas();
+    for schema in &mut schemas {
+        let name = schema.pointer("/function/name").and_then(Value::as_str);
+        if let Some((_, required)) = PROMPTING_TOOLS
+            .iter()
+            .find(|(tool, _)| Some(*tool) == name)
+        {
+            add_reason_argument(schema, *required);
+        }
+    }
+    schemas
+}
+
+fn base_tool_schemas() -> Vec<Value> {
     vec![
         json!({
             "type": "function",
@@ -140,7 +264,7 @@ pub fn tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "edit",
-                "description": "Replace an exact string in an existing file. old_string must match exactly and uniquely unless replace_all is true.",
+                "description": "Replace a string in an existing file. old_string must be the exact current text without the line-number prefix from read; minor indentation and whitespace differences are tolerated. It must match uniquely unless replace_all is true.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -217,7 +341,7 @@ pub fn tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "webfetch",
-                "description": "Fetch a URL and return its readable text. The user must approve each website the first time; remember to explain why you need it.",
+                "description": "Fetch a URL and return its readable text. The user must approve each website the first time; say why you need it in reason.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -299,6 +423,10 @@ pub fn tool_schemas() -> Vec<Value> {
 }
 
 pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -> ToolOutcome {
+    // A direct MCP tool may declare its own `reason`; `call_mcp_tool` decides.
+    if !name.starts_with("mcp__") {
+        runtime.justification = justification(arguments.get(REASON_ARGUMENT));
+    }
     match name {
         "read" => read_file(runtime, arguments).await,
         "write" => write_file(runtime, arguments).await,
@@ -310,25 +438,219 @@ pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -
         "webfetch" => web_fetch(runtime, arguments).await,
         "websearch" => web_search(runtime, arguments).await,
         "question" => ask_question(runtime, arguments).await,
+        "skill" => load_skill(runtime, arguments).await,
+        "tool_search" => search_mcp_tools(runtime, arguments).await,
+        "mcp_invoke" => invoke_mcp_tool(runtime, arguments).await,
         other if other.starts_with("mcp__") => call_mcp_tool(runtime, other, arguments).await,
         other => ToolOutcome::error(format!("Unknown tool: {other}")),
     }
+}
+
+/// Schema for the progressive-disclosure search tool. Added to the tool set
+/// only when MCP schemas are deferred (see `agent::build_tool_schemas`).
+pub fn tool_search_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "tool_search",
+            "description": "Search the connected MCP tools by keyword and get their input schema. Use this when you need an MCP capability that is not already in your tool list, then call it with mcp_invoke.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Keywords describing the capability you need" },
+                    "limit": { "type": "integer", "description": "Maximum number of matches (default 8, max 20)" }
+                },
+                "required": ["query"]
+            }
+        }
+    })
+}
+
+/// Schema for invoking a deferred MCP tool by name.
+pub fn mcp_invoke_schema() -> Value {
+    let mut schema = json!({
+        "type": "function",
+        "function": {
+            "name": "mcp_invoke",
+            "description": "Invoke an MCP tool by its exposed name. Find the name and its input schema with tool_search first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": { "type": "string", "description": "The exposed MCP tool name, e.g. mcp__server__tool" },
+                    "arguments": { "type": "object", "description": "Arguments object matching the tool's input schema" }
+                },
+                "required": ["tool"]
+            }
+        }
+    });
+    add_reason_argument(&mut schema, true);
+    schema
+}
+
+/// Schema for loading a discovered skill's instructions on demand.
+pub fn skill_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "skill",
+            "description": "Load a skill's full instructions by name. The available skills are listed in your system prompt. Use this when a skill applies to the user's request.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "The skill name to load" }
+                },
+                "required": ["name"]
+            }
+        }
+    })
+}
+
+async fn load_skill(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let name = arguments
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return ToolOutcome::error("The skill tool requires a 'name'.");
+    }
+    let Some(entry) = runtime
+        .skills
+        .iter()
+        .find(|skill| skill.name == name)
+        .cloned()
+    else {
+        let available: Vec<&str> = runtime.skills.iter().map(|skill| skill.name.as_str()).collect();
+        return ToolOutcome::error(format!(
+            "No skill named '{name}'. Available skills: {}.",
+            if available.is_empty() {
+                "(none)".to_string()
+            } else {
+                available.join(", ")
+            }
+        ));
+    };
+
+    let directory = Path::new(&entry.path);
+    let skill_file = directory.join("SKILL.md");
+    let mut files: Vec<PathBuf> = Vec::new();
+    if skill_file.is_file() {
+        files.push(skill_file.clone());
+    }
+    if let Ok(entries) = std::fs::read_dir(directory) {
+        for file in entries.flatten() {
+            let path = file.path();
+            if path.is_file()
+                && path.extension().map(|ext| ext == "md").unwrap_or(false)
+                && path != skill_file
+            {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files.truncate(20);
+
+    let mut body = String::new();
+    for file in &files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            if let Some(file_name) = file.file_name() {
+                body.push_str(&format!(
+                    "\n### {}\n{}\n",
+                    file_name.to_string_lossy(),
+                    content.trim()
+                ));
+            }
+        }
+    }
+    if body.trim().is_empty() {
+        return ToolOutcome::error(format!("Skill '{name}' has no readable instructions."));
+    }
+    ToolOutcome::ok(format!(
+        "<skill name=\"{name}\" path=\"{}\">\n{}\n</skill>\n\nFollow the skill instructions above when they apply to the user's request.",
+        entry.path,
+        body.trim()
+    ))
+}
+
+async fn search_mcp_tools(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let Some(manager) = runtime.mcp.clone() else {
+        return ToolOutcome::error("No MCP tools are available in this session.");
+    };
+    let query = arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return ToolOutcome::error("The tool_search query is empty.");
+    }
+    let limit = arguments
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(8)
+        .clamp(1, 20) as usize;
+    let matches = manager.search(&query, limit);
+    if matches.is_empty() {
+        return ToolOutcome::ok(format!(
+            "No MCP tools match '{query}'. Try different keywords."
+        ));
+    }
+    let mut output = format!("MCP tools matching '{query}':\n");
+    for tool in matches {
+        output.push_str(&format!(
+            "\n- {} (server: {})\n  {}\n  input schema: {}\n",
+            tool.exposed_name, tool.server, tool.description, tool.input_schema
+        ));
+    }
+    output.push_str(
+        "\nCall one with mcp_invoke: { tool: <exposed name>, arguments: <input object> }.",
+    );
+    ToolOutcome::ok(output)
+}
+
+async fn invoke_mcp_tool(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let Some(name) = arguments.get("tool").and_then(Value::as_str) else {
+        return ToolOutcome::error("mcp_invoke requires the 'tool' exposed MCP tool name.");
+    };
+    let call_arguments = arguments
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    call_mcp_tool(runtime, name, &call_arguments).await
 }
 
 async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -> ToolOutcome {
     let Some(manager) = runtime.mcp.clone() else {
         return ToolOutcome::error(format!("MCP tool '{name}' is not available."));
     };
+    // The `reason` we add to MCP schemas is for the prompt, not the server;
+    // a tool that declares its own `reason` keeps it.
+    let mut arguments = arguments.clone();
+    if !manager.declares_argument(name, REASON_ARGUMENT) {
+        if let Some(reason) = arguments
+            .as_object_mut()
+            .and_then(|object| object.remove(REASON_ARGUMENT))
+        {
+            if runtime.justification.is_none() {
+                runtime.justification = justification(Some(&reason));
+            }
+        }
+    }
+    let arguments = &arguments;
     // MCP tools run server-side and bypass the built-in command gate, so require
     // an explicit user decision before every invocation.
     let preview = serde_json::json!({ "tool": name, "arguments": arguments }).to_string();
-    let allowed = runtime
+    let decision = runtime
         .broker
         .ask(
             PermissionPrompt {
                 kind: "command".to_string(),
                 operation: PermissionOperation::McpTool,
                 cwd: Some(permission_path(&runtime.project_root)),
+                project_root: runtime.project_root.clone(),
                 title: format!("Run MCP tool {name}?"),
                 detail: "The assistant wants to call an MCP server tool. Review the arguments before allowing."
                     .to_string(),
@@ -340,15 +662,18 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                folders: Vec::new(),
+                hosts: Vec::new(),
+                grant_session_id: runtime.conversation_id.clone(),
+                justification: runtime.justification.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
             &runtime.emit,
         )
-        .await
-        .allowed;
-    if !allowed {
-        return ToolOutcome::denied();
+        .await;
+    if !decision.allowed {
+        return ToolOutcome::refused(&decision);
     }
     match manager.call(name, arguments.clone()).await {
         Ok((text, is_error)) => {
@@ -495,12 +820,12 @@ async fn ensure_path_access(
     absolute: &Path,
     label: &str,
     operation: PermissionOperation,
-) -> bool {
+) -> std::result::Result<(), ToolOutcome> {
     let extra = runtime.permissions.extra_folders();
     if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
         && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
     {
-        return true;
+        return Ok(());
     }
     let folder = if absolute.is_dir() {
         absolute.to_path_buf()
@@ -510,18 +835,16 @@ async fn ensure_path_access(
             .map(Path::to_path_buf)
             .unwrap_or_else(|| absolute.to_path_buf())
     };
-    runtime
+    let decision = runtime
         .broker
         .ask(
             PermissionPrompt {
                 kind: "folder".to_string(),
                 operation,
                 cwd: Some(permission_path(&runtime.project_root)),
+                project_root: runtime.project_root.clone(),
                 title: format!("Access {label} outside the project?"),
-                detail: format!(
-                    "The assistant wants to access {}. Allow once, or add the folder permanently so it never asks again.",
-                    absolute.display()
-                ),
+                detail: format!("The assistant wants to access {}.", absolute.display()),
                 command: None,
                 path: Some(permission_path(absolute).display().to_string()),
                 folder: Some(folder.display().to_string()),
@@ -530,31 +853,41 @@ async fn ensure_path_access(
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                folders: Vec::new(),
+                hosts: Vec::new(),
+                grant_session_id: runtime.conversation_id.clone(),
+                justification: runtime.justification.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
             &runtime.emit,
         )
-        .await
-        .allowed
+        .await;
+    if decision.allowed {
+        Ok(())
+    } else {
+        Err(ToolOutcome::refused(&decision))
+    }
 }
 
-async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool {
-    if !ensure_path_access(runtime, absolute, "file", PermissionOperation::Write).await {
-        return false;
-    }
+async fn ensure_write_access(
+    runtime: &mut ToolRuntime,
+    absolute: &Path,
+) -> std::result::Result<(), ToolOutcome> {
+    ensure_path_access(runtime, absolute, "file", PermissionOperation::Write).await?;
     let relative = relative_display(runtime, absolute);
     if runtime.file_ignore.sensitive_reason(absolute).is_none() {
-        return true;
+        return Ok(());
     }
     let reason = "this is a sensitive file (env, key, database, credentials)".to_string();
-    runtime
+    let decision = runtime
         .broker
         .ask(
             PermissionPrompt {
                 kind: "file".to_string(),
                 operation: PermissionOperation::Write,
                 cwd: Some(permission_path(&runtime.project_root)),
+                project_root: runtime.project_root.clone(),
                 title: format!("Modify {}?", relative),
                 detail: format!("The assistant wants to modify {relative}, but {reason}."),
                 command: None,
@@ -565,13 +898,21 @@ async fn ensure_write_access(runtime: &mut ToolRuntime, absolute: &Path) -> bool
                 segments: Vec::new(),
                 risk: None,
                 scope_options: Vec::new(),
+                folders: Vec::new(),
+                hosts: Vec::new(),
+                grant_session_id: runtime.conversation_id.clone(),
+                justification: runtime.justification.clone(),
             },
             &runtime.cancel,
             &runtime.session_id,
             &runtime.emit,
         )
-        .await
-        .allowed
+        .await;
+    if decision.allowed {
+        Ok(())
+    } else {
+        Err(ToolOutcome::refused(&decision))
+    }
 }
 
 async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -580,8 +921,10 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_path_access(runtime, &absolute, "file", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &absolute, "file", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     if let Some(reason) = file_ignore_reason(runtime, &absolute) {
         let relative = relative_display(runtime, &absolute);
@@ -591,13 +934,14 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     }
     if let Some(sensitive) = runtime.file_ignore.sensitive_reason(&absolute) {
         let relative = relative_display(runtime, &absolute);
-        let allowed = runtime
+        let decision = runtime
             .broker
             .ask(
                 PermissionPrompt {
                     kind: "file".to_string(),
                     operation: PermissionOperation::Read,
                     cwd: Some(permission_path(&runtime.project_root)),
+                    project_root: runtime.project_root.clone(),
                     title: format!("Read {relative}?"),
                     detail: format!("{relative} looks like a sensitive file: {sensitive}."),
                     command: None,
@@ -608,15 +952,18 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     segments: Vec::new(),
                     risk: None,
                     scope_options: Vec::new(),
+                    folders: Vec::new(),
+                    hosts: Vec::new(),
+                    grant_session_id: runtime.conversation_id.clone(),
+                    justification: runtime.justification.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
                 &runtime.emit,
             )
-            .await
-            .allowed;
-        if !allowed {
-            return ToolOutcome::denied();
+            .await;
+        if !decision.allowed {
+            return ToolOutcome::refused(&decision);
         }
     }
     let content = match tokio::fs::read_to_string(&absolute).await {
@@ -643,10 +990,11 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     let shown_end = (offset - 1 + limit).min(lines.len());
     if lines.len() > shown_end {
         output.push_str(&format!(
-            "\n… file has {} lines total; showing {}-{}",
+            "\n… file has {} lines total; showing {}-{}. Continue with offset={} and the same limit to read on.",
             lines.len(),
             offset,
-            shown_end
+            shown_end,
+            shown_end + 1
         ));
     }
     ToolOutcome::ok(output)
@@ -662,8 +1010,8 @@ async fn write_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_write_access(runtime, &absolute).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) = ensure_write_access(runtime, &absolute).await {
+        return outcome;
     }
     if let Some(parent) = absolute.parent() {
         if let Err(error) = tokio::fs::create_dir_all(parent).await {
@@ -712,8 +1060,8 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
-    if !ensure_write_access(runtime, &absolute).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) = ensure_write_access(runtime, &absolute).await {
+        return outcome;
     }
     let current = match tokio::fs::read_to_string(&absolute).await {
         Ok(content) => content,
@@ -721,21 +1069,24 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             return ToolOutcome::error(format!("Cannot read {}: {error}", absolute.display()))
         }
     };
-    let occurrences = current.matches(&old_string).count();
-    if occurrences == 0 {
-        return ToolOutcome::error(
-            "old_string was not found. Read the file and provide the exact current text.",
-        );
-    }
-    if occurrences > 1 && !replace_all {
-        return ToolOutcome::error(format!(
-            "old_string occurs {occurrences} times. Add more context to make it unique or set replace_all."
-        ));
-    }
-    let updated = if replace_all {
-        current.replace(&old_string, &new_string)
-    } else {
-        current.replacen(&old_string, &new_string, 1)
+    let (updated, occurrences) = match apply_edit(&current, &old_string, &new_string, replace_all) {
+        Ok(applied) => applied,
+        Err(EditError::EmptyOldString) => {
+            return ToolOutcome::error(
+                "old_string must not be empty. Provide the exact current text to replace.",
+            )
+        }
+        Err(EditError::NotFound) => {
+            let relative = relative_display(runtime, &absolute);
+            return ToolOutcome::error(format!(
+                "old_string was not found in {relative}. Read the file with the read tool and copy the exact current text, without line-number prefixes or surrounding quotes."
+            ));
+        }
+        Err(EditError::NotUnique(count)) => {
+            return ToolOutcome::error(format!(
+                "old_string occurs {count} times. Add more surrounding context to make it unique or set replace_all to true."
+            ));
+        }
     };
     if let Err(error) = tokio::fs::write(&absolute, &updated).await {
         return ToolOutcome::error(format!("Cannot write {}: {error}", absolute.display()));
@@ -757,8 +1108,255 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     }
 }
 
+#[derive(Debug)]
+enum EditError {
+    EmptyOldString,
+    NotFound,
+    NotUnique(usize),
+}
+
+enum EditMatch {
+    Exact(Vec<(usize, usize)>),
+    LineTrimmed {
+        ranges: Vec<(usize, usize)>,
+        old_indent: String,
+        target_indent: String,
+    },
+    Whitespace(Vec<(usize, usize)>),
+}
+
+impl EditMatch {
+    fn ranges(&self) -> &[(usize, usize)] {
+        match self {
+            EditMatch::Exact(ranges) | EditMatch::Whitespace(ranges) => ranges,
+            EditMatch::LineTrimmed { ranges, .. } => ranges,
+        }
+    }
+}
+
+/// Apply an exact-string edit, falling back to progressively more forgiving
+/// matchers so small differences in indentation or whitespace do not fail the
+/// edit. Returns the updated content and the number of replacements made.
+fn apply_edit(
+    content: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> std::result::Result<(String, usize), EditError> {
+    if old.is_empty() {
+        return Err(EditError::EmptyOldString);
+    }
+    let matched = find_match(content, old);
+    let ranges = matched.ranges();
+    if ranges.is_empty() {
+        return Err(EditError::NotFound);
+    }
+    if ranges.len() > 1 && !replace_all {
+        return Err(EditError::NotUnique(ranges.len()));
+    }
+    let replacement = match &matched {
+        EditMatch::LineTrimmed {
+            old_indent,
+            target_indent,
+            ..
+        } => reindent(new, old_indent, target_indent),
+        _ => new.to_string(),
+    };
+    let take = if replace_all { ranges.len() } else { 1 };
+    let mut result = String::with_capacity(content.len() + replacement.len());
+    let mut cursor = 0;
+    let mut replaced = 0;
+    for (start, end) in ranges.iter().take(take) {
+        if *start < cursor {
+            continue;
+        }
+        result.push_str(&content[cursor..*start]);
+        result.push_str(&replacement);
+        cursor = *end;
+        replaced += 1;
+    }
+    result.push_str(&content[cursor..]);
+    Ok((result, replaced))
+}
+
+/// Try an exact byte-for-byte match first, then a line-trimmed match (ignores
+/// leading/trailing whitespace on each line), then a whitespace-normalised
+/// match (any run of whitespace equals any other).
+fn find_match(content: &str, old: &str) -> EditMatch {
+    let exact = exact_ranges(content, old);
+    if !exact.is_empty() {
+        return EditMatch::Exact(exact);
+    }
+    let trimmed = line_trimmed_ranges(content, old);
+    if !trimmed.ranges().is_empty() {
+        return trimmed;
+    }
+    EditMatch::Whitespace(whitespace_ranges(content, old))
+}
+
+fn leading_whitespace(line: &str) -> &str {
+    &line[..line.len() - line.trim_start().len()]
+}
+
+/// Rewrite `new` so its indentation matches the file when `old` was matched
+/// with different leading whitespace.
+fn reindent(new: &str, old_indent: &str, target_indent: &str) -> String {
+    if old_indent == target_indent {
+        return new.to_string();
+    }
+    let mut result = String::with_capacity(new.len());
+    for (index, line) in new.split('\n').enumerate() {
+        if index > 0 {
+            result.push('\n');
+        }
+        if line.trim().is_empty() {
+            result.push_str(line);
+            continue;
+        }
+        match line.strip_prefix(old_indent) {
+            Some(rest) => {
+                result.push_str(target_indent);
+                result.push_str(rest);
+            }
+            None => result.push_str(line),
+        }
+    }
+    result
+}
+
+fn exact_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(position) = content[cursor..].find(old) {
+        let start = cursor + position;
+        ranges.push((start, start + old.len()));
+        cursor = start + old.len();
+    }
+    ranges
+}
+
+/// A line together with its byte span. `end` includes the trailing newline
+/// (if any); `text` excludes it. `content_end` is `start + text.len()`.
+struct LineSpan<'a> {
+    start: usize,
+    end: usize,
+    text: &'a str,
+}
+
+fn line_spans(content: &str) -> Vec<LineSpan<'_>> {
+    let bytes = content.as_bytes();
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            let text_end = if index > start && bytes[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            spans.push(LineSpan {
+                start,
+                end: index + 1,
+                text: &content[start..text_end],
+            });
+            start = index + 1;
+        }
+        index += 1;
+    }
+    if start <= content.len() {
+        spans.push(LineSpan {
+            start,
+            end: content.len(),
+            text: &content[start..],
+        });
+    }
+    spans
+}
+
+fn line_trimmed_ranges(content: &str, old: &str) -> EditMatch {
+    let haystack = line_spans(content);
+    let needle: Vec<&str> = old.lines().collect();
+    let mut target_indent = String::new();
+    let mut old_indent = String::new();
+    let mut ranges = Vec::new();
+    if !needle.is_empty() && needle.len() <= haystack.len() {
+        old_indent = leading_whitespace(needle[0]).to_string();
+        for index in 0..=(haystack.len() - needle.len()) {
+            let matched = needle
+                .iter()
+                .zip(&haystack[index..index + needle.len()])
+                .all(|(expected, span)| expected.trim() == span.text.trim());
+            if matched {
+                if ranges.is_empty() {
+                    target_indent = leading_whitespace(haystack[index].text).to_string();
+                }
+                let start = haystack[index].start;
+                let last = &haystack[index + needle.len() - 1];
+                let end = if old.ends_with('\n') {
+                    last.end
+                } else {
+                    last.start + last.text.len()
+                };
+                ranges.push((start, end));
+            }
+        }
+    }
+    EditMatch::LineTrimmed {
+        ranges,
+        old_indent,
+        target_indent,
+    }
+}
+
+fn normalize_whitespace(text: &str) -> (String, Vec<usize>) {
+    let mut normalized = String::with_capacity(text.len());
+    let mut map = Vec::with_capacity(text.len());
+    let mut in_whitespace = false;
+    for (index, character) in text.char_indices() {
+        if character.is_whitespace() {
+            if !in_whitespace {
+                normalized.push(' ');
+                map.push(index);
+                in_whitespace = true;
+            }
+        } else {
+            let before = normalized.len();
+            normalized.push(character);
+            for _ in before..normalized.len() {
+                map.push(index);
+            }
+            in_whitespace = false;
+        }
+    }
+    (normalized, map)
+}
+
+fn whitespace_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
+    let (haystack, map) = normalize_whitespace(content);
+    let (needle, _) = normalize_whitespace(old);
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(position) = haystack[cursor..].find(&needle) {
+        let start = cursor + position;
+        let end = start + needle.len();
+        let original_start = map[start];
+        let original_end = map.get(end).copied().unwrap_or(content.len());
+        ranges.push((original_start, original_end));
+        cursor = end;
+    }
+    ranges
+}
+
 /// Build a directory walker that never descends into `.git` and that prunes
-/// generated/dependency directories unless the user allowed scanning them.
+/// generated/dependency directories (`node_modules`, `target`, `dist`, …)
+/// regardless of `scanGeneratedFiles`. That flag only controls whether
+/// generated *files* (`*.min.js`, `*.log`, …) are surfaced, so a project with
+/// dependencies enabled can still be searched quickly. A user exemption or an
+/// explicitly disabled generated rule re-enables the matching subtree.
 /// `.gitignore` is handled separately so user exemptions can override it.
 fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>) -> ignore::Walk {
     let root = project_root.to_path_buf();
@@ -786,10 +1384,9 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
         }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         if is_dir
-            && !config.scan_generated_files
             && !config.has_exemptions()
             && config.is_generated_path(path)
-            && !config.generated_rule_disabled(path)
+            && !config.generated_rule_explicitly_disabled(path)
         {
             return false;
         }
@@ -808,8 +1405,10 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     let matcher = match Glob::new(&pattern) {
         Ok(glob) => glob.compile_matcher(),
@@ -880,8 +1479,10 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     let mut candidates: Vec<PathBuf> = Vec::new();
     for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
@@ -947,7 +1548,14 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     if results.is_empty() {
         return ToolOutcome::ok(format!("No matches for '{pattern}'."));
     }
-    ToolOutcome::ok(results.join("\n"))
+    let capped = results.len() >= 200;
+    let mut output = results.join("\n");
+    if capped {
+        output.push_str(
+            "\n\n… showing the first 200 matches only. Narrow the pattern or add include/path to see more.",
+        );
+    }
+    ToolOutcome::ok(output)
 }
 
 async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -956,8 +1564,10 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &base, "directory", PermissionOperation::Read).await
+    {
+        return outcome;
     }
     let mut entries = match tokio::fs::read_dir(&base).await {
         Ok(entries) => entries,
@@ -1001,10 +1611,30 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     ToolOutcome::ok(output)
 }
 
+/// Records a decision made without a prompt in the permission audit log:
+/// allowed by a rule, an automatic approval or a read-only check, or denied
+/// by a deny rule. Prompted decisions are recorded by the broker.
+fn audit_unprompted(runtime: &ToolRuntime, kind: &str, subject: &str, allowed: bool, reason: String) {
+    runtime.broker.audit(PermissionAuditEntry {
+        id: 0,
+        created_at: 0,
+        session_id: runtime.session_id.clone(),
+        conversation_id: runtime.conversation_id.clone(),
+        kind: kind.to_string(),
+        subject: subject.to_string(),
+        allowed,
+        decided_by: if allowed { "auto" } else { "rule" }.to_string(),
+        decision: None,
+        reason,
+        rule: None,
+    });
+}
+
 enum WebsiteAccess {
     Allowed,
     DeniedByRule(String),
-    DeniedByUser,
+    /// The prompt ended without an allow; `decided_by` says who ended it.
+    Refused(PermissionDecision),
 }
 
 /// Ask the user for permission before the agent reaches a website. Rules are
@@ -1021,23 +1651,34 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
         &runtime.permissions.allowed_websites(),
         &runtime.permissions.denied_websites(),
     ) {
-        WebsiteDecision::Allow => WebsiteAccess::Allowed,
-        WebsiteDecision::Deny { reason } => WebsiteAccess::DeniedByRule(reason),
+        WebsiteDecision::Allow => {
+            audit_unprompted(
+                runtime,
+                kind,
+                url,
+                true,
+                format!("{host} is on the allowed websites list"),
+            );
+            WebsiteAccess::Allowed
+        }
+        WebsiteDecision::Deny { reason } => {
+            audit_unprompted(runtime, kind, url, false, reason.clone());
+            WebsiteAccess::DeniedByRule(reason)
+        }
         WebsiteDecision::Ask {
             reason,
             suggested_rule,
         } => {
-            let allowed = runtime
+            let decision = runtime
                 .broker
                 .ask(
                     PermissionPrompt {
                         kind: kind.to_string(),
                         operation: PermissionOperation::Fetch,
                         cwd: Some(permission_path(&runtime.project_root)),
+                        project_root: runtime.project_root.clone(),
                         title: format!("Visit {host}?"),
-                        detail: format!(
-                            "{reason} The assistant wants to access this website. Allow once, always allow it, or deny it."
-                        ),
+                        detail: reason,
                         command: None,
                         path: None,
                         folder: None,
@@ -1046,17 +1687,20 @@ async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str)
                         segments: Vec::new(),
                         risk: None,
                         scope_options: Vec::new(),
+                        folders: Vec::new(),
+                        hosts: Vec::new(),
+                        grant_session_id: runtime.conversation_id.clone(),
+                        justification: runtime.justification.clone(),
                     },
                     &runtime.cancel,
                     &runtime.session_id,
                     &runtime.emit,
                 )
-                .await
-                .allowed;
-            if allowed {
+                .await;
+            if decision.allowed {
                 WebsiteAccess::Allowed
             } else {
-                WebsiteAccess::DeniedByUser
+                WebsiteAccess::Refused(decision)
             }
         }
     }
@@ -1083,52 +1727,107 @@ async fn read_web_body(response: reqwest::Response) -> std::result::Result<Vec<u
 }
 
 /// True for addresses the agent must never reach: loopback, private, link-local,
-/// unique-local, unspecified, multicast and similar (SSRF protection).
+/// unique-local, carrier-grade NAT, benchmarking, reserved, unspecified,
+/// multicast and similar (SSRF protection). IPv6 forms that embed an IPv4
+/// address (mapped `::ffff:a.b.c.d`, compatible, NAT64 `64:ff9b::/96` and
+/// 6to4 `2002::/16`) are judged by that IPv4 address.
 fn blocked_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
+            let [first, second, ..] = v4.octets();
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
                 || v4.is_broadcast()
                 || v4.is_documentation()
-                || v4.octets()[0] == 0
+                || v4.is_multicast()
+                || first == 0
+                // 100.64.0.0/10 carrier-grade NAT.
+                || (first == 100 && (second & 0xc0) == 64)
+                // 198.18.0.0/15 benchmarking.
+                || (first == 198 && (second & 0xfe) == 18)
+                // 192.0.0.0/24 IETF protocol assignments.
+                || (first == 192 && second == 0 && v4.octets()[2] == 0)
+                // 240.0.0.0/4 reserved.
+                || first >= 240
         }
         std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4() {
+                // `::1` is also "compatible" with 0.0.0.1, which is blocked.
+                return blocked_ip(std::net::IpAddr::V4(v4));
+            }
+            let segments = v6.segments();
+            if segments[0] == 0x0064 && segments[1] == 0xff9b {
+                let [a, b] = segments[6].to_be_bytes();
+                let [c, d] = segments[7].to_be_bytes();
+                return blocked_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
+            if segments[0] == 0x2002 {
+                let [a, b] = segments[1].to_be_bytes();
+                let [c, d] = segments[2].to_be_bytes();
+                return blocked_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                // fec0::/10 deprecated site-local.
+                || (segments[0] & 0xffc0) == 0xfec0
+                // 2001:db8::/32 documentation.
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8)
         }
     }
 }
 
 /// Resolves the URL host and rejects it when any resolved address is non-public.
-/// This runs on every hop so a redirect or DNS rebind cannot reach internal
-/// services after the initial allowlist check.
-async fn ensure_host_public(url: &reqwest::Url) -> std::result::Result<(), String> {
+/// This runs on every hop so a redirect cannot reach internal services after
+/// the initial allowlist check. The checked addresses are returned so the
+/// request connects to exactly those: resolving the name a second time would
+/// let a DNS rebind swap in a private address after the check.
+async fn ensure_host_public(
+    url: &reqwest::Url,
+) -> std::result::Result<Vec<std::net::SocketAddr>, String> {
     let host = url
         .host_str()
         .ok_or_else(|| "The URL does not contain a valid host.".to_string())?;
     let port = url.port_or_known_default().unwrap_or(443);
-    let addresses = tokio::net::lookup_host((host, port))
+    let lookup = host.trim_start_matches('[').trim_end_matches(']');
+    let addresses: Vec<std::net::SocketAddr> = tokio::net::lookup_host((lookup, port))
         .await
-        .map_err(|error| format!("Could not resolve {host}: {error}"))?;
-    let mut resolved = false;
-    for address in addresses {
-        resolved = true;
-        if blocked_ip(address.ip()) {
-            return Err(format!(
-                "{host} resolves to a non-public address and was blocked."
-            ));
-        }
-    }
-    if !resolved {
+        .map_err(|error| format!("Could not resolve {host}: {error}"))?
+        .collect();
+    if addresses.is_empty() {
         return Err(format!("Could not resolve {host}."));
     }
-    Ok(())
+    if addresses.iter().any(|address| blocked_ip(address.ip())) {
+        return Err(format!(
+            "{host} resolves to a non-public address and was blocked."
+        ));
+    }
+    Ok(addresses)
+}
+
+/// An HTTP client for one hop of `web_fetch`: it never follows redirects on
+/// its own and connects to `host` only at the pre-checked `addresses`.
+fn pinned_client(
+    host: &str,
+    addresses: &[std::net::SocketAddr],
+) -> std::result::Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent("pumr/0.1")
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(WEB_TIMEOUT_SECONDS))
+        // A proxy would resolve the name itself and bypass the pinned address.
+        .no_proxy();
+    // An IP literal needs no resolution; a name is pinned to what was checked.
+    if host.parse::<std::net::IpAddr>().is_err() {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    builder
+        .build()
+        .map_err(|error| format!("HTTP client error: {error}"))
 }
 
 pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -1148,26 +1847,23 @@ pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> T
         WebsiteAccess::DeniedByRule(reason) => {
             return ToolOutcome::error(format!("Blocked: {reason}"))
         }
-        WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+        WebsiteAccess::Refused(decision) => return ToolOutcome::refused(&decision),
     }
 
     // Follow redirects manually so every hop is re-checked against the website
-    // rules and the private-address block, then fetch the final URL.
-    let client = match reqwest::Client::builder()
-        .user_agent("pumr/0.1")
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(WEB_TIMEOUT_SECONDS))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => return ToolOutcome::error(format!("HTTP client error: {error}")),
-    };
+    // rules and the private-address block, then fetch the final URL. Each hop
+    // connects only to the addresses that passed the block.
     let mut current = parsed.clone();
     let mut redirects = 0;
     let response = loop {
-        if let Err(reason) = ensure_host_public(&current).await {
-            return ToolOutcome::error(reason);
-        }
+        let addresses = match ensure_host_public(&current).await {
+            Ok(addresses) => addresses,
+            Err(reason) => return ToolOutcome::error(reason),
+        };
+        let client = match pinned_client(current.host_str().unwrap_or_default(), &addresses) {
+            Ok(client) => client,
+            Err(error) => return ToolOutcome::error(error),
+        };
         let response = match client
             .get(current.clone())
             .header(
@@ -1206,7 +1902,7 @@ pub(crate) async fn web_fetch(runtime: &mut ToolRuntime, arguments: &Value) -> T
                 WebsiteAccess::DeniedByRule(reason) => {
                     return ToolOutcome::error(format!("Blocked: {reason}"))
                 }
-                WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+                WebsiteAccess::Refused(decision) => return ToolOutcome::refused(&decision),
             }
         }
         current = next;
@@ -1269,7 +1965,7 @@ async fn web_search(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         WebsiteAccess::DeniedByRule(reason) => {
             return ToolOutcome::error(format!("Blocked: {reason}"))
         }
-        WebsiteAccess::DeniedByUser => return ToolOutcome::denied(),
+        WebsiteAccess::Refused(decision) => return ToolOutcome::refused(&decision),
     }
 
     let response = match runtime
@@ -1541,27 +2237,34 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .and_then(Value::as_str)
         .map(|path| permissions::resolve_path(&runtime.project_root, path))
         .unwrap_or_else(|| runtime.project_root.clone());
-    if !ensure_path_access(runtime, &cwd, "directory", PermissionOperation::Access).await {
-        return ToolOutcome::denied();
+    if let Err(outcome) =
+        ensure_path_access(runtime, &cwd, "directory", PermissionOperation::Access).await
+    {
+        return outcome;
     }
 
-    let mut allowed_rules = runtime.permissions.command_rules();
-    allowed_rules.extend(
-        runtime
-            .permissions
-            .session_command_rules(&runtime.session_id),
-    );
-    let denied_rules = runtime.permissions.denied_command_rules();
-    let decision = permissions::evaluate_command(
+    let mut trace: Vec<String> = Vec::new();
+    let decision = runtime.permissions.evaluate_command(
         &command,
         &runtime.project_root,
         &cwd,
-        &runtime.permissions.extra_folders(),
-        &allowed_rules,
-        &denied_rules,
+        &runtime.conversation_id,
+        &mut trace,
     );
-    if let CommandDecision::Deny { reason } = decision {
-        return ToolOutcome::denied_with_reason(reason);
+    match &decision {
+        CommandDecision::Deny { reason } => {
+            audit_unprompted(runtime, "command", &command, false, reason.clone());
+            return ToolOutcome::denied_with_reason(reason.clone());
+        }
+        CommandDecision::Allow => {
+            let reason = if trace.is_empty() {
+                "allowed".to_string()
+            } else {
+                trace.join("; ")
+            };
+            audit_unprompted(runtime, "command", &command, true, reason);
+        }
+        CommandDecision::Ask { .. } => {}
     }
     if let CommandDecision::Ask {
         reason,
@@ -1569,15 +2272,18 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         segments,
         risk,
         scope_options,
+        outside_folders,
+        hosts,
     } = decision
     {
-        let allowed = runtime
+        let answer = runtime
             .broker
             .ask(
                 PermissionPrompt {
                     kind: "command".to_string(),
                     operation: PermissionOperation::Execute,
                     cwd: Some(permission_path(&cwd)),
+                    project_root: runtime.project_root.clone(),
                     title: "Run command?".to_string(),
                     detail: reason,
                     command: Some(command.clone()),
@@ -1588,15 +2294,18 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     segments,
                     risk: Some(risk),
                     scope_options,
+                    folders: outside_folders,
+                    hosts,
+                    grant_session_id: runtime.conversation_id.clone(),
+                    justification: runtime.justification.clone(),
                 },
                 &runtime.cancel,
                 &runtime.session_id,
                 &runtime.emit,
             )
-            .await
-            .allowed;
-        if !allowed {
-            return ToolOutcome::denied();
+            .await;
+        if !answer.allowed {
+            return ToolOutcome::refused(&answer);
         }
     }
 
@@ -1773,19 +2482,143 @@ fn spawn_waiter(
 }
 
 fn truncate(text: String) -> String {
-    if text.len() <= MAX_TOOL_OUTPUT {
-        return text;
+    head_tail(&text, MAX_TOOL_OUTPUT)
+}
+
+/// Truncates to at most `max_bytes` while keeping both the beginning and the
+/// end of the output, since failures and errors usually appear at the tail.
+/// The split favours the head slightly (~55/45) to preserve the leading context.
+fn head_tail(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
     }
-    let mut end = MAX_TOOL_OUTPUT;
-    while !text.is_char_boundary(end) {
-        end -= 1;
+    let notice = format!(
+        "\n\n…(output truncated: {} of {} bytes kept; head and tail shown)\n\n",
+        max_bytes,
+        text.len()
+    );
+    // When the budget cannot hold the notice plus both ends, fall back to a
+    // plain prefix cut so the result never exceeds `max_bytes`.
+    if max_bytes <= notice.len() + 1 {
+        let end = floor_char_boundary(text, max_bytes);
+        return text[..end].to_string();
     }
-    format!("{}\n…(output truncated)", &text[..end])
+    let budget = max_bytes - notice.len();
+    let head_budget = budget * 55 / 100;
+    let tail_budget = budget - head_budget;
+    let head_end = floor_char_boundary(text, head_budget);
+    let tail_start = ceil_char_boundary(text, text.len().saturating_sub(tail_budget));
+    format!("{}{}{}", &text[..head_end], notice, &text[tail_start..])
+}
+
+fn floor_char_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, index: usize) -> usize {
+    let mut index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn schema_named(name: &str) -> Value {
+        tool_schemas()
+            .into_iter()
+            .find(|schema| schema.pointer("/function/name").and_then(Value::as_str) == Some(name))
+            .unwrap()
+    }
+
+    fn requires_reason(schema: &Value) -> bool {
+        schema
+            .pointer("/function/parameters/required")
+            .and_then(Value::as_array)
+            .is_some_and(|list| list.iter().any(|entry| entry == REASON_ARGUMENT))
+    }
+
+    #[test]
+    fn prompting_tools_take_a_reason() {
+        for (name, required) in PROMPTING_TOOLS {
+            let schema = schema_named(name);
+            assert!(
+                schema
+                    .pointer(&format!("/function/parameters/properties/{REASON_ARGUMENT}"))
+                    .is_some(),
+                "{name}"
+            );
+            assert_eq!(requires_reason(&schema), required, "{name}");
+        }
+        assert!(schema_named("question")
+            .pointer("/function/parameters/properties/reason")
+            .is_none());
+        assert!(requires_reason(&mcp_invoke_schema()));
+    }
+
+    #[test]
+    fn reason_argument_keeps_a_declared_reason_and_fills_empty_schemas() {
+        let mut declared = json!({ "function": { "parameters": {
+            "type": "object",
+            "properties": { "reason": { "type": "integer" } },
+            "required": ["reason"]
+        } } });
+        add_reason_argument(&mut declared, true);
+        assert_eq!(
+            declared.pointer("/function/parameters/properties/reason/type"),
+            Some(&json!("integer"))
+        );
+        assert_eq!(
+            declared.pointer("/function/parameters/required"),
+            Some(&json!(["reason"]))
+        );
+
+        let mut bare = json!({ "function": { "parameters": { "type": "object" } } });
+        add_reason_argument(&mut bare, true);
+        assert!(bare.pointer("/function/parameters/properties/reason").is_some());
+        assert!(requires_reason(&bare));
+    }
+
+    #[test]
+    fn justification_is_collapsed_and_capped() {
+        assert_eq!(justification(None), None);
+        assert_eq!(justification(Some(&json!("  \n "))), None);
+        assert_eq!(justification(Some(&json!(42))), None);
+        assert_eq!(
+            justification(Some(&json!("Run  the\ntests."))).as_deref(),
+            Some("Run the tests.")
+        );
+        let long = justification(Some(&json!("a".repeat(1000)))).unwrap();
+        assert_eq!(long.chars().count(), MAX_JUSTIFICATION_CHARS);
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn non_public_addresses_are_blocked_in_every_form() {
+        for address in [
+            "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
+            "100.64.0.1", "100.127.255.254", "198.18.0.1", "198.19.255.255", "224.0.0.1",
+            "240.0.0.1", "255.255.255.255", "0.0.0.0", "192.0.0.8",
+            "::1", "::", "fc00::1", "fe80::1", "fec0::1", "ff02::1", "2001:db8::1",
+            "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254",
+            "64:ff9b::a00:1", "2002:c0a8:0101::1",
+        ] {
+            assert!(blocked_ip(address.parse().unwrap()), "{address}");
+        }
+        for address in [
+            "93.184.216.34", "1.1.1.1", "100.128.0.1", "198.20.0.1",
+            "2606:4700:4700::1111", "::ffff:93.184.216.34", "64:ff9b::5db8:d822",
+        ] {
+            assert!(!blocked_ip(address.parse().unwrap()), "{address}");
+        }
+    }
 
     #[test]
     fn permission_paths_are_absolute_and_canonical_when_existing() {
@@ -1806,6 +2639,31 @@ mod tests {
         assert!(!missing.exists());
         assert_eq!(permission_path(&missing), missing);
         assert!(permission_path(&missing).is_absolute());
+    }
+
+    #[test]
+    fn head_tail_keeps_both_ends_within_budget() {
+        let text = format!("{}{}", "a".repeat(1000), "b".repeat(1000));
+        let limited = head_tail(&text, 600);
+        assert!(limited.starts_with("aaa"));
+        assert!(limited.ends_with("bbb"));
+        assert!(limited.len() <= 600, "expected <= 600, got {}", limited.len());
+        assert!(limited.contains("truncated"));
+    }
+
+    #[test]
+    fn head_tail_leaves_short_output_untouched() {
+        let text = "short output".to_string();
+        assert_eq!(head_tail(&text, 100), text);
+    }
+
+    #[test]
+    fn head_tail_respects_utf8_boundaries() {
+        let text = "é".repeat(400);
+        let limited = head_tail(&text, 300);
+        assert!(limited.len() <= 300);
+        // Must remain valid UTF-8; `.chars()` would panic on a broken boundary.
+        assert!(limited.chars().count() > 0);
     }
 
     #[cfg(unix)]
@@ -1854,6 +2712,67 @@ mod tests {
         );
     }
 
+    fn walk_relative(base: &Path, config: &Arc<FileIgnoreConfig>) -> Vec<String> {
+        let mut found: Vec<String> = file_walker(base, base, config)
+            .flatten()
+            .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+            .map(|entry| {
+                entry
+                    .path()
+                    .strip_prefix(base)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn walk_prunes_generated_dirs_even_when_scanning_is_enabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::write(root.join("dist/app.js"), "y").unwrap();
+
+        let config = Arc::new(FileIgnoreConfig::new(true, true, false, true, &[]));
+        assert_eq!(walk_relative(root, &config), vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn walk_reenters_generated_dirs_for_exemptions_and_disabled_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::write(root.join("dist/app.js"), "y").unwrap();
+        std::fs::write(root.join("src/main.rs"), "z").unwrap();
+
+        let exempted = Arc::new(FileIgnoreConfig::new(
+            true,
+            true,
+            false,
+            true,
+            &["node_modules/**".to_string()],
+        ));
+        assert!(walk_relative(root, &exempted).contains(&"node_modules/pkg/index.js".to_string()));
+
+        let disabled = Arc::new(
+            FileIgnoreConfig::new(true, true, false, true, &[])
+                .with_overrides(&["dir:node_modules".to_string()], &[]),
+        );
+        let found = walk_relative(root, &disabled);
+        assert!(found.contains(&"node_modules/pkg/index.js".to_string()));
+        assert!(!found.contains(&"dist/app.js".to_string()));
+    }
+
     #[test]
     fn duckduckgo_results_are_parsed() {
         let html = r#"
@@ -1868,5 +2787,104 @@ mod tests {
         assert_eq!(results[0].title, "serde - Rust");
         assert_eq!(results[0].snippet, "A serialization framework.");
         assert_eq!(results[1].url, "https://example.com/page");
+    }
+
+    #[test]
+    fn edit_matches_exact_text_once() {
+        let (updated, count) = apply_edit("let a = 1;\n", "a = 1", "a = 2", false).unwrap();
+        assert_eq!(updated, "let a = 2;\n");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn edit_replace_all_replaces_every_match() {
+        let (updated, count) = apply_edit("x x x", "x", "y", true).unwrap();
+        assert_eq!(updated, "y y y");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn edit_requires_unique_match_without_replace_all() {
+        assert!(matches!(
+            apply_edit("x x", "x", "y", false),
+            Err(EditError::NotUnique(2))
+        ));
+    }
+
+    #[test]
+    fn edit_rejects_empty_old_string() {
+        assert!(matches!(
+            apply_edit("abc", "", "y", false),
+            Err(EditError::EmptyOldString)
+        ));
+    }
+
+    #[test]
+    fn edit_reports_missing_text() {
+        assert!(matches!(
+            apply_edit("abc", "zzz", "y", false),
+            Err(EditError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn edit_restores_indentation_when_old_string_is_flattened() {
+        let content = "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n}\n";
+        let old = "let x = 1;\nprintln!(\"{x}\");";
+        let (updated, count) = apply_edit(content, old, "let x = 2;", false).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "fn main() {\n    let x = 2;\n}\n");
+    }
+
+    #[test]
+    fn edit_removes_extra_indentation_from_replacement() {
+        let content = "fn main() {\n    let x = 1;\n}\n";
+        let old = "        let x = 1;";
+        let (updated, count) = apply_edit(content, old, "        let x = 2;", false).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "fn main() {\n    let x = 2;\n}\n");
+    }
+
+    #[test]
+    fn edit_tolerates_whitespace_runs() {
+        let (updated, count) = apply_edit("a = 1\nb = 2\n", "a = 1   b = 2", "c = 3", false)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "c = 3\n");
+    }
+
+    #[test]
+    fn edit_tolerates_carriage_returns() {
+        let (updated, count) = apply_edit("a = 1\r\nb = 2\r\n", "a = 1\nb = 2", "c = 3", false)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(updated, "c = 3\r\n");
+    }
+
+    #[test]
+    fn only_the_users_own_denial_is_reported_as_one() {
+        let refused = |decided_by: &str| {
+            ToolOutcome::refused(&PermissionDecision {
+                allowed: false,
+                rule: None,
+                folder: None,
+                decided_by: decided_by.to_string(),
+                decision: None,
+            })
+        };
+        let user = refused("user");
+        assert_eq!(user.status, "denied");
+        assert_eq!(user.result, "The user denied this action.");
+        assert_eq!(refused("").result, user.result);
+        for decided_by in ["cascade", "grant"] {
+            let outcome = refused(decided_by);
+            assert_eq!(outcome.status, "denied", "{decided_by}");
+            assert_ne!(outcome.result, user.result, "{decided_by}");
+        }
+        for decided_by in ["cancelled", "stopped", "timeout"] {
+            let outcome = refused(decided_by);
+            assert_eq!(outcome.status, "canceled", "{decided_by}");
+            assert_ne!(outcome.result, user.result, "{decided_by}");
+        }
     }
 }

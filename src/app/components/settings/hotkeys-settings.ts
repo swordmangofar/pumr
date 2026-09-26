@@ -36,7 +36,7 @@ type HotkeyField =
       <div class="mt-5 space-y-3">
         @for (item of items; track item.field) {
           <div
-            class="flex items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
+            class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
           >
             <div class="min-w-0">
               <p class="text-sm font-medium text-white">{{ item.label | transloco }}</p>

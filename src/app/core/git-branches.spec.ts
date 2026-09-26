@@ -8,6 +8,8 @@ function branch(name: string, remote = false): GitBranch {
     current: false,
     remote,
     upstream: null,
+    remoteName: null,
+    remoteBranch: null,
     hash: null,
     subject: null,
     timestamp: null,

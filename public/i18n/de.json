@@ -71,8 +71,12 @@
     "unstage": "Zurücknehmen",
     "stageAll": "Alle vormerken",
     "unstageAll": "Alle zurücknehmen",
+    "stageSelected": "{{ count }} ausgewählte vormerken",
+    "unstageSelected": "{{ count }} ausgewählte zurücknehmen",
     "discard": "Verwerfen",
     "discardConfirm": "Änderungen an „{{ path }}“ verwerfen? Dies kann nicht rückgängig gemacht werden.",
+    "discardSelected": "{{ count }} Dateien verwerfen",
+    "discardSelectedConfirm": "Änderungen an {{ count }} Dateien verwerfen? Dies kann nicht rückgängig gemacht werden.",
     "blame": "Blame",
     "blameEmpty": "Keine Blame-Informationen verfügbar.",
     "ignore": "Zu .gitignore hinzufügen",
@@ -124,7 +128,14 @@
       "banner": "{{ operation }} läuft",
       "files": "{{ count }} Dateien mit Konflikten",
       "continue": "Fortsetzen",
-      "abort": "Abbrechen"
+      "abort": "Abbrechen",
+      "resolveFirst": "Zuerst alle Konflikte lösen und die Dateien stagen."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-Pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Authentifizierung fehlgeschlagen. Prüfe deine Git-Zugangsdaten.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Den neuen Branch auschecken",
       "confirm": "Bestätigen",
       "mergeConfirm": "'{{branch}}' in '{{current}}' mergen?",
+      "rebaseConfirm": "'{{current}}' auf '{{branch}}' rebasen? Dabei werden die Commits von '{{current}}' neu geschrieben.",
       "deleteConfirm": "Branch '{{branch}}' löschen? Das kann nicht rückgängig gemacht werden.",
       "deleteRemoteConfirm": "Remote-Branch '{{branch}}' löschen? Dies betrifft das Remote-Repository.",
+      "forceDeleteConfirm": "Branch '{{branch}}' ist nicht vollständig gemergt. Trotzdem löschen? Seine nicht gemergten Commits gehen verloren.",
       "rebaseHint": "Ordne Commits neu und wähle eine Aktion für jeden. Der Rebase läuft vom ältesten zum neuesten Commit.",
-      "nothingToRebase": "Keine Commits zum Rebasen."
+      "nothingToRebase": "Keine Commits zum Rebasen.",
+      "rebaseActions": {
+        "pick": "Übernehmen (pick)",
+        "squash": "Zusammenfassen (squash)",
+        "fixup": "Einschmelzen (fixup)",
+        "drop": "Verwerfen (drop)"
+      },
+      "rebaseSquashFirst": "Der erste Commit kann nicht per Squash oder Fixup eingeschmolzen werden – es gibt keinen früheren Commit, mit dem er kombiniert werden könnte.",
+      "moveUp": "Nach oben",
+      "moveDown": "Nach unten"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Keine Schritte passen zu den aktuellen Filtern.",
     "view": {
       "timeline": "Zeitleiste",
-      "branches": "Zweige"
+      "branches": "Zweige",
+      "permissions": "Berechtigungen"
     },
     "filters": {
       "type": "Typ",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Sitzungs-Override",
       "default": "Standardeinstellungen"
+    },
+    "permissions": {
+      "empty": "Für diesen Chat wurden noch keine Berechtigungsentscheidungen aufgezeichnet.",
+      "clear": "Protokoll leeren",
+      "clearConfirm": "Zum Leeren erneut klicken",
+      "allowed": "Erlaubt",
+      "denied": "Verboten",
+      "why": "Grund:",
+      "rule": "Regel:",
+      "filters": {
+        "auto": "Ohne Nachfrage erlaubt",
+        "asked": "Nachgefragt",
+        "denied": "Verboten"
+      },
+      "by": {
+        "auto": "Automatisch",
+        "rule": "Verbotsregel",
+        "user": "Du",
+        "grant": "Durch neue Freigabe abgedeckt",
+        "cascade": "Mit einer anderen Anfrage verboten",
+        "stopped": "Gestoppt",
+        "timeout": "Zeitüberschreitung",
+        "cancelled": "Abgebrochen"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Ergänzt Hinweise zu fokussierten, deterministischen Tests und deren Ausführung vor Abschluss.",
     "architecturePrompt": "Softwarearchitektur",
     "architecturePromptHint": "Ergänzt Hinweise zu Modulgrenzen, Verantwortlichkeiten und wartbarem Design.",
-    "budget": "Budget (USD)",
-    "budgetHint": "0 deaktiviert die Budgetanzeige.",
     "language": "Sprache",
     "replyLanguage": "Antwortsprache",
     "replyLanguageDefault": "Standard (Sprache des Modells)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Wie viele aufeinanderfolgende Tool-Aufrufe der Agent machen darf, bevor er pausiert und dich um Fortsetzen bittet. Das Limit ist ein Sicherheitsventil: Es stoppt ein Modell, das in einer Schleife feststeckt, damit es nicht endlos weiterläuft und Token verbraucht. 35 ist ein guter Standardwert; erhöhe ihn für lange, mehrstufige Aufgaben.",
     "autoContinueAllSessions": "Alle Sitzungen automatisch fortsetzen",
     "autoContinueAllSessionsHint": "Wenn eine Sitzung das Tool-Aufruf-Limit erreicht, automatisch weitermachen statt zu pausieren. Das entfernt das Schleifen-Sicherheitsnetz, ein festgefahrener Agent kann also bis zum manuellen Stopp weiterlaufen. Kann auch im Chat aktiviert werden, wenn ein Limit erreicht wird.",
+    "subagentModel": "Subagent-Modell",
+    "subagentModelHint": "Modell für Subagenten. Leer lassen, um das Modell der Sitzung zu verwenden.",
+    "compactionModel": "Komprimierungsmodell",
+    "compactionModelHint": "Modell zum Zusammenfassen langer Konversationen. Leer lassen, um das Modell der Sitzung zu verwenden.",
+    "promptCaching": "Prompt-Caching",
+    "promptCachingHint": "Den stabilen Prompt-Präfix als cachefähig markieren, damit unterstützte Anbieter gecachte Eingabe-Token günstiger abrechnen.",
+    "mcpProgressiveDisclosure": "Schrittweise MCP-Tool-Anzeige",
+    "mcpProgressiveDisclosureHint": "Bei vielen verbundenen MCP-Tools ein tool_search/mcp_invoke-Paar anzeigen, statt jedes Schema einzubinden, um Kontext zu sparen. Kleine Toolsets werden immer eingebunden.",
     "fileAccessRules": "Dateizugriffsregeln",
     "fileAccessRulesHint": "Steuere, welche Dateien der Assistent finden und lesen darf. Eigene Ausnahmen gewinnen immer gegen alle Regeln darunter.",
     "ignoreGitignored": "Dateien aus .gitignore ignorieren",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Keine blockierten Befehle.",
     "scope": {
       "program": "Programm",
+      "subcommand": "Programm + Unterbefehl",
       "programFlags": "Programm + Optionen",
       "exact": "Exakt"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Noch keine Regeln. Nutze \"Immer erlauben\" in einer Freigabe, um eine anzulegen.",
     "websiteRules": "Websites",
-    "websiteRulesHint": "Websites, die der Assistent besuchen darf. Verbotsregeln gewinnen über Erlaubnisregeln; eine reine Domain gilt auch für ihre Subdomains. Nutze \"Immer erlauben\" oder \"Immer verbieten\" in einer Freigabe, um eine Regel anzulegen.",
+    "websiteRulesHint": "Websites, die der Assistent besuchen darf, mit seinen Web-Tools oder mit Befehlen wie curl, git und ssh. Verbotsregeln gewinnen über Erlaubnisregeln; eine reine Domain gilt auch für ihre Subdomains. Nutze \"Immer erlauben\" oder \"Immer verbieten\" in einer Freigabe, um eine Regel anzulegen.",
     "permissionPrompts": "Berechtigungsanfragen",
     "permissionPromptsHint": "Wähle, was die Hauptschaltfläche „Erlauben“ standardmäßig tut. Einmal erlauben genehmigt eine einzelne Anfrage; für diese Sitzung erlauben merkt sich den Ordnerzugriff bis zum Neustart der App.",
+    "autoApprove": "Automatische Freigabe",
+    "autoApproveHint": "Überspringt Nachfragen für Arbeit, die der Assistent als sicher nachweisen kann. Gefährliche Befehle, Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, Pfade außerhalb des Projekts und sensible Dateien fragen weiterhin nach.",
+    "autoApproveReadOnly": "Nur-Lese-Befehle",
+    "autoApproveReadOnlyHint": "Erlaubt Inspektionsbefehle wie ls, grep und git status ohne Nachfrage.",
+    "autoApprovePackageScripts": "Paketmanager und Build-Runner",
+    "autoApprovePackageScriptsHint": "Erlaubt pnpm, npm, yarn, bun, ng, make und ähnliche Werkzeuge, solange nichts auf etwas außerhalb des Projekts zeigt.",
+    "autoApproveProjectExecutables": "Projekt-Programme",
+    "autoApproveProjectExecutablesHint": "Erlaubt Programme innerhalb des Projekts, z. B. ./node_modules/.bin/ng, ohne jedes Mal nachzufragen.",
+    "autoApproveProjectCommands": "Alle Befehle innerhalb des Projekts",
+    "autoApproveProjectCommandsHint": "Erlaubt jeden ungefährlichen Befehl, dessen Pfade im Projekt bleiben. Gefährliche Befehle, Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, sensible Dateien und alles außerhalb fragen weiterhin nach.",
+    "permissionPreset": {
+      "strict": "Streng",
+      "strictHint": "Nur Befehle, die ausschließlich lesen, laufen ohne Nachfrage.",
+      "balanced": "Ausgewogen",
+      "balancedHint": "Lesende Befehle, Paketmanager, Build-Tools und Projekt-Programme laufen ohne Nachfrage.",
+      "autonomous": "Autonom",
+      "autonomousHint": "Jeder ungefährliche Befehl innerhalb des Projekts läuft ohne Nachfrage.",
+      "custom": "Benutzerdefiniert",
+      "autonomousWarning": "Autonom vertraut diesem Projekt: Seine Skripte, Makefiles und Programme können ohne Nachfrage alles tun. Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, gefährliche Befehle und alles außerhalb des Projekts fragen weiterhin nach.",
+      "confirm": "Autonom verwenden"
+    },
     "noAllowedWebsites": "Noch keine immer erlaubten Websites.",
     "noDeniedWebsites": "Noch keine immer verbotenen Websites.",
     "websitePlaceholder": "z. B. docs.rs oder *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Ordner"
     },
     "allowAlways": "Immer erlauben",
-    "addFolder": "Ordner dauerhaft hinzufügen",
     "siteRuleLabel": "Website-Regel (Domain oder Glob)",
     "siteRuleHint": "Zum Beispiel: docs.rs erlaubt diese Seite, *.github.com erlaubt alle Subdomains.",
-    "segment": {
-      "allowed": "Erlaubt",
-      "needsApproval": "Erfordert Zustimmung"
-    },
+    "siteRuleInvalid": "Diese Regel deckt {{ host }} nicht ab oder ist zu weit gefasst, daher wird stattdessen {{ host }} gespeichert.",
     "risk": {
       "low": "Niedrig",
       "medium": "Mittel",
+      "network": "Netzwerk",
       "high": "Hoch",
       "danger": "Gefahr"
     },
@@ -994,7 +1066,39 @@
       "title": "Regelbereich",
       "hint": "Wähle, wie breit diese Regel gilt."
     },
-    "allowChat": "In diesem Chat erlauben"
+    "folderScope": {
+      "title": "Ordner freigeben",
+      "hint": "Fügt den Ordner und alles darunter zu den immer erlaubten Ordnern hinzu.",
+      "option": "Ordner + Unterordner"
+    },
+    "hostScope": {
+      "title": "Website erlauben",
+      "hint": "Fügt die Website und ihre Subdomains zu den erlaubten Websites hinzu.",
+      "option": "Website + Subdomains"
+    },
+    "allowChat": "In diesem Chat erlauben",
+    "option": {
+      "yes": "Ja",
+      "chat": "Ja, und in diesem Chat nicht mehr fragen für",
+      "session": "Ja, und bis zum Neustart nicht mehr fragen für",
+      "always": "Ja, und immer erlauben",
+      "no": "Nein",
+      "denyAlways": "Nein, und immer verbieten"
+    },
+    "customize": "Anpassen",
+    "justification": "Warum",
+    "keyboardHint": "1–{{ count }} drücken oder ↑ ↓ und Enter verwenden · Esc lehnt ab",
+    "url": {
+      "queryWarning": "Diese Adresse enthält viele Daten in ihrem Query-String. Prüfe, dass nichts Privates darin steht, bevor du sie erlaubst."
+    },
+    "tooltip": {
+      "deny": "Diese Anfrage und alle anderen wartenden Anfragen in diesem Chat verbieten.",
+      "denyAlways": "Verbieten und eine Verbotsregel in deinen Einstellungen speichern. Andere wartende Anfragen in diesem Chat werden ebenfalls verboten.",
+      "allowOnce": "Nur diese Anfrage erlauben.",
+      "allowSession": "Gilt in allen Chats, bis die App neu gestartet wird.",
+      "allowChat": "Befehlsregeln gelten für diesen Chat und seine Subagenten; Ordner und Websites bis zum Neustart der App.",
+      "allowAlways": "Wird in deinen Einstellungen gespeichert und gilt für alle Chats."
+    }
   },
   "question": {
     "title": "Frage",
@@ -1044,6 +1148,8 @@
     "installing": "Wird installiert…",
     "uninstall": "Deinstallieren",
     "addFolder": "Ordner hinzufügen",
-    "noFolders": "Noch keine Ordner hinzugefügt."
+    "noFolders": "Noch keine Ordner hinzugefügt.",
+    "binaryFile": "Binärdatei – keine Vorschau verfügbar.",
+    "fileTooLarge": "Diese Datei ist zu groß für eine Vorschau."
   }
 }

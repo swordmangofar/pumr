@@ -10,18 +10,19 @@ import {
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
-import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
+import { ContextUsageInfo, FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
 import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { AttachmentPreview } from './attachment-preview';
 import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
 import { CopyButton } from './copy-button';
+import { MarkdownView } from './markdown-view';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
 import { ProjectIcon } from './project-icon';
 import { QuestionOverlay } from './question-overlay';
-import { StreamText } from './stream-text';
+import { StickToBottom } from './stick-to-bottom';
 import { ToolCard } from './tool-card';
 import { ToolGroup, ToolGroupItem } from './tool-group';
 
@@ -61,6 +62,17 @@ type ChatEntry = MessageEntry | ToolEntry | ToolGroupEntry;
 const HIDDEN_TOOLS = new Set(['ls']);
 const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
 
+/** Compact token count for the context meter, e.g. 12300 -> "12.3k". */
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}k`;
+  }
+  return `${value}`;
+}
+
 import { TypedInput } from './typed-input';
 
 @Component({
@@ -77,7 +89,8 @@ import { TypedInput } from './typed-input';
     ToolGroup,
     AgentStatus,
     PumaLoader,
-    StreamText,
+    MarkdownView,
+    StickToBottom,
     ProjectIcon,
     CopyButton,
   ],
@@ -95,6 +108,22 @@ import { TypedInput } from './typed-input';
           >
             {{ 'chat.openSettings' | transloco }}
           </button>
+        </div>
+      }
+
+      @if (contextUsage(); as usage) {
+        <div
+          class="flex items-center gap-2 border-b border-white/5 px-5 py-1.5"
+          [attr.title]="contextTooltip(usage)"
+        >
+          <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+            <div
+              class="h-full rounded-full transition-all"
+              [class]="contextBarClass(usage)"
+              [style.width.%]="contextPercent(usage)"
+            ></div>
+          </div>
+          <span class="text-[11px] tabular-nums text-mist/50">{{ contextLabel(usage) }}</span>
         </div>
       }
 
@@ -249,7 +278,7 @@ import { TypedInput } from './typed-input';
                             </svg>
                           </button>
                           <div
-                            class="max-w-[85%] rounded-2xl rounded-tr-md border px-4 py-3 text-[15px] whitespace-pre-wrap text-white"
+                            class="min-w-0 max-w-[85%] rounded-2xl rounded-tr-md border px-4 py-3 text-[15px] break-words whitespace-pre-wrap text-white"
                             [class]="
                               entry.message.id === delegatedPromptId()
                                 ? 'border-sky-400/30 bg-sky-500/10'
@@ -350,11 +379,14 @@ import { TypedInput } from './typed-input';
                                 }
                               </summary>
                               <div
-                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-mist/60"
+                                class="max-h-80 overflow-y-auto border-t border-white/5 px-4 py-3 text-sm leading-relaxed break-words text-mist/60"
+                                [appStickToBottom]="entry.message.reasoning"
                               >
-                                <app-stream-text
+                                <app-markdown
+                                  class="markdown-muted"
                                   [content]="entry.message.reasoning"
-                                  [follow]="true"
+                                  [streaming]="isThinking(entry.message)"
+                                  [caret]="false"
                                 />
                               </div>
                             </details>
@@ -368,14 +400,11 @@ import { TypedInput } from './typed-input';
                           }
 
                           @if (entry.message.content) {
-                            <div class="text-[15px] leading-relaxed whitespace-pre-wrap text-mist">
-                              <app-stream-text [content]="entry.message.content" />
-                              @if (streaming() && isLast(entry.message)) {
-                                <span
-                                  class="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-accent align-text-bottom"
-                                ></span>
-                              }
-                            </div>
+                            <app-markdown
+                              class="text-[15px] leading-relaxed break-words text-mist"
+                              [content]="entry.message.content"
+                              [streaming]="streaming() && isLast(entry.message)"
+                            />
                           }
 
                           @if (entry.message.content || entry.message.cost > 0) {
@@ -631,6 +660,45 @@ export class ChatView {
 
   protected readonly session = this.workspace.activeAgent;
   protected readonly subAgents = this.workspace.activeSubAgents;
+  protected readonly contextUsage = computed<ContextUsageInfo | null>(() => {
+    const session = this.session();
+    if (!session) {
+      return null;
+    }
+    const usage = this.workspace.contextUsage()[session.id];
+    return usage && usage.budgetTokens > 0 ? usage : null;
+  });
+
+  protected contextPercent(usage: ContextUsageInfo): number {
+    if (usage.budgetTokens <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.round((usage.usedTokens / usage.budgetTokens) * 100));
+  }
+
+  protected contextLabel(usage: ContextUsageInfo): string {
+    return `${formatTokenCount(usage.usedTokens)} / ${formatTokenCount(usage.budgetTokens)}`;
+  }
+
+  protected contextTooltip(usage: ContextUsageInfo): string {
+    return [
+      `system ${formatTokenCount(usage.systemTokens)}`,
+      `history ${formatTokenCount(usage.historyTokens)}`,
+      `tools ${formatTokenCount(usage.toolSchemaTokens)}`,
+      `tool output ${formatTokenCount(usage.toolOutputTokens)}`,
+    ].join(' · ');
+  }
+
+  protected contextBarClass(usage: ContextUsageInfo): string {
+    const percent = this.contextPercent(usage);
+    if (percent >= 90) {
+      return 'bg-red-500';
+    }
+    if (percent >= 70) {
+      return 'bg-amber-400';
+    }
+    return 'bg-accent';
+  }
   protected readonly fromSubAgent = computed(() => this.session()?.parentSessionId != null);
   protected readonly viewingSubAgent = computed(() => {
     const root = this.workspace.activeSession();

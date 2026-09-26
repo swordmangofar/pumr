@@ -29,7 +29,7 @@ import { TypedInput } from '../typed-input';
         {{ 'settings.replyLanguage' | transloco }}
       </label>
       <select
-        class="field field-select w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
+        class="field field-select w-full max-w-64 rounded-xl py-2 pr-9 pl-4 text-sm"
         (typedValue)="draft.patch('replyLanguage', $event || null)"
       >
         <option value="" [selected]="!draft.draft().replyLanguage">
@@ -44,20 +44,7 @@ import { TypedInput } from '../typed-input';
       <p class="mt-2 text-xs text-mist/30">{{ 'settings.replyLanguageHint' | transloco }}</p>
     </section>
 
-    <section class="mt-8 grid grid-cols-2 gap-6">
-      <div>
-        <label class="mb-2 block text-sm text-mist/50">{{ 'settings.budget' | transloco }}</label>
-        <input
-          type="number"
-          min="0"
-          step="0.5"
-          class="field w-full rounded-xl px-4 py-2 text-sm"
-          [value]="draft.draft().budgetUsd"
-          (typedValue)="draft.patch('budgetUsd', +$event)"
-        />
-        <p class="mt-2 text-xs text-mist/30">{{ 'settings.budgetHint' | transloco }}</p>
-      </div>
-
+    <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div>
         <label class="mb-2 block text-sm text-mist/50">{{
           'settings.contextLimit' | transloco
@@ -82,7 +69,7 @@ import { TypedInput } from '../typed-input';
         type="number"
         min="1"
         step="1"
-        class="field w-40 rounded-xl px-4 py-2 text-sm"
+        class="field w-full max-w-40 rounded-xl px-4 py-2 text-sm"
         [value]="draft.draft().maxToolIterations"
         (typedValue)="draft.patch('maxToolIterations', +$event)"
       />
@@ -103,6 +90,69 @@ import { TypedInput } from '../typed-input';
       </div>
       <p class="mt-2 text-xs leading-relaxed text-mist/30">
         {{ 'settings.autoContinueAllSessionsHint' | transloco }}
+      </p>
+    </section>
+
+    <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
+      <div>
+        <label class="mb-2 block text-sm font-semibold text-white">{{
+          'settings.subagentModel' | transloco
+        }}</label>
+        <input
+          type="text"
+          class="field w-full rounded-xl px-4 py-2 text-sm"
+          [value]="draft.draft().subagentModel ?? ''"
+          (typedValue)="draft.patch('subagentModel', $event.trim() || null)"
+        />
+        <p class="mt-2 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.subagentModelHint' | transloco }}
+        </p>
+      </div>
+      <div>
+        <label class="mb-2 block text-sm font-semibold text-white">{{
+          'settings.compactionModel' | transloco
+        }}</label>
+        <input
+          type="text"
+          class="field w-full rounded-xl px-4 py-2 text-sm"
+          [value]="draft.draft().compactionModel ?? ''"
+          (typedValue)="draft.patch('compactionModel', $event.trim() || null)"
+        />
+        <p class="mt-2 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.compactionModelHint' | transloco }}
+        </p>
+      </div>
+    </section>
+
+    <section class="mt-8">
+      <div class="flex items-center gap-3">
+        <app-toggle
+          [checked]="draft.draft().promptCaching"
+          (toggled)="draft.patch('promptCaching', !draft.draft().promptCaching)"
+        />
+        <label class="text-sm font-semibold text-white">
+          {{ 'settings.promptCaching' | transloco }}
+        </label>
+      </div>
+      <p class="mt-2 text-xs leading-relaxed text-mist/30">
+        {{ 'settings.promptCachingHint' | transloco }}
+      </p>
+    </section>
+
+    <section class="mt-8">
+      <div class="flex items-center gap-3">
+        <app-toggle
+          [checked]="draft.draft().mcpProgressiveDisclosure"
+          (toggled)="
+            draft.patch('mcpProgressiveDisclosure', !draft.draft().mcpProgressiveDisclosure)
+          "
+        />
+        <label class="text-sm font-semibold text-white">
+          {{ 'settings.mcpProgressiveDisclosure' | transloco }}
+        </label>
+      </div>
+      <p class="mt-2 text-xs leading-relaxed text-mist/30">
+        {{ 'settings.mcpProgressiveDisclosureHint' | transloco }}
       </p>
     </section>
 

@@ -19,16 +19,20 @@ describe('AgentRulesSettings command rules', () => {
   let settings: ReturnType<typeof signal<Settings>>;
   let addCommandRule: ReturnType<typeof vi.fn>;
   let deleteCommandRule: ReturnType<typeof vi.fn>;
+  let patch: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.spyOn(api, 'getFileIgnoreCatalog').mockResolvedValue([]);
     settings = signal<Settings>({ ...FALLBACK_SETTINGS });
     addCommandRule = vi.fn().mockResolvedValue(undefined);
     deleteCommandRule = vi.fn().mockResolvedValue(undefined);
+    patch = vi.fn((key: keyof Settings, value: Settings[keyof Settings]) =>
+      settings.update((current) => ({ ...current, [key]: value })),
+    );
     TestBed.configureTestingModule({
       providers: [
         { provide: SettingsService, useValue: { settings, addCommandRule, deleteCommandRule } },
-        { provide: SettingsDraftService, useValue: { draft: settings } },
+        { provide: SettingsDraftService, useValue: { draft: settings, patch } },
       ],
     });
     TestBed.overrideComponent(AgentRulesSettings, {
@@ -126,5 +130,62 @@ describe('AgentRulesSettings command rules', () => {
       .find((button) => button.textContent?.includes('settings.allowCommand'))!
       .click();
     expect(addCommandRule).not.toHaveBeenCalled();
+  });
+
+  it('toggles automatic approval settings', () => {
+    const section = [...fixture.nativeElement.querySelectorAll('section')].find((entry) =>
+      (entry as HTMLElement).querySelector('h3')?.textContent?.includes('settings.autoApprove'),
+    ) as HTMLElement;
+    expect(section).toBeTruthy();
+    expect(section.querySelectorAll('app-toggle')).toHaveLength(4);
+
+    const instance = fixture.componentInstance as unknown as {
+      isAuto: (key: string) => boolean;
+      toggleAuto: (key: string) => void;
+    };
+    expect(instance.isAuto('autoApproveProjectCommands')).toBe(true);
+    instance.toggleAuto('autoApproveProjectCommands');
+    expect(patch).toHaveBeenCalledWith('autoApproveProjectCommands', false);
+    expect(instance.isAuto('autoApproveProjectCommands')).toBe(false);
+  });
+
+  function presetButton(preset: string): HTMLButtonElement {
+    return fixture.nativeElement.querySelector(`[data-preset="${preset}"]`) as HTMLButtonElement;
+  }
+
+  it('applies presets and shows custom mixes', () => {
+    expect(presetButton('autonomous').className).toContain('border-accent/60');
+    presetButton('strict').click();
+    fixture.detectChanges();
+    expect(settings().autoApproveReadOnly).toBe(true);
+    expect(settings().autoApprovePackageScripts).toBe(false);
+    expect(settings().autoApproveProjectExecutables).toBe(false);
+    expect(settings().autoApproveProjectCommands).toBe(false);
+    expect(presetButton('strict').className).toContain('border-accent/60');
+
+    presetButton('balanced').click();
+    fixture.detectChanges();
+    expect(settings().autoApprovePackageScripts).toBe(true);
+    expect(settings().autoApproveProjectExecutables).toBe(true);
+    expect(settings().autoApproveProjectCommands).toBe(false);
+
+    const instance = fixture.componentInstance as unknown as { toggleAuto: (key: string) => void };
+    instance.toggleAuto('autoApproveReadOnly');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="custom-preset"]')).not.toBeNull();
+  });
+
+  it('asks for confirmation before switching to autonomous', () => {
+    presetButton('strict').click();
+    fixture.detectChanges();
+    presetButton('autonomous').click();
+    fixture.detectChanges();
+    expect(settings().autoApproveProjectCommands).toBe(false);
+    const warning = fixture.nativeElement.querySelector('[data-testid="autonomous-warning"]');
+    expect(warning).not.toBeNull();
+    (warning.querySelector('[data-testid="confirm-autonomous"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(settings().autoApproveProjectCommands).toBe(true);
+    expect(fixture.nativeElement.querySelector('[data-testid="autonomous-warning"]')).toBeNull();
   });
 });

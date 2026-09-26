@@ -81,11 +81,11 @@ const CATEGORIES: Category[] = [
         </header>
 
         <div class="flex min-h-0 flex-1">
-          <nav class="w-60 shrink-0 border-r border-white/5 p-3">
+          <nav class="min-h-0 w-48 shrink-0 overflow-y-auto border-r border-white/5 p-3 sm:w-60">
             @for (category of categories; track category.id) {
               <button
                 type="button"
-                class="relative mb-1 flex w-full items-center rounded-full px-4 py-2 text-left text-sm transition-colors"
+                class="relative mb-1 flex w-full min-w-0 items-center break-words rounded-full px-4 py-2 text-left text-sm transition-colors"
                 [class]="
                   category.id === active()
                     ? 'bg-accent font-medium text-ink'
@@ -131,7 +131,7 @@ const CATEGORIES: Category[] = [
                 <app-hotkeys-settings />
               }
               @case ('window') {
-                <app-window-settings />
+                <app-window-settings class="block" />
               }
               @case ('skills') {
                 <app-skills-settings />

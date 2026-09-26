@@ -57,7 +57,7 @@ import { SpendStatsDialog } from './spend-stats-dialog';
                 ></span>
               </span>
               <span class="text-[10px] text-mist/40">
-                {{ money(summary.totalCost) }} / {{ money(summary.budgetUsd) }}
+                {{ money(used(summary)) }} / {{ money(summary.budgetUsd) }}
               </span>
             </span>
           </span>
@@ -78,11 +78,18 @@ export class SpendIndicator {
     return summary.budgetUsd > 0 && summary.remainingUsd !== null;
   }
 
+  protected used(summary: SpendSummary): number {
+    if (summary.budgetUsd <= 0 || summary.remainingUsd === null) {
+      return summary.totalCost;
+    }
+    return Math.max(0, summary.budgetUsd - summary.remainingUsd);
+  }
+
   protected usedPercent(summary: SpendSummary): number {
     if (summary.budgetUsd <= 0) {
       return 0;
     }
-    return Math.min(100, Math.round((summary.totalCost / summary.budgetUsd) * 100));
+    return Math.min(100, Math.round((this.used(summary) / summary.budgetUsd) * 100));
   }
 
   protected barClass(summary: SpendSummary): string {

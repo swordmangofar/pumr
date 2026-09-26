@@ -71,8 +71,12 @@
     "unstage": "Odobrať z indexu",
     "stageAll": "Pridať všetko do indexu",
     "unstageAll": "Odobrať všetko z indexu",
+    "stageSelected": "Pridať {{ count }} vybrané do indexu",
+    "unstageSelected": "Odobrať {{ count }} vybrané z indexu",
     "discard": "Zahodiť",
     "discardConfirm": "Zahodiť zmeny v „{{ path }}“? Toto sa nedá vrátiť.",
+    "discardSelected": "Zahodiť {{ count }} súborov",
+    "discardSelectedConfirm": "Zahodiť zmeny v {{ count }} súboroch? Túto akciu nie je možné vrátiť späť.",
     "blame": "Blame",
     "blameEmpty": "Nie sú k dispozícii informácie o autorstve.",
     "ignore": "Pridať do .gitignore",
@@ -124,7 +128,14 @@
       "banner": "Prebieha {{ operation }}",
       "files": "{{ count }} súborov s konfliktmi",
       "continue": "Pokračovať",
-      "abort": "Zrušiť"
+      "abort": "Zrušiť",
+      "resolveFirst": "Najprv vyriešte všetky konflikty a pripravte súbory na commit (stage)."
+    },
+    "operation": {
+      "merge": "Merge",
+      "rebase": "Rebase",
+      "cherryPick": "Cherry-pick",
+      "revert": "Revert"
     },
     "errors": {
       "auth": "Overenie zlyhalo. Skontrolujte prihlasovacie údaje Git.",
@@ -167,10 +178,21 @@
       "checkoutAfterCreate": "Prepnúť na novú vetvu",
       "confirm": "Potvrdiť",
       "mergeConfirm": "Zlúčiť '{{branch}}' do '{{current}}'?",
+      "rebaseConfirm": "Vykonať rebase '{{current}}' na '{{branch}}'? Commity vetvy '{{current}}' sa prepíšu.",
       "deleteConfirm": "Odstrániť vetvu '{{branch}}'? Túto akciu nie je možné vrátiť.",
       "deleteRemoteConfirm": "Odstrániť vzdialenú vetvu '{{branch}}'? Ovplyvní to vzdialený repozitár.",
+      "forceDeleteConfirm": "Vetva '{{branch}}' nie je úplne zlúčená. Napriek tomu ju odstrániť? Jej nezlúčené commity sa stratia.",
       "rebaseHint": "Zmeňte poradie commitov a zvoľte akciu pre každý. Rebase prebieha od najstaršieho po najnovší.",
-      "nothingToRebase": "Žiadne commity na rebase."
+      "nothingToRebase": "Žiadne commity na rebase.",
+      "rebaseActions": {
+        "pick": "Ponechať (pick)",
+        "squash": "Zlúčiť (squash)",
+        "fixup": "Začleniť (fixup)",
+        "drop": "Zahodiť (drop)"
+      },
+      "rebaseSquashFirst": "Prvý commit nemožno zlúčiť (squash ani fixup): neexistuje žiadny skorší commit, s ktorým by sa dal spojiť.",
+      "moveUp": "Posunúť nahor",
+      "moveDown": "Posunúť nadol"
     }
   },
   "tabs": {
@@ -245,7 +267,8 @@
     "noMatches": "Aktuálnym filtrom nevyhovujú žiadne kroky.",
     "view": {
       "timeline": "Časová os",
-      "branches": "Vetvy"
+      "branches": "Vetvy",
+      "permissions": "Povolenia"
     },
     "filters": {
       "type": "Typ",
@@ -333,6 +356,30 @@
     "sources": {
       "session": "Prepísanie relácie",
       "default": "Predvolené nastavenia"
+    },
+    "permissions": {
+      "empty": "Pre tento chat zatiaľ nie sú zaznamenané žiadne rozhodnutia o povoleniach.",
+      "clear": "Vymazať záznam",
+      "clearConfirm": "Kliknite znova na vymazanie",
+      "allowed": "Povolené",
+      "denied": "Odmietnuté",
+      "why": "Dôvod:",
+      "rule": "Pravidlo:",
+      "filters": {
+        "auto": "Povolené bez opýtania",
+        "asked": "S opýtaním",
+        "denied": "Odmietnuté"
+      },
+      "by": {
+        "auto": "Automaticky",
+        "rule": "Pravidlo odmietnutia",
+        "user": "Vy",
+        "grant": "Pokryté novým povolením",
+        "cascade": "Odmietnuté spolu s inou požiadavkou",
+        "stopped": "Zastavené",
+        "timeout": "Vypršal čas",
+        "cancelled": "Zrušené"
+      }
     }
   },
   "agents": {
@@ -745,8 +792,6 @@
     "testingPromptHint": "Pridáva pokyny k písaniu zameraných, deterministických testov a ich spúšťaniu pred dokončením.",
     "architecturePrompt": "Softvérová architektúra",
     "architecturePromptHint": "Pridáva pokyny k hraniciam modulov, zodpovednostiam a udržiavateľnému návrhu.",
-    "budget": "Rozpočet (USD)",
-    "budgetHint": "0 vypne zobrazenie rozpočtu.",
     "language": "Jazyk",
     "replyLanguage": "Jazyk odpovedí",
     "replyLanguageDefault": "Predvolené (jazyk modelu)",
@@ -906,6 +951,14 @@
     "maxToolIterationsHint": "Koľko po sebe idúcich volaní nástroja môže agent uskutočniť, kým sa pozastaví a požiada vás, aby ste pokračovali. Limitom je bezpečnostný ventil: zabráni modelu, ktorý uviazne v slučke, aby večne bežal a spaľoval žetóny. 35 je dobrá predvolená hodnota; zdvihnite ho pre dlhé, viackrokové úlohy.",
     "autoContinueAllSessions": "Automaticky pokračovať vo všetkých reláciách",
     "autoContinueAllSessionsHint": "Keď relácia dosiahne limit počtu volaní nástroja, pokračujte automaticky namiesto pozastavenia. Tým sa odstráni slučková bezpečnostná sieť, takže zaseknutý agent môže bežať, kým ho nezastavíte. Môžete to tiež prepnúť z chatu, keď sa dosiahne limit.",
+    "subagentModel": "Model pre podagentov",
+    "subagentModelHint": "Model používaný pre podagentov. Ponechajte prázdne, aby sa použil model relácie.",
+    "compactionModel": "Model kompresie",
+    "compactionModelHint": "Model používaný na zhrnutie dlhých konverzácií. Ponechajte prázdne, aby sa použil model relácie.",
+    "promptCaching": "Ukladanie promptov do vyrovnávacej pamäte",
+    "promptCachingHint": "Označte stabilný prefix promptu ako ukladateľný do vyrovnávacej pamäte, aby poskytovatelia podporujúci vyrovnávaciu pamäť účtovali cachované vstupné tokeny lacnejšie.",
+    "mcpProgressiveDisclosure": "Postupné odhaľovanie nástrojov MCP",
+    "mcpProgressiveDisclosureHint": "Keď je pripojených veľa nástrojov MCP, zobrazte dvojicu tool_search/mcp_invoke namiesto vkladania každej schémy, aby ste ušetrili kontext. Malé sady nástrojov sa vždy vkladajú.",
     "fileAccessRules": "Pravidlá prístupu k súborom",
     "fileAccessRulesHint": "Ovládajte, ktoré súbory môže asistent objavovať a čítať. Používateľské výnimky vždy víťazia nad každým pravidlom uvedeným nižšie.",
     "ignoreGitignored": "Ignorovať súbory uvedené v .gitignore",
@@ -940,6 +993,7 @@
     "noDeniedCommandRules": "Žiadne blokované príkazy.",
     "scope": {
       "program": "Program",
+      "subcommand": "Program + podpríkaz",
       "programFlags": "Program + prepínače",
       "exact": "Presný"
     },
@@ -951,9 +1005,30 @@
     },
     "noCommandRules": "Zatiaľ žiadne pravidlá príkazov. Vytvorte ich pomocou „vždy povoliť“ vo výzve na povolenie.",
     "websiteRules": "Webové stránky",
-    "websiteRulesHint": "Webové stránky, ktoré asistent môže navštíviť. Pravidlá odmietnutia majú prednosť pred pravidlami povolenia; samotná doména zahŕňa aj jej subdomény. Vytvorte ich pomocou „vždy povoliť“ alebo „vždy odmietnuť“ vo výzve na povolenie.",
+    "websiteRulesHint": "Webové stránky, ktoré asistent môže navštíviť svojimi webovými nástrojmi alebo príkazmi ako curl, git a ssh. Pravidlá odmietnutia majú prednosť pred pravidlami povolenia; samotná doména zahŕňa aj jej subdomény. Vytvorte ich pomocou „vždy povoliť“ alebo „vždy odmietnuť“ vo výzve na povolenie.",
     "permissionPrompts": "Žiadosti o povolenie",
     "permissionPromptsHint": "Vyberte, čo hlavné tlačidlo povolenia robí predvolene. Povoliť raz schváli jednu žiadosť; povoliť pre túto reláciu si pamätá prístup k priečinku do reštartu aplikácie.",
+    "autoApprove": "Automatické schválenie",
+    "autoApproveHint": "Preskočí otázky pri práci, ktorú asistent dokáže preukázať ako bezpečnú. Nebezpečné príkazy, vložený kód, sťahovanie balíkov, zatiaľ nepovolené webové stránky, cesty mimo projektu a citlivé súbory sa vždy pýtajú.",
+    "autoApproveReadOnly": "Príkazy iba na čítanie",
+    "autoApproveReadOnlyHint": "Umožní kontrolné príkazy ako ls, grep a git status bez pýtania.",
+    "autoApprovePackageScripts": "Správcovia balíkov a nástroje na zostavenie",
+    "autoApprovePackageScriptsHint": "Umožní pnpm, npm, yarn, bun, ng, make a podobné nástroje, keď nič nesmeruje mimo projektu.",
+    "autoApproveProjectExecutables": "Spustiteľné súbory projektu",
+    "autoApproveProjectExecutablesHint": "Umožní spustiteľné súbory v projekte, ako ./node_modules/.bin/ng, bez pýtania zakaždým.",
+    "autoApproveProjectCommands": "Všetky príkazy v projekte",
+    "autoApproveProjectCommandsHint": "Povolí každý nenebezpečný príkaz, ktorého cesty zostávajú v projekte. Nebezpečné príkazy, vložený kód, sťahovanie balíkov, zatiaľ nepovolené webové stránky, citlivé súbory a všetko mimo sa stále pýtajú.",
+    "permissionPreset": {
+      "strict": "Prísny",
+      "strictHint": "Bez opýtania bežia iba príkazy, ktoré iba čítajú.",
+      "balanced": "Vyvážený",
+      "balancedHint": "Príkazy iba na čítanie, správcovia balíkov, nástroje na zostavenie a spustiteľné súbory projektu bežia bez opýtania.",
+      "autonomous": "Autonómny",
+      "autonomousHint": "Každý nenebezpečný príkaz v projekte beží bez opýtania.",
+      "custom": "Vlastný",
+      "autonomousWarning": "Autonómny režim dôveruje tomuto projektu: jeho skripty, súbory Makefile a spustiteľné súbory môžu bez opýtania robiť čokoľvek. Vložený kód, sťahovanie balíkov, zatiaľ nepovolené webové stránky, nebezpečné príkazy a všetko mimo projektu sa stále pýtajú.",
+      "confirm": "Použiť autonómny režim"
+    },
     "noAllowedWebsites": "Zatiaľ žiadne vždy povolené webové stránky.",
     "noDeniedWebsites": "Zatiaľ žiadne vždy odmietnuté webové stránky.",
     "websitePlaceholder": "napr. docs.rs alebo *.github.com",
@@ -977,16 +1052,13 @@
       "folder": "Priečinok"
     },
     "allowAlways": "Vždy povoliť",
-    "addFolder": "Trvalo pridať priečinok",
     "siteRuleLabel": "Pravidlo webovej stránky (doména alebo glob)",
     "siteRuleHint": "Napríklad: docs.rs povoľuje túto lokalitu, *.github.com povoľuje všetky jej subdomény.",
-    "segment": {
-      "allowed": "Povolené",
-      "needsApproval": "Vyžaduje schválenie"
-    },
+    "siteRuleInvalid": "Toto pravidlo nezahŕňa {{ host }} alebo je príliš široké, preto sa namiesto neho uloží {{ host }}.",
     "risk": {
       "low": "Nízke",
       "medium": "Stredné",
+      "network": "Sieť",
       "high": "Vysoké",
       "danger": "Nebezpečenstvo"
     },
@@ -994,7 +1066,39 @@
       "title": "Rozsah pravidla",
       "hint": "Vyberte, ako široko sa pravidlo použije."
     },
-    "allowChat": "Povoliť v tomto chate"
+    "folderScope": {
+      "title": "Povoliť priečinok",
+      "hint": "Pridá priečinok a všetko v ňom medzi vždy povolené priečinky.",
+      "option": "Priečinok + podpriečinky"
+    },
+    "hostScope": {
+      "title": "Povoliť webovú stránku",
+      "hint": "Pridá webovú stránku a jej subdomény medzi povolené webové stránky.",
+      "option": "Webová stránka + subdomény"
+    },
+    "allowChat": "Povoliť v tomto chate",
+    "option": {
+      "yes": "Áno",
+      "chat": "Áno, a v tomto chate sa už nepýtať na",
+      "session": "Áno, a do reštartu sa už nepýtať na",
+      "always": "Áno, a vždy povoliť",
+      "no": "Nie",
+      "denyAlways": "Nie, a vždy odmietnuť"
+    },
+    "customize": "Prispôsobiť",
+    "justification": "Prečo",
+    "keyboardHint": "Stlačte 1–{{ count }} alebo použite ↑ ↓ a Enter · Esc odmietne",
+    "url": {
+      "queryWarning": "Táto adresa nesie v reťazci dopytu veľa údajov. Pred povolením sa uistite, že neobsahuje nič súkromné."
+    },
+    "tooltip": {
+      "deny": "Odmietne túto požiadavku a všetky ostatné čakajúce požiadavky v tomto chate.",
+      "denyAlways": "Odmietne a uloží pravidlo odmietnutia do nastavení. Ostatné čakajúce požiadavky v tomto chate sa tiež odmietnu.",
+      "allowOnce": "Povolí iba túto požiadavku.",
+      "allowSession": "Platí vo všetkých chatoch do reštartu aplikácie.",
+      "allowChat": "Pravidlá príkazov platia pre tento chat a jeho subagentov; priečinky a webové stránky do reštartu aplikácie.",
+      "allowAlways": "Uloží sa do nastavení a platí pre všetky chaty."
+    }
   },
   "question": {
     "title": "Otázka",
@@ -1044,6 +1148,8 @@
     "installing": "Inštaluje sa…",
     "uninstall": "Odinštalovať",
     "addFolder": "Pridať priečinok",
-    "noFolders": "Zatiaľ neboli pridané žiadne priečinky."
+    "noFolders": "Zatiaľ neboli pridané žiadne priečinky.",
+    "binaryFile": "Binárny súbor – náhľad nie je k dispozícii.",
+    "fileTooLarge": "Tento súbor je príliš veľký na náhľad."
   }
 }

@@ -1,7 +1,7 @@
 use crate::error::{AppError, Result};
 use crate::models::{
-    Attachment, DailySpend, FileChange, Mention, Message, ModelSpend, Project, Session,
-    SessionSpend, SpendStats, SpendSummary, ToolCallRecord,
+    Attachment, DailySpend, FileChange, Mention, Message, ModelSpend, PermissionAuditEntry,
+    Project, Session, SessionSpend, SpendStats, SpendSummary, ToolCallRecord,
 };
 use chrono::{Local, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -126,6 +126,11 @@ impl<'a> NewMessage<'a> {
     }
 }
 
+/// How many permission decisions the audit log keeps.
+const AUDIT_MAX_ROWS: i64 = 10_000;
+/// How long permission decisions are kept (90 days).
+const AUDIT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -199,6 +204,22 @@ impl Db {
                 changes TEXT NOT NULL DEFAULT '[]',
                 last_commit TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS permission_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                session_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                allowed INTEGER NOT NULL,
+                decided_by TEXT NOT NULL,
+                decision TEXT,
+                reason TEXT NOT NULL DEFAULT '',
+                rule TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_permission_audit_conversation
+                ON permission_audit(conversation_id, id DESC);
             "#,
         )?;
         for (column, definition) in [
@@ -563,6 +584,88 @@ impl Db {
     pub fn delete_session(&self, id: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+            // A deleted chat takes its permission history with it.
+            conn.execute(
+                "DELETE FROM permission_audit WHERE conversation_id = ?1 OR session_id = ?1",
+                params![id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Records a permission decision and prunes the log to the newest
+    /// [`AUDIT_MAX_ROWS`] entries from the last [`AUDIT_MAX_AGE_MS`].
+    pub fn record_permission_audit(&self, entry: &PermissionAuditEntry) -> Result<()> {
+        self.with_conn(|conn| {
+            let now = now_ms();
+            conn.execute(
+                "INSERT INTO permission_audit
+                    (created_at, session_id, conversation_id, kind, subject, allowed,
+                     decided_by, decision, reason, rule)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    now,
+                    entry.session_id,
+                    entry.conversation_id,
+                    entry.kind,
+                    entry.subject,
+                    entry.allowed,
+                    entry.decided_by,
+                    entry.decision,
+                    entry.reason,
+                    entry.rule,
+                ],
+            )?;
+            let newest = conn.last_insert_rowid();
+            conn.execute(
+                "DELETE FROM permission_audit WHERE id <= ?1 OR created_at < ?2",
+                params![newest - AUDIT_MAX_ROWS, now - AUDIT_MAX_AGE_MS],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The newest permission decisions, of one chat or of all, newest first.
+    pub fn list_permission_audit(
+        &self,
+        conversation_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<PermissionAuditEntry>> {
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, created_at, session_id, conversation_id, kind, subject, allowed,
+                        decided_by, decision, reason, rule
+                 FROM permission_audit
+                 WHERE ?1 IS NULL OR conversation_id = ?1
+                 ORDER BY id DESC
+                 LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![conversation_id, limit as i64], |row| {
+                Ok(PermissionAuditEntry {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    session_id: row.get(2)?,
+                    conversation_id: row.get(3)?,
+                    kind: row.get(4)?,
+                    subject: row.get(5)?,
+                    allowed: row.get(6)?,
+                    decided_by: row.get(7)?,
+                    decision: row.get(8)?,
+                    reason: row.get(9)?,
+                    rule: row.get(10)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+    }
+
+    /// Deletes the permission history of one chat, or all of it.
+    pub fn clear_permission_audit(&self, conversation_id: Option<&str>) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM permission_audit WHERE ?1 IS NULL OR conversation_id = ?1",
+                params![conversation_id],
+            )?;
             Ok(())
         })
     }
@@ -664,6 +767,28 @@ impl Db {
             }
             messages.reverse();
             Ok(messages)
+        })
+    }
+
+    /// Returns the newest user message for a session, even when many assistant
+    /// and tool messages have been recorded since. The model history is capped
+    /// to the newest `limit` messages, so without this a long tool loop can drop
+    /// the user's instruction entirely and leave the model without a user turn.
+    pub fn latest_user_message(&self, session_id: &str) -> Result<Option<Message>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
+                          cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
+                          tool_calls, tool_call_id, tool_name, status, changes, base_commit,
+                          attachments, mentions, context, duration_ms
+                   FROM messages WHERE session_id = ?1 AND role = 'user'
+                   ORDER BY seq DESC LIMIT 1"#,
+            )?;
+            let mut rows = stmt.query_map(params![session_id], map_message)?;
+            match rows.next() {
+                Some(row) => Ok(Some(row?)),
+                None => Ok(None),
+            }
         })
     }
 
@@ -830,7 +955,7 @@ impl Db {
         })
     }
 
-    pub fn spend(&self, session_id: Option<&str>, budget_usd: f64) -> Result<SpendSummary> {
+    pub fn spend(&self, session_id: Option<&str>) -> Result<SpendSummary> {
         self.with_conn(|conn| {
             let (total_cost, prompt_tokens, completion_tokens, cached_tokens): (
                 f64,
@@ -865,17 +990,12 @@ impl Db {
                 params![today_start],
                 |row| row.get(0),
             )?;
-            let remaining = if budget_usd > 0.0 {
-                Some((budget_usd - total_cost).max(0.0))
-            } else {
-                None
-            };
             Ok(SpendSummary {
                 total_cost,
                 today_cost,
                 session_cost,
-                budget_usd,
-                remaining_usd: remaining,
+                budget_usd: 0.0,
+                remaining_usd: None,
                 prompt_tokens,
                 completion_tokens,
                 cached_tokens,
@@ -1146,4 +1266,51 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         context: row.get(21)?,
         duration_ms: row.get(22)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(conversation: &str, subject: &str, allowed: bool) -> PermissionAuditEntry {
+        PermissionAuditEntry {
+            id: 0,
+            created_at: 0,
+            session_id: conversation.to_string(),
+            conversation_id: conversation.to_string(),
+            kind: "command".to_string(),
+            subject: subject.to_string(),
+            allowed,
+            decided_by: "auto".to_string(),
+            decision: None,
+            reason: "'ls' is a read-only command".to_string(),
+            rule: None,
+        }
+    }
+
+    #[test]
+    fn permission_audit_is_listed_per_chat_and_removed_with_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        db.record_permission_audit(&entry("a", "ls", true)).unwrap();
+        db.record_permission_audit(&entry("a", "rm -rf .", false)).unwrap();
+        db.record_permission_audit(&entry("b", "pwd", true)).unwrap();
+
+        let chat = db.list_permission_audit(Some("a"), 10).unwrap();
+        assert_eq!(
+            chat.iter().map(|entry| entry.subject.as_str()).collect::<Vec<_>>(),
+            vec!["rm -rf .", "ls"],
+        );
+        assert!(chat[0].created_at > 0);
+        assert!(!chat[0].allowed);
+        assert_eq!(chat[1].reason, "'ls' is a read-only command");
+        assert_eq!(db.list_permission_audit(None, 10).unwrap().len(), 3);
+        assert_eq!(db.list_permission_audit(None, 2).unwrap().len(), 2);
+
+        db.delete_session("a").unwrap();
+        assert!(db.list_permission_audit(Some("a"), 10).unwrap().is_empty());
+        db.clear_permission_audit(None).unwrap();
+        assert!(db.list_permission_audit(None, 10).unwrap().is_empty());
+    }
 }
