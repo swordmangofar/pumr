@@ -7,6 +7,7 @@ use crate::permissions::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{oneshot, watch};
@@ -103,6 +104,11 @@ struct PendingPermission {
     session_id: String,
     grant_session_id: String,
     project_root: PathBuf,
+    /// The `PermissionRequest` event that announced the prompt, so it can be
+    /// sent again to a webview that reloaded before the user answered.
+    request: StreamEvent,
+    /// Creation order, so re-sent prompts keep the order they were asked in.
+    seq: u64,
 }
 
 /// The backend-owned fields of a pending prompt, used to validate a renderer's
@@ -242,6 +248,7 @@ pub struct PermissionBroker {
 struct BrokerInner {
     pending: HashMap<String, PendingPermission>,
     by_signature: HashMap<PermissionSignature, String>,
+    next_seq: u64,
 }
 
 impl PermissionBroker {
@@ -296,6 +303,25 @@ impl PermissionBroker {
                 session_id: entry.session_id.clone(),
                 grant_session_id: entry.grant_session_id.clone(),
             })
+    }
+
+    /// Prompts still waiting on the user, oldest first, as the events that
+    /// announced them. Prompts that already have a decision are left out.
+    pub fn pending_requests(&self) -> Vec<RoutedEvent> {
+        let inner = self.inner.lock().unwrap();
+        let mut entries: Vec<&PendingPermission> = inner
+            .pending
+            .values()
+            .filter(|entry| entry.sender.borrow().is_none())
+            .collect();
+        entries.sort_by_key(|entry| entry.seq);
+        entries
+            .into_iter()
+            .map(|entry| RoutedEvent {
+                session_id: entry.session_id.clone(),
+                event: entry.request.clone(),
+            })
+            .collect()
     }
 
     /// Denies the queued prompts of a stopped chat: its own and its subagents'
@@ -383,7 +409,7 @@ impl PermissionBroker {
         emit: &EventSink,
     ) -> PermissionDecision {
         let signature = prompt.signature(session_id);
-        let (is_new, request_id, mut receiver) = {
+        let (request, request_id, mut receiver) = {
             let mut inner = self.inner.lock().unwrap();
             match inner.by_signature.get(&signature).cloned() {
                 Some(existing) if inner.pending.contains_key(&existing) => {
@@ -392,11 +418,30 @@ impl PermissionBroker {
                         .get(&existing)
                         .map(|entry| entry.sender.subscribe())
                         .unwrap();
-                    (false, existing, receiver)
+                    (None, existing, receiver)
                 }
                 _ => {
                     let request_id = Uuid::new_v4().to_string();
                     let (sender, receiver) = watch::channel(None);
+                    let request = StreamEvent::PermissionRequest {
+                        request_id: request_id.clone(),
+                        prompt_kind: prompt.kind.clone(),
+                        title: prompt.title.clone(),
+                        detail: prompt.detail.clone(),
+                        command: prompt.command.clone(),
+                        path: prompt.path.clone(),
+                        folder: prompt.folder.clone(),
+                        url: prompt.url.clone(),
+                        suggested_rule: prompt.suggested_rule.clone(),
+                        segments: prompt.segments.clone(),
+                        risk: prompt.risk.clone(),
+                        scope_options: prompt.scope_options.clone(),
+                        folders: prompt.folders.clone(),
+                        hosts: prompt.hosts.clone(),
+                        justification: prompt.justification.clone(),
+                    };
+                    inner.next_seq += 1;
+                    let seq = inner.next_seq;
                     inner
                         .by_signature
                         .insert(signature.clone(), request_id.clone());
@@ -414,33 +459,20 @@ impl PermissionBroker {
                             session_id: session_id.to_string(),
                             grant_session_id: prompt.grant_session_id.clone(),
                             project_root: prompt.project_root.clone(),
+                            request: request.clone(),
+                            seq,
                         },
                     );
-                    (true, request_id, receiver)
+                    (Some(request), request_id, receiver)
                 }
             }
         };
+        let is_new = request.is_some();
 
-        if is_new {
+        if let Some(request) = request {
             (emit)(RoutedEvent {
                 session_id: session_id.to_string(),
-                event: StreamEvent::PermissionRequest {
-                    request_id: request_id.clone(),
-                    prompt_kind: prompt.kind.clone(),
-                    title: prompt.title.clone(),
-                    detail: prompt.detail.clone(),
-                    command: prompt.command.clone(),
-                    path: prompt.path.clone(),
-                    folder: prompt.folder.clone(),
-                    url: prompt.url.clone(),
-                    suggested_rule: prompt.suggested_rule.clone(),
-                    segments: prompt.segments.clone(),
-                    risk: prompt.risk.clone(),
-                    scope_options: prompt.scope_options.clone(),
-                    folders: prompt.folders.clone(),
-                    hosts: prompt.hosts.clone(),
-                    justification: prompt.justification.clone(),
-                },
+                event: request,
             });
         }
 
@@ -483,6 +515,14 @@ impl PermissionBroker {
                 reason: prompt.detail.clone(),
                 rule: decision.rule.clone(),
             });
+            // Unlist the prompt before announcing the decision, so a webview
+            // re-attaching in between is never sent a prompt already resolved.
+            {
+                let mut inner = self.inner.lock().unwrap();
+                if let Some(entry) = inner.pending.remove(&request_id) {
+                    inner.by_signature.remove(&entry.signature);
+                }
+            }
             (emit)(RoutedEvent {
                 session_id: session_id.to_string(),
                 event: StreamEvent::PermissionResolved {
@@ -490,10 +530,6 @@ impl PermissionBroker {
                     allowed: decision.allowed,
                 },
             });
-            let mut inner = self.inner.lock().unwrap();
-            if let Some(entry) = inner.pending.remove(&request_id) {
-                inner.by_signature.remove(&entry.signature);
-            }
         }
         decision
     }
@@ -509,23 +545,33 @@ impl Default for PermissionBroker {
 /// here until the user submits answers (or skips), the turn is cancelled, or the
 /// prompt times out.
 pub struct QuestionBroker {
-    /// Open questions by request id, with the session that asked them.
-    pending: Mutex<HashMap<String, (String, AnswerSender)>>,
+    /// Open questions by request id.
+    pending: Mutex<HashMap<String, PendingQuestion>>,
+    next_seq: AtomicU64,
 }
 
-/// Delivers a question's answers; `None` skips it.
-type AnswerSender = oneshot::Sender<Option<Vec<QuestionAnswer>>>;
+struct PendingQuestion {
+    /// Delivers the answers; `None` skips the question.
+    sender: oneshot::Sender<Option<Vec<QuestionAnswer>>>,
+    /// The session that asked.
+    session_id: String,
+    /// Kept so the question can be sent again to a webview that reloaded
+    /// before the user answered.
+    questions: Vec<QuestionItem>,
+    seq: u64,
+}
 
 impl QuestionBroker {
     pub fn new() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
+            next_seq: AtomicU64::new(0),
         }
     }
 
     pub fn resolve(&self, request_id: &str, answers: Option<Vec<QuestionAnswer>>) {
-        if let Some((_, sender)) = self.pending.lock().unwrap().remove(request_id) {
-            let _ = sender.send(answers);
+        if let Some(entry) = self.pending.lock().unwrap().remove(request_id) {
+            let _ = entry.sender.send(answers);
         }
     }
 
@@ -536,14 +582,32 @@ impl QuestionBroker {
         let mut pending = self.pending.lock().unwrap();
         let asked: Vec<String> = pending
             .iter()
-            .filter(|(_, (asker, _))| asker == session_id)
+            .filter(|(_, entry)| entry.session_id == session_id)
             .map(|(request_id, _)| request_id.clone())
             .collect();
         for request_id in asked {
-            if let Some((_, sender)) = pending.remove(&request_id) {
-                let _ = sender.send(None);
+            if let Some(entry) = pending.remove(&request_id) {
+                let _ = entry.sender.send(None);
             }
         }
+    }
+
+    /// Questions still waiting on the user, oldest first, as the events that
+    /// announced them.
+    pub fn pending_requests(&self) -> Vec<RoutedEvent> {
+        let pending = self.pending.lock().unwrap();
+        let mut entries: Vec<(&String, &PendingQuestion)> = pending.iter().collect();
+        entries.sort_by_key(|(_, entry)| entry.seq);
+        entries
+            .into_iter()
+            .map(|(request_id, entry)| RoutedEvent {
+                session_id: entry.session_id.clone(),
+                event: StreamEvent::QuestionRequest {
+                    request_id: request_id.clone(),
+                    questions: entry.questions.clone(),
+                },
+            })
+            .collect()
     }
 
     pub async fn ask(
@@ -555,10 +619,15 @@ impl QuestionBroker {
     ) -> Option<Vec<QuestionAnswer>> {
         let request_id = Uuid::new_v4().to_string();
         let (sender, receiver) = oneshot::channel();
-        self.pending
-            .lock()
-            .unwrap()
-            .insert(request_id.clone(), (session_id.to_string(), sender));
+        self.pending.lock().unwrap().insert(
+            request_id.clone(),
+            PendingQuestion {
+                sender,
+                session_id: session_id.to_string(),
+                questions: questions.clone(),
+                seq: self.next_seq.fetch_add(1, Ordering::Relaxed),
+            },
+        );
 
         (emit)(RoutedEvent {
             session_id: session_id.to_string(),
@@ -1114,5 +1183,108 @@ mod tests {
         assert_eq!(entries[1].subject, "npm publish");
         assert!(!entries[1].allowed);
         assert_eq!(entries[1].decided_by, "stopped");
+    }
+
+    fn permission_request_id(event: &RoutedEvent) -> String {
+        match &event.event {
+            StreamEvent::PermissionRequest { request_id, .. } => request_id.clone(),
+            other => panic!("expected a permission request, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_prompts_keep_their_full_payload_until_decided() {
+        use crate::permissions::{CommandRiskLevel, CommandScopeKind};
+
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let emit: EventSink = {
+            let events = events.clone();
+            Arc::new(move |event| events.lock().unwrap().push(event))
+        };
+        let scope = CommandScopeOption {
+            kind: CommandScopeKind::Program,
+            rule: CommandRule::Glob("npm *".to_string()),
+        };
+        let mut detailed = command_prompt();
+        detailed.suggested_rule = Some("npm *".to_string());
+        detailed.segments = vec![CommandSegment {
+            text: "npm install".to_string(),
+            allowed: false,
+            suggested_rule: Some("npm *".to_string()),
+            scope_options: vec![scope.clone()],
+            reason: Some("Installs packages".to_string()),
+            folders: vec!["/opt/cache".to_string()],
+            hosts: vec!["registry.npmjs.org".to_string()],
+        }];
+        detailed.risk = Some(CommandRisk {
+            level: CommandRiskLevel::Medium,
+            detail: "Installs packages".to_string(),
+        });
+        detailed.scope_options = vec![scope];
+        detailed.folders = vec!["/opt/cache".to_string()];
+        detailed.hosts = vec!["registry.npmjs.org".to_string()];
+        let mut other = command_prompt();
+        other.command = Some("cargo build".to_string());
+        let first = broker.ask(detailed, &cancel, "chat", &emit);
+        let second = broker.ask(other, &cancel, "subagent", &emit);
+        tokio::pin!(first, second);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+
+        // A replayed prompt is exactly what was streamed, oldest first.
+        let pending = broker.pending_requests();
+        assert_eq!(
+            serde_json::to_value(&pending).unwrap(),
+            serde_json::to_value(&*events.lock().unwrap()).unwrap(),
+        );
+        assert_eq!(pending[0].session_id, "chat");
+        assert_eq!(pending[1].session_id, "subagent");
+
+        // A decided prompt is unlisted before its waiter even wakes up.
+        broker.resolve(&permission_request_id(&pending[0]), allow_by("user"));
+        let remaining = broker.pending_requests();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            permission_request_id(&remaining[0]),
+            permission_request_id(&pending[1]),
+        );
+        assert!(first.await.allowed);
+        cancel.cancel();
+        assert!(!second.await.allowed);
+        assert!(broker.pending_requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_questions_are_listed_until_answered() {
+        let broker = QuestionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let questions = vec![QuestionItem {
+            header: "Target".to_string(),
+            question: "Which crate?".to_string(),
+            options: Vec::new(),
+            multi_select: false,
+        }];
+        let ask = broker.ask(questions, &cancel, "chat", &emit);
+        tokio::pin!(ask);
+        assert!(futures_util::poll!(ask.as_mut()).is_pending());
+
+        let pending = broker.pending_requests();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].session_id, "chat");
+        let StreamEvent::QuestionRequest {
+            request_id,
+            questions,
+        } = &pending[0].event
+        else {
+            panic!("expected a question request");
+        };
+        assert_eq!(questions[0].question, "Which crate?");
+
+        broker.resolve(request_id, None);
+        assert!(broker.pending_requests().is_empty());
+        assert!(ask.await.is_none());
     }
 }
