@@ -17,6 +17,7 @@ mod processes;
 mod providers;
 mod shell_lex;
 mod state;
+mod terminal;
 mod tools;
 mod window;
 
@@ -68,7 +69,17 @@ pub fn run() {
                 commands::allow_asset_path(app.handle(), path);
             }
             window::apply(app.handle(), &settings.window);
-            app.manage(state::AppState::new(db, data_dir, settings_path, settings));
+            let state = state::AppState::new(db, data_dir, settings_path, settings);
+            // Each chat gets a scratch folder here (see `LivePermissions`);
+            // ones whose chat is gone are cleared on start.
+            if let Ok(cache_dir) = app.path().app_cache_dir() {
+                state.permissions.set_scratch_root(cache_dir.join("scratch"));
+                let db = state.db.clone();
+                state
+                    .permissions
+                    .prune_scratch_dirs(|id| db.get_session(id).is_ok());
+            }
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -120,11 +131,19 @@ pub fn run() {
             commands::install_marketplace_skills,
             commands::list_installed_marketplace_skills,
             commands::uninstall_marketplace_skills,
+            commands::list_installed_mcp_servers,
+            commands::install_mcp_server,
+            commands::uninstall_mcp_server,
             commands::list_workspace_entries,
             commands::read_workspace_file,
             commands::write_workspace_file,
             commands::list_processes,
             commands::stop_process,
+            commands::terminal_open,
+            commands::terminal_write,
+            commands::terminal_resize,
+            commands::terminal_close,
+            commands::terminal_close_all,
             commands::get_git_info,
             commands::get_git_status,
             commands::get_git_refs,

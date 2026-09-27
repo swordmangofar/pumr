@@ -12,12 +12,21 @@ files, but never runs code or edits agent configuration on the user's behalf.
   environment variables the server declares.
 - Namespaced entries (`io.github.owner/server`) that the registry reports as
   `active` are marked **verified**; everything else is shown as unverified.
-- pumr does **not** install or launch a server from a registry result. The user
-  copies a config snippet into their own MCP configuration and connects it
-  explicitly, after reviewing the command line. pumr never injects a `-y`/force
-  flag beyond what the registry entry already declares.
+- pumr never launches a server from a registry or directory result. **Install**
+  opens a review dialog that shows the exact command line or URL; only when the
+  user confirms is the entry written to pumr's own config,
+  `<data-dir>/mcp.json` (`mcpServers` format, created owner-readable only
+  because `env` may hold API keys). Alternatively the user can copy the snippet
+  into another tool's config. pumr never injects a `-y`/force flag beyond what
+  the entry already declares.
+- Servers in `<data-dir>/mcp.json` are always discovered (like installed
+  skills), can be switched off per server, and are removed with **Remove**.
+  Being installed does not start them: a server still only connects when it is
+  referenced with `@mcp` or a mode, and the usual per-session approval shows the
+  command/URL again before it runs.
 - Environment variables required by a server are surfaced before install,
-  including which are secret, so the user knows what credentials a server needs.
+  including which are secret (entered as password fields), so the user knows
+  what credentials a server needs.
 
 ## Agent Skills (git marketplaces)
 

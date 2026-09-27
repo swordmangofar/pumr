@@ -2,22 +2,17 @@ import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api, isTauri } from '../../core/api';
 import {
-  defaultCloseTabHotkey,
-  defaultDeleteSessionHotkey,
-  defaultNewSessionHotkey,
-  defaultOpenTabHotkey,
-  defaultWindowToggleHotkey,
-  displayHotkey,
+  acceptsBareKey,
+  ConfigurableHotkey,
+  displayBindings,
   formatHotkey,
+  HOTKEY_CATEGORIES,
+  HOTKEY_DEFINITIONS,
+  HotkeyDefinition,
+  hotkeyBindings,
+  splitHotkey,
 } from '../../core/hotkeys';
 import { SettingsDraftService } from './settings-draft.service';
-
-type HotkeyField =
-  | 'openTabHotkey'
-  | 'closeTabHotkey'
-  | 'newSessionHotkey'
-  | 'deleteSessionHotkey'
-  | 'windowToggleHotkey';
 
 @Component({
   selector: 'app-hotkeys-settings',
@@ -33,114 +28,115 @@ type HotkeyField =
         {{ 'settings.hotkeys.hint' | transloco }}
       </p>
 
-      <div class="mt-5 space-y-3">
-        @for (item of items; track item.field) {
-          <div
-            class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
-          >
-            <div class="min-w-0">
-              <p class="text-sm font-medium text-white">{{ item.label | transloco }}</p>
-              <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
-                {{ item.hint | transloco }}
-              </p>
-            </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                class="field min-w-32 rounded-xl px-4 py-2 text-center font-mono text-sm transition-colors"
-                [class]="
-                  active() === item.field
-                    ? 'border-accent/70 bg-accent/10 text-accent'
-                    : 'text-mist hover:bg-white/5'
-                "
-                (click)="toggle(item.field)"
-              >
-                @if (active() === item.field) {
-                  {{ 'settings.hotkeys.recording' | transloco }}
-                } @else {
-                  {{ display(draft.draft()[item.field]) || '—' }}
+      @for (group of groups; track group.category) {
+        <h4 class="mt-6 text-xs font-semibold uppercase tracking-wider text-mist/40">
+          {{ 'settings.hotkeys.category.' + group.category | transloco }}
+        </h4>
+        <div class="mt-2 space-y-2">
+          @for (item of group.items; track item.id) {
+            <div
+              class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
+            >
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-white">{{ item.label | transloco }}</p>
+                @if (item.hint) {
+                  <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
+                    {{ item.hint | transloco }}
+                  </p>
                 }
-              </button>
-              <button
-                type="button"
-                class="rounded-xl border border-white/10 px-3 py-2 text-xs text-mist/50 transition-colors hover:border-white/25 hover:text-mist disabled:opacity-30"
-                [disabled]="draft.draft()[item.field] === item.default"
-                [title]="'settings.hotkeys.reset' | transloco"
-                (click)="reset(item.field, item.default)"
-              >
-                {{ 'settings.hotkeys.reset' | transloco }}
-              </button>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                @if (item.kind === 'fixed') {
+                  <span
+                    class="min-w-32 rounded-xl border border-white/5 px-4 py-2 text-center font-mono text-sm text-mist/50"
+                  >
+                    {{ display(item.keys) }}
+                  </span>
+                  <span
+                    class="rounded-xl px-3 py-2 text-xs text-mist/30"
+                    [title]="'settings.hotkeys.fixedHint' | transloco"
+                  >
+                    {{ 'settings.hotkeys.fixed' | transloco }}
+                  </span>
+                } @else {
+                  <button
+                    type="button"
+                    class="field min-w-32 rounded-xl px-4 py-2 text-center font-mono text-sm transition-colors"
+                    [class]="
+                      active() === item.id
+                        ? 'border-accent/70 bg-accent/10 text-accent'
+                        : 'text-mist hover:bg-white/5'
+                    "
+                    (click)="toggle(item)"
+                  >
+                    @if (active() === item.id) {
+                      {{ 'settings.hotkeys.recording' | transloco }}
+                    } @else {
+                      {{ display(bindings(item)) || '—' }}
+                    }
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-xl border border-white/10 px-3 py-2 text-xs text-mist/50 transition-colors hover:border-white/25 hover:text-mist disabled:opacity-30"
+                    [disabled]="isDefault(item)"
+                    [title]="'settings.hotkeys.reset' | transloco"
+                    (click)="reset(item)"
+                  >
+                    {{ 'settings.hotkeys.reset' | transloco }}
+                  </button>
+                }
+              </div>
             </div>
-          </div>
-        }
-      </div>
+          }
+        </div>
+      }
     </section>
   `,
 })
 export class HotkeysSettings {
   protected readonly draft = inject(SettingsDraftService);
-  protected readonly active = signal<HotkeyField | null>(null);
-  protected readonly items: {
-    field: HotkeyField;
-    label: string;
-    hint: string;
-    default: string;
-  }[] = [
-    {
-      field: 'openTabHotkey',
-      label: 'settings.hotkeys.openTab',
-      hint: 'settings.hotkeys.openTabHint',
-      default: defaultOpenTabHotkey(),
-    },
-    {
-      field: 'closeTabHotkey',
-      label: 'settings.hotkeys.closeTab',
-      hint: 'settings.hotkeys.closeTabHint',
-      default: defaultCloseTabHotkey(),
-    },
-    {
-      field: 'newSessionHotkey',
-      label: 'settings.hotkeys.newSession',
-      hint: 'settings.hotkeys.newSessionHint',
-      default: defaultNewSessionHotkey(),
-    },
-    {
-      field: 'deleteSessionHotkey',
-      label: 'settings.hotkeys.deleteSession',
-      hint: 'settings.hotkeys.deleteSessionHint',
-      default: defaultDeleteSessionHotkey(),
-    },
-    {
-      field: 'windowToggleHotkey',
-      label: 'settings.hotkeys.windowToggle',
-      hint: 'settings.hotkeys.windowToggleHint',
-      default: defaultWindowToggleHotkey(),
-    },
-  ];
+  protected readonly active = signal<string | null>(null);
+  protected readonly groups = HOTKEY_CATEGORIES.map((category) => ({
+    category,
+    items: HOTKEY_DEFINITIONS.filter((item) => item.category === category),
+  })).filter((group) => group.items.length > 0);
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.stop());
   }
 
-  protected display(hotkey: string | null | undefined): string {
-    return displayHotkey(hotkey);
+  protected display(bindings: readonly string[]): string {
+    return displayBindings(bindings);
   }
 
-  protected toggle(field: HotkeyField): void {
-    if (this.active() === field) {
+  protected bindings(item: ConfigurableHotkey): string[] {
+    return hotkeyBindings(this.draft.draft(), item.id);
+  }
+
+  protected isDefault(item: ConfigurableHotkey): boolean {
+    const settings = this.draft.draft();
+    if (item.kind === 'field') {
+      return settings[item.id] === item.defaults()[0];
+    }
+    return !settings.hotkeys?.[item.id];
+  }
+
+  protected toggle(item: ConfigurableHotkey): void {
+    if (this.active() === item.id) {
       this.stop();
       return;
     }
-    this.active.set(field);
+    this.stop();
+    this.active.set(item.id);
     this.draft.recording.set(true);
-    if (field === 'windowToggleHotkey') {
+    if (item.id === 'windowToggleHotkey') {
       void this.setSuspended(true);
     }
   }
 
   protected capture(event: KeyboardEvent): void {
-    const field = this.active();
-    if (!field) {
+    const item = this.activeItem();
+    if (!item) {
       return;
     }
     event.preventDefault();
@@ -149,36 +145,47 @@ export class HotkeysSettings {
       this.stop();
       return;
     }
-    const hotkey = formatHotkey(
-      event,
-      field === 'deleteSessionHotkey'
-        ? { anyKey: true }
-        : field === 'windowToggleHotkey',
-    );
+    const hotkey = formatHotkey(event, { anyKey: !!item.bare });
     if (!hotkey) {
       return;
     }
-    if (field === 'deleteSessionHotkey' && !this.isValidDeleteHotkey(hotkey)) {
+    const parts = splitHotkey(hotkey);
+    if (parts.length === 1 && !acceptsBareKey(item.bare, parts[0])) {
       return;
     }
-    this.draft.patch(field, hotkey);
+    this.apply(item, hotkey);
     this.stop();
   }
 
-  private isValidDeleteHotkey(hotkey: string): boolean {
-    return hotkey.includes('+') || hotkey === 'Delete' || hotkey === 'Backspace';
+  protected reset(item: ConfigurableHotkey): void {
+    this.stop();
+    this.apply(item, null);
   }
 
-  protected reset(field: HotkeyField, value: string): void {
-    this.stop();
-    this.draft.patch(field, value);
+  /** Stores `hotkey`, or restores the default when it is `null`. */
+  private apply(item: ConfigurableHotkey, hotkey: string | null): void {
+    if (item.kind === 'field') {
+      this.draft.patch(item.id, hotkey ?? item.defaults()[0]);
+      return;
+    }
+    const rest = { ...this.draft.draft().hotkeys };
+    delete rest[item.id];
+    const isDefault =
+      hotkey === null || (item.defaults().length === 1 && item.defaults()[0] === hotkey);
+    this.draft.patch('hotkeys', isDefault ? rest : { ...rest, [item.id]: hotkey });
+  }
+
+  private activeItem(): ConfigurableHotkey | null {
+    const id = this.active();
+    const item = HOTKEY_DEFINITIONS.find((entry: HotkeyDefinition) => entry.id === id);
+    return item && item.kind !== 'fixed' ? item : null;
   }
 
   private stop(): void {
-    const field = this.active();
+    const id = this.active();
     this.active.set(null);
     this.draft.recording.set(false);
-    if (field === 'windowToggleHotkey') {
+    if (id === 'windowToggleHotkey') {
       void this.setSuspended(false);
     }
   }

@@ -149,8 +149,14 @@ pub async fn run_turn(
 
         let history = build_history(deps, &request, &tool_schemas, &mut summary_cache).await?;
         {
-            let (used, budget, system_tokens, history_tokens, tool_schema_tokens, tool_output_tokens) =
-                context_usage(&history, request.context_length, &tool_schemas);
+            let (
+                used,
+                budget,
+                system_tokens,
+                history_tokens,
+                tool_schema_tokens,
+                tool_output_tokens,
+            ) = context_usage(&history, request.context_length, &tool_schemas);
             emit(StreamEvent::ContextUsage {
                 used_tokens: used,
                 budget_tokens: budget,
@@ -271,7 +277,10 @@ pub async fn run_turn(
 
         // Surface edits in the changed-files panel as they happen instead of
         // only once the whole turn has finished.
-        if tool_calls.iter().any(|call| may_mutate_workspace(&call.name)) {
+        if tool_calls
+            .iter()
+            .any(|call| may_mutate_workspace(&call.name))
+        {
             if let Some(changes) = preview_changes(deps, &request) {
                 emit(StreamEvent::Changes { changes });
             }
@@ -353,9 +362,7 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
 /// large schema sets (roughly >10% of the context window, with a floor) are
 /// deferred, so small setups keep the simpler inline behaviour.
 fn should_defer_mcp(request: &TurnRequest, mcp_schemas: &[Value]) -> bool {
-    if !request.mcp_progressive_disclosure
-        || mcp_schemas.is_empty()
-        || request.context_length <= 0
+    if !request.mcp_progressive_disclosure || mcp_schemas.is_empty() || request.context_length <= 0
     {
         return false;
     }
@@ -478,7 +485,14 @@ async fn execute_tool_calls(
     results.sort_by_key(|(index, _, _)| *index);
     let mut cancelled = false;
     for (index, outcome, duration_ms) in results {
-        record_tool_outcome(deps, request, &tool_calls[index], &outcome, duration_ms, emit)?;
+        record_tool_outcome(
+            deps,
+            request,
+            &tool_calls[index],
+            &outcome,
+            duration_ms,
+            emit,
+        )?;
         if request.cancel.is_cancelled() {
             cancelled = true;
         }
@@ -1123,9 +1137,7 @@ fn render_transcript(messages: &[ChatMessage]) -> String {
         if let Some(calls) = message.tool_calls.as_ref().and_then(Value::as_array) {
             let names = calls
                 .iter()
-                .filter_map(|call| {
-                    call.pointer("/function/name").and_then(Value::as_str)
-                })
+                .filter_map(|call| call.pointer("/function/name").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join(", ");
             if !names.is_empty() {
@@ -1424,7 +1436,9 @@ fn finalize_changes(deps: &TurnDeps, request: &TurnRequest) -> Vec<FileChange> {
 /// counting again from `base_commit` would count those changes twice.
 fn increment_start(deps: &TurnDeps, request: &TurnRequest, last_commit: Option<String>) -> String {
     match last_commit {
-        Some(last) if request.resume || deps.shadow.is_ancestor(&request.base_commit, &last) => last,
+        Some(last) if request.resume || deps.shadow.is_ancestor(&request.base_commit, &last) => {
+            last
+        }
         _ => request.base_commit.clone(),
     }
 }
@@ -1749,10 +1763,16 @@ mod tests {
     fn pinned_prompt_goes_back_before_the_work_that_followed_it() {
         let mut history = vec![
             ChatMessage::text("system", "sys"),
-            with_seq(ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])), 11),
+            with_seq(
+                ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])),
+                11,
+            ),
             with_seq(ChatMessage::tool_result("a", "result"), 12),
         ];
-        place_pinned_prompt(&mut history, with_seq(ChatMessage::text("user", "task"), 10));
+        place_pinned_prompt(
+            &mut history,
+            with_seq(ChatMessage::text("user", "task"), 10),
+        );
         assert_eq!(history.len(), 4);
         assert_eq!(content_to_text(&history[1].content), "task");
         assert_eq!(history[2].role, "assistant");
@@ -1762,14 +1782,29 @@ mod tests {
     fn pinned_prompt_keeps_its_place_after_older_messages() {
         let mut history = vec![
             ChatMessage::text("system", "sys"),
-            with_seq(ChatMessage::text("user", "(Summary of earlier conversation)\n..."), 1),
+            with_seq(
+                ChatMessage::text("user", "(Summary of earlier conversation)\n..."),
+                1,
+            ),
             with_seq(ChatMessage::text("assistant", "older answer"), 8),
-            with_seq(ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])), 11),
+            with_seq(
+                ChatMessage::assistant_tool_calls("working".into(), calls(&["a"])),
+                11,
+            ),
             with_seq(ChatMessage::tool_result("a", "result"), 12),
         ];
-        place_pinned_prompt(&mut history, with_seq(ChatMessage::text("user", "task"), 10));
-        let roles: Vec<&str> = history.iter().map(|message| message.role.as_str()).collect();
-        assert_eq!(roles, ["system", "user", "assistant", "user", "assistant", "tool"]);
+        place_pinned_prompt(
+            &mut history,
+            with_seq(ChatMessage::text("user", "task"), 10),
+        );
+        let roles: Vec<&str> = history
+            .iter()
+            .map(|message| message.role.as_str())
+            .collect();
+        assert_eq!(
+            roles,
+            ["system", "user", "assistant", "user", "assistant", "tool"]
+        );
         assert_eq!(content_to_text(&history[3].content), "task");
     }
 
@@ -1803,7 +1838,10 @@ mod tests {
         let reserved = message_token_estimate(&prompt);
         let mut history = vec![ChatMessage::text("system", "sys")];
         for seq in 2..60 {
-            history.push(with_seq(ChatMessage::text("assistant", "z".repeat(1_000)), seq));
+            history.push(with_seq(
+                ChatMessage::text("assistant", "z".repeat(1_000)),
+                seq,
+            ));
         }
         let mut history = trim_to_budget(history, 8_000, reserved);
         place_pinned_prompt(&mut history, prompt);

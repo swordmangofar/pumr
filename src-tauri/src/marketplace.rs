@@ -707,8 +707,95 @@ pub struct MarketplacePlugin {
 pub struct InstalledSkill {
     pub name: String,
     pub marketplace: String,
+    /// Plugin the skill was installed from, so catalogs can mark it installed.
+    pub plugin: String,
     pub description: Option<String>,
     pub path: String,
+}
+
+/// A server the user reviewed and chose to add to pumr's own MCP config.
+/// Exactly one of `command` and `url` is set.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpInstallRequest {
+    pub name: String,
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// Server names become JSON keys and `@mcp:` mention tokens, so they are kept
+/// to characters that survive both unchanged.
+fn valid_server_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Validates a request and turns it into an `mcpServers` entry.
+fn mcp_entry(request: &McpInstallRequest) -> Result<serde_json::Value> {
+    if !valid_server_name(&request.name) {
+        return Err(AppError::msg(
+            "server names may only contain letters, digits, '-', '_' and '.'",
+        ));
+    }
+    let command = request
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let url = request
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut entry = serde_json::Map::new();
+    match (command, url) {
+        (Some(command), None) => {
+            if command.contains(['\n', '\r', '\0']) {
+                return Err(AppError::msg("the command must be a single line"));
+            }
+            entry.insert("command".into(), command.into());
+            if !request.args.is_empty() {
+                entry.insert("args".into(), request.args.clone().into());
+            }
+        }
+        (None, Some(url)) => {
+            if !(url.starts_with("https://") || url.starts_with("http://")) {
+                return Err(AppError::msg("the server URL must start with http:// or https://"));
+            }
+            entry.insert("url".into(), url.into());
+            if let Some(transport) = request
+                .transport
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                entry.insert("type".into(), transport.into());
+            }
+        }
+        _ => {
+            return Err(AppError::msg(
+                "a server needs either a command or a URL, not both",
+            ))
+        }
+    }
+    let env: serde_json::Map<String, serde_json::Value> = request
+        .env
+        .iter()
+        .filter(|(key, value)| !key.trim().is_empty() && !value.is_empty())
+        .map(|(key, value)| (key.trim().to_string(), value.clone().into()))
+        .collect();
+    if !env.is_empty() {
+        entry.insert("env".into(), env.into());
+    }
+    Ok(entry.into())
 }
 
 fn is_reserved(name: &str) -> bool {
@@ -890,7 +977,9 @@ impl MarketplaceService {
     /// change with the Rust version. A checkout still under its old name is
     /// moved over the first time it is looked up.
     fn checkout_dir(&self, url: &str) -> PathBuf {
-        let dir = self.cache_dir.join(format!("{:016x}", fnv1a(url.as_bytes())));
+        let dir = self
+            .cache_dir
+            .join(format!("{:016x}", fnv1a(url.as_bytes())));
         if !dir.exists() {
             let legacy = self.cache_dir.join(legacy_checkout_name(url));
             if legacy.is_dir() {
@@ -1130,6 +1219,7 @@ impl MarketplaceService {
             installed.push(InstalledSkill {
                 name,
                 marketplace: manifest.name.clone(),
+                plugin: entry.name.clone(),
                 description: entry.description.clone(),
                 path: to.to_string_lossy().to_string(),
             });
@@ -1160,6 +1250,7 @@ impl MarketplaceService {
                 if !plugin.path().is_dir() {
                     continue;
                 }
+                let plugin_name = plugin.file_name().to_string_lossy().to_string();
                 let Ok(skills) = std::fs::read_dir(plugin.path()) else {
                     continue;
                 };
@@ -1171,6 +1262,7 @@ impl MarketplaceService {
                     installed.push(InstalledSkill {
                         name: skill.file_name().to_string_lossy().to_string(),
                         marketplace: marketplace_name.clone(),
+                        plugin: plugin_name.clone(),
                         description: skill_description(&path),
                         path: path.to_string_lossy().to_string(),
                     });
@@ -1209,6 +1301,79 @@ impl MarketplaceService {
         self.cache_dir.join("..").join("skills")
     }
 
+    /// pumr's own MCP config (`mcpServers` JSON), written only when the user
+    /// installs a server they reviewed. Private to the user because it may hold
+    /// API keys in `env`.
+    pub fn mcp_config_path(&self) -> PathBuf {
+        self.cache_dir
+            .parent()
+            .unwrap_or(&self.cache_dir)
+            .join("mcp.json")
+    }
+
+    /// Config files discovery always includes, like installed skills.
+    pub fn installed_mcp_files(&self) -> Vec<PathBuf> {
+        vec![self.mcp_config_path()]
+    }
+
+    fn read_mcp_config(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
+        let path = self.mcp_config_path();
+        if !path.is_file() {
+            return Ok(serde_json::Map::new());
+        }
+        let raw = std::fs::read_to_string(&path)?;
+        match serde_json::from_str::<serde_json::Value>(&raw)? {
+            serde_json::Value::Object(map) => Ok(map),
+            _ => Err(AppError::msg("pumr's MCP config is not a JSON object")),
+        }
+    }
+
+    fn write_mcp_config(&self, config: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+        let contents = serde_json::to_string_pretty(config)?;
+        crate::config::write_file_atomic(&self.mcp_config_path(), contents.as_bytes(), true)?;
+        Ok(())
+    }
+
+    /// Names of the servers in pumr's own MCP config.
+    pub fn list_installed_mcp(&self) -> Result<Vec<String>> {
+        let config = self.read_mcp_config()?;
+        let mut names: Vec<String> = config
+            .get("mcpServers")
+            .and_then(serde_json::Value::as_object)
+            .map(|servers| servers.keys().cloned().collect())
+            .unwrap_or_default();
+        names.sort();
+        Ok(names)
+    }
+
+    /// Adds (or replaces) a server in pumr's MCP config. Nothing is launched:
+    /// the server only starts when the user references it in a chat or mode.
+    pub fn install_mcp(&self, request: &McpInstallRequest) -> Result<()> {
+        let entry = mcp_entry(request)?;
+        let mut config = self.read_mcp_config()?;
+        let servers = config
+            .entry("mcpServers")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        let Some(servers) = servers.as_object_mut() else {
+            return Err(AppError::msg("pumr's MCP config has an invalid mcpServers entry"));
+        };
+        servers.insert(request.name.clone(), entry);
+        self.write_mcp_config(&config)
+    }
+
+    pub fn uninstall_mcp(&self, name: &str) -> Result<()> {
+        let mut config = self.read_mcp_config()?;
+        let removed = config
+            .get_mut("mcpServers")
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|servers| servers.remove(name))
+            .is_some();
+        if !removed {
+            return Err(AppError::msg(format!("no installed MCP server named \"{name}\"")));
+        }
+        self.write_mcp_config(&config)
+    }
+
     /// Directories of every installed skill (`<marketplace>/<plugin>/<skill>`),
     /// so the discovery layer can offer them to the agent without knowing the
     /// on-disk layout. One directory per skill, each containing `SKILL.md`.
@@ -1234,7 +1399,11 @@ impl MarketplaceService {
 
     fn write_custom_marketplace_urls(&self, urls: &[String]) -> Result<()> {
         let path = self.cache_dir.join("marketplaces.json");
-        crate::config::write_file_atomic(&path, serde_json::to_string_pretty(urls)?.as_bytes(), false)?;
+        crate::config::write_file_atomic(
+            &path,
+            serde_json::to_string_pretty(urls)?.as_bytes(),
+            false,
+        )?;
         Ok(())
     }
 
@@ -1312,6 +1481,77 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    fn install_request(name: &str) -> McpInstallRequest {
+        McpInstallRequest {
+            name: name.to_string(),
+            command: Some("npx".to_string()),
+            args: vec!["-y".to_string(), "@acme/server".to_string()],
+            url: None,
+            transport: None,
+            env: [("API_KEY".to_string(), "secret".to_string())]
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn installs_and_removes_mcp_servers_in_pumr_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let service =
+            MarketplaceService::new(reqwest::Client::new(), dir.path().join("marketplaces"));
+        assert!(service.list_installed_mcp().unwrap().is_empty());
+
+        service.install_mcp(&install_request("acme")).unwrap();
+        service
+            .install_mcp(&McpInstallRequest {
+                name: "remote".to_string(),
+                command: None,
+                args: Vec::new(),
+                url: Some("https://mcp.example.com/mcp".to_string()),
+                transport: Some("http".to_string()),
+                env: Default::default(),
+            })
+            .unwrap();
+        assert_eq!(service.list_installed_mcp().unwrap(), vec!["acme", "remote"]);
+
+        let configs = crate::discovery::discover_mcp_servers(
+            &[],
+            &[],
+            &[],
+            false,
+            &service.installed_mcp_files(),
+        );
+        let acme = configs.iter().find(|config| config.name == "acme").unwrap();
+        assert_eq!(acme.command.as_deref(), Some("npx"));
+        assert_eq!(acme.args, vec!["-y", "@acme/server"]);
+        assert_eq!(acme.env, vec![("API_KEY".to_string(), "secret".to_string())]);
+        let remote = configs.iter().find(|config| config.name == "remote").unwrap();
+        assert_eq!(remote.url.as_deref(), Some("https://mcp.example.com/mcp"));
+
+        service.uninstall_mcp("acme").unwrap();
+        assert_eq!(service.list_installed_mcp().unwrap(), vec!["remote"]);
+        assert!(service.uninstall_mcp("acme").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_mcp_install_requests() {
+        assert!(mcp_entry(&install_request("bad name")).is_err());
+        assert!(mcp_entry(&install_request("")).is_err());
+        let mut both = install_request("both");
+        both.url = Some("https://example.com".to_string());
+        assert!(mcp_entry(&both).is_err());
+        let mut neither = install_request("neither");
+        neither.command = None;
+        assert!(mcp_entry(&neither).is_err());
+        let mut file_url = install_request("file");
+        file_url.command = None;
+        file_url.url = Some("file:///etc/passwd".to_string());
+        assert!(mcp_entry(&file_url).is_err());
+        let mut multiline = install_request("multi");
+        multiline.command = Some("npx\nrm -rf /".to_string());
+        assert!(mcp_entry(&multiline).is_err());
+    }
 
     #[test]
     fn registry_params_add_search_only_for_a_term() {
@@ -1578,7 +1818,10 @@ mod tests {
         fs::create_dir_all(legacy.join(".claude-plugin")).unwrap();
 
         let checkout = service.checkout_dir(url);
-        assert_eq!(checkout, cache.join(format!("{:016x}", fnv1a(url.as_bytes()))));
+        assert_eq!(
+            checkout,
+            cache.join(format!("{:016x}", fnv1a(url.as_bytes())))
+        );
         assert!(checkout.join(".claude-plugin").is_dir());
         assert!(!legacy.exists());
         assert_eq!(service.checkout_dir(url), checkout);

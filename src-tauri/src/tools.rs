@@ -164,12 +164,15 @@ pub fn add_reason_argument(schema: &mut Value, required: bool) {
     else {
         return;
     };
-    if parameters.get("type").and_then(Value::as_str).unwrap_or("object") != "object" {
+    if parameters
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("object")
+        != "object"
+    {
         return;
     }
-    let properties = parameters
-        .entry("properties")
-        .or_insert_with(|| json!({}));
+    let properties = parameters.entry("properties").or_insert_with(|| json!({}));
     let Some(properties) = properties.as_object_mut() else {
         return;
     };
@@ -208,7 +211,10 @@ fn justification(reason: Option<&Value>) -> Option<String> {
     if collapsed.chars().count() <= MAX_JUSTIFICATION_CHARS {
         return Some(collapsed);
     }
-    let mut capped: String = collapsed.chars().take(MAX_JUSTIFICATION_CHARS - 1).collect();
+    let mut capped: String = collapsed
+        .chars()
+        .take(MAX_JUSTIFICATION_CHARS - 1)
+        .collect();
     capped.push('…');
     Some(capped)
 }
@@ -217,10 +223,7 @@ pub fn tool_schemas() -> Vec<Value> {
     let mut schemas = base_tool_schemas();
     for schema in &mut schemas {
         let name = schema.pointer("/function/name").and_then(Value::as_str);
-        if let Some((_, required)) = PROMPTING_TOOLS
-            .iter()
-            .find(|(tool, _)| Some(*tool) == name)
-        {
+        if let Some((_, required)) = PROMPTING_TOOLS.iter().find(|(tool, _)| Some(*tool) == name) {
             add_reason_argument(schema, *required);
         }
     }
@@ -325,7 +328,7 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "bash",
-                "description": "Run a shell command in the project. Long-running commands (dev servers, watchers) are moved to the background automatically and can be stopped by the user.",
+                "description": "Run a shell command in the project. Long-running commands (dev servers, watchers) are moved to the background automatically and can be stopped by the user. Keep each call to one task: when one part of a long `;`/`&&` chain needs approval, the whole line waits. Put temporary files in the scratch folder named in the environment section, not in /tmp.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -522,7 +525,11 @@ async fn load_skill(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         .find(|skill| skill.name == name)
         .cloned()
     else {
-        let available: Vec<&str> = runtime.skills.iter().map(|skill| skill.name.as_str()).collect();
+        let available: Vec<&str> = runtime
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
         return ToolOutcome::error(format!(
             "No skill named '{name}'. Available skills: {}.",
             if available.is_empty() {
@@ -818,7 +825,7 @@ fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(&runtime.project_root) {
         return relative.to_string_lossy().replace('\\', "/");
     }
-    for folder in &runtime.permissions.extra_folders() {
+    for folder in &runtime.permissions.folders_for(&runtime.conversation_id) {
         if let Ok(relative) = path.strip_prefix(folder) {
             return relative.to_string_lossy().replace('\\', "/");
         }
@@ -856,7 +863,7 @@ async fn ensure_path_access(
     label: &str,
     operation: PermissionOperation,
 ) -> std::result::Result<(), ToolOutcome> {
-    let extra = runtime.permissions.extra_folders();
+    let extra = runtime.permissions.folders_for(&runtime.conversation_id);
     if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
         && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
     {
@@ -1672,7 +1679,13 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
 /// Records a decision made without a prompt in the permission audit log:
 /// allowed by a rule, an automatic approval or a read-only check, or denied
 /// by a deny rule. Prompted decisions are recorded by the broker.
-fn audit_unprompted(runtime: &ToolRuntime, kind: &str, subject: &str, allowed: bool, reason: String) {
+fn audit_unprompted(
+    runtime: &ToolRuntime,
+    kind: &str,
+    subject: &str,
+    allowed: bool,
+    reason: String,
+) {
     runtime.broker.audit(PermissionAuditEntry {
         id: 0,
         created_at: 0,
@@ -2302,11 +2315,22 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     }
 
     let mut trace: Vec<String> = Vec::new();
+    // A project path is restorable when the turn's snapshot holds it: nothing
+    // at or below it is ignored, except output a build recreates.
+    let shadow = runtime.shadow.clone();
+    let restorable = move |path: &Path| {
+        shadow.ignored_entries(path).is_some_and(|entries| {
+            entries
+                .iter()
+                .all(|entry| permissions::is_regenerable(entry))
+        })
+    };
     let decision = runtime.permissions.evaluate_command(
         &command,
         &runtime.project_root,
         &cwd,
         &runtime.conversation_id,
+        Some(&restorable),
         &mut trace,
     );
     match &decision {
@@ -2670,7 +2694,9 @@ mod tests {
             let schema = schema_named(name);
             assert!(
                 schema
-                    .pointer(&format!("/function/parameters/properties/{REASON_ARGUMENT}"))
+                    .pointer(&format!(
+                        "/function/parameters/properties/{REASON_ARGUMENT}"
+                    ))
                     .is_some(),
                 "{name}"
             );
@@ -2701,7 +2727,9 @@ mod tests {
 
         let mut bare = json!({ "function": { "parameters": { "type": "object" } } });
         add_reason_argument(&mut bare, true);
-        assert!(bare.pointer("/function/parameters/properties/reason").is_some());
+        assert!(bare
+            .pointer("/function/parameters/properties/reason")
+            .is_some());
         assert!(requires_reason(&bare));
     }
 
@@ -2722,18 +2750,43 @@ mod tests {
     #[test]
     fn non_public_addresses_are_blocked_in_every_form() {
         for address in [
-            "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
-            "100.64.0.1", "100.127.255.254", "198.18.0.1", "198.19.255.255", "224.0.0.1",
-            "240.0.0.1", "255.255.255.255", "0.0.0.0", "192.0.0.8",
-            "::1", "::", "fc00::1", "fe80::1", "fec0::1", "ff02::1", "2001:db8::1",
-            "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254",
-            "64:ff9b::a00:1", "2002:c0a8:0101::1",
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "100.127.255.254",
+            "198.18.0.1",
+            "198.19.255.255",
+            "224.0.0.1",
+            "240.0.0.1",
+            "255.255.255.255",
+            "0.0.0.0",
+            "192.0.0.8",
+            "::1",
+            "::",
+            "fc00::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+            "2001:db8::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:169.254.169.254",
+            "64:ff9b::a00:1",
+            "2002:c0a8:0101::1",
         ] {
             assert!(blocked_ip(address.parse().unwrap()), "{address}");
         }
         for address in [
-            "93.184.216.34", "1.1.1.1", "100.128.0.1", "198.20.0.1",
-            "2606:4700:4700::1111", "::ffff:93.184.216.34", "64:ff9b::5db8:d822",
+            "93.184.216.34",
+            "1.1.1.1",
+            "100.128.0.1",
+            "198.20.0.1",
+            "2606:4700:4700::1111",
+            "::ffff:93.184.216.34",
+            "64:ff9b::5db8:d822",
         ] {
             assert!(!blocked_ip(address.parse().unwrap()), "{address}");
         }
@@ -2766,7 +2819,11 @@ mod tests {
         let limited = head_tail(&text, 600);
         assert!(limited.starts_with("aaa"));
         assert!(limited.ends_with("bbb"));
-        assert!(limited.len() <= 600, "expected <= 600, got {}", limited.len());
+        assert!(
+            limited.len() <= 600,
+            "expected <= 600, got {}",
+            limited.len()
+        );
         assert!(limited.contains("truncated"));
     }
 
@@ -2834,7 +2891,12 @@ mod tests {
     fn walk_relative(base: &Path, config: &Arc<FileIgnoreConfig>) -> Vec<String> {
         let mut found: Vec<String> = file_walker(base, base, config)
             .flatten()
-            .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .map(|kind| kind.is_file())
+                    .unwrap_or(false)
+            })
             .map(|entry| {
                 entry
                     .path()
@@ -2954,12 +3016,27 @@ mod tests {
 
     #[test]
     fn recommended_suffixes_are_stripped_from_labels() {
-        assert_eq!(strip_recommended_suffix("Use Postgres (Recommendation)"), ("Use Postgres", true));
-        assert_eq!(strip_recommended_suffix("Use Postgres (recommended)"), ("Use Postgres", true));
+        assert_eq!(
+            strip_recommended_suffix("Use Postgres (Recommendation)"),
+            ("Use Postgres", true)
+        );
+        assert_eq!(
+            strip_recommended_suffix("Use Postgres (recommended)"),
+            ("Use Postgres", true)
+        );
         assert_eq!(strip_recommended_suffix("Ja – [Recommended]"), ("Ja", true));
-        assert_eq!(strip_recommended_suffix("Größer (Recommended)"), ("Größer", true));
-        assert_eq!(strip_recommended_suffix("(Recommended)"), ("(Recommended)", false));
-        assert_eq!(strip_recommended_suffix("Recommended settings"), ("Recommended settings", false));
+        assert_eq!(
+            strip_recommended_suffix("Größer (Recommended)"),
+            ("Größer", true)
+        );
+        assert_eq!(
+            strip_recommended_suffix("(Recommended)"),
+            ("(Recommended)", false)
+        );
+        assert_eq!(
+            strip_recommended_suffix("Recommended settings"),
+            ("Recommended settings", false)
+        );
     }
 
     #[tokio::test]
@@ -3000,7 +3077,10 @@ mod tests {
             .iter()
             .map(|option| (option.label.as_str(), option.recommended))
             .collect();
-        assert_eq!(options, [("Search", true), ("Export", true), ("Sync", false)]);
+        assert_eq!(
+            options,
+            [("Search", true), ("Export", true), ("Sync", false)]
+        );
     }
 
     #[test]
@@ -3077,16 +3157,16 @@ mod tests {
 
     #[test]
     fn edit_tolerates_whitespace_runs() {
-        let (updated, count) = apply_edit("a = 1\nb = 2\n", "a = 1   b = 2", "c = 3", false)
-            .unwrap();
+        let (updated, count) =
+            apply_edit("a = 1\nb = 2\n", "a = 1   b = 2", "c = 3", false).unwrap();
         assert_eq!(count, 1);
         assert_eq!(updated, "c = 3\n");
     }
 
     #[test]
     fn edit_tolerates_carriage_returns() {
-        let (updated, count) = apply_edit("a = 1\r\nb = 2\r\n", "a = 1\nb = 2", "c = 3", false)
-            .unwrap();
+        let (updated, count) =
+            apply_edit("a = 1\r\nb = 2\r\n", "a = 1\nb = 2", "c = 3", false).unwrap();
         assert_eq!(count, 1);
         assert_eq!(updated, "c = 3\r\n");
     }

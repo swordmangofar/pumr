@@ -488,8 +488,7 @@ impl OpenRouterClient {
                         }
                         if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
                             for call in calls {
-                                let index =
-                                    call.get("index").and_then(Value::as_u64).unwrap_or(0);
+                                let index = call.get("index").and_then(Value::as_u64).unwrap_or(0);
                                 let entry = tool_calls.entry(index).or_default();
                                 if let Some(id) = call.get("id").and_then(Value::as_str) {
                                     if !id.is_empty() {
@@ -497,8 +496,7 @@ impl OpenRouterClient {
                                     }
                                 }
                                 if let Some(function) = call.get("function") {
-                                    if let Some(name) =
-                                        function.get("name").and_then(Value::as_str)
+                                    if let Some(name) = function.get("name").and_then(Value::as_str)
                                     {
                                         if !name.is_empty() {
                                             entry.name = name.to_string();
@@ -580,7 +578,9 @@ async fn wait_backoff(
     cancel: &CancellationToken,
 ) -> bool {
     let exponent = attempt.saturating_sub(1).min(6) as u32;
-    let base = RETRY_BASE_MS.saturating_mul(1u64 << exponent).min(RETRY_MAX_MS);
+    let base = RETRY_BASE_MS
+        .saturating_mul(1u64 << exponent)
+        .min(RETRY_MAX_MS);
     let delay_ms = retry_after
         .map(|seconds| seconds.saturating_mul(1_000).min(RETRY_MAX_MS))
         .unwrap_or(base)

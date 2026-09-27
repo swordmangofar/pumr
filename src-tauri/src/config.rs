@@ -509,7 +509,9 @@ enum StoredCommandRule {
     Legacy(String),
 }
 
-fn deserialize_command_allows<'de, D>(deserializer: D) -> std::result::Result<Vec<CommandRule>, D::Error>
+fn deserialize_command_allows<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<CommandRule>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -523,7 +525,9 @@ where
         .collect())
 }
 
-fn deserialize_command_denies<'de, D>(deserializer: D) -> std::result::Result<Vec<CommandRule>, D::Error>
+fn deserialize_command_denies<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<CommandRule>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -686,6 +690,16 @@ pub fn default_delete_session_hotkey() -> String {
     format!("{}+W", default_hotkey_modifier())
 }
 
+/// Toggles the terminal dock. `Ctrl` stays free for the shell's own control
+/// keys on macOS, and elsewhere `` Ctrl+` `` matches other editors.
+pub fn default_terminal_hotkey() -> String {
+    if cfg!(target_os = "macos") {
+        "Cmd+J".to_string()
+    } else {
+        "Ctrl+`".to_string()
+    }
+}
+
 pub fn default_window_toggle_hotkey() -> String {
     format!("{}+Shift+Space", default_hotkey_modifier())
 }
@@ -705,6 +719,10 @@ pub struct InterfaceSettings {
     pub close_tab_hotkey: String,
     pub new_session_hotkey: String,
     pub delete_session_hotkey: String,
+    pub terminal_hotkey: String,
+    /// Overrides for configurable in-app hotkeys, keyed by action id
+    /// (e.g. `chatSend`). Missing entries use the frontend defaults.
+    pub hotkeys: std::collections::BTreeMap<String, String>,
     pub sounds_enabled: bool,
     pub sound_volume: f64,
     pub done_sound: String,
@@ -725,6 +743,8 @@ impl Default for InterfaceSettings {
             close_tab_hotkey: default_close_tab_hotkey(),
             new_session_hotkey: default_new_session_hotkey(),
             delete_session_hotkey: default_delete_session_hotkey(),
+            terminal_hotkey: default_terminal_hotkey(),
+            hotkeys: std::collections::BTreeMap::new(),
             sounds_enabled: true,
             sound_volume: 0.6,
             done_sound: "chime".to_string(),
@@ -925,7 +945,11 @@ pub fn save_settings(path: &Path, settings: &Settings) -> Result<()> {
 /// to disk, and then takes the original's place in a single rename. A crash or
 /// a full disk mid-write leaves the previous version intact. `private` limits
 /// the file to its owner on Unix from the moment it is created.
-pub(crate) fn write_file_atomic(path: &Path, contents: &[u8], private: bool) -> std::io::Result<()> {
+pub(crate) fn write_file_atomic(
+    path: &Path,
+    contents: &[u8],
+    private: bool,
+) -> std::io::Result<()> {
     use std::io::Write;
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
@@ -1132,7 +1156,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_command_rule_fields_keep_settings_defaults() {        for input in [
+    fn missing_command_rule_fields_keep_settings_defaults() {
+        for input in [
             json!({"theme": "custom"}),
             json!({"theme": "custom", "commandRules": ["pnpm *"]}),
             json!({"theme": "custom", "deniedCommandRules": ["rm *"]}),
@@ -1182,12 +1207,20 @@ mod tests {
         std::fs::write(&path, broken).unwrap();
 
         let settings = load_settings(&path);
-        assert_eq!(settings.settings_version, Settings::default().settings_version.max(1));
+        assert_eq!(
+            settings.settings_version,
+            Settings::default().settings_version.max(1)
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
         let backups: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with("settings.json.broken-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("settings.json.broken-")
+            })
             .collect();
         assert_eq!(backups.len(), 1);
         assert_eq!(std::fs::read_to_string(backups[0].path()).unwrap(), broken);
@@ -1231,7 +1264,8 @@ mod tests {
         let mut stored = serde_json::to_value(Settings::default()).unwrap();
         stored.as_object_mut().unwrap().remove("settingsVersion");
         stored["autoApproveProjectCommands"] = json!(false);
-        stored["permissionDefaults"] = json!({"website": "once", "command": "once", "folder": "once"});
+        stored["permissionDefaults"] =
+            json!({"website": "once", "command": "once", "folder": "once"});
         std::fs::write(&path, serde_json::to_string_pretty(&stored).unwrap()).unwrap();
 
         let settings = load_settings(&path);

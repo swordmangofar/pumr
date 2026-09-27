@@ -4,13 +4,16 @@ import {
   ElementRef,
   computed,
   effect,
+  inject,
   input,
   output,
   signal,
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { matchesAction } from '../core/hotkeys';
 import { MessageAttachment } from '../core/models';
+import { SettingsService } from '../core/settings.service';
 
 type Tool = 'pen' | 'highlighter' | 'arrow' | 'rectangle' | 'ellipse' | 'text' | 'crop';
 
@@ -579,6 +582,7 @@ function drawCropOverlay(
   ],
 })
 export class ImageAnnotator {
+  private readonly settings = inject(SettingsService);
   readonly attachment = input.required<MessageAttachment>();
   readonly applied = output<MessageAttachment>();
 
@@ -974,7 +978,7 @@ export class ImageAnnotator {
   }
 
   protected onKeydown(event: KeyboardEvent): void {
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+    if (matchesAction(this.settings.settings(), 'annotatorUndo', event)) {
       event.preventDefault();
       this.undo();
     }

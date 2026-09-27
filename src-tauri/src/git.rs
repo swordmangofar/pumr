@@ -628,6 +628,37 @@ impl ShadowRepo {
     pub fn is_ignored(&self, relative_path: &str) -> bool {
         check_ignore(self.command(), relative_path)
     }
+
+    /// Untracked files and folders at or below `path` that snapshots skip
+    /// because `.gitignore` (or the default excludes) ignores them, relative to
+    /// the project root. A wholly ignored folder is listed once, with a
+    /// trailing `/`. `None` when `path` is not below the project root or git
+    /// fails, so callers treat it as not restorable.
+    pub fn ignored_entries(&self, path: &Path) -> Option<Vec<String>> {
+        let relative = path.strip_prefix(&self.work_tree).ok()?.to_str()?;
+        if relative.is_empty() {
+            return None;
+        }
+        let output = self
+            .run_bytes([
+                "ls-files",
+                "-z",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+                "--",
+                relative,
+            ])
+            .ok()?;
+        Some(
+            output
+                .split(|byte| *byte == 0)
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| String::from_utf8_lossy(entry).into_owned())
+                .collect(),
+        )
+    }
 }
 
 /// A project is a repository when it is the root of one: `.git` is a folder,
@@ -1673,8 +1704,11 @@ pub fn git_commit(project_root: &Path, message: &str, amend: bool) -> Result<Str
 
 /// Whether `hash` names a commit with more than one parent.
 fn is_merge_commit(project_root: &Path, hash: &str) -> bool {
-    git_stdout_opt(project_root, &["rev-list", "--parents", "-n", "1", hash, "--"])
-        .is_some_and(|line| line.split_whitespace().count() > 2)
+    git_stdout_opt(
+        project_root,
+        &["rev-list", "--parents", "-n", "1", hash, "--"],
+    )
+    .is_some_and(|line| line.split_whitespace().count() > 2)
 }
 
 /// Applies the change a commit introduced on top of HEAD. A merge commit is
@@ -1772,7 +1806,13 @@ pub struct StagedSummary {
 pub fn staged_summary(project_root: &Path, max_patch_chars: usize) -> Result<StagedSummary> {
     let stat = git_stdout(
         project_root,
-        &["diff", "--cached", "--no-color", "--no-ext-diff", "--stat=160"],
+        &[
+            "diff",
+            "--cached",
+            "--no-color",
+            "--no-ext-diff",
+            "--stat=160",
+        ],
     )?;
     if stat.trim().is_empty() {
         return Err(AppError::msg("nothing is staged"));
@@ -2387,6 +2427,42 @@ mod tests {
 
     fn refs(project: &Path) -> GitRefs {
         project_git_refs(project).unwrap()
+    }
+
+    #[test]
+    fn ignored_entries_lists_what_snapshots_skip() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::create_dir_all(project.join("data")).unwrap();
+        std::fs::create_dir_all(project.join("node_modules/pkg")).unwrap();
+        std::fs::write(project.join(".gitignore"), "data/\nsrc/local.json\n").unwrap();
+        std::fs::write(project.join("src/main.ts"), "tracked\n").unwrap();
+        std::fs::write(project.join("src/local.json"), "{}\n").unwrap();
+        std::fs::write(project.join("data/store.bin"), "precious\n").unwrap();
+        std::fs::write(project.join("node_modules/pkg/index.js"), "installed\n").unwrap();
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        shadow.snapshot("base").unwrap();
+
+        assert_eq!(
+            shadow.ignored_entries(&project.join("src/main.ts")),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            shadow.ignored_entries(&project.join("src")),
+            Some(vec!["src/local.json".to_string()])
+        );
+        assert_eq!(
+            shadow.ignored_entries(&project.join("data")),
+            Some(vec!["data/".to_string()])
+        );
+        assert_eq!(
+            shadow.ignored_entries(&project.join("node_modules")),
+            Some(vec!["node_modules/".to_string()])
+        );
+        // Outside the project or the project itself: nothing to vouch for.
+        assert_eq!(shadow.ignored_entries(temp.path()), None);
+        assert_eq!(shadow.ignored_entries(&project), None);
     }
 
     #[test]
@@ -3749,7 +3825,10 @@ mod tests {
         git_checkout(&project, &default, false, None).unwrap();
         std::fs::write(project.join("main.txt"), "main\n").unwrap();
         commit(&project, "main");
-        sh(&project, &["merge", "--no-ff", "-q", "-m", "merge feature", "feature"]);
+        sh(
+            &project,
+            &["merge", "--no-ff", "-q", "-m", "merge feature", "feature"],
+        );
         let merge = head(&project);
         assert!(is_merge_commit(&project, &merge));
 
@@ -3770,12 +3849,18 @@ mod tests {
         git_reset(&project, &base, "soft").unwrap();
         assert_eq!(head(&project), base);
         let status = project_git_status(&project).unwrap();
-        assert!(status.staged.iter().any(|change| change.path == "tracked.txt"));
+        assert!(status
+            .staged
+            .iter()
+            .any(|change| change.path == "tracked.txt"));
 
         git_reset(&project, &base, "mixed").unwrap();
         let status = project_git_status(&project).unwrap();
         assert!(status.staged.is_empty());
-        assert!(status.unstaged.iter().any(|change| change.path == "tracked.txt"));
+        assert!(status
+            .unstaged
+            .iter()
+            .any(|change| change.path == "tracked.txt"));
 
         git_reset(&project, &base, "hard").unwrap();
         assert_eq!(

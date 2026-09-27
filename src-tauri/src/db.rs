@@ -1400,7 +1400,10 @@ mod tests {
         let gap_day = SkipsMidnight::gap_day();
         assert_eq!(day_start(&SkipsMidnight, gap_day), Some(at(gap_day, 1)));
         let normal_day = gap_day.succ_opt().unwrap();
-        assert_eq!(day_start(&SkipsMidnight, normal_day), Some(at(normal_day, 0)));
+        assert_eq!(
+            day_start(&SkipsMidnight, normal_day),
+            Some(at(normal_day, 0))
+        );
     }
 
     fn entry(conversation: &str, subject: &str, allowed: bool) -> PermissionAuditEntry {
@@ -1425,12 +1428,16 @@ mod tests {
         let db = Db::open(&directory.path().join("test.db")).unwrap();
         db.migrate().unwrap();
         db.record_permission_audit(&entry("a", "ls", true)).unwrap();
-        db.record_permission_audit(&entry("a", "rm -rf .", false)).unwrap();
-        db.record_permission_audit(&entry("b", "pwd", true)).unwrap();
+        db.record_permission_audit(&entry("a", "rm -rf .", false))
+            .unwrap();
+        db.record_permission_audit(&entry("b", "pwd", true))
+            .unwrap();
 
         let chat = db.list_permission_audit(Some("a"), 10).unwrap();
         assert_eq!(
-            chat.iter().map(|entry| entry.subject.as_str()).collect::<Vec<_>>(),
+            chat.iter()
+                .map(|entry| entry.subject.as_str())
+                .collect::<Vec<_>>(),
             vec!["rm -rf .", "ls"],
         );
         assert!(chat[0].created_at > 0);
@@ -1466,7 +1473,8 @@ mod tests {
         let mut sub_entry = entry(&chat.id, "ls", true);
         sub_entry.session_id = nested.id.clone();
         db.record_permission_audit(&sub_entry).unwrap();
-        db.record_permission_audit(&entry(&other.id, "pwd", true)).unwrap();
+        db.record_permission_audit(&entry(&other.id, "pwd", true))
+            .unwrap();
 
         assert_eq!(
             db.session_tree(&chat.id).unwrap(),

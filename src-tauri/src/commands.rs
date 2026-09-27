@@ -8,14 +8,14 @@ use crate::mentions;
 use crate::models::{
     Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine,
     GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus, Mention, Message,
-    ModelInfo,
-    PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
+    ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
     RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry,
     WorkspaceFile,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::openrouter::{ChatChunk, ChatMessage};
 use crate::state::{AppState, SendClaim, SwappableSink};
+use crate::terminal::TerminalEvent;
 use crate::tools::ToolRuntime;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
@@ -193,8 +193,8 @@ pub fn add_project(state: State<'_, AppState>, path: String) -> Result<Project> 
 const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Stops the turns, processes, prompts and MCP servers of sessions that are
-/// about to be deleted, forgets their chat grants, and waits (briefly) until
-/// the stopped turns have finished.
+/// about to be deleted, forgets their chat grants, waits (briefly) until the
+/// stopped turns have finished, and deletes their scratch folders.
 async fn stop_for_deletion(state: &AppState, session_ids: &[String]) {
     let finished = state.stop_sessions(session_ids);
     for id in session_ids {
@@ -205,8 +205,14 @@ async fn stop_for_deletion(state: &AppState, session_ids: &[String]) {
             token.cancelled().await;
         }
     };
-    if tokio::time::timeout(STOP_GRACE, all_finished).await.is_err() {
+    if tokio::time::timeout(STOP_GRACE, all_finished)
+        .await
+        .is_err()
+    {
         log::warn!("a stopped turn was still running when its session was deleted");
+    }
+    for id in session_ids {
+        state.permissions.remove_scratch_dir(id);
     }
 }
 
@@ -409,11 +415,8 @@ pub async fn attach_session(
     request_id: Option<String>,
     channel: Channel<RoutedEvent>,
 ) -> Result<bool> {
-    let Some(turn) = state.attach_turn(
-        &session_id,
-        request_id.as_deref(),
-        channel_sink(channel),
-    ) else {
+    let Some(turn) = state.attach_turn(&session_id, request_id.as_deref(), channel_sink(channel))
+    else {
         return Ok(false);
     };
     turn.finished().await;
@@ -430,12 +433,19 @@ fn channel_sink(channel: Channel<RoutedEvent>) -> EventSink {
 
 #[tauri::command]
 pub fn discover_mcp_sources(
+    state: State<'_, AppState>,
     folders: Vec<String>,
     disabled: Vec<String>,
     disabled_servers: Vec<crate::models::McpServerRef>,
     auto_discovery: bool,
 ) -> Vec<crate::models::McpCandidate> {
-    crate::discovery::discover_mcp(&folders, &disabled, &disabled_servers, auto_discovery)
+    crate::discovery::discover_mcp(
+        &folders,
+        &disabled,
+        &disabled_servers,
+        auto_discovery,
+        &state.marketplace.installed_mcp_files(),
+    )
 }
 
 #[tauri::command]
@@ -560,6 +570,27 @@ pub fn uninstall_marketplace_skills(
     skill: String,
 ) -> Result<()> {
     state.marketplace.uninstall_skills(&marketplace, &skill)
+}
+
+/// Names of the MCP servers installed into pumr's own config.
+#[tauri::command]
+pub fn list_installed_mcp_servers(state: State<'_, AppState>) -> Result<Vec<String>> {
+    state.marketplace.list_installed_mcp()
+}
+
+/// Adds a server the user reviewed to pumr's MCP config. It is not started
+/// here; connecting still needs the usual per-session approval.
+#[tauri::command]
+pub fn install_mcp_server(
+    state: State<'_, AppState>,
+    request: crate::marketplace::McpInstallRequest,
+) -> Result<()> {
+    state.marketplace.install_mcp(&request)
+}
+
+#[tauri::command]
+pub fn uninstall_mcp_server(state: State<'_, AppState>, name: String) -> Result<()> {
+    state.marketplace.uninstall_mcp(&name)
 }
 
 const MAX_WORKSPACE_ENTRIES: usize = 4000;
@@ -708,9 +739,14 @@ mod permission_rule_tests {
     use crate::permissions::{evaluate_command, CommandDecision};
 
     fn options(command: &str) -> Vec<CommandScopeOption> {
-        let CommandDecision::Ask { scope_options, .. } =
-            evaluate_command(command, Path::new("/project"), Path::new("/project"), &[], &[], &[])
-        else {
+        let CommandDecision::Ask { scope_options, .. } = evaluate_command(
+            command,
+            Path::new("/project"),
+            Path::new("/project"),
+            &[],
+            &[],
+            &[],
+        ) else {
             panic!("expected command scopes");
         };
         scope_options
@@ -1262,6 +1298,56 @@ pub fn stop_process(state: State<'_, AppState>, process_id: String) -> Result<()
     state.processes.stop(&process_id)
 }
 
+/// Opens a terminal in the project's folder, streaming its output to
+/// `channel`, and returns its id.
+#[tauri::command]
+pub fn terminal_open(
+    state: State<'_, AppState>,
+    project_id: String,
+    cols: u16,
+    rows: u16,
+    channel: Channel<TerminalEvent>,
+) -> Result<String> {
+    let root = project_root(&state, &project_id)?;
+    state.terminals.open(
+        &root,
+        cols,
+        rows,
+        Arc::new(move |event| {
+            let _ = channel.send(event);
+        }),
+    )
+}
+
+// The terminal commands below are synchronous so they run on the main thread
+// in the order the webview sent them, which keeps keystrokes in order.
+
+#[tauri::command]
+pub fn terminal_write(state: State<'_, AppState>, terminal_id: String, data: String) -> Result<()> {
+    state.terminals.write(&terminal_id, &data)
+}
+
+#[tauri::command]
+pub fn terminal_resize(
+    state: State<'_, AppState>,
+    terminal_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<()> {
+    state.terminals.resize(&terminal_id, cols, rows)
+}
+
+#[tauri::command]
+pub fn terminal_close(state: State<'_, AppState>, terminal_id: String) {
+    state.terminals.close(&terminal_id);
+}
+
+/// Closes every terminal, e.g. those a reloaded page can no longer reach.
+#[tauri::command]
+pub fn terminal_close_all(state: State<'_, AppState>) {
+    state.terminals.close_all();
+}
+
 #[tauri::command]
 pub async fn get_git_info(state: State<'_, AppState>, project_id: String) -> Result<GitInfo> {
     in_project(&state, &project_id, |root| Ok(git::project_git_info(root))).await
@@ -1517,7 +1603,10 @@ pub async fn git_revert(
     project_id: String,
     hash: String,
 ) -> Result<String> {
-    in_project(&state, &project_id, move |root| git::git_revert(root, &hash)).await
+    in_project(&state, &project_id, move |root| {
+        git::git_revert(root, &hash)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2461,6 +2550,15 @@ async fn run_send_message(
     } else {
         Vec::new()
     };
+    // Every session of a chat (subagents included) shares the root session's
+    // scratch folder, like its chat-scoped permission grants.
+    let scratch_dir = state.permissions.ensure_scratch_dir(
+        setup
+            .session
+            .parent_session_id
+            .as_deref()
+            .unwrap_or(&session_id),
+    );
     let system_prompt = build_system_prompt(
         &setup.settings,
         &setup.session,
@@ -2469,6 +2567,7 @@ async fn run_send_message(
         &rules,
         &skills,
         &setup.project_root,
+        scratch_dir.as_deref(),
     );
 
     let cached_model = state
@@ -2770,6 +2869,7 @@ async fn assemble_turn_context(
             &settings.integrations.mcp_disabled,
             &settings.integrations.mcp_disabled_servers,
             settings.integrations.mcp_auto_discovery,
+            &state.marketplace.installed_mcp_files(),
         );
         for name in &mcp_servers {
             match available.iter().find(|config| &config.name == name) {
@@ -2897,6 +2997,7 @@ fn append_user_message(
 
 /// Assembles the system prompt for a turn from the session prompt, global
 /// prompts, the selected mode, reply language, project rules and MCP tools.
+#[allow(clippy::too_many_arguments)]
 fn build_system_prompt(
     settings: &Settings,
     session: &Session,
@@ -2905,6 +3006,7 @@ fn build_system_prompt(
     rules: &[ProjectRule],
     skills: &[crate::models::SkillEntry],
     project_root: &Path,
+    scratch_dir: Option<&Path>,
 ) -> String {
     let mut system_prompt = session
         .system_prompt
@@ -2976,7 +3078,7 @@ fn build_system_prompt(
         system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
     }
 
-    system_prompt.push_str(&environment_section(project_root));
+    system_prompt.push_str(&environment_section(project_root, scratch_dir));
 
     if !rules.is_empty() {
         system_prompt.push_str("\n\n# Project rules\n");
@@ -3025,11 +3127,20 @@ fn build_system_prompt(
 /// Tells the model where it runs, so it does not probe the filesystem with
 /// guessed paths (`cd /Users/*/project || cd ../project; pwd`) that only
 /// trigger permission prompts.
-fn environment_section(project_root: &Path) -> String {
-    format!(
+fn environment_section(project_root: &Path, scratch_dir: Option<&Path>) -> String {
+    let mut section = format!(
         "\n\n# Environment\n- Project root: {}\n- bash commands already run in the project root unless you pass `cwd`; do not `cd` into it or probe for it with `pwd`/`ls`.\n- Relative paths in tools resolve against the project root. Paths outside it require user approval.",
         project_root.display()
-    )
+    );
+    // Agents reach for `/tmp` for downloads and throwaway files, which is
+    // outside the project and asks every time.
+    if let Some(scratch) = scratch_dir {
+        section.push_str(&format!(
+            "\n- Scratch folder for temporary files (downloads, experiments, notes): {}. It needs no approval and is deleted with this chat. Use it instead of `/tmp`, and never for files the project needs.",
+            scratch.display()
+        ));
+    }
+    section
 }
 
 const HANDOVER_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The current working session is being handed off to a fresh session. Write a self-contained handover briefing that lets the next assistant continue seamlessly. Cover, when relevant:\n- The user's overall goal and any constraints or decisions already made.\n- What has been completed so far, with concrete file paths and key changes.\n- The current state of the work: what works, what is untested, what is still in progress.\n- Important commands, findings, errors or gotchas discovered.\n- Open questions or decisions that still need the user.\n- Clear next steps.\nWrite it as a message from the user to the new assistant and begin by stating the goal. Use concise bullet points. Output only the briefing and do not call any tools.";
@@ -3200,7 +3311,12 @@ mod tests {
         let root = Path::new("/work/app");
         let directories = nested_rule_directories(
             root,
-            &["src/core/deep/file.rs", "src/lib.rs", "docs/guide.md", "README.md"],
+            &[
+                "src/core/deep/file.rs",
+                "src/lib.rs",
+                "docs/guide.md",
+                "README.md",
+            ],
         );
         let relative: Vec<String> = directories
             .iter()

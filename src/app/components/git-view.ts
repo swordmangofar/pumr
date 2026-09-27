@@ -26,6 +26,8 @@ import {
   linearGitGraph,
 } from '../core/git-graph';
 import { WorkspaceService } from '../core/workspace.service';
+import { matchesAction } from '../core/hotkeys';
+import { SettingsService } from '../core/settings.service';
 import { GitService } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
@@ -1037,6 +1039,7 @@ interface VirtualWindow {
 export class GitView {
   private readonly workspace = inject(WorkspaceService);
   private readonly git = inject(GitService);
+  private readonly settings = inject(SettingsService);
   private readonly transloco = inject(TranslocoService);
 
   protected readonly project = this.workspace.activeProject;
@@ -1247,12 +1250,13 @@ export class GitView {
     if (onButton && (event.key === 'Enter' || event.key === ' ')) {
       return;
     }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+    const settings = this.settings.settings();
+    if (matchesAction(settings, 'gitSelectAllFiles', event)) {
       event.preventDefault();
       this.markAll(staged);
       return;
     }
-    if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (matchesAction(settings, 'gitDiscardFiles', event)) {
       if (staged) {
         return;
       }
@@ -1287,7 +1291,7 @@ export class GitView {
       this.scrollFileIntoView(nextKey, event.currentTarget as HTMLElement, list, staged);
       return;
     }
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (matchesAction(settings, 'gitToggleStage', event)) {
       event.preventDefault();
       if (staged) {
         this.unstageMarked();

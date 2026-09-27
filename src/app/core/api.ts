@@ -25,6 +25,7 @@ import {
   InstalledSkill,
   MarketplaceServer,
   McpCandidate,
+  McpInstallRequest,
   McpServerRef,
   Message,
   Mode,
@@ -46,6 +47,7 @@ import {
   SkillRef,
   SpendStats,
   SpendSummary,
+  TerminalEvent,
   UpdateSessionArgs,
   WorkspaceEntry,
   WorkspaceFile,
@@ -151,6 +153,14 @@ export const api = {
   getFileIgnoreCatalog: () => invoke<IgnoreCatalogEntry[]>('get_file_ignore_catalog'),
   listProcesses: () => invoke<ProcessInfo[]>('list_processes'),
   stopProcess: (processId: string) => invoke<void>('stop_process', { processId }),
+  terminalOpen: (projectId: string, cols: number, rows: number, channel: Channel<TerminalEvent>) =>
+    invoke<string>('terminal_open', { projectId, cols, rows, channel }),
+  terminalWrite: (terminalId: string, data: string) =>
+    invoke<void>('terminal_write', { terminalId, data }),
+  terminalResize: (terminalId: string, cols: number, rows: number) =>
+    invoke<void>('terminal_resize', { terminalId, cols, rows }),
+  terminalClose: (terminalId: string) => invoke<void>('terminal_close', { terminalId }),
+  terminalCloseAll: () => invoke<void>('terminal_close_all'),
   getGitInfo: (projectId: string) => invoke<GitInfo>('get_git_info', { projectId }),
   getGitStatus: (projectId: string) => invoke<GitStatus>('get_git_status', { projectId }),
   getGitRefs: (projectId: string) => invoke<GitRefs>('get_git_refs', { projectId }),
@@ -330,6 +340,9 @@ export const api = {
     invoke<void>('remove_skill_marketplace', { url }),
   installMarketplaceSkills: (url: string, plugin: string, includeUnverified = false) =>
     invoke<InstalledSkill[]>('install_marketplace_skills', { url, plugin, includeUnverified }),
+  listInstalledMcpServers: () => invoke<string[]>('list_installed_mcp_servers'),
+  installMcpServer: (request: McpInstallRequest) => invoke<void>('install_mcp_server', { request }),
+  uninstallMcpServer: (name: string) => invoke<void>('uninstall_mcp_server', { name }),
   listInstalledMarketplaceSkills: () =>
     invoke<InstalledSkill[]>('list_installed_marketplace_skills'),
   uninstallMarketplaceSkills: (marketplace: string, skill: string) =>

@@ -531,7 +531,11 @@ impl McpManager {
             })
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored.into_iter().take(limit).map(|(_, tool)| tool).collect()
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(_, tool)| tool)
+            .collect()
     }
 
     pub fn schemas(&self) -> Vec<Value> {
@@ -624,7 +628,11 @@ impl McpSessions {
     /// turn while that still fits and is healthy, otherwise a new connection.
     /// A running turn keeps its own handle, so replacing or evicting a manager
     /// only stops its servers once no turn uses them anymore.
-    pub async fn manager(&self, session_id: &str, configs: Vec<McpServerConfig>) -> Arc<McpManager> {
+    pub async fn manager(
+        &self,
+        session_id: &str,
+        configs: Vec<McpServerConfig>,
+    ) -> Arc<McpManager> {
         if configs.is_empty() {
             self.remove(&[session_id.to_string()], false);
             return Arc::new(McpManager::empty());
@@ -788,7 +796,11 @@ done
         // Different servers mean a new connection; none at all, no manager.
         let third = sessions.manager("chat", vec![changed]).await;
         assert!(!Arc::ptr_eq(&second, &third));
-        assert!(sessions.manager("chat", Vec::new()).await.tools().is_empty());
+        assert!(sessions
+            .manager("chat", Vec::new())
+            .await
+            .tools()
+            .is_empty());
         assert!(sessions.inner.lock().unwrap().managers.is_empty());
         assert!(sessions.is_approved("chat", &config));
 

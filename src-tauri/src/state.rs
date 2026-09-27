@@ -7,6 +7,7 @@ use crate::permissions::{AutoApproveConfig, LivePermissions};
 use crate::power::PowerManager;
 use crate::processes::ProcessRegistry;
 use crate::providers::openrouter::{KeyInfo, OpenRouterClient};
+use crate::terminal::TerminalRegistry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -40,6 +41,7 @@ pub struct AppState {
     settings: Mutex<Settings>,
     pub http: reqwest::Client,
     pub processes: Arc<ProcessRegistry>,
+    pub terminals: TerminalRegistry,
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
     pub permissions: Arc<LivePermissions>,
@@ -86,6 +88,7 @@ impl AppState {
             settings: Mutex::new(settings),
             http,
             processes: Arc::new(ProcessRegistry::new()),
+            terminals: TerminalRegistry::new(),
             broker,
             questions: Arc::new(QuestionBroker::new()),
             permissions,
@@ -604,7 +607,9 @@ mod tests {
         let _handover = registry.register("handover:chat", None);
         let (sink, _) = capture();
         assert!(registry.running_turns().is_empty());
-        assert!(registry.attach("handover:chat", None, sink.clone()).is_none());
+        assert!(registry
+            .attach("handover:chat", None, sink.clone())
+            .is_none());
         assert!(registry.attach("chat", None, sink).is_none());
     }
 
@@ -648,8 +653,18 @@ mod tests {
         let _registration = registry.register("chat", Some(SwappableSink::new(original)));
         let (first_page, first_events) = capture();
         let (second_page, second_events) = capture();
-        assert!(registry.attach("chat", Some("first"), first_page.clone()).unwrap().1);
-        assert!(registry.attach("chat", Some("second"), second_page).unwrap().1);
+        assert!(
+            registry
+                .attach("chat", Some("first"), first_page.clone())
+                .unwrap()
+                .1
+        );
+        assert!(
+            registry
+                .attach("chat", Some("second"), second_page)
+                .unwrap()
+                .1
+        );
 
         // The first page reloaded while attached, so Tauri delivers its attach
         // again: the turn must keep streaming to the second page.
@@ -767,10 +782,12 @@ mod tests {
         let (other_channel, _) = capture();
         let other_cancel = CancellationToken::new();
 
-        let permission =
-            state
-                .broker
-                .ask(command_prompt(temp.path(), &chat.id), &cancel, &subagent.id, &sink);
+        let permission = state.broker.ask(
+            command_prompt(temp.path(), &chat.id),
+            &cancel,
+            &subagent.id,
+            &sink,
+        );
         let question = state.questions.ask(questions(), &cancel, &chat.id, &sink);
         let unrelated = state
             .questions

@@ -85,12 +85,30 @@ pub fn discover_mcp(
     disabled: &[String],
     disabled_servers: &[McpServerRef],
     auto: bool,
+    installed: &[PathBuf],
 ) -> Vec<McpCandidate> {
     let mut candidates: Vec<McpCandidate> = Vec::new();
 
+    // Servers the user installed through pumr are always available, regardless
+    // of auto-discovery, because the user opted in explicitly.
+    for path in installed {
+        if path.is_file() {
+            candidates.push(mcp_candidate(
+                path.clone(),
+                "pumr".to_string(),
+                "installed",
+                disabled,
+                disabled_servers,
+            ));
+        }
+    }
+
     if auto {
         for (path, label) in standard_mcp_paths() {
-            if path.is_file() {
+            let already = candidates
+                .iter()
+                .any(|candidate| candidate.path == path.to_string_lossy());
+            if path.is_file() && !already {
                 candidates.push(mcp_candidate(
                     path,
                     label.to_string(),
@@ -160,10 +178,15 @@ fn mcp_candidate(
         ("json", json_server_names(&path))
     };
     let enabled = !disabled.iter().any(|entry| entry == &path_string);
+    let configs = parse_server_configs(&path);
     let servers = names
         .into_iter()
         .map(|name| McpServerState {
             enabled: enabled && !is_server_disabled(disabled_servers, &path_string, &name),
+            detail: configs
+                .iter()
+                .find(|config| config.name == name)
+                .and_then(server_detail),
             name,
         })
         .collect();
@@ -175,6 +198,18 @@ fn mcp_candidate(
         format: format.to_string(),
         servers,
     }
+}
+
+/// A short, human-readable summary of how a server is reached: its URL, or its
+/// command line without environment values (which may hold secrets).
+fn server_detail(config: &McpServerConfig) -> Option<String> {
+    if let Some(url) = &config.url {
+        return Some(url.clone());
+    }
+    let command = config.command.as_ref()?;
+    let mut parts = vec![command.clone()];
+    parts.extend(config.args.iter().cloned());
+    Some(parts.join(" "))
 }
 
 /// True when the user switched this exact server off. Both the config file path
@@ -326,20 +361,21 @@ fn read_skill_description(file: &Path) -> String {
     let Ok(content) = std::fs::read_to_string(file) else {
         return String::new();
     };
+    let mut body = content.as_str();
     if let Some(rest) = content.strip_prefix("---") {
         if let Some(end) = rest.find("\n---") {
             for line in rest[..end].lines() {
                 if let Some(value) = line.strip_prefix("description:") {
-                    return value.trim().trim_matches('"').to_string();
+                    return value.trim().trim_matches('"').trim_matches('\'').to_string();
                 }
             }
+            body = rest[end + 4..].trim_start_matches('-');
         }
     }
-    content
-        .lines()
-        .find(|line| !line.trim().is_empty())
+    body.lines()
+        .map(|line| line.trim().trim_start_matches('#').trim())
+        .find(|line| !line.is_empty())
         .unwrap_or("")
-        .trim()
         .to_string()
 }
 
@@ -354,9 +390,20 @@ fn skill_candidate(
     let enabled = !disabled.iter().any(|entry| entry == &path_string);
     let skills = skill_names(&path)
         .into_iter()
-        .map(|name| SkillState {
-            enabled: enabled && !is_skill_disabled(disabled_skills, &path_string, &name),
-            name,
+        .map(|name| {
+            let root_is_skill = path.join("SKILL.md").is_file()
+                && path.file_name().is_some_and(|value| *value == *name);
+            let directory = if root_is_skill {
+                path.clone()
+            } else {
+                path.join(&name)
+            };
+            let description = read_skill_description(&directory.join("SKILL.md"));
+            SkillState {
+                enabled: enabled && !is_skill_disabled(disabled_skills, &path_string, &name),
+                description: (!description.is_empty()).then_some(description),
+                name,
+            }
         })
         .collect();
     SkillCandidate {
@@ -408,11 +455,16 @@ pub fn discover_mcp_servers(
     disabled: &[String],
     disabled_servers: &[McpServerRef],
     auto: bool,
+    installed: &[PathBuf],
 ) -> Vec<McpServerConfig> {
-    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut paths: Vec<PathBuf> = installed
+        .iter()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect();
     if auto {
         for (path, _) in standard_mcp_paths() {
-            if path.is_file() {
+            if path.is_file() && !paths.contains(&path) {
                 paths.push(path);
             }
         }
@@ -679,6 +731,7 @@ mod tests {
             &disabled,
             &[],
             false,
+            &[],
         );
         assert!(candidates.iter().any(|candidate| !candidate.enabled));
     }
@@ -703,6 +756,7 @@ mod tests {
             &[],
             &disabled_servers,
             false,
+            &[],
         );
         let candidate = candidates.iter().find(|c| c.path == path).unwrap();
         assert!(candidate.enabled);
@@ -724,6 +778,7 @@ mod tests {
             &[],
             &disabled_servers,
             false,
+            &[],
         );
         let names: Vec<String> = configs.iter().map(|c| c.name.clone()).collect();
         assert_eq!(names, vec!["filesystem"]);
@@ -741,6 +796,7 @@ mod tests {
             &disabled,
             &[],
             false,
+            &[],
         );
         let candidate = candidates.iter().find(|c| c.path == path).unwrap();
         assert!(!candidate.enabled);

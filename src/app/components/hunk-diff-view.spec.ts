@@ -4,6 +4,7 @@ import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { GitDiffLine, GitDiffLineKind, GitHunkDiff } from '../core/models';
 import { MonacoService } from '../core/monaco.service';
+import { SettingsService } from '../core/settings.service';
 import { ThemeService } from '../core/theme.service';
 import { DiffQuestion, HunkDiffView, LineActionRequest } from './hunk-diff-view';
 
@@ -79,6 +80,7 @@ describe('HunkDiffView', () => {
       providers: [
         { provide: MonacoService, useValue: { colorize: async () => '' } },
         { provide: ThemeService, useValue: { current: signal({ id: 'dark' }) } },
+        { provide: SettingsService, useValue: { settings: signal(null) } },
         {
           provide: TranslocoService,
           useValue: {

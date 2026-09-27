@@ -26,12 +26,14 @@ import { RightPanel } from './components/right-panel';
 import { SettingsDialog } from './components/settings/settings-dialog';
 import { Sidebar } from './components/sidebar';
 import { SpendIndicator } from './components/spend-indicator';
+import { TerminalDock } from './components/terminal-dock';
 import { WorkspaceEditor } from './components/workspace-editor';
 import { isTauri } from './core/api';
-import { matchesHotkey } from './core/hotkeys';
+import { displayHotkey, matchesAction, matchesHotkey } from './core/hotkeys';
 import { Session, Settings } from './core/models';
 import { ModelsService } from './core/models.service';
 import { SettingsService } from './core/settings.service';
+import { TerminalService } from './core/terminal.service';
 import { UpdaterService } from './core/updater.service';
 import { WorkspaceService } from './core/workspace.service';
 import { stepZoom, ZOOM_DEFAULT } from './core/zoom';
@@ -52,6 +54,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
     ProcessIndicator,
     PumaLoader,
     SpendIndicator,
+    TerminalDock,
     WorkspaceEditor,
     TranslocoPipe,
     AgentStatus,
@@ -339,6 +342,31 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
           <app-process-indicator />
           <button
             type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors"
+            [class]="
+              terminals.open()
+                ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/30'
+                : 'bg-white/5 text-mist/60 hover:bg-white/10 hover:text-accent'
+            "
+            [title]="('app.toggleTerminal' | transloco) + terminalHotkeyHint()"
+            [attr.aria-label]="'app.toggleTerminal' | transloco"
+            [attr.aria-pressed]="terminals.open()"
+            (click)="terminals.toggle()"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="m4 17 6-6-6-6M12 19h8" />
+            </svg>
+          </button>
+          <button
+            type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
             [title]="'app.toggleRightPanel' | transloco"
             (click)="workspace.toggleRightPanel()"
@@ -403,6 +431,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
           } @else {
             <app-chat-view class="min-h-0 flex-1" />
           }
+          <app-terminal-dock />
         </main>
 
         @if (workspace.rightPanelOpen() && workspace.leftTab() !== 'git') {
@@ -442,10 +471,15 @@ export class App implements OnInit {
   protected readonly settings = inject(SettingsService);
   protected readonly workspace = inject(WorkspaceService);
   protected readonly updater = inject(UpdaterService);
+  protected readonly terminals = inject(TerminalService);
   private readonly models = inject(ModelsService);
   private readonly zoom = inject(ZoomService);
 
   protected readonly tauri = isTauri();
+  protected readonly terminalHotkeyHint = computed(() => {
+    const hotkey = displayHotkey(this.settings.settings()?.terminalHotkey);
+    return hotkey ? ` (${hotkey})` : '';
+  });
 
   protected readonly resizing = signal<'left' | 'right' | null>(null);
   protected readonly booting = signal(true);
@@ -732,6 +766,16 @@ export class App implements OnInit {
     if (this.handleZoomHotkey(event, settings)) {
       return;
     }
+    if (matchesHotkey(settings.terminalHotkey, event)) {
+      event.preventDefault();
+      this.terminals.toggle();
+      return;
+    }
+    if (this.isTerminalTarget(event.target) && !event.metaKey) {
+      // Keys typed in a terminal belong to its shell; only Cmd shortcuts,
+      // which the terminal passes on (see TerminalView), reach the app.
+      return;
+    }
     if (matchesHotkey(settings.openTabHotkey, event)) {
       event.preventDefault();
       void this.startNewSession();
@@ -757,19 +801,28 @@ export class App implements OnInit {
       return;
     }
     if (
-      event.key === 'Tab' &&
       !event.defaultPrevented &&
       this.workspace.focusedPanel() &&
       (!this.isEditableTarget(event.target) || this.isComposerTarget(event.target))
     ) {
-      if (event.ctrlKey && !event.altKey && !event.metaKey) {
+      const tabStep = matchesAction(settings, 'nextPanelTab', event)
+        ? 1
+        : matchesAction(settings, 'previousPanelTab', event)
+          ? -1
+          : 0;
+      if (tabStep !== 0) {
         event.preventDefault();
-        this.workspace.cycleFocusedPanelTab(event.shiftKey ? -1 : 1);
+        this.workspace.cycleFocusedPanelTab(tabStep);
         return;
       }
-      if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+      const panelStep = matchesAction(settings, 'focusNextPanel', event)
+        ? 1
+        : matchesAction(settings, 'focusPreviousPanel', event)
+          ? -1
+          : 0;
+      if (panelStep !== 0) {
         event.preventDefault();
-        this.workspace.focusAdjacentPanel(event.shiftKey ? -1 : 1);
+        this.workspace.focusAdjacentPanel(panelStep);
         if (this.workspace.focusedPanel() === 'center') {
           this.workspace.requestComposerFocus();
         }
@@ -778,17 +831,13 @@ export class App implements OnInit {
   }
 
   private handleZoomHotkey(event: KeyboardEvent, settings: Settings): boolean {
-    const modifier = event.metaKey || event.ctrlKey;
-    if (!modifier || event.altKey) {
-      return false;
-    }
     const current = settings.zoom ?? ZOOM_DEFAULT;
     let next: number;
-    if (event.key === '+' || event.key === '=') {
+    if (matchesAction(settings, 'zoomIn', event)) {
       next = stepZoom(current, 1);
-    } else if (event.key === '-' || event.key === '_') {
+    } else if (matchesAction(settings, 'zoomOut', event)) {
       next = stepZoom(current, -1);
-    } else if (event.key === '0') {
+    } else if (matchesAction(settings, 'zoomReset', event)) {
       next = ZOOM_DEFAULT;
     } else {
       return false;
@@ -800,6 +849,11 @@ export class App implements OnInit {
     this.zoom.apply(next);
     void this.settings.patch({ zoom: next });
     return true;
+  }
+
+  private isTerminalTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    return !!element?.closest?.('app-terminal-dock');
   }
 
   private isComposerTarget(target: EventTarget | null): boolean {

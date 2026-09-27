@@ -8,6 +8,7 @@ import {
   defaultDeleteSessionHotkey,
   defaultNewSessionHotkey,
   defaultOpenTabHotkey,
+  defaultTerminalHotkey,
   defaultWindowToggleHotkey,
 } from './hotkeys';
 import { CommandRule, DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
@@ -81,6 +82,8 @@ export const FALLBACK_SETTINGS: Settings = {
   closeTabHotkey: defaultCloseTabHotkey(),
   newSessionHotkey: defaultNewSessionHotkey(),
   deleteSessionHotkey: defaultDeleteSessionHotkey(),
+  terminalHotkey: defaultTerminalHotkey(),
+  hotkeys: {},
   windowToggleEnabled: false,
   windowToggleHotkey: defaultWindowToggleHotkey(),
   windowToggleAction: 'hide',

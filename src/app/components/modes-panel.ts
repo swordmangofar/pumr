@@ -1,23 +1,16 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  inject,
-  signal,
-  untracked,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
-import { api } from '../core/api';
+import { CapabilityCatalogService } from '../core/capability-catalog.service';
 import { Mode, Settings } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 
+import { CapabilityPicker } from './capability-picker';
 import { TypedInput } from './typed-input';
 
 @Component({
   selector: 'app-modes-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe],
+  imports: [TypedInput, TranslocoPipe, CapabilityPicker],
   host: { class: 'flex min-h-0 flex-1 flex-col' },
   template: `
     <div class="min-h-0 flex-1 overflow-y-auto">
@@ -186,55 +179,23 @@ import { TypedInput } from './typed-input';
                   </div>
                 </div>
 
-                <div>
-                  <span class="mb-1 block text-[10px] uppercase tracking-wide text-mist/40">
-                    {{ 'right.modeMcp' | transloco }}
-                  </span>
-                  <div class="flex flex-wrap gap-1.5">
-                    @for (server of mcpServers(); track server) {
-                      <button
-                        type="button"
-                        class="rounded-full border px-2.5 py-1 text-[11px] transition-colors"
-                        [class]="
-                          mode.mcpServers.includes(server)
-                            ? 'border-accent/40 bg-accent/10 text-accent'
-                            : 'border-white/10 text-mist/40 hover:text-mist'
-                        "
-                        (click)="toggleMcp(mode, server)"
-                      >
-                        {{ server }}
-                      </button>
-                    } @empty {
-                      <span class="text-xs text-mist/30">{{
-                        'right.noMcpServers' | transloco
-                      }}</span>
-                    }
-                  </div>
-                </div>
+                <app-capability-picker
+                  labelKey="right.modeMcp"
+                  emptyKey="right.noMcpServers"
+                  [items]="catalog.mcpServers()"
+                  [selected]="mode.mcpServers"
+                  [loaded]="catalog.loaded()"
+                  (toggled)="toggleMcp(mode, $event)"
+                />
 
-                <div>
-                  <span class="mb-1 block text-[10px] uppercase tracking-wide text-mist/40">
-                    {{ 'right.modeSkills' | transloco }}
-                  </span>
-                  <div class="flex flex-wrap gap-1.5">
-                    @for (skill of skills(); track skill) {
-                      <button
-                        type="button"
-                        class="rounded-full border px-2.5 py-1 text-[11px] transition-colors"
-                        [class]="
-                          mode.skills.includes(skill)
-                            ? 'border-accent/40 bg-accent/10 text-accent'
-                            : 'border-white/10 text-mist/40 hover:text-mist'
-                        "
-                        (click)="toggleSkill(mode, skill)"
-                      >
-                        {{ skill }}
-                      </button>
-                    } @empty {
-                      <span class="text-xs text-mist/30">{{ 'right.noSkills' | transloco }}</span>
-                    }
-                  </div>
-                </div>
+                <app-capability-picker
+                  labelKey="right.modeSkills"
+                  emptyKey="right.noSkills"
+                  [items]="catalog.skills()"
+                  [selected]="mode.skills"
+                  [loaded]="catalog.loaded()"
+                  (toggled)="toggleSkill(mode, $event)"
+                />
 
                 <div class="flex items-center justify-between">
                   @if (isBuiltin(mode)) {
@@ -268,9 +229,9 @@ export class ModesPanel {
   protected readonly settings = inject(SettingsService);
   private readonly transloco = inject(TranslocoService);
 
+  protected readonly catalog = inject(CapabilityCatalogService);
+
   protected readonly expandedIds = signal<string[]>([]);
-  protected readonly mcpServers = signal<string[]>([]);
-  protected readonly skills = signal<string[]>([]);
 
   protected readonly modes = computed(() => this.settings.modes());
   protected readonly userPrompts = computed(
@@ -279,32 +240,6 @@ export class ModesPanel {
   protected readonly defaultModeId = computed(
     () => this.settings.settings()?.defaultModeId ?? 'coding',
   );
-
-  private readonly discoveryQuery = computed(() => {
-    const settings = this.settings.settings();
-    if (!settings) {
-      return '';
-    }
-    return JSON.stringify({
-      mcpFolders: settings.mcpFolders,
-      mcpDisabled: settings.mcpDisabled,
-      mcpDisabledServers: settings.mcpDisabledServers,
-      mcpAutoDiscovery: settings.mcpAutoDiscovery,
-      skillFolders: settings.skillFolders,
-      skillsDisabled: settings.skillsDisabled,
-      skillsDisabledItems: settings.skillsDisabledItems,
-      skillsAutoDiscovery: settings.skillsAutoDiscovery,
-    });
-  });
-
-  constructor() {
-    effect(() => {
-      const query = this.discoveryQuery();
-      if (query) {
-        untracked(() => void this.loadOptions());
-      }
-    });
-  }
 
   protected expanded(id: string): boolean {
     return this.expandedIds().includes(id);
@@ -384,49 +319,6 @@ export class ModesPanel {
 
   protected async setDefaultMode(id: string): Promise<void> {
     await this.settings.patch({ defaultModeId: id });
-  }
-
-  private async loadOptions(): Promise<void> {
-    const settings = this.settings.settings();
-    if (!settings) {
-      return;
-    }
-    try {
-      const [mcp, skillCandidates] = await Promise.all([
-        api.discoverMcpSources(
-          settings.mcpFolders,
-          settings.mcpDisabled,
-          settings.mcpDisabledServers,
-          settings.mcpAutoDiscovery,
-        ),
-        api.discoverSkills(
-          settings.skillFolders,
-          settings.skillsDisabled,
-          settings.skillsDisabledItems,
-          settings.skillsAutoDiscovery,
-        ),
-      ]);
-      this.mcpServers.set(
-        [
-          ...new Set(
-            mcp.flatMap((candidate) =>
-              candidate.servers.filter((server) => server.enabled).map((server) => server.name),
-            ),
-          ),
-        ].sort(),
-      );
-      this.skills.set(
-        [
-          ...new Set(
-            skillCandidates.flatMap((candidate) =>
-              candidate.skills.filter((skill) => skill.enabled).map((skill) => skill.name),
-            ),
-          ),
-        ].sort(),
-      );
-    } catch {
-      // Discovery is best effort; the panel still works without options.
-    }
   }
 }
 

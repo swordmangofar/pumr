@@ -8,7 +8,9 @@ import {
   untracked,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { matchesAction } from '../core/hotkeys';
 import { FileChange } from '../core/models';
+import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { WorkspaceEditorService } from '../core/workspace-editor.service';
 import { ChangeStatusIcon } from './change-status-icon';
@@ -186,6 +188,7 @@ import { FileView } from './file-view';
 export class WorkspaceEditor {
   private readonly workspace = inject(WorkspaceService);
   private readonly editor = inject(WorkspaceEditorService);
+  private readonly settings = inject(SettingsService);
 
   protected readonly project = this.workspace.activeProject;
   protected readonly mode = signal<'diff' | 'file'>('diff');
@@ -289,7 +292,7 @@ export class WorkspaceEditor {
   }
 
   protected onKeydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+    if (matchesAction(this.settings.settings(), 'editorSave', event)) {
       event.preventDefault();
       void this.save();
     }

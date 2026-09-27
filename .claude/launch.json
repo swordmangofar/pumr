@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 4200
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "exec",
+        "ng",
+        "serve",
+        "--port",
+        "4300"
+      ],
+      "port": 4300
+    }
+  ]
+}

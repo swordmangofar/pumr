@@ -23,7 +23,9 @@ import {
   WorkspaceEntry,
 } from '../core/models';
 import { api } from '../core/api';
+import { CapabilityCatalogService, searchCapabilities } from '../core/capability-catalog.service';
 import { formatTokenCount } from '../core/format';
+import { displayHotkey, HotkeyAction, hotkeyBindings, matchesAction } from '../core/hotkeys';
 import { ModelsService } from '../core/models.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
@@ -51,6 +53,8 @@ interface MentionItem {
   value: string;
   label: string;
   sublabel: string | null;
+  /** Render the sublabel as prose (skill descriptions) instead of a path. */
+  prose?: boolean;
 }
 
 const MAX_ATTACHMENTS = 10;
@@ -401,9 +405,12 @@ const PROVIDER_PRESETS = [
                 <span class="min-w-0 flex-1">
                   <span class="block truncate">{{ item.label }}</span>
                   @if (item.sublabel) {
-                    <span class="block truncate font-mono text-xs text-mist/40">{{
-                      item.sublabel
-                    }}</span>
+                    <span
+                      class="block truncate text-xs text-mist/40"
+                      [class.font-mono]="!item.prose"
+                      [attr.title]="item.prose ? item.sublabel : null"
+                      >{{ item.sublabel }}</span
+                    >
                   }
                 </span>
                 <span class="shrink-0 text-[10px] tracking-wide text-mist/40 uppercase">{{
@@ -1007,11 +1014,11 @@ const PROVIDER_PRESETS = [
       >
         <p class="hidden min-w-0 flex-1 truncate sm:block">
           @if (streaming()) {
-            {{ 'chat.hintStreaming' | transloco }}
+            {{ 'chat.hintStreaming' | transloco: hintKeys() }}
           } @else {
-            {{ 'chat.hint' | transloco }}
+            {{ 'chat.hint' | transloco: hintKeys() }}
             @if (!composingDraft() && hasPreviousPrompt()) {
-              · {{ 'chat.hintRecall' | transloco }}
+              · {{ 'chat.hintRecall' | transloco: hintKeys() }}
             }
           }
         </p>
@@ -1224,6 +1231,17 @@ export class Composer {
   protected readonly workspace = inject(WorkspaceService);
   private readonly queue = inject(MessageQueueService);
   protected readonly settings = inject(SettingsService);
+  /** The configured chat keys, for the hint below the input. */
+  protected readonly hintKeys = computed(() => {
+    const settings = this.settings.settings();
+    const label = (id: HotkeyAction) => displayHotkey(hotkeyBindings(settings, id)[0]);
+    return {
+      send: label('chatSend'),
+      newLine: label('chatNewLine'),
+      stop: label('chatStop'),
+      recall: label('chatRecallPrompt'),
+    };
+  });
   protected readonly modelsService = inject(ModelsService);
   private readonly editorDom = inject(ComposerEditorService);
 
@@ -1251,8 +1269,8 @@ export class Composer {
   protected readonly blockDraft = signal('');
 
   private readonly workspaceEntries = signal<WorkspaceEntry[]>([]);
-  private readonly skillNames = signal<string[]>([]);
-  private readonly mcpServers = signal<string[]>([]);
+  private readonly catalog = inject(CapabilityCatalogService);
+  private catalogRefreshedFor: MentionKind | null = null;
   private mentionQuery: MentionQuery | null = null;
   private loadedEntriesFor = '';
   private lastSessionId: string | null = null;
@@ -2011,55 +2029,13 @@ export class Composer {
       }
       return;
     }
-    const settings = this.settings.settings();
-    if (!settings) {
+    if ((kind !== 'skill' && kind !== 'mcp') || this.catalogRefreshedFor === kind) {
       return;
     }
-    if (kind === 'skill') {
-      if (this.skillNames().length === 0) {
-        try {
-          const candidates = await api.discoverSkills(
-            settings.skillFolders,
-            settings.skillsDisabled,
-            settings.skillsDisabledItems,
-            settings.skillsAutoDiscovery,
-          );
-          const names = new Set<string>();
-          for (const candidate of candidates) {
-            for (const skill of candidate.skills) {
-              if (skill.enabled) {
-                names.add(skill.name);
-              }
-            }
-          }
-          this.skillNames.set([...names].sort());
-        } catch {
-          this.skillNames.set([]);
-        }
-      }
-    } else if (kind === 'mcp') {
-      if (this.mcpServers().length === 0) {
-        try {
-          const candidates = await api.discoverMcpSources(
-            settings.mcpFolders,
-            settings.mcpDisabled,
-            settings.mcpDisabledServers,
-            settings.mcpAutoDiscovery,
-          );
-          const names = new Set<string>();
-          for (const candidate of candidates) {
-            for (const server of candidate.servers) {
-              if (server.enabled) {
-                names.add(server.name);
-              }
-            }
-          }
-          this.mcpServers.set([...names].sort());
-        } catch {
-          this.mcpServers.set([]);
-        }
-      }
-    }
+    // Skills and servers can be added on disk outside pumr, so re-scan once each
+    // time the picker opens; the cached list shows immediately meanwhile.
+    this.catalogRefreshedFor = kind;
+    await this.catalog.refresh();
     if (this.mentionKind() === kind) {
       this.mentionItems.set(this.filterMentionItems(kind, this.mentionTerm()));
     }
@@ -2082,15 +2058,19 @@ export class Composer {
             sublabel: entry.path,
           }));
       case 'skill':
-        return this.skillNames()
-          .filter((name) => needle === '' || name.toLowerCase().includes(needle))
-          .slice(0, limit)
-          .map((name) => ({ kind, value: name, label: name, sublabel: null }));
       case 'mcp':
-        return this.mcpServers()
-          .filter((name) => needle === '' || name.toLowerCase().includes(needle))
+        return searchCapabilities(
+          kind === 'skill' ? this.catalog.skills() : this.catalog.mcpServers(),
+          term,
+        )
           .slice(0, limit)
-          .map((name) => ({ kind, value: name, label: name, sublabel: null }));
+          .map((item) => ({
+            kind,
+            value: item.name,
+            label: item.name,
+            sublabel: item.description ?? item.sources.join(', '),
+            prose: kind === 'skill' && item.description !== null,
+          }));
       case 'website': {
         const items: MentionItem[] = [];
         const trimmed = term.trim();
@@ -2152,6 +2132,7 @@ export class Composer {
   }
 
   protected closeMention(): void {
+    this.catalogRefreshedFor = null;
     this.mentionOpen.set(false);
     this.mentionKind.set(null);
     this.mentionTerm.set('');
@@ -2243,19 +2224,13 @@ export class Composer {
       this.closeMenus();
       return;
     }
-    if (event.key === 'Escape' && this.streaming()) {
+    const settings = this.settings.settings();
+    if (this.streaming() && matchesAction(settings, 'chatStop', event)) {
       event.preventDefault();
       void this.stop();
       return;
     }
-    if (
-      event.key === 'ArrowUp' &&
-      !event.shiftKey &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !this.composingDraft()
-    ) {
+    if (!this.composingDraft() && matchesAction(settings, 'chatRecallPrompt', event)) {
       const previous = this.lastPrompt();
       if (previous) {
         event.preventDefault();
@@ -2263,13 +2238,19 @@ export class Composer {
       }
       return;
     }
-    if (event.key === 'Enter' && !this.modelOpen() && !this.providerOpen() && !this.modeOpen()) {
+    if (this.modelOpen() || this.providerOpen() || this.modeOpen()) {
+      return;
+    }
+    if (matchesAction(settings, 'chatSend', event)) {
       event.preventDefault();
-      if (event.shiftKey) {
-        this.insertLineBreak();
-      } else {
-        void this.send();
-      }
+      void this.send();
+      return;
+    }
+    // Any other Enter combination breaks the line rather than letting the
+    // editable insert its own block markup.
+    if (matchesAction(settings, 'chatNewLine', event) || event.key === 'Enter') {
+      event.preventDefault();
+      this.insertLineBreak();
     }
   }
 

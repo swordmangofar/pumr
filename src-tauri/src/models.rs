@@ -627,6 +627,8 @@ pub struct McpCandidate {
 pub struct McpServerState {
     pub name: String,
     pub enabled: bool,
+    /// The launch command line or URL, so pickers can tell servers apart.
+    pub detail: Option<String>,
 }
 
 /// Identifies a single MCP server: the config file it lives in plus the key it
@@ -654,6 +656,8 @@ pub struct SkillCandidate {
 pub struct SkillState {
     pub name: String,
     pub enabled: bool,
+    /// One-line description from the skill's `SKILL.md` frontmatter.
+    pub description: Option<String>,
 }
 
 /// Identifies a single skill: the root directory it was found under plus its

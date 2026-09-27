@@ -9,10 +9,11 @@ import {
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { confirmWarning } from '../core/confirm-warning';
-import { displayHotkey, isMacPlatform } from '../core/hotkeys';
+import { displayHotkey, HotkeyAction, hotkeyBindings, matchesAction } from '../core/hotkeys';
 import { contextMenuStyle } from '../core/menu-position';
 import { GIT_REBASE_ACTIONS, GitBranch, GitRebaseEntry } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
+import { SettingsService } from '../core/settings.service';
 import { GitService } from '../core/git.service';
 import { GitNameDialog, GitNameDialogResult } from './git-name-dialog';
 import { TypedInput } from './typed-input';
@@ -90,11 +91,11 @@ interface RebaseState {
         <div class="menu-sep"></div>
         <button type="button" class="menu-item" (click)="openPrompt('newBranch')">
           <span class="flex-1">{{ 'git.menu.newBranch' | transloco }}</span>
-          <span class="text-[11px] text-mist/30">{{ shortcuts.newBranch }}</span>
+          <span class="text-[11px] text-mist/30">{{ shortcuts().newBranch }}</span>
         </button>
         <button type="button" class="menu-item" (click)="openPrompt('newTag')">
           <span class="flex-1">{{ 'git.menu.newTag' | transloco }}</span>
-          <span class="text-[11px] text-mist/30">{{ shortcuts.newTag }}</span>
+          <span class="text-[11px] text-mist/30">{{ shortcuts().newTag }}</span>
         </button>
 
         @if (!branch().remote) {
@@ -144,7 +145,7 @@ interface RebaseState {
         <div class="menu-sep"></div>
         <button type="button" class="menu-item" (click)="copyName()">
           <span class="flex-1">{{ 'git.menu.copyName' | transloco }}</span>
-          <span class="text-[11px] text-mist/30">{{ shortcuts.copyName }}</span>
+          <span class="text-[11px] text-mist/30">{{ shortcuts().copyName }}</span>
         </button>
       </div>
     }
@@ -338,7 +339,17 @@ export class GitBranchMenu {
   readonly closed = output<void>();
 
   protected readonly rebaseActions = GIT_REBASE_ACTIONS;
-  protected readonly shortcuts = shortcutLabels();
+  private readonly settings = inject(SettingsService);
+  /** Shortcut hints for the configured keys. */
+  protected readonly shortcuts = computed(() => {
+    const settings = this.settings.settings();
+    const label = (id: HotkeyAction) => displayHotkey(hotkeyBindings(settings, id)[0]);
+    return {
+      newBranch: label('branchNewBranch'),
+      newTag: label('branchNewTag'),
+      copyName: label('branchCopyName'),
+    };
+  });
   protected readonly menuVisible = signal(true);
   protected readonly trackingOpen = signal(false);
   protected readonly prompt = signal<PromptKind | null>(null);
@@ -407,17 +418,17 @@ export class GitBranchMenu {
   }
 
   protected onKeydown(event: KeyboardEvent): void {
-    if (!(event.metaKey || event.ctrlKey) || !this.menuVisible()) {
+    if (!this.menuVisible()) {
       return;
     }
-    const key = event.key.toLowerCase();
-    if (key === 'c') {
+    const settings = this.settings.settings();
+    if (matchesAction(settings, 'branchCopyName', event)) {
       event.preventDefault();
       void this.copyName();
-    } else if (key === 'b') {
+    } else if (matchesAction(settings, 'branchNewBranch', event)) {
       event.preventDefault();
       this.openPrompt('newBranch');
-    } else if (key === 'g') {
+    } else if (matchesAction(settings, 'branchNewTag', event)) {
       event.preventDefault();
       this.openPrompt('newTag');
     }
@@ -649,14 +660,4 @@ export class GitBranchMenu {
   private ask(key: string, params: Record<string, unknown>): Promise<boolean> {
     return confirmWarning(this.transloco.translate(key, params));
   }
-}
-
-/** Shortcut hints in the platform's notation (the handler accepts Cmd or Ctrl). */
-function shortcutLabels(): { newBranch: string; newTag: string; copyName: string } {
-  const modifier = isMacPlatform() ? 'Cmd' : 'Ctrl';
-  return {
-    newBranch: displayHotkey(`${modifier}+B`),
-    newTag: displayHotkey(`${modifier}+G`),
-    copyName: displayHotkey(`${modifier}+C`),
-  };
 }

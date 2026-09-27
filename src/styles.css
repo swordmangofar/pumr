@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+/* Hides xterm's input and measuring elements; see TerminalView. */
+@import '@xterm/xterm/css/xterm.css';
 
 @theme {
   --color-ink: #000000;

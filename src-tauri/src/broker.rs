@@ -1,10 +1,8 @@
 use crate::models::{
-    EventSink, PermissionAuditEntry, PermissionDecision, QuestionAnswer, QuestionItem,
-    RoutedEvent, StreamEvent,
+    EventSink, PermissionAuditEntry, PermissionDecision, QuestionAnswer, QuestionItem, RoutedEvent,
+    StreamEvent,
 };
-use crate::permissions::{
-    CommandRisk, CommandScopeOption, CommandSegment, LivePermissions,
-};
+use crate::permissions::{CommandRisk, CommandScopeOption, CommandSegment, LivePermissions};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -203,11 +201,14 @@ impl PendingSnapshot {
                     return None;
                 }
                 let cwd = self.cwd.clone()?;
+                // No snapshot is at hand here, so a deleting command that
+                // asked stays with the user.
                 match permissions.evaluate_command(
                     &command,
                     &self.project_root,
                     &cwd,
                     &self.grant_session_id,
+                    None,
                     &mut Vec::new(),
                 ) {
                     crate::permissions::CommandDecision::Allow => Some(true),
@@ -221,13 +222,9 @@ impl PendingSnapshot {
             "folder" => {
                 let path = self.path.as_deref()?;
                 let absolute = crate::permissions::resolve_path(&self.project_root, path);
-                let extra = permissions.extra_folders();
+                let extra = permissions.folders_for(&self.grant_session_id);
                 if crate::permissions::path_is_inside(&absolute, &self.project_root, &extra)
-                    && !crate::permissions::symlink_escapes(
-                        &absolute,
-                        &self.project_root,
-                        &extra,
-                    )
+                    && !crate::permissions::symlink_escapes(&absolute, &self.project_root, &extra)
                 {
                     Some(true)
                 } else {
@@ -1168,7 +1165,10 @@ mod tests {
         assert!(broker.resolve(&first_id, user));
         assert!(broker.pending_prompt(&first_id).is_none());
         let permissions = live_permissions(vec![outside.display().to_string()]);
-        assert_eq!(broker.auto_resolve("chat", &permissions), vec![second_id.clone()]);
+        assert_eq!(
+            broker.auto_resolve("chat", &permissions),
+            vec![second_id.clone()]
+        );
         // A later cascade cannot turn either answer into a denial.
         broker.deny_chat("chat", "another");
         assert!(!broker.resolve(&second_id, deny_by("user")));
@@ -1176,7 +1176,10 @@ mod tests {
         assert!(first.await.allowed);
         assert!(second.await.allowed);
         let entries = recorded.lock().unwrap().clone();
-        let by: Vec<&str> = entries.iter().map(|entry| entry.decided_by.as_str()).collect();
+        let by: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry.decided_by.as_str())
+            .collect();
         assert_eq!(by, ["user", "grant"]);
         assert_eq!(entries[0].decision.as_deref(), Some("allow_session"));
         std::fs::remove_dir_all(&outside).ok();
@@ -1230,7 +1233,15 @@ mod tests {
         let first = broker.ask(command_prompt(), &cancel, "sub", &emit);
         tokio::pin!(first);
         assert!(futures_util::poll!(first.as_mut()).is_pending());
-        let first_id = broker.inner.lock().unwrap().by_signature.values().next().cloned().unwrap();
+        let first_id = broker
+            .inner
+            .lock()
+            .unwrap()
+            .by_signature
+            .values()
+            .next()
+            .cloned()
+            .unwrap();
         broker.resolve(
             &first_id,
             PermissionDecision {

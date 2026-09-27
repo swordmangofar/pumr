@@ -306,6 +306,9 @@ export interface Settings {
   closeTabHotkey: string;
   newSessionHotkey: string;
   deleteSessionHotkey: string;
+  terminalHotkey: string;
+  /** Overrides for configurable hotkeys, keyed by `HotkeyAction`. */
+  hotkeys: Record<string, string>;
   windowToggleEnabled: boolean;
   windowToggleHotkey: string;
   windowToggleAction: WindowToggleAction;
@@ -354,6 +357,8 @@ export interface McpCandidate {
 export interface McpServerState {
   name: string;
   enabled: boolean;
+  /** Launch command line or URL. */
+  detail: string | null;
 }
 
 export interface McpServerRef {
@@ -372,6 +377,7 @@ export interface SkillCandidate {
 export interface SkillState {
   name: string;
   enabled: boolean;
+  description: string | null;
 }
 
 export interface SkillRef {
@@ -468,8 +474,19 @@ export interface SkillMarketplace {
 export interface InstalledSkill {
   name: string;
   marketplace: string;
+  plugin: string;
   description: string | null;
   path: string;
+}
+
+/** A reviewed server to add to pumr's own MCP config. */
+export interface McpInstallRequest {
+  name: string;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  transport: string | null;
+  env: Record<string, string>;
 }
 
 export interface IgnoreCatalogEntry {
@@ -673,6 +690,11 @@ export interface ProcessInfo {
   running: boolean;
   output: string;
 }
+
+/** Streamed from an interactive terminal opened with `terminal_open`. */
+export type TerminalEvent =
+  | { kind: 'output'; data: string }
+  | { kind: 'exit'; code: number | null };
 
 export interface RevertResult {
   prompt: string;

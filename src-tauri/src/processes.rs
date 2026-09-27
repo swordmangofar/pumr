@@ -215,7 +215,10 @@ mod tests {
         let mut buffer = OutputBuffer::default();
         buffer.push(&"a".repeat(OUTPUT_HEAD_BYTES - 1));
         buffer.push("ü tail");
-        assert_eq!(buffer.text(), format!("{}ü tail", "a".repeat(OUTPUT_HEAD_BYTES - 1)));
+        assert_eq!(
+            buffer.text(),
+            format!("{}ü tail", "a".repeat(OUTPUT_HEAD_BYTES - 1))
+        );
     }
 
     #[cfg(unix)]

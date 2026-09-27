@@ -312,10 +312,7 @@ impl Lexer {
                 self.position += 2;
                 let body = self.parameter_body()?;
                 if is_name(&body) {
-                    word.part(Part::Variable {
-                        name: body,
-                        quoted,
-                    });
+                    word.part(Part::Variable { name: body, quoted });
                 } else if body.strip_prefix('#').is_some_and(is_name)
                     || matches!(body.as_str(), "#" | "?" | "$" | "!" | "-")
                 {
@@ -641,7 +638,10 @@ fn is_sequence(inner: &str) -> bool {
         !digits.is_empty() && digits.chars().all(|digit| digit.is_ascii_digit())
     };
     let letter = |value: &str| {
-        value.chars().count() == 1 && value.chars().all(|character| character.is_ascii_alphabetic())
+        value.chars().count() == 1
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
     };
     match parts.as_slice() {
         [from, to] => (number(from) && number(to)) || (letter(from) && letter(to)),
@@ -716,7 +716,10 @@ mod tests {
             ],
         );
         // An escaped dollar is text.
-        assert_eq!(parts("echo \\$HOME \"\\$HOME\""), vec![vec![text("echo")], vec![text("$HOME")], vec![text("$HOME")]]);
+        assert_eq!(
+            parts("echo \\$HOME \"\\$HOME\""),
+            vec![vec![text("echo")], vec![text("$HOME")], vec![text("$HOME")]]
+        );
     }
 
     #[test]
@@ -725,7 +728,10 @@ mod tests {
             parts("\"$HO\"\"ME\""),
             vec![vec![variable("HO", true), text("ME")]],
         );
-        assert_eq!(parts("$HO\\ME"), vec![vec![variable("HO", false), text("ME")]]);
+        assert_eq!(
+            parts("$HO\\ME"),
+            vec![vec![variable("HO", false), text("ME")]]
+        );
     }
 
     #[test]
@@ -733,11 +739,17 @@ mod tests {
         let words = lex_words("echo \"$(cat ~/.ssh/id_rsa | base64)\" `id` x").unwrap();
         assert_eq!(words.len(), 4);
         assert_eq!(words[1].parts, vec![Part::Dynamic]);
-        assert_eq!(words[1].substitutions, vec!["cat ~/.ssh/id_rsa | base64".to_string()]);
+        assert_eq!(
+            words[1].substitutions,
+            vec!["cat ~/.ssh/id_rsa | base64".to_string()]
+        );
         assert_eq!(words[2].substitutions, vec!["id".to_string()]);
         let nested = lex_words("x=$(echo \"$(pwd)\" \")\")").unwrap();
         assert_eq!(nested.len(), 1);
-        assert_eq!(nested[0].substitutions, vec!["echo \"$(pwd)\" \")\"".to_string()]);
+        assert_eq!(
+            nested[0].substitutions,
+            vec!["echo \"$(pwd)\" \")\"".to_string()]
+        );
         // Parameter operators and arithmetic can hide substitutions too.
         assert_eq!(
             lex_words("echo ${X:-$(id)} $(( $(wc -l < f) + 1 ))").unwrap()[1..]
@@ -776,11 +788,20 @@ mod tests {
 
     #[test]
     fn brace_lists_are_flagged() {
-        let flagged = |line: &str| lex_words(line).unwrap().iter().map(|word| word.brace).collect::<Vec<_>>();
+        let flagged = |line: &str| {
+            lex_words(line)
+                .unwrap()
+                .iter()
+                .map(|word| word.brace)
+                .collect::<Vec<_>>()
+        };
         assert_eq!(flagged("{rm,-rf,~}"), vec![true]);
         assert_eq!(flagged("echo a{1..3}b"), vec![false, true]);
         assert_eq!(flagged("find . -exec rm {} ;"), vec![false; 6]);
-        assert_eq!(flagged("git show HEAD@{1} '{a,b}' \"{a,b}\" { x"), vec![false; 7]);
+        assert_eq!(
+            flagged("git show HEAD@{1} '{a,b}' \"{a,b}\" { x"),
+            vec![false; 7]
+        );
         assert_eq!(flagged("echo ${a,b}"), vec![false, false]);
     }
 
@@ -799,7 +820,9 @@ mod tests {
 
     #[test]
     fn unclosed_constructs_are_errors() {
-        for line in ["echo 'a", "echo \"a", "echo $(a", "echo ${a", "echo `a", "echo $'a"] {
+        for line in [
+            "echo 'a", "echo \"a", "echo $(a", "echo ${a", "echo `a", "echo $'a",
+        ] {
             assert_eq!(lex_words(line), Err(LexError), "{line}");
         }
     }

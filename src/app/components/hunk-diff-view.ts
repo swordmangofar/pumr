@@ -41,7 +41,9 @@ import {
 } from '../core/diff-rows';
 import { contextMenuStyle } from '../core/menu-position';
 import { GitDiffHunk, GitDiffLine, GitHunkDiff, GitLineAction } from '../core/models';
+import { matchesAction } from '../core/hotkeys';
 import { MonacoService } from '../core/monaco.service';
+import { SettingsService } from '../core/settings.service';
 import { ThemeService } from '../core/theme.service';
 
 const ROW_HEIGHT = 20;
@@ -589,6 +591,7 @@ export class HunkDiffView {
 
   private readonly monaco = inject(MonacoService);
   private readonly theme = inject(ThemeService);
+  private readonly settings = inject(SettingsService);
   private readonly transloco = inject(TranslocoService);
   private readonly root = viewChild<ElementRef<HTMLDivElement>>('root');
   private readonly scroller = viewChild<ElementRef<HTMLDivElement>>('scroller');
@@ -1027,23 +1030,46 @@ export class HunkDiffView {
     if (event.target instanceof HTMLInputElement) {
       return;
     }
-    const modifier = event.metaKey || event.ctrlKey;
-    const key = event.key.toLowerCase();
-    if (modifier && !event.altKey) {
-      if (key === 'f') {
-        event.preventDefault();
-        this.openFind();
-      } else if (key === 'a') {
-        event.preventDefault();
-        this.base = new Set();
-        this.selected.set(new Set(changeIds(this.diff())));
-      } else if (key === 'c' && this.selected().size > 0) {
-        event.preventDefault();
-        void this.copySelection();
-      }
+    const settings = this.settings.settings();
+    const staged = this.diff().staged;
+    const matches = (id: Parameters<typeof matchesAction>[1]) =>
+      matchesAction(settings, id, event);
+    if (matches('diffFind')) {
+      event.preventDefault();
+      this.openFind();
       return;
     }
-    if (event.altKey) {
+    if (matches('diffSelectAll')) {
+      event.preventDefault();
+      this.base = new Set();
+      this.selected.set(new Set(changeIds(this.diff())));
+      return;
+    }
+    if (this.selected().size > 0 && matches('diffCopy')) {
+      event.preventDefault();
+      void this.copySelection();
+      return;
+    }
+    const step = matches('diffNextHunk') ? 1 : matches('diffPreviousHunk') ? -1 : 0;
+    if (step !== 0) {
+      event.preventDefault();
+      this.jumpHunk(step);
+      return;
+    }
+    const action =
+      !staged && matches('diffStage')
+        ? 'stage'
+        : staged && matches('diffUnstage')
+          ? 'unstage'
+          : !staged && matches('diffDiscard')
+            ? 'discard'
+            : null;
+    if (action) {
+      event.preventDefault();
+      this.run(action);
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) {
       return;
     }
     switch (event.key) {
@@ -1060,30 +1086,6 @@ export class HunkDiffView {
       case 'ArrowUp':
         event.preventDefault();
         this.moveCursor(event.key === 'ArrowDown' ? 1 : -1, event.shiftKey);
-        break;
-      case 'j':
-      case 'k':
-        event.preventDefault();
-        this.jumpHunk(event.key === 'j' ? 1 : -1);
-        break;
-      case 's':
-        if (!this.diff().staged) {
-          event.preventDefault();
-          this.run('stage');
-        }
-        break;
-      case 'u':
-        if (this.diff().staged) {
-          event.preventDefault();
-          this.run('unstage');
-        }
-        break;
-      case 'Backspace':
-      case 'Delete':
-        if (!this.diff().staged) {
-          event.preventDefault();
-          this.run('discard');
-        }
         break;
     }
   }

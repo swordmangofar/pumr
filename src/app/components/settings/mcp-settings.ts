@@ -14,9 +14,11 @@ import {
   McpCandidate,
   McpServerState,
 } from '../../core/models';
+import { CapabilityCatalogService } from '../../core/capability-catalog.service';
 import { RECOMMENDED_MCP_SERVERS, RecommendedMcpServer } from '../../core/recommendations';
 import { FolderList } from './folder-list';
 import { MarketplaceRegistryService } from './marketplace-registry.service';
+import { McpInstallDialog, McpInstallDraft, suggestServerName } from './mcp-install-dialog';
 import { SettingsDraftService } from './settings-draft.service';
 import { Toggle } from '../toggle';
 
@@ -26,423 +28,575 @@ import { TypedInput } from '../typed-input';
   selector: 'app-mcp-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [MarketplaceRegistryService],
-  imports: [TypedInput, TranslocoPipe, FolderList, Toggle],
+  imports: [TypedInput, TranslocoPipe, FolderList, Toggle, McpInstallDialog],
   template: `
-    <section>
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h3 class="text-sm font-semibold text-white">
-            {{ 'settings.mcp.directory.title' | transloco }}
-          </h3>
-          <p class="mt-1 text-xs leading-relaxed text-mist/30">
-            {{ 'settings.mcp.directory.subtitle' | transloco: { count: directoryTotal() } }}
-          </p>
+    <div
+      class="mb-6 inline-flex rounded-full border border-white/10 bg-ink/40 p-0.5"
+      role="tablist"
+    >
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="tab() === 'browse'"
+        [class]="tabClass(tab() === 'browse')"
+        (click)="tab.set('browse')"
+      >
+        {{ 'settings.mcp.tabBrowse' | transloco }}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="tab() === 'configured'"
+        [class]="tabClass(tab() === 'configured')"
+        (click)="tab.set('configured')"
+      >
+        {{ 'settings.mcp.tabConfigured' | transloco }}
+        <span class="ml-1 opacity-60">{{ enabledCount() }}</span>
+      </button>
+    </div>
+
+    @if (tab() === 'browse') {
+      <section>
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-sm font-semibold text-white">
+              {{ 'settings.mcp.directory.title' | transloco }}
+            </h3>
+            <p class="mt-1 text-xs leading-relaxed text-mist/30">
+              {{ 'settings.mcp.directory.subtitle' | transloco: { count: directoryTotal() } }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 rounded-full border border-white/15 px-3.5 py-1.5 text-xs text-mist transition-colors hover:bg-white/5"
+            (click)="loadDirectory(true)"
+          >
+            ↻ {{ 'common.refresh' | transloco }}
+          </button>
         </div>
-        <button
-          type="button"
-          class="shrink-0 rounded-full border border-white/15 px-3.5 py-1.5 text-xs text-mist transition-colors hover:bg-white/5"
-          (click)="loadDirectory(true)"
-        >
-          ↻ {{ 'common.refresh' | transloco }}
-        </button>
-      </div>
 
-      <input
-        type="search"
-        class="field mt-4 w-full rounded-xl px-4 py-2 text-sm"
-        [value]="directoryQuery()"
-        [placeholder]="'settings.mcp.directory.search' | transloco"
-        (typedValue)="onDirectoryQuery($event)"
-      />
+        <input
+          type="search"
+          class="field mt-4 w-full rounded-xl px-4 py-2 text-sm"
+          [value]="directoryQuery()"
+          [placeholder]="'settings.mcp.directory.search' | transloco"
+          (typedValue)="onDirectoryQuery($event)"
+        />
 
-      <div class="mt-3 flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          [class]="chipClass(directoryCategory() === null)"
-          (click)="setDirectoryCategory(null)"
-        >
-          {{ 'settings.mcp.directory.all' | transloco }}
-        </button>
-        @for (category of directoryCategories; track category.id) {
+        <div class="mt-3 flex flex-wrap gap-1.5">
           <button
             type="button"
-            [class]="chipClass(directoryCategory() === category.id)"
-            (click)="setDirectoryCategory(category.id)"
+            [class]="chipClass(directoryCategory() === null)"
+            (click)="setDirectoryCategory(null)"
           >
-            {{ 'settings.mcp.directory.categories.' + category.key | transloco }}
+            {{ 'settings.mcp.directory.all' | transloco }}
           </button>
-        }
-      </div>
-
-      <div class="mt-3 flex flex-wrap items-center gap-2">
-        <span class="text-xs text-mist/40">{{ 'settings.mcp.directory.source' | transloco }}</span>
-        @for (item of directorySources; track item.id) {
-          <button
-            type="button"
-            [class]="chipClass(directorySource() === item.id)"
-            (click)="setDirectorySource(item.id)"
-          >
-            {{ sourceLabelKey(item.id) | transloco }}
-            @if (directoryCounts()?.[item.id]; as count) {
-              ({{ count }})
-            }
-          </button>
-        }
-        <select
-          class="field field-select ml-auto w-44 rounded-xl py-1.5 pr-9 pl-3 text-xs"
-          [value]="directorySort()"
-          (typedValue)="onDirectorySort($event)"
-        >
-          @for (option of directorySortOptions; track option.id) {
-            <option [value]="option.id">
-              {{ 'settings.mcp.directory.' + option.key | transloco }}
-            </option>
+          @for (category of directoryCategories; track category.id) {
+            <button
+              type="button"
+              [class]="chipClass(directoryCategory() === category.id)"
+              (click)="setDirectoryCategory(category.id)"
+            >
+              {{ 'settings.mcp.directory.categories.' + category.key | transloco }}
+            </button>
           }
-        </select>
-      </div>
+        </div>
 
-      <p class="mt-1 text-xs leading-relaxed text-mist/30">
-        {{ 'settings.mcp.directory.installHint' | transloco }}
-      </p>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="text-xs text-mist/40">{{
+            'settings.mcp.directory.source' | transloco
+          }}</span>
+          @for (item of directorySources; track item.id) {
+            <button
+              type="button"
+              [class]="chipClass(directorySource() === item.id)"
+              (click)="setDirectorySource(item.id)"
+            >
+              {{ sourceLabelKey(item.id) | transloco }}
+              @if (directoryCounts()?.[item.id]; as count) {
+                ({{ count }})
+              }
+            </button>
+          }
+          <select
+            class="field field-select ml-auto w-44 rounded-xl py-1.5 pr-9 pl-3 text-xs"
+            [value]="directorySort()"
+            (typedValue)="onDirectorySort($event)"
+          >
+            @for (option of directorySortOptions; track option.id) {
+              <option [value]="option.id">
+                {{ 'settings.mcp.directory.' + option.key | transloco }}
+              </option>
+            }
+          </select>
+        </div>
 
-      @if (registry.error()) {
-        <p class="mt-3 text-sm text-red-400">{{ registry.error() }}</p>
-      }
+        <p class="mt-1 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.directory.installHint' | transloco }}
+        </p>
 
-      @if (directoryLoading()) {
-        <p class="mt-4 text-sm text-mist/30">{{ 'common.loading' | transloco }}</p>
-      } @else {
-        <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          @for (server of directoryServers(); track server.name) {
-            <div class="flex flex-col rounded-xl border border-white/10 bg-ink/40 p-4">
-              <div class="flex items-start gap-2.5">
-                <span
-                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-sm font-semibold text-accent"
-                >
-                  {{ initial(server) }}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <p class="truncate text-sm font-medium text-mist">{{ server.displayName }}</p>
-                  <div class="mt-1 flex flex-wrap items-center gap-1.5">
-                    @if (server.sourceRegistry === 'official-mcp') {
-                      <span
-                        class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300"
-                        [attr.title]="'settings.mcp.directory.officialTooltip' | transloco"
-                      >
-                        {{ 'settings.mcp.directory.official' | transloco }}
-                      </span>
-                    } @else if (server.sourceRegistry === 'docker') {
-                      <span
-                        class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300"
-                        [attr.title]="'settings.mcp.directory.dockerTooltip' | transloco"
-                      >
-                        {{ 'settings.mcp.directory.docker' | transloco }}
-                      </span>
-                    }
+        @if (registry.error()) {
+          <p class="mt-3 text-sm text-red-400">{{ registry.error() }}</p>
+        }
+
+        @if (directoryLoading()) {
+          <p class="mt-4 text-sm text-mist/30">{{ 'common.loading' | transloco }}</p>
+        } @else {
+          <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            @for (server of directoryServers(); track server.name) {
+              <div class="flex flex-col rounded-xl border border-white/10 bg-ink/40 p-4">
+                <div class="flex items-start gap-2.5">
+                  <span
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-sm font-semibold text-accent"
+                  >
+                    {{ initial(server) }}
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-sm font-medium text-mist">{{ server.displayName }}</p>
+                    <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                      @if (server.sourceRegistry === 'official-mcp') {
+                        <span
+                          class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300"
+                          [attr.title]="'settings.mcp.directory.officialTooltip' | transloco"
+                        >
+                          {{ 'settings.mcp.directory.official' | transloco }}
+                        </span>
+                      } @else if (server.sourceRegistry === 'docker') {
+                        <span
+                          class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300"
+                          [attr.title]="'settings.mcp.directory.dockerTooltip' | transloco"
+                        >
+                          {{ 'settings.mcp.directory.docker' | transloco }}
+                        </span>
+                      }
+                      @if (isInstalled(suggestName(server.name))) {
+                        <span
+                          class="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent"
+                        >
+                          ✓ {{ 'settings.mcp.installed' | transloco }}
+                        </span>
+                      }
+                    </div>
                   </div>
+                  @if (directoryMetric(server); as metric) {
+                    <span
+                      class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-mist/60"
+                    >
+                      {{ metric.icon }} {{ formatCount(metric.value) }}
+                    </span>
+                  }
                 </div>
-                @if (directoryMetric(server); as metric) {
-                  <span class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-mist/60">
-                    ★ {{ formatCount(metric) }}
+
+                @if (server.description) {
+                  <p class="mt-2 line-clamp-3 text-xs leading-relaxed text-mist/50">
+                    {{ server.description }}
+                  </p>
+                }
+
+                <div class="mt-auto flex items-center gap-2 pt-3">
+                  <button
+                    type="button"
+                    [class]="
+                      isInstalled(suggestName(server.name))
+                        ? 'rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5'
+                        : 'rounded-full bg-accent px-3 py-1 text-xs font-medium text-ink transition-opacity hover:opacity-90'
+                    "
+                    (click)="installDirectory(server)"
+                  >
+                    {{
+                      (isInstalled(suggestName(server.name))
+                        ? 'settings.mcp.reinstall'
+                        : 'settings.mcp.directory.install'
+                      ) | transloco
+                    }}
+                  </button>
+                  @if (directoryLink(server); as link) {
+                    <button
+                      type="button"
+                      class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
+                      (click)="openDirectoryLink(link)"
+                    >
+                      {{ 'settings.mcp.directory.github' | transloco }}
+                    </button>
+                  }
+                </div>
+              </div>
+            } @empty {
+              @if (!directoryLoading()) {
+                <p class="text-sm text-mist/30">{{ 'settings.mcp.directory.empty' | transloco }}</p>
+              }
+            }
+          </div>
+
+          @if (directoryHasMore()) {
+            <button
+              type="button"
+              class="mt-3 w-full rounded-xl border border-white/15 px-4 py-2 text-xs text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
+              [disabled]="directoryLoadingMore()"
+              (click)="loadDirectory(false)"
+            >
+              {{ 'settings.mcp.directory.loadMore' | transloco }}
+            </button>
+          }
+        }
+      </section>
+
+      <section class="mt-8">
+        <h3 class="text-sm font-semibold text-white">{{ 'settings.mcp.registry' | transloco }}</h3>
+        <p class="mb-3 mt-1 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.registryHint' | transloco }}
+        </p>
+
+        <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-mist/40">
+          {{ 'settings.mcp.recommended' | transloco }}
+        </h4>
+        <p class="mb-2 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.recommendedHint' | transloco }}
+        </p>
+        <div class="mb-3 flex flex-wrap gap-1.5">
+          @for (item of recommended; track item.query) {
+            <button
+              type="button"
+              class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
+              [disabled]="searching()"
+              [title]="item.descriptionKey | transloco"
+              (click)="searchRecommended(item)"
+            >
+              {{ item.nameKey | transloco }}
+            </button>
+          }
+        </div>
+
+        <div class="flex gap-2">
+          <input
+            type="search"
+            class="field min-w-0 flex-1 rounded-xl px-4 py-2 text-sm"
+            [value]="searchQuery()"
+            [placeholder]="'settings.mcp.registrySearch' | transloco"
+            (typedValue)="searchQuery.set($event)"
+            (keydown.enter)="search()"
+          />
+          <button
+            type="button"
+            class="shrink-0 rounded-xl border border-white/15 px-4 py-2 text-sm text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
+            [disabled]="searching()"
+            (click)="search()"
+          >
+            {{ 'common.search' | transloco }}
+          </button>
+        </div>
+
+        <div class="mt-3 flex items-center gap-3">
+          <app-toggle
+            size="sm"
+            [checked]="draft.draft().marketplaceVerifiedOnly"
+            (toggled)="toggleVerifiedOnly()"
+          />
+          <span class="text-xs text-mist/50">{{ 'settings.mcp.verifiedOnly' | transloco }}</span>
+        </div>
+        <p class="mt-1 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.verifiedOnlyHint' | transloco }}
+        </p>
+
+        @if (registry.error()) {
+          <p class="mt-3 text-sm text-red-400">{{ registry.error() }}</p>
+        }
+
+        @if (searching()) {
+          <p class="mt-3 text-sm text-mist/30">{{ 'common.loading' | transloco }}</p>
+        }
+
+        <div class="mt-3 space-y-1.5">
+          @for (server of results(); track server.name) {
+            <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
+              <div class="flex items-center gap-2">
+                @if (server.verified) {
+                  <span
+                    class="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-300"
+                    [attr.title]="'settings.mcp.verifiedTooltip' | transloco"
+                  >
+                    {{ 'settings.mcp.verified' | transloco }}
                   </span>
                 }
+                <span class="truncate text-sm text-mist">{{ server.title || server.name }}</span>
+                @if (server.version) {
+                  <span class="shrink-0 text-xs text-mist/30">v{{ server.version }}</span>
+                }
               </div>
-
+              <p class="mt-0.5 truncate font-mono text-xs text-mist/30">{{ server.name }}</p>
               @if (server.description) {
-                <p class="mt-2 line-clamp-3 text-xs leading-relaxed text-mist/50">
-                  {{ server.description }}
+                <p class="mt-1 text-xs leading-relaxed text-mist/50">{{ server.description }}</p>
+              }
+              <p class="mt-1 truncate font-mono text-xs text-mist/40">
+                @if (server.command) {
+                  {{ server.command }} {{ server.args.join(' ') }}
+                } @else if (server.url) {
+                  {{ server.transport || 'remote' }} · {{ server.url }}
+                }
+              </p>
+              @if (server.env.length > 0) {
+                <p class="mt-1 text-xs text-mist/40">
+                  {{ 'settings.mcp.registryEnv' | transloco: { names: envNames(server) } }}
                 </p>
               }
-
-              <div class="mt-auto flex items-center gap-2 pt-3">
+              <div class="mt-2 flex gap-2">
+                @if (server.command || server.url) {
+                  <button
+                    type="button"
+                    class="rounded-full bg-accent px-3 py-1 text-xs font-medium text-ink transition-opacity hover:opacity-90"
+                    (click)="installRegistry(server)"
+                  >
+                    {{
+                      (isInstalled(suggestName(server.name))
+                        ? 'settings.mcp.reinstall'
+                        : 'settings.mcp.directory.install'
+                      ) | transloco
+                    }}
+                  </button>
+                }
                 <button
                   type="button"
                   class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
-                  (click)="installDirectory(server)"
+                  (click)="copyConfig(server)"
                 >
                   {{
-                    (directoryCopied() === server.name
-                      ? 'settings.mcp.copied'
-                      : 'settings.mcp.directory.install'
-                    ) | transloco
+                    (copied() === server.name ? 'settings.mcp.copied' : 'common.copy') | transloco
                   }}
                 </button>
-                @if (directoryLink(server); as link) {
+                @if (server.repository) {
                   <button
                     type="button"
                     class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
-                    (click)="openDirectoryLink(link)"
+                    (click)="openRepository(server.repository)"
                   >
-                    {{ 'settings.mcp.directory.github' | transloco }}
+                    {{ 'settings.mcp.repository' | transloco }}
                   </button>
                 }
               </div>
             </div>
           } @empty {
-            @if (!directoryLoading()) {
-              <p class="text-sm text-mist/30">{{ 'settings.mcp.directory.empty' | transloco }}</p>
+            @if (!searching() && searched()) {
+              <p class="text-sm text-mist/30">{{ 'settings.mcp.registryNoResults' | transloco }}</p>
+            }
+          }
+        </div>
+      </section>
+    } @else {
+      <section>
+        <h3 class="text-sm font-semibold text-white">
+          {{ 'settings.mcp.installedServers' | transloco }}
+        </h3>
+        <p class="mt-1 mb-3 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.installedServersHint' | transloco }}
+        </p>
+        <div class="space-y-1.5">
+          @for (entry of installedServers(); track entry.server.name) {
+            <div
+              class="flex items-center gap-2.5 rounded-xl border border-white/10 bg-ink/40 px-4 py-3"
+            >
+              <app-toggle
+                size="xs"
+                [checked]="entry.server.enabled"
+                [disabled]="!entry.candidate.enabled"
+                (toggled)="toggleServer(entry.candidate, entry.server)"
+              />
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm text-mist">{{ entry.server.name }}</p>
+                @if (entry.server.detail) {
+                  <p
+                    class="truncate font-mono text-xs text-mist/30"
+                    [attr.title]="entry.server.detail"
+                  >
+                    {{ entry.server.detail }}
+                  </p>
+                }
+              </div>
+              <button
+                type="button"
+                class="shrink-0 rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
+                [disabled]="removingServer() === entry.server.name"
+                (click)="uninstallServer(entry.server.name)"
+              >
+                {{ 'common.remove' | transloco }}
+              </button>
+            </div>
+          } @empty {
+            <div class="rounded-xl border border-dashed border-white/10 px-4 py-4 text-center">
+              <p class="text-sm text-mist/40">
+                {{ 'settings.mcp.noInstalledServers' | transloco }}
+              </p>
+              <button
+                type="button"
+                class="mt-2 rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
+                (click)="tab.set('browse')"
+              >
+                {{ 'settings.mcp.tabBrowse' | transloco }}
+              </button>
+            </div>
+          }
+        </div>
+      </section>
+
+      <section class="mt-8 flex items-center justify-between gap-4">
+        <div>
+          <h3 class="text-sm font-semibold text-white">
+            {{ 'settings.mcp.autoDiscovery' | transloco }}
+          </h3>
+          <p class="mt-1 text-xs leading-relaxed text-mist/30">
+            {{ 'settings.mcp.autoDiscoveryHint' | transloco }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+          [class]="draft.draft().mcpAutoDiscovery ? 'bg-accent' : 'bg-white/15'"
+          (click)="draft.patch('mcpAutoDiscovery', !draft.draft().mcpAutoDiscovery)"
+        >
+          <span
+            class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
+            [class]="draft.draft().mcpAutoDiscovery ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
+          ></span>
+        </button>
+      </section>
+
+      <section class="mt-8">
+        <h3 class="mb-2 text-sm font-semibold text-white">
+          {{ 'settings.mcp.folders' | transloco }}
+        </h3>
+        <p class="mb-3 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.foldersHint' | transloco }}
+        </p>
+        <app-folder-list
+          [folders]="draft.draft().mcpFolders"
+          (changed)="draft.patch('mcpFolders', $event)"
+          addLabel="settings.mcp.addFolder"
+        />
+      </section>
+
+      <section class="mt-8">
+        <div class="mb-3 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-white">
+            {{ 'settings.mcp.detected' | transloco }}
+          </h3>
+          <button
+            type="button"
+            class="rounded-full border border-white/15 px-3.5 py-1.5 text-xs text-mist transition-colors hover:bg-white/5"
+            (click)="refresh()"
+          >
+            ↻ {{ 'common.refresh' | transloco }}
+          </button>
+        </div>
+
+        @if (loading()) {
+          <p class="text-sm text-mist/30">{{ 'common.loading' | transloco }}</p>
+        }
+
+        <div class="space-y-1.5">
+          @for (candidate of detectedCandidates(); track candidate.path) {
+            <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
+              <div class="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
+                  [class]="candidate.enabled ? 'bg-accent' : 'bg-white/15'"
+                  (click)="toggle(candidate)"
+                >
+                  <span
+                    class="absolute top-0.5 h-4 w-4 rounded-full transition-all"
+                    [class]="candidate.enabled ? 'left-4.5 bg-ink' : 'left-0.5 bg-white'"
+                  ></span>
+                </button>
+                <span class="truncate text-sm text-mist">{{ candidate.label }}</span>
+                <span class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-mist/40">
+                  {{ candidate.source }}
+                </span>
+                <span class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-mist/40">
+                  {{ candidate.format }}
+                </span>
+              </div>
+              <p class="mt-1 truncate font-mono text-xs text-mist/30">{{ candidate.path }}</p>
+              @if (candidate.servers.length > 0) {
+                <div class="mt-2 space-y-1.5">
+                  @for (server of candidate.servers; track server.name) {
+                    <div class="flex items-center gap-2.5">
+                      <app-toggle
+                        size="xs"
+                        [checked]="server.enabled"
+                        [disabled]="!candidate.enabled"
+                        (toggled)="toggleServer(candidate, server)"
+                      />
+                      <span
+                        [class]="
+                          'shrink-0 text-xs ' +
+                          (server.enabled ? 'text-mist' : 'text-mist/30 line-through')
+                        "
+                      >
+                        {{ server.name }}
+                      </span>
+                      @if (server.detail) {
+                        <span
+                          class="min-w-0 truncate font-mono text-[11px] text-mist/25"
+                          [attr.title]="server.detail"
+                        >
+                          {{ server.detail }}
+                        </span>
+                      }
+                    </div>
+                  }
+                </div>
+              } @else {
+                <p class="mt-1 text-xs text-mist/20">{{ 'settings.mcp.noServers' | transloco }}</p>
+              }
+            </div>
+          } @empty {
+            @if (!loading()) {
+              <p class="text-sm text-mist/30">{{ 'settings.mcp.noSources' | transloco }}</p>
             }
           }
         </div>
 
-        @if (directoryHasMore()) {
-          <button
-            type="button"
-            class="mt-3 w-full rounded-xl border border-white/15 px-4 py-2 text-xs text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
-            [disabled]="directoryLoadingMore()"
-            (click)="loadDirectory(false)"
-          >
-            {{ 'settings.mcp.directory.loadMore' | transloco }}
-          </button>
-        }
-      }
-    </section>
-
-    <section class="mt-8 flex items-center justify-between gap-4">
-      <div>
-        <h3 class="text-sm font-semibold text-white">
-          {{ 'settings.mcp.autoDiscovery' | transloco }}
-        </h3>
-        <p class="mt-1 text-xs leading-relaxed text-mist/30">
-          {{ 'settings.mcp.autoDiscoveryHint' | transloco }}
+        <p class="mt-4 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.mcp.phaseNote' | transloco }}
         </p>
-      </div>
-      <button
-        type="button"
-        class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
-        [class]="draft.draft().mcpAutoDiscovery ? 'bg-accent' : 'bg-white/15'"
-        (click)="draft.patch('mcpAutoDiscovery', !draft.draft().mcpAutoDiscovery)"
-      >
-        <span
-          class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-          [class]="draft.draft().mcpAutoDiscovery ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
-        ></span>
-      </button>
-    </section>
+      </section>
+    }
 
-    <section class="mt-8">
-      <h3 class="mb-2 text-sm font-semibold text-white">
-        {{ 'settings.mcp.folders' | transloco }}
-      </h3>
-      <p class="mb-3 text-xs leading-relaxed text-mist/30">
-        {{ 'settings.mcp.foldersHint' | transloco }}
-      </p>
-      <app-folder-list
-        [folders]="draft.draft().mcpFolders"
-        (changed)="draft.patch('mcpFolders', $event)"
-        addLabel="settings.mcp.addFolder"
+    @if (installDraft(); as draft) {
+      <app-mcp-install-dialog
+        [draft]="draft"
+        [installedNames]="installedNames()"
+        (installed)="onInstalled()"
+        (closed)="installDraft.set(null)"
       />
-    </section>
-
-    <section class="mt-8">
-      <div class="mb-3 flex items-center justify-between">
-        <h3 class="text-sm font-semibold text-white">{{ 'settings.mcp.detected' | transloco }}</h3>
-        <button
-          type="button"
-          class="rounded-full border border-white/15 px-3.5 py-1.5 text-xs text-mist transition-colors hover:bg-white/5"
-          (click)="refresh()"
-        >
-          ↻ {{ 'common.refresh' | transloco }}
-        </button>
-      </div>
-
-      @if (loading()) {
-        <p class="text-sm text-mist/30">{{ 'common.loading' | transloco }}</p>
-      }
-
-      <div class="space-y-1.5">
-        @for (candidate of candidates(); track candidate.path) {
-          <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
-            <div class="flex items-center gap-2.5">
-              <button
-                type="button"
-                class="relative h-5 w-9 shrink-0 rounded-full transition-colors"
-                [class]="candidate.enabled ? 'bg-accent' : 'bg-white/15'"
-                (click)="toggle(candidate)"
-              >
-                <span
-                  class="absolute top-0.5 h-4 w-4 rounded-full transition-all"
-                  [class]="candidate.enabled ? 'left-4.5 bg-ink' : 'left-0.5 bg-white'"
-                ></span>
-              </button>
-              <span class="truncate text-sm text-mist">{{ candidate.label }}</span>
-              <span class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-mist/40">
-                {{ candidate.source }}
-              </span>
-              <span class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-mist/40">
-                {{ candidate.format }}
-              </span>
-            </div>
-            <p class="mt-1 truncate font-mono text-xs text-mist/30">{{ candidate.path }}</p>
-            @if (candidate.servers.length > 0) {
-              <div class="mt-2 space-y-1.5">
-                @for (server of candidate.servers; track server.name) {
-                  <div class="flex items-center gap-2.5">
-                    <app-toggle
-                      size="xs"
-                      [checked]="server.enabled"
-                      [disabled]="!candidate.enabled"
-                      (toggled)="toggleServer(candidate, server)"
-                    />
-                    <span
-                      [class]="
-                        'truncate text-xs ' +
-                        (server.enabled ? 'text-mist' : 'text-mist/30 line-through')
-                      "
-                    >
-                      {{ server.name }}
-                    </span>
-                  </div>
-                }
-              </div>
-            } @else {
-              <p class="mt-1 text-xs text-mist/20">{{ 'settings.mcp.noServers' | transloco }}</p>
-            }
-          </div>
-        } @empty {
-          @if (!loading()) {
-            <p class="text-sm text-mist/30">{{ 'settings.mcp.noSources' | transloco }}</p>
-          }
-        }
-      </div>
-
-      <p class="mt-4 text-xs leading-relaxed text-mist/30">
-        {{ 'settings.mcp.phaseNote' | transloco }}
-      </p>
-    </section>
-
-    <section class="mt-8">
-      <h3 class="text-sm font-semibold text-white">{{ 'settings.mcp.registry' | transloco }}</h3>
-      <p class="mb-3 mt-1 text-xs leading-relaxed text-mist/30">
-        {{ 'settings.mcp.registryHint' | transloco }}
-      </p>
-
-      <h4 class="mb-1 text-xs font-semibold uppercase tracking-wide text-mist/40">
-        {{ 'settings.mcp.recommended' | transloco }}
-      </h4>
-      <p class="mb-2 text-xs leading-relaxed text-mist/30">
-        {{ 'settings.mcp.recommendedHint' | transloco }}
-      </p>
-      <div class="mb-3 flex flex-wrap gap-1.5">
-        @for (item of recommended; track item.query) {
-          <button
-            type="button"
-            class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
-            [disabled]="searching()"
-            [title]="item.descriptionKey | transloco"
-            (click)="searchRecommended(item)"
-          >
-            {{ item.nameKey | transloco }}
-          </button>
-        }
-      </div>
-
-      <div class="flex gap-2">
-        <input
-          type="search"
-          class="field min-w-0 flex-1 rounded-xl px-4 py-2 text-sm"
-          [value]="searchQuery()"
-          [placeholder]="'settings.mcp.registrySearch' | transloco"
-          (typedValue)="searchQuery.set($event)"
-          (keydown.enter)="search()"
-        />
-        <button
-          type="button"
-          class="shrink-0 rounded-xl border border-white/15 px-4 py-2 text-sm text-mist transition-colors hover:bg-white/5 disabled:opacity-40"
-          [disabled]="searching()"
-          (click)="search()"
-        >
-          {{ 'common.search' | transloco }}
-        </button>
-      </div>
-
-      <div class="mt-3 flex items-center gap-3">
-        <app-toggle
-          size="sm"
-          [checked]="draft.draft().marketplaceVerifiedOnly"
-          (toggled)="toggleVerifiedOnly()"
-        />
-        <span class="text-xs text-mist/50">{{ 'settings.mcp.verifiedOnly' | transloco }}</span>
-      </div>
-      <p class="mt-1 text-xs leading-relaxed text-mist/30">
-        {{ 'settings.mcp.verifiedOnlyHint' | transloco }}
-      </p>
-
-      @if (registry.error()) {
-        <p class="mt-3 text-sm text-red-400">{{ registry.error() }}</p>
-      }
-
-      @if (searching()) {
-        <p class="mt-3 text-sm text-mist/30">{{ 'common.loading' | transloco }}</p>
-      }
-
-      <div class="mt-3 space-y-1.5">
-        @for (server of results(); track server.name) {
-          <div class="rounded-xl border border-white/10 bg-ink/40 px-4 py-3">
-            <div class="flex items-center gap-2">
-              @if (server.verified) {
-                <span
-                  class="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-300"
-                  [attr.title]="'settings.mcp.verifiedTooltip' | transloco"
-                >
-                  {{ 'settings.mcp.verified' | transloco }}
-                </span>
-              }
-              <span class="truncate text-sm text-mist">{{ server.title || server.name }}</span>
-              @if (server.version) {
-                <span class="shrink-0 text-xs text-mist/30">v{{ server.version }}</span>
-              }
-            </div>
-            <p class="mt-0.5 truncate font-mono text-xs text-mist/30">{{ server.name }}</p>
-            @if (server.description) {
-              <p class="mt-1 text-xs leading-relaxed text-mist/50">{{ server.description }}</p>
-            }
-            <p class="mt-1 truncate font-mono text-xs text-mist/40">
-              @if (server.command) {
-                {{ server.command }} {{ server.args.join(' ') }}
-              } @else if (server.url) {
-                {{ server.transport || 'remote' }} · {{ server.url }}
-              }
-            </p>
-            @if (server.env.length > 0) {
-              <p class="mt-1 text-xs text-mist/40">
-                {{ 'settings.mcp.registryEnv' | transloco: { names: envNames(server) } }}
-              </p>
-            }
-            <div class="mt-2 flex gap-2">
-              <button
-                type="button"
-                class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
-                (click)="copyConfig(server)"
-              >
-                {{ (copied() === server.name ? 'settings.mcp.copied' : 'common.copy') | transloco }}
-              </button>
-              @if (server.repository) {
-                <button
-                  type="button"
-                  class="rounded-full border border-white/15 px-3 py-1 text-xs text-mist transition-colors hover:bg-white/5"
-                  (click)="openRepository(server.repository)"
-                >
-                  {{ 'settings.mcp.repository' | transloco }}
-                </button>
-              }
-            </div>
-          </div>
-        } @empty {
-          @if (!searching() && searched()) {
-            <p class="text-sm text-mist/30">{{ 'settings.mcp.registryNoResults' | transloco }}</p>
-          }
-        }
-      </div>
-    </section>
+    }
   `,
 })
 export class McpSettings {
   protected readonly draft = inject(SettingsDraftService);
   protected readonly registry = inject(MarketplaceRegistryService);
   private readonly transloco = inject(TranslocoService);
+  private readonly catalog = inject(CapabilityCatalogService);
   protected readonly recommended = RECOMMENDED_MCP_SERVERS;
+  protected readonly tab = signal<'browse' | 'configured'>('browse');
+  protected readonly installDraft = signal<McpInstallDraft | null>(null);
+  protected readonly installedNames = signal<string[]>([]);
+  protected readonly removingServer = signal<string | null>(null);
   protected readonly candidates = signal<McpCandidate[]>([]);
+  /** Servers in pumr's own config, shown with a Remove action. */
+  protected readonly installedServers = computed(() =>
+    this.candidates()
+      .filter((candidate) => candidate.source === 'installed')
+      .flatMap((candidate) => candidate.servers.map((server) => ({ candidate, server }))),
+  );
+  /** Config files found elsewhere (other tools, custom folders). */
+  protected readonly detectedCandidates = computed(() =>
+    this.candidates().filter((candidate) => candidate.source !== 'installed'),
+  );
+  protected readonly enabledCount = computed(
+    () =>
+      this.candidates().flatMap((candidate) => candidate.servers.filter((server) => server.enabled))
+        .length,
+  );
   protected readonly loading = signal(false);
   protected readonly searchQuery = signal('');
   protected readonly results = signal<MarketplaceServer[]>([]);
@@ -460,7 +614,6 @@ export class McpSettings {
   protected readonly directorySource = signal('all');
   protected readonly directorySort = signal('stars');
   protected readonly directoryCounts = signal<Record<string, number> | null>(null);
-  protected readonly directoryCopied = signal<string | null>(null);
 
   protected readonly directoryCategories = [
     { id: 'web-search', key: 'webSearch' },
@@ -476,11 +629,7 @@ export class McpSettings {
     { id: 'utilities', key: 'utilities' },
   ];
 
-  protected readonly directorySources = [
-    { id: 'all' },
-    { id: 'official-mcp' },
-    { id: 'docker' },
-  ];
+  protected readonly directorySources = [{ id: 'all' }, { id: 'official-mcp' }, { id: 'docker' }];
 
   protected readonly directorySortOptions = [
     { id: 'stars', key: 'mostStars' },
@@ -508,6 +657,63 @@ export class McpSettings {
     });
     void this.loadDirectory(true);
     void this.loadDirectoryCounts();
+    void this.loadInstalledNames();
+  }
+
+  private async loadInstalledNames(): Promise<void> {
+    try {
+      this.installedNames.set(await api.listInstalledMcpServers());
+    } catch {
+      this.installedNames.set([]);
+    }
+  }
+
+  protected suggestName(name: string): string {
+    return suggestServerName(name);
+  }
+
+  protected isInstalled(name: string): boolean {
+    return this.installedNames().includes(name);
+  }
+
+  protected tabClass(active: boolean): string {
+    return active
+      ? 'rounded-full bg-accent px-4 py-1.5 text-xs font-medium text-ink'
+      : 'rounded-full px-4 py-1.5 text-xs text-mist/60 transition-colors hover:text-mist';
+  }
+
+  protected async onInstalled(): Promise<void> {
+    await Promise.all([this.loadInstalledNames(), this.refresh(), this.catalog.refresh()]);
+  }
+
+  protected async uninstallServer(name: string): Promise<void> {
+    if (this.removingServer()) {
+      return;
+    }
+    this.removingServer.set(name);
+    this.registry.clearError();
+    try {
+      await api.uninstallMcpServer(name);
+      await this.onInstalled();
+    } catch (error) {
+      this.registry.error.set(String(error));
+    } finally {
+      this.removingServer.set(null);
+    }
+  }
+
+  protected installRegistry(server: MarketplaceServer): void {
+    this.installDraft.set({
+      name: suggestServerName(server.name),
+      displayName: server.title || server.name,
+      command: server.url ? null : server.command,
+      args: server.url ? [] : server.args,
+      url: server.url,
+      transport: server.transport,
+      env: server.env,
+      requirements: [],
+      cli: null,
+    });
   }
 
   protected async refresh(): Promise<void> {
@@ -679,8 +885,7 @@ export class McpSettings {
         'official-mcp': official.total,
         docker: docker.total,
       });
-    } catch {
-    }
+    } catch {}
   }
 
   protected chipClass(active: boolean): string {
@@ -703,8 +908,12 @@ export class McpSettings {
     return (server.displayName || server.name).charAt(0).toUpperCase();
   }
 
-  protected directoryMetric(server: DirectoryServer): number {
-    return server.githubStars || server.dockerPulls || server.npmDownloads;
+  protected directoryMetric(server: DirectoryServer): { icon: string; value: number } | null {
+    if (server.githubStars) {
+      return { icon: '★', value: server.githubStars };
+    }
+    const downloads = server.dockerPulls || server.npmDownloads;
+    return downloads ? { icon: '↓', value: downloads } : null;
   }
 
   protected formatCount(value: number): string {
@@ -725,33 +934,18 @@ export class McpSettings {
     void api.openExternalUrl(url);
   }
 
-  protected async installDirectory(server: DirectoryServer): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(this.directoryConfig(server));
-      this.directoryCopied.set(server.name);
-      setTimeout(() => this.directoryCopied.set(null), 1500);
-    } catch {
-      this.registry.error.set(this.transloco.translate('common.clipboardError'));
-    }
-  }
-
-  private directoryConfig(server: DirectoryServer): string {
+  protected installDirectory(server: DirectoryServer): void {
     const { install } = server;
-    if (install.cli && !install.command && !install.url) {
-      return install.cli;
-    }
-    const entry: Record<string, unknown> = {};
-    if (install.url) {
-      entry['url'] = install.url;
-      if (install.transport) {
-        entry['type'] = install.transport;
-      }
-    } else if (install.command) {
-      entry['command'] = install.command;
-      if (install.args.length > 0) {
-        entry['args'] = install.args;
-      }
-    }
-    return JSON.stringify({ mcpServers: { [server.name]: entry } }, null, 2);
+    this.installDraft.set({
+      name: suggestServerName(server.name),
+      displayName: server.displayName || server.name,
+      command: install.url ? null : install.command,
+      args: install.url ? [] : install.args,
+      url: install.url,
+      transport: install.transport,
+      env: server.env,
+      requirements: install.requirements,
+      cli: install.cli,
+    });
   }
 }
