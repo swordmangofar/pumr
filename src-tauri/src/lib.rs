@@ -94,6 +94,8 @@ pub fn run() {
             commands::list_models,
             commands::list_endpoints,
             commands::list_providers,
+            commands::list_llm_providers,
+            commands::update_provider,
             commands::list_projects,
             commands::add_project,
             commands::remove_project,

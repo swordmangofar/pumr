@@ -17,6 +17,7 @@ function model(id: string): ModelInfo {
     supportsTools: true,
     inputModalities: ['text'],
     supportedParameters: [],
+    source: 'openrouter',
     created: 0,
   };
 }
@@ -56,17 +57,34 @@ describe('ModelsService', () => {
       expect(service.loading()).toBe(false);
     });
 
-    it('ignores a second load while one is in flight', async () => {
+    it('shares a load that is already in flight', async () => {
       const pending = deferred<ModelInfo[]>();
       const listModels = vi.spyOn(api, 'listModels').mockReturnValue(pending.promise);
 
       const first = service.load();
-      await service.load();
+      const second = service.load();
       expect(listModels).toHaveBeenCalledTimes(1);
       expect(service.loading()).toBe(true);
 
       pending.resolve([model('a/one')]);
-      await first;
+      await Promise.all([first, second]);
+      expect(service.loading()).toBe(false);
+      expect(service.modelIds()).toEqual(new Set(['a/one']));
+    });
+
+    it('refreshes once more when a refresh is asked for during a load', async () => {
+      const initial = deferred<ModelInfo[]>();
+      const listModels = vi
+        .spyOn(api, 'listModels')
+        .mockReturnValueOnce(initial.promise)
+        .mockResolvedValueOnce([model('a/one'), model('b/new')]);
+
+      const loads = [service.load(), service.load(true), service.load(true)];
+      initial.resolve([model('a/one')]);
+      await Promise.all(loads);
+
+      expect(listModels.mock.calls).toEqual([[false], [true]]);
+      expect(service.modelIds()).toEqual(new Set(['a/one', 'b/new']));
       expect(service.loading()).toBe(false);
     });
 

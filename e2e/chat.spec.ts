@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { expect, MODEL_ID, project, seed, session, test } from './support/fixtures';
+import { expect, model, MODEL_ID, project, seed, session, test } from './support/fixtures';
 import type { FakeSeed } from './support/fake-backend';
 
 async function openSession(
@@ -58,6 +58,55 @@ test.describe('chat', () => {
     await expect(main.locator('strong', { hasText: 'pnpm verify' })).toBeVisible();
   });
 
+  test('shows and filters models by provider', async ({ app, page }) => {
+    const direct = 'anthropic:claude-opus-5';
+    const composer = await openSession(page, app.start, {
+      apiKeys: ['openrouter', 'anthropic'],
+      models: [model(), model(direct, 'Claude Opus 5')],
+      sessions: [session({ title: 'New session', model: direct })],
+      replies: [{ steps: [{ kind: 'text', text: 'Hello from Claude.' }] }],
+    });
+
+    // The model button names the provider; direct models have no OpenRouter routing.
+    const composerBar = page.locator('app-composer');
+    const modelButton = composerBar.getByRole('button', { name: 'Claude Opus 5 Anthropic' });
+    await expect(modelButton).toBeVisible();
+    await expect(composerBar.getByText('Auto (best available)')).toHaveCount(0);
+
+    await modelButton.click();
+    const menu = page.locator('#composer-model-menu');
+    await expect(menu.locator('[data-model-group]')).toContainText(['OpenRouter', 'Anthropic']);
+    await menu.getByRole('button', { name: 'Anthropic 1' }).click();
+    await expect(menu.locator('[data-model-group]')).toHaveCount(1);
+    await expect(menu.locator('[data-model-group]')).toContainText('Anthropic');
+    await expect(menu.getByText('Claude Sonnet 5')).toHaveCount(0);
+    await menu.getByRole('button', { name: 'All', exact: true }).click();
+    await expect(menu.getByText('Claude Sonnet 5')).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await composer.click();
+    await page.keyboard.type('Hi Claude');
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('main')).toContainText('Hello from Claude.');
+    const call = await app.backend.lastCall('send_message');
+    expect(call?.args).toMatchObject({ content: 'Hi Claude', model: direct });
+    expect(call?.args['provider'] ?? null).toBeNull();
+    expect(await app.backend.calls('list_endpoints')).toEqual([]);
+  });
+
+  test('a provider key alone is enough to chat', async ({ app, page }) => {
+    await openSession(page, app.start, {
+      apiKeys: ['openai'],
+      models: [model(), model('openai:gpt-5', 'GPT-5')],
+      sessions: [session({ title: 'New session', model: 'openai:gpt-5' })],
+    });
+    await expect(page.getByText('Connect a model provider in Settings')).toHaveCount(0);
+    await expect(
+      page.locator('app-composer').getByRole('button', { name: 'GPT-5 OpenAI' }),
+    ).toBeVisible();
+  });
+
   test('Shift+Enter inserts a new line instead of sending', async ({ app, page }) => {
     const composer = await openSession(page, app.start);
 
@@ -98,6 +147,9 @@ test.describe('chat', () => {
     const stop = page.getByRole('button', { name: 'Stop' });
     await expect(stop).toBeVisible();
     await expect(page.getByRole('main')).toContainText('Starting a long job');
+    // Reverting would take back what the running turn is still writing.
+    const revert = page.getByRole('button', { name: 'Revert to this prompt' });
+    await expect(revert).toHaveCount(0);
 
     await stop.click();
 
@@ -105,6 +157,7 @@ test.describe('chat', () => {
     expect((await app.backend.lastCall('stop_generation'))?.args).toEqual({
       sessionId: 'session-1',
     });
+    await expect(revert).toHaveCount(1);
   });
 
   test('queues a follow-up while a turn is running and sends it afterwards', async ({

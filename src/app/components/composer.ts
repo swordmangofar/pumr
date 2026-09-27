@@ -22,19 +22,21 @@ import {
   TextBlock,
   WorkspaceEntry,
 } from '../core/models';
-import { api } from '../core/api';
+import { OPENROUTER_PROVIDER, api, providerIdOf } from '../core/api';
 import { CapabilityCatalogService, searchCapabilities } from '../core/capability-catalog.service';
 import { formatTokenCount } from '../core/format';
 import { displayHotkey, HotkeyAction, hotkeyBindings, matchesAction } from '../core/hotkeys';
 import { ModelsService } from '../core/models.service';
+import { ProvidersService } from '../core/providers.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { MessageQueueService } from '../core/message-queue.service';
 import { AttachmentPreview } from './attachment-preview';
+import { ModelMenu, formatModelContext, formatModelPrice } from './model-menu';
+import { ProviderMark } from './provider-mark';
 import { ComposerEditorService, MentionQuery } from './composer-editor.service';
 
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
-
 const MENTION_KINDS: MentionKind[] = ['file', 'directory', 'website', 'skill', 'mcp'];
 
 const MENTION_TOKEN_RE = /@(file|directory|website|skill|mcp):([^\s]+)/g;
@@ -139,7 +141,7 @@ const PROVIDER_PRESETS = [
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [ComposerEditorService],
   encapsulation: ViewEncapsulation.None,
-  imports: [TranslocoPipe, AttachmentPreview],
+  imports: [TranslocoPipe, AttachmentPreview, ProviderMark, ModelMenu],
   styles: [
     `
       .composer-editor:empty::before {
@@ -470,19 +472,32 @@ const PROVIDER_PRESETS = [
               class="hidden"
               (change)="onFilesSelected($event)"
             />
-            <!-- Model picker -->
+            <!-- Model picker: the provider is always shown next to the model -->
             <div>
               <button
                 type="button"
                 class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
                 [attr.aria-expanded]="modelOpen()"
                 [attr.aria-controls]="modelOpen() ? 'composer-model-menu' : null"
+                [attr.title]="
+                  selectedModel()
+                    ? ('composer.viaProvider' | transloco: { provider: selectedProviderName() })
+                    : null
+                "
                 (click)="modelOpen.set(!modelOpen())"
                 (keydown.escape)="closeMenus()"
               >
+                @if (selectedModel()) {
+                  <app-provider-mark [provider]="selectedProviderId()" size="xs" />
+                }
                 <span class="max-w-56 truncate">{{
                   selectedModel()?.name ?? ('composer.noModels' | transloco)
                 }}</span>
+                @if (selectedModel()) {
+                  <span class="hidden max-w-28 truncate text-mist/35 sm:inline">{{
+                    selectedProviderName()
+                  }}</span>
+                }
                 <svg
                   class="h-3 w-3 shrink-0 text-mist/40"
                   viewBox="0 0 20 20"
@@ -501,105 +516,13 @@ const PROVIDER_PRESETS = [
 
               @if (modelOpen()) {
                 <div class="fixed inset-0 z-30" (click)="modelOpen.set(false)"></div>
-                <div
-                  class="absolute bottom-full left-0 z-40 mb-2 flex max-h-[min(24rem,50vh)] w-[min(30rem,100%)] flex-col overflow-hidden glass-pop rounded-2xl shadow-2xl"
+                <app-model-menu
+                  class="absolute bottom-full left-0 z-40 mb-2 max-h-[min(28rem,60vh)] w-[min(34rem,100%)]"
                   id="composer-model-menu"
+                  [selected]="selectedModel()?.id ?? null"
+                  (picked)="$event && selectModel($event)"
                   (keydown.escape)="closeMenus()"
-                >
-                  <input
-                    class="field-flush px-4 py-2.5 text-sm"
-                    [value]="modelFilter()"
-                    [placeholder]="'composer.searchModel' | transloco"
-                    [attr.aria-label]="'composer.searchModel' | transloco"
-                    (input)="onFilter($event)"
-                    autofocus
-                  />
-                  <div class="min-h-0 flex-1 overflow-y-auto">
-                    @for (model of filteredModels(); track model.id) {
-                      <div
-                        class="flex items-stretch border-b border-white/5 transition-colors hover:bg-white/5"
-                        [class]="model.id === selectedModel()?.id ? 'bg-accent/10' : ''"
-                      >
-                        <button
-                          type="button"
-                          class="min-w-0 flex-1 px-4 py-2.5 text-left"
-                          (click)="selectModel(model.id)"
-                        >
-                          <div class="flex items-center justify-between gap-3">
-                            <span class="truncate text-sm text-white">{{ model.name }}</span>
-                            <span class="shrink-0 text-xs text-mist/40">
-                              {{ price(model.promptPricePerM) }} /
-                              {{ price(model.completionPricePerM) }}
-                            </span>
-                          </div>
-                          <div class="mt-1 flex items-center gap-2 text-xs text-mist/30">
-                            <span class="truncate">{{ model.id }}</span>
-                            <span
-                              class="shrink-0"
-                              [attr.title]="
-                                ('provider.context' | transloco) +
-                                ': ' +
-                                model.contextLength.toLocaleString()
-                              "
-                              >{{ context(model.contextLength) }}</span
-                            >
-                            @if (model.supportsReasoning) {
-                              <span
-                                class="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-accent"
-                                >{{ 'composer.reasoning' | transloco }}</span
-                              >
-                            }
-                            @if (model.supportsVision) {
-                              <span
-                                class="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-mist/60"
-                                >{{ 'composer.vision' | transloco }}</span
-                              >
-                            }
-                            @if (model.supportsTools) {
-                              <span
-                                class="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300"
-                                >{{ 'composer.tools' | transloco }}</span
-                              >
-                            }
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          class="flex shrink-0 items-center px-3 transition-colors"
-                          [class]="
-                            isFavorite(model.id)
-                              ? 'text-amber-300 hover:text-amber-200'
-                              : 'text-mist/40 hover:text-amber-200'
-                          "
-                          [attr.aria-label]="
-                            (isFavorite(model.id) ? 'composer.unfavorite' : 'composer.favorite')
-                              | transloco
-                          "
-                          [attr.title]="
-                            (isFavorite(model.id) ? 'composer.unfavorite' : 'composer.favorite')
-                              | transloco
-                          "
-                          (click)="toggleFavorite(model.id)"
-                        >
-                          <svg
-                            class="h-4 w-4"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                            aria-hidden="true"
-                          >
-                            <path
-                              d="m10 2.6 2.3 4.7 5.1.7-3.7 3.6.9 5.1L10 14.3l-4.6 2.4.9-5.1L2.6 8l5.1-.7z"
-                            />
-                          </svg>
-                        </button>
-                      </div>
-                    } @empty {
-                      <p class="px-4 py-5 text-center text-sm text-mist/40">
-                        {{ 'composer.noModels' | transloco }}
-                      </p>
-                    }
-                  </div>
-                </div>
+                />
               }
             </div>
 
@@ -707,135 +630,94 @@ const PROVIDER_PRESETS = [
               }
             </div>
 
-            <!-- Provider picker -->
-            <div>
-              <button
-                type="button"
-                class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
-                [attr.aria-expanded]="providerOpen()"
-                [attr.aria-controls]="providerOpen() ? 'composer-provider-menu' : null"
-                (click)="toggleProvider()"
-                (keydown.escape)="closeMenus()"
-              >
-                <span class="flex min-w-0 items-center gap-1.5">
-                  @if (presetKey(provider()); as key) {
-                    <svg
-                      class="h-3 w-3 shrink-0 text-accent"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <path
-                        [attr.d]="presetIcon(provider())"
-                        stroke="currentColor"
-                        stroke-width="1.6"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
-                    <span class="max-w-40 truncate">{{ key | transloco }}</span>
-                  } @else {
-                    @if (provider() !== 'auto') {
-                      @if (providerIcon(provider()); as icon) {
-                        <img
-                          [src]="icon"
-                          alt=""
-                          class="h-3 w-3 shrink-0 rounded object-contain"
-                          (error)="providerIconError(provider())"
-                        />
-                      }
-                    }
-                    <span class="max-w-40 truncate">
-                      @if (provider() === 'auto') {
-                        {{ 'provider.auto' | transloco }}
-                      } @else {
-                        {{ providerLabel() }}
-                      }
-                    </span>
-                  }
-                </span>
-                <svg
-                  class="h-3 w-3 shrink-0 text-mist/40"
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M5 7.5 10 12.5 15 7.5"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </button>
-
-              @if (providerOpen()) {
-                <div class="fixed inset-0 z-30" (click)="providerOpen.set(false)"></div>
-                <div
-                  class="absolute bottom-full left-0 z-40 mb-2 max-h-[min(24rem,50vh)] w-[min(32rem,100%)] overflow-y-auto glass-pop rounded-2xl shadow-2xl"
-                  id="composer-provider-menu"
+            <!-- Routing picker: only OpenRouter models are served by several providers -->
+            @if (isOpenRouterModel()) {
+              <div>
+                <button
+                  type="button"
+                  class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
+                  [attr.aria-expanded]="providerOpen()"
+                  [attr.aria-controls]="providerOpen() ? 'composer-provider-menu' : null"
+                  (click)="toggleProvider()"
                   (keydown.escape)="closeMenus()"
                 >
-                  <div class="border-b border-white/10">
-                    <button
-                      type="button"
-                      class="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-white/5"
-                      [class]="provider() === 'auto' ? 'bg-accent/10 text-white' : 'text-mist'"
-                      (click)="selectAutoProvider()"
-                    >
+                  <span class="flex min-w-0 items-center gap-1.5">
+                    @if (presetKey(provider()); as key) {
                       <svg
-                        class="h-4 w-4 shrink-0 text-accent"
+                        class="h-3 w-3 shrink-0 text-accent"
                         viewBox="0 0 20 20"
-                        fill="currentColor"
+                        fill="none"
                         aria-hidden="true"
                       >
-                        <path d="m10 2 1.6 4.4L16 8l-4.4 1.6L10 14l-1.6-4.4L4 8l4.4-1.6z" />
+                        <path
+                          [attr.d]="presetIcon(provider())"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
                       </svg>
-                      <span class="flex-1">{{ 'provider.auto' | transloco }}</span>
-                      @if (provider() === 'auto') {
-                        <svg
-                          class="h-4 w-4 shrink-0 text-accent"
-                          viewBox="0 0 20 20"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M5 10.5 9 14.5 15.5 6"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
+                      <span class="max-w-40 truncate">{{ key | transloco }}</span>
+                    } @else {
+                      @if (provider() !== 'auto') {
+                        @if (providerIcon(provider()); as icon) {
+                          <img
+                            [src]="icon"
+                            alt=""
+                            class="h-3 w-3 shrink-0 rounded object-contain"
+                            (error)="providerIconError(provider())"
                           />
-                        </svg>
+                        }
                       }
-                    </button>
-                    @for (preset of providerPresets; track preset.value) {
+                      <span class="max-w-40 truncate">
+                        @if (provider() === 'auto') {
+                          {{ 'provider.auto' | transloco }}
+                        } @else {
+                          {{ providerLabel() }}
+                        }
+                      </span>
+                    }
+                  </span>
+                  <svg
+                    class="h-3 w-3 shrink-0 text-mist/40"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M5 7.5 10 12.5 15 7.5"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+
+                @if (providerOpen()) {
+                  <div class="fixed inset-0 z-30" (click)="providerOpen.set(false)"></div>
+                  <div
+                    class="absolute bottom-full left-0 z-40 mb-2 max-h-[min(24rem,50vh)] w-[min(32rem,100%)] overflow-y-auto glass-pop rounded-2xl shadow-2xl"
+                    id="composer-provider-menu"
+                    (keydown.escape)="closeMenus()"
+                  >
+                    <div class="border-b border-white/10">
                       <button
                         type="button"
                         class="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-white/5"
-                        [class]="
-                          provider() === preset.value ? 'bg-accent/10 text-white' : 'text-mist'
-                        "
-                        [attr.title]="preset.hint | transloco"
-                        (click)="selectPreset(preset.value)"
+                        [class]="provider() === 'auto' ? 'bg-accent/10 text-white' : 'text-mist'"
+                        (click)="selectAutoProvider()"
                       >
                         <svg
                           class="h-4 w-4 shrink-0 text-accent"
                           viewBox="0 0 20 20"
-                          fill="none"
+                          fill="currentColor"
                           aria-hidden="true"
                         >
-                          <path
-                            [attr.d]="presetIcon(preset.value)"
-                            stroke="currentColor"
-                            stroke-width="1.6"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          />
+                          <path d="m10 2 1.6 4.4L16 8l-4.4 1.6L10 14l-1.6-4.4L4 8l4.4-1.6z" />
                         </svg>
-                        <span class="flex-1">{{ preset.key | transloco }}</span>
-                        @if (provider() === preset.value) {
+                        <span class="flex-1">{{ 'provider.auto' | transloco }}</span>
+                        @if (provider() === 'auto') {
                           <svg
                             class="h-4 w-4 shrink-0 text-accent"
                             viewBox="0 0 20 20"
@@ -852,116 +734,159 @@ const PROVIDER_PRESETS = [
                           </svg>
                         }
                       </button>
-                    }
-                  </div>
-                  @if (modelsService.endpointsLoading()[model()]) {
-                    <p class="px-4 py-4 text-center text-sm text-mist/40">
-                      {{ 'common.loading' | transloco }}
-                    </p>
-                  }
-                  @for (endpoint of endpoints(); track endpoint.slug + endpoint.name) {
-                    <button
-                      type="button"
-                      class="block w-full border-b border-white/5 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
-                      (click)="selectProvider(endpoint)"
-                    >
-                      <div class="flex items-center justify-between gap-3">
-                        <span class="flex min-w-0 items-center gap-2">
-                          @if (providerIcon(endpoint.providerSlug); as icon) {
-                            <img
-                              [src]="icon"
-                              alt=""
-                              class="h-5 w-5 shrink-0 rounded object-contain"
-                              (error)="providerIconError(endpoint.providerSlug)"
-                            />
-                          } @else {
-                            <span
-                              class="grid h-5 w-5 shrink-0 place-items-center rounded bg-white/10 text-[10px] font-semibold text-mist/60"
-                            >
-                              {{ initial(endpoint.providerName) }}
-                            </span>
-                          }
-                          <span class="truncate text-sm text-white">{{
-                            endpoint.providerName
-                          }}</span>
-                          @if (endpoint.training) {
-                            <span
-                              class="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
-                              [attr.title]="'provider.trainsHint' | transloco"
-                            >
-                              {{ 'provider.trains' | transloco }}
-                            </span>
-                          }
-                          @if (endpoint.quantization) {
-                            <span
-                              class="shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-mist/40"
-                            >
-                              {{ endpoint.quantization }}
-                            </span>
-                          }
-                        </span>
-                        <span
-                          class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums"
-                          [style.color]="priceColor(endpoint)"
-                          [style.background-color]="priceBackground(endpoint)"
-                          [attr.title]="'provider.priceHint' | transloco"
-                        >
-                          {{ price(endpoint.promptPricePerM) }} /
-                          {{ price(endpoint.completionPricePerM) }}
-                        </span>
-                      </div>
-                      <div class="mt-1.5 flex items-center gap-3 text-xs text-mist/40">
-                        @if (uptime(endpoint); as up) {
-                          <span
-                            class="flex items-center gap-1.5 font-medium"
-                            [style.color]="uptimeColor(endpoint)"
-                            [attr.title]="'provider.uptime' | transloco"
-                          >
-                            <span
-                              class="h-1.5 w-1.5 shrink-0 rounded-full"
-                              [style.background-color]="uptimeColor(endpoint)"
-                            ></span>
-                            {{ up.toFixed(1) }}%
-                          </span>
-                        }
-                        @if (endpoint.throughputLast30m !== null) {
-                          <span [attr.title]="'provider.tokensPerSecond' | transloco">
-                            {{ endpoint.throughputLast30m.toFixed(0) }} tok/s
-                          </span>
-                        }
-                        @if (endpoint.latencyLast30m !== null) {
-                          <span [attr.title]="'provider.latency' | transloco">
-                            {{ endpoint.latencyLast30m.toFixed(0) }} ms
-                          </span>
-                        }
-                        <span
-                          [attr.title]="
-                            ('provider.context' | transloco) +
-                            ': ' +
-                            endpoint.contextLength.toLocaleString()
+                      @for (preset of providerPresets; track preset.value) {
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-white/5"
+                          [class]="
+                            provider() === preset.value ? 'bg-accent/10 text-white' : 'text-mist'
                           "
+                          [attr.title]="preset.hint | transloco"
+                          (click)="selectPreset(preset.value)"
                         >
-                          {{ context(endpoint.contextLength) }}
-                        </span>
-                        @if (region(endpoint.slug); as reg) {
-                          <span class="text-mist/40">{{ reg }}</span>
-                        }
-                      </div>
-                    </button>
-                  } @empty {
-                    @if (!modelsService.endpointsLoading()[model()]) {
+                          <svg
+                            class="h-4 w-4 shrink-0 text-accent"
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <path
+                              [attr.d]="presetIcon(preset.value)"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
+                          <span class="flex-1">{{ preset.key | transloco }}</span>
+                          @if (provider() === preset.value) {
+                            <svg
+                              class="h-4 w-4 shrink-0 text-accent"
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              aria-hidden="true"
+                            >
+                              <path
+                                d="M5 10.5 9 14.5 15.5 6"
+                                stroke="currentColor"
+                                stroke-width="1.8"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              />
+                            </svg>
+                          }
+                        </button>
+                      }
+                    </div>
+                    @if (modelsService.endpointsLoading()[model()]) {
                       <p class="px-4 py-4 text-center text-sm text-mist/40">
-                        @if (modelsService.endpointsError()[model()]; as err) {
-                          {{ err }}
-                        } @else {
-                          {{ 'composer.noModels' | transloco }}
-                        }
+                        {{ 'common.loading' | transloco }}
                       </p>
                     }
-                  }
-                </div>
-              }
-            </div>
+                    @for (endpoint of endpoints(); track endpoint.slug + endpoint.name) {
+                      <button
+                        type="button"
+                        class="block w-full border-b border-white/5 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+                        (click)="selectProvider(endpoint)"
+                      >
+                        <div class="flex items-center justify-between gap-3">
+                          <span class="flex min-w-0 items-center gap-2">
+                            @if (providerIcon(endpoint.providerSlug); as icon) {
+                              <img
+                                [src]="icon"
+                                alt=""
+                                class="h-5 w-5 shrink-0 rounded object-contain"
+                                (error)="providerIconError(endpoint.providerSlug)"
+                              />
+                            } @else {
+                              <span
+                                class="grid h-5 w-5 shrink-0 place-items-center rounded bg-white/10 text-[10px] font-semibold text-mist/60"
+                              >
+                                {{ initial(endpoint.providerName) }}
+                              </span>
+                            }
+                            <span class="truncate text-sm text-white">{{
+                              endpoint.providerName
+                            }}</span>
+                            @if (endpoint.training) {
+                              <span
+                                class="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+                                [attr.title]="'provider.trainsHint' | transloco"
+                              >
+                                {{ 'provider.trains' | transloco }}
+                              </span>
+                            }
+                            @if (endpoint.quantization) {
+                              <span
+                                class="shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-mist/40"
+                              >
+                                {{ endpoint.quantization }}
+                              </span>
+                            }
+                          </span>
+                          <span
+                            class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums"
+                            [style.color]="priceColor(endpoint)"
+                            [style.background-color]="priceBackground(endpoint)"
+                            [attr.title]="'provider.priceHint' | transloco"
+                          >
+                            {{ price(endpoint.promptPricePerM) }} /
+                            {{ price(endpoint.completionPricePerM) }}
+                          </span>
+                        </div>
+                        <div class="mt-1.5 flex items-center gap-3 text-xs text-mist/40">
+                          @if (uptime(endpoint); as up) {
+                            <span
+                              class="flex items-center gap-1.5 font-medium"
+                              [style.color]="uptimeColor(endpoint)"
+                              [attr.title]="'provider.uptime' | transloco"
+                            >
+                              <span
+                                class="h-1.5 w-1.5 shrink-0 rounded-full"
+                                [style.background-color]="uptimeColor(endpoint)"
+                              ></span>
+                              {{ up.toFixed(1) }}%
+                            </span>
+                          }
+                          @if (endpoint.throughputLast30m !== null) {
+                            <span [attr.title]="'provider.tokensPerSecond' | transloco">
+                              {{ endpoint.throughputLast30m.toFixed(0) }} tok/s
+                            </span>
+                          }
+                          @if (endpoint.latencyLast30m !== null) {
+                            <span [attr.title]="'provider.latency' | transloco">
+                              {{ endpoint.latencyLast30m.toFixed(0) }} ms
+                            </span>
+                          }
+                          <span
+                            [attr.title]="
+                              ('provider.context' | transloco) +
+                              ': ' +
+                              endpoint.contextLength.toLocaleString()
+                            "
+                          >
+                            {{ context(endpoint.contextLength) }}
+                          </span>
+                          @if (region(endpoint.slug); as reg) {
+                            <span class="text-mist/40">{{ reg }}</span>
+                          }
+                        </div>
+                      </button>
+                    } @empty {
+                      @if (!modelsService.endpointsLoading()[model()]) {
+                        <p class="px-4 py-4 text-center text-sm text-mist/40">
+                          @if (modelsService.endpointsError()[model()]; as err) {
+                            {{ err }}
+                          } @else {
+                            {{ 'composer.noModels' | transloco }}
+                          }
+                        </p>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            }
           </div>
 
           <div class="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
@@ -1243,6 +1168,7 @@ export class Composer {
     };
   });
   protected readonly modelsService = inject(ModelsService);
+  protected readonly providers = inject(ProvidersService);
   private readonly editorDom = inject(ComposerEditorService);
 
   protected readonly reasoningOptions = REASONING_OPTIONS;
@@ -1258,7 +1184,6 @@ export class Composer {
   protected readonly modelOpen = signal(false);
   protected readonly providerOpen = signal(false);
   protected readonly modeOpen = signal(false);
-  protected readonly modelFilter = signal('');
   protected readonly mentionOpen = signal(false);
   protected readonly mentionIndex = signal(0);
   protected readonly mentionKind = signal<MentionKind | null>(null);
@@ -1314,6 +1239,15 @@ export class Composer {
     return session?.provider || this.providerForModel(this.model()) || 'auto';
   });
   protected readonly selectedModel = computed(() => this.modelsService.byId(this.model()));
+  /** Brand of the provider a direct (non-OpenRouter) model is sent to. */
+  protected readonly selectedProviderId = computed(() => providerIdOf(this.model()));
+  protected readonly selectedProviderName = computed(() =>
+    this.providers.name(this.selectedProviderId()),
+  );
+  /** Only OpenRouter routes a model to one of several upstream providers. */
+  protected readonly isOpenRouterModel = computed(
+    () => this.selectedProviderId() === OPENROUTER_PROVIDER,
+  );
   protected readonly modes = computed(() => this.settings.modes());
   protected readonly selectedMode = computed<Mode | undefined>(() => {
     const modes = this.settings.modes();
@@ -1323,9 +1257,6 @@ export class Composer {
       modes.find((mode) => mode.id === id) ?? modes.find((mode) => mode.id === 'coding') ?? modes[0]
     );
   });
-  protected readonly favoriteModels = computed(
-    () => this.settings.settings()?.favoriteModels ?? [],
-  );
   protected readonly endpoints = computed(() => this.modelsService.endpoints()[this.model()] ?? []);
   protected readonly supportsReasoning = computed(
     () => this.selectedModel()?.supportsReasoning ?? false,
@@ -1372,7 +1303,7 @@ export class Composer {
     return (
       !!session &&
       !this.handover() &&
-      this.settings.hasApiKey() &&
+      this.providers.anyConnected() &&
       !this.workspace.isStreaming(session.id) &&
       this.workspace.messagesFor(session.id).length > 0
     );
@@ -1412,21 +1343,6 @@ export class Composer {
   protected readonly suggestHandover = computed(
     () => (this.contextUsage()?.ratio ?? 0) >= METER_WARN_RATIO && this.canHandover(),
   );
-  protected readonly filteredModels = computed(() => {
-    const filter = this.modelFilter().trim().toLowerCase();
-    const favorites = new Set(this.favoriteModels());
-    const models = this.modelsService.models();
-    const filtered = filter
-      ? models.filter(
-          (model) =>
-            model.name.toLowerCase().includes(filter) || model.id.toLowerCase().includes(filter),
-        )
-      : models;
-    const sorted = [...filtered].sort(
-      (a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)),
-    );
-    return sorted.slice(0, 200);
-  });
   protected readonly providerLabel = computed(() => {
     const provider = this.provider();
     const endpoint = this.endpoints().find(
@@ -1448,7 +1364,7 @@ export class Composer {
     void this.modelsService.loadProviders();
     effect(() => {
       const model = this.model();
-      if (model) {
+      if (model && providerIdOf(model) === OPENROUTER_PROVIDER) {
         untracked(() => void this.modelsService.loadEndpoints(model));
       }
     });
@@ -1957,10 +1873,6 @@ export class Composer {
     });
   }
 
-  protected onFilter(event: Event): void {
-    this.modelFilter.set((event.target as HTMLInputElement).value);
-  }
-
   protected closeMenus(): void {
     if (this.modelOpen() || this.providerOpen() || this.modeOpen()) {
       this.modelOpen.set(false);
@@ -2337,7 +2249,7 @@ export class Composer {
       content,
       model,
       reasoningEffort: this.reasoning(),
-      provider: this.provider() === 'auto' ? null : this.provider(),
+      provider: !this.isOpenRouterModel() || this.provider() === 'auto' ? null : this.provider(),
       attachments,
       mentions,
     };
@@ -2404,18 +2316,6 @@ export class Composer {
       return;
     }
     await this.settings.patch({ providerByModel: { ...current, [modelId]: value } });
-  }
-
-  protected isFavorite(modelId: string): boolean {
-    return this.favoriteModels().includes(modelId);
-  }
-
-  protected async toggleFavorite(modelId: string): Promise<void> {
-    const current = this.favoriteModels();
-    const next = current.includes(modelId)
-      ? current.filter((id) => id !== modelId)
-      : [...current, modelId];
-    await this.settings.patch({ favoriteModels: next });
   }
 
   protected async selectReasoning(option: string): Promise<void> {
@@ -2568,19 +2468,8 @@ export class Composer {
     return `hsl(${140 - 140 * this.priceTier(endpoint)} 72% 50% / 0.16)`;
   }
 
-  protected price(value: number): string {
-    return `$${value.toFixed(2)}`;
-  }
-
-  protected context(value: number): string {
-    if (!value) {
-      return '—';
-    }
-    if (value >= 1_000_000) {
-      return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-    }
-    return value >= 1000 ? `${Math.round(value / 1000)}k` : `${value}`;
-  }
+  protected readonly price = formatModelPrice;
+  protected readonly context = formatModelContext;
 
   protected money(value: number): string {
     return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;

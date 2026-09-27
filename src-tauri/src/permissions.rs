@@ -3135,14 +3135,16 @@ fn symlink_escape(path: &Path, project_root: &Path, extra_folders: &[PathBuf]) -
             return None;
         }
         if probe.symlink_metadata().is_ok() {
-            let canonical = probe.canonicalize().ok()?;
-            if path_is_inside(&canonical, &root, &extras) {
+            // A link whose target does not exist yet leads to that target
+            // (writing through it creates it); one that cannot be followed
+            // at all counts as leading out.
+            let Some(mut real) = real_location(probe) else {
+                return Some(path.to_path_buf());
+            };
+            if path_is_inside(&real, &root, &extras) {
                 return None;
             }
-            let mut real = canonical;
-            for component in rest.iter().rev() {
-                real.push(component);
-            }
+            real.extend(rest.iter().rev());
             return Some(real);
         }
         if let Some(name) = probe.file_name() {
@@ -7014,19 +7016,57 @@ pub fn symlink_escapes(path: &Path, project_root: &Path, extra_folders: &[PathBu
         .iter()
         .map(|folder| folder.canonicalize().unwrap_or_else(|_| folder.clone()))
         .collect();
-    let mut probe = path;
-    loop {
-        if probe.exists() {
-            return match probe.canonicalize() {
-                Ok(canonical) => !path_is_inside(&canonical, &root, &extras),
-                Err(_) => false,
-            };
-        }
-        match probe.parent() {
-            Some(parent) => probe = parent,
-            None => return false,
-        }
+    // A path whose links cannot be followed counts as leading out.
+    real_location(path).is_none_or(|real| !path_is_inside(&real, &root, &extras))
+}
+
+/// How many symlinks [`real_location`] follows before giving up, like the
+/// operating system's own limit on link chains.
+const MAX_LINK_HOPS: usize = 40;
+
+/// Where `path` really leads: the canonical form of its deepest existing
+/// component with the rest appended. A symlink whose target does not exist
+/// (yet) makes `canonicalize` fail, but writing through it creates that
+/// target, so such a link is followed to where it points. `None` when a link
+/// cannot be followed (a loop, or an entry that cannot be resolved).
+fn real_location(path: &Path) -> Option<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..MAX_LINK_HOPS {
+        let mut probe = current.as_path();
+        let mut rest: Vec<&std::ffi::OsStr> = Vec::new();
+        let next = loop {
+            if probe.symlink_metadata().is_ok() {
+                if let Ok(mut real) = probe.canonicalize() {
+                    real.extend(rest.iter().rev());
+                    return Some(real);
+                }
+                let mut target = link_target(probe)?;
+                target.extend(rest.iter().rev());
+                break target;
+            }
+            match (probe.file_name(), probe.parent()) {
+                (Some(name), Some(parent)) => {
+                    rest.push(name);
+                    probe = parent;
+                }
+                // Nothing on the way exists, so there is nothing to resolve.
+                _ => return Some(current),
+            }
+        };
+        current = next;
     }
+    None
+}
+
+/// Where the symlink `link` points, resolved against the real folder that
+/// holds it, as the operating system resolves it. `None` for anything else.
+fn link_target(link: &Path) -> Option<PathBuf> {
+    let target = std::fs::read_link(link).ok()?;
+    if target.is_absolute() {
+        return Some(normalize(&target));
+    }
+    let folder = link.parent()?.canonicalize().ok()?;
+    Some(normalize(&folder.join(target)))
 }
 
 fn relative_path(path: &Path, project_root: &Path, extra_folders: &[PathBuf]) -> String {
@@ -9038,6 +9078,49 @@ mod hardening_tests {
                 &mut Vec::new()
             ),
             CommandDecision::Allow,
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlinks_lead_where_they_point() {
+        use std::os::unix::fs::symlink;
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("project");
+        let outside = fixture.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        // No target exists yet: writing through a link creates it.
+        symlink(outside.join("new.txt"), root.join("out")).unwrap();
+        symlink("new.txt", root.join("in")).unwrap();
+        symlink(root.join("out"), root.join("chain")).unwrap();
+        symlink(root.join("loop-b"), root.join("loop-a")).unwrap();
+        symlink(root.join("loop-a"), root.join("loop-b")).unwrap();
+
+        for name in ["out", "chain", "loop-a"] {
+            assert!(symlink_escapes(&root.join(name), &root, &[]), "{name}");
+        }
+        assert!(!symlink_escapes(&root.join("in"), &root, &[]));
+        assert!(!symlink_escapes(&root.join("missing.txt"), &root, &[]));
+
+        let none = WebsiteRules::default();
+        let real = outside.canonicalize().unwrap().display().to_string();
+        for command in ["touch out", "echo x > out", "touch chain"] {
+            let CommandDecision::Ask {
+                outside_folders, ..
+            } = run(&root, &root, command, &[], &none)
+            else {
+                panic!("{command} must ask");
+            };
+            assert!(
+                outside_folders.contains(&real),
+                "{command}: {outside_folders:?}"
+            );
+        }
+        assert!(run(&root, &root, "touch loop-a", &[], &none).is_ask());
+        assert_eq!(
+            run(&root, &root, "touch in", &[], &none),
+            CommandDecision::Allow
         );
     }
 

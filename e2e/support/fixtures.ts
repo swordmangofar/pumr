@@ -26,6 +26,7 @@ export function model(id = MODEL_ID, name = 'Claude Sonnet 5'): ModelInfo {
     inputModalities: ['text', 'image'],
     supportedParameters: ['tools', 'reasoning'],
     created: 1_700_000_000,
+    source: /^[^/:]+:/.test(id) ? id.slice(0, id.indexOf(':')) : 'openrouter',
   };
 }
 
@@ -113,7 +114,7 @@ export function seed(patch: Partial<FakeSeed> = {}): FakeSeed {
       soundsEnabled: false,
       keepAwake: false,
     },
-    hasApiKey: true,
+    apiKeys: ['openrouter'],
     projects: [],
     sessions: [],
     messages: [],

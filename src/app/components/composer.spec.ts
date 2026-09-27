@@ -50,7 +50,6 @@ describe('Composer keyboard', () => {
           useValue: {
             settings: signal(FALLBACK_SETTINGS),
             modes: signal([]),
-            hasApiKey: signal(true),
           },
         },
         {

@@ -222,6 +222,31 @@ pub struct ModelInfo {
     pub input_modalities: Vec<String>,
     pub supported_parameters: Vec<String>,
     pub created: i64,
+    /// Id of the provider that serves the model (see `providers::catalog`):
+    /// OpenRouter, or a direct provider whose model ids carry its prefix.
+    pub source: String,
+}
+
+/// A model provider and whether it is set up (see `providers::catalog`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatus {
+    pub id: String,
+    pub name: String,
+    /// A server on this machine that needs no key.
+    pub local: bool,
+    /// Offered before the long tail of providers when adding one.
+    pub popular: bool,
+    pub has_key: bool,
+    pub enabled: bool,
+    /// Enabled and, unless local, with a key: its models are listed.
+    pub connected: bool,
+    pub base_url: String,
+    pub default_base_url: String,
+    pub key_placeholder: String,
+    pub keys_url: String,
+    /// Why its models could not be listed the last time.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

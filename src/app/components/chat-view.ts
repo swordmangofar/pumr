@@ -12,6 +12,7 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import { formatTokenCount } from '../core/format';
 import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
+import { ProvidersService } from '../core/providers.service';
 import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { AttachmentPreview } from './attachment-preview';
@@ -99,7 +100,7 @@ import { TypedInput } from './typed-input';
   ],
   template: `
     <div class="flex h-full min-h-0 flex-col">
-      @if (tauri && !settings.hasApiKey()) {
+      @if (tauri && !providers.anyConnected()) {
         <div
           class="flex items-center justify-between gap-3 border-b border-accent/25 bg-accent/10 px-5 py-2.5 text-sm text-accent"
         >
@@ -245,25 +246,28 @@ import { TypedInput } from './typed-input';
                             [text]="entry.message.content"
                             buttonClass="mt-2 h-7 w-7 border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
                           />
-                          <button
-                            type="button"
-                            class="mt-2 flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
-                            [title]="'chat.revert' | transloco"
-                            (click)="revertTarget.set(entry.message)"
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              class="h-4 w-4"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
+                          <!-- A running turn keeps writing what a revert takes back. -->
+                          @if (!streaming()) {
+                            <button
+                              type="button"
+                              class="mt-2 flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-mist/60 opacity-0 transition group-hover:opacity-100 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+                              [title]="'chat.revert' | transloco"
+                              (click)="revertTarget.set(entry.message)"
                             >
-                              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                              <path d="M3 3v5h5" />
-                            </svg>
-                          </button>
+                              <svg
+                                viewBox="0 0 24 24"
+                                class="h-4 w-4"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                <path d="M3 3v5h5" />
+                              </svg>
+                            </button>
+                          }
                           <div
                             class="min-w-0 max-w-[85%] rounded-2xl rounded-tr-md border px-4 py-3 text-[15px] break-words whitespace-pre-wrap text-white"
                             [class]="
@@ -649,6 +653,7 @@ import { TypedInput } from './typed-input';
 export class ChatView {
   protected readonly workspace = inject(WorkspaceService);
   protected readonly settings = inject(SettingsService);
+  protected readonly providers = inject(ProvidersService);
   protected readonly tauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
   protected readonly revertTarget = signal<Message | null>(null);

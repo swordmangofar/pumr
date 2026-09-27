@@ -33,6 +33,7 @@ export const FALLBACK_SETTINGS: Settings = {
   extraFolders: [],
   settingsVersion: 1,
   openrouterBaseUrl: 'https://openrouter.ai/api/v1',
+  providers: {},
   defaultModel: null,
   handoverModel: null,
   defaultReasoningEffort: 'medium',

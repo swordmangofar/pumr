@@ -30,6 +30,11 @@ export class SettingsDraftService {
     this.saved.set(false);
   }
 
+  /** Takes over values that were saved elsewhere, without marking the draft dirty. */
+  adopt(values: Partial<Settings>): void {
+    this.draft.update((draft) => ({ ...draft, ...values }));
+  }
+
   selectTheme(id: string): void {
     this.patch('theme', id);
     this.theme.apply(id);
@@ -97,6 +102,8 @@ export class SettingsDraftService {
         deniedCommandRules: this.settingsService.settings()?.deniedCommandRules ?? [],
         allowedWebsites: this.settingsService.settings()?.allowedWebsites ?? [],
         deniedWebsites: this.settingsService.settings()?.deniedWebsites ?? [],
+        // Starred straight from the model pickers, outside the draft.
+        favoriteModels: this.settingsService.settings()?.favoriteModels ?? [],
       });
       this.dirty.set(false);
       this.saved.set(true);

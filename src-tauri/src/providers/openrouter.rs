@@ -1,86 +1,9 @@
+use super::{chat_completions, ChatChunk, ChatMessage, ChatOutcome, Pricing, ReasoningSetting};
 use crate::error::{AppError, Result};
 use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
-use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
-
-pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    /// Position of the stored message this was built from; never sent. Lets
-    /// the history put a pinned prompt back where it belongs.
-    #[serde(skip)]
-    pub seq: Option<i64>,
-}
-
-impl ChatMessage {
-    pub fn text(role: &str, content: impl Into<String>) -> Self {
-        Self {
-            role: role.to_string(),
-            content: Value::String(content.into()),
-            tool_calls: None,
-            tool_call_id: None,
-            seq: None,
-        }
-    }
-
-    pub fn parts(role: &str, content: Value) -> Self {
-        Self {
-            role: role.to_string(),
-            content,
-            tool_calls: None,
-            tool_call_id: None,
-            seq: None,
-        }
-    }
-
-    pub fn assistant_tool_calls(content: String, tool_calls: Value) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: Value::String(content),
-            tool_calls: Some(tool_calls),
-            tool_call_id: None,
-            seq: None,
-        }
-    }
-
-    pub fn tool_result(call_id: &str, content: impl Into<String>) -> Self {
-        Self {
-            role: "tool".to_string(),
-            content: Value::String(content.into()),
-            tool_calls: None,
-            tool_call_id: Some(call_id.to_string()),
-            seq: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ChatUsage {
-    pub prompt_tokens: i64,
-    pub completion_tokens: i64,
-    /// Prompt tokens served from the provider's cache (cache read).
-    pub cached_tokens: i64,
-    /// Prompt tokens written into the provider's cache this request. Providers
-    /// that do not report it (or do not support caching) leave this at zero.
-    pub cache_write_tokens: i64,
-    pub cost: f64,
-}
-
-#[derive(Debug, Clone)]
-pub enum ChatChunk {
-    Delta(String),
-    Reasoning(String),
-    Usage(ChatUsage),
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct ProviderRouting {
@@ -90,36 +13,12 @@ pub struct ProviderRouting {
     pub sort: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub enum ReasoningSetting {
-    Off,
-    Effort(String),
-    #[allow(dead_code)]
-    MaxTokens(i64),
-}
-
-impl ReasoningSetting {
-    pub fn from_effort(effort: &str) -> Option<Self> {
-        match effort {
-            "off" | "none" | "disabled" => Some(Self::Off),
-            "default" | "" => None,
-            other => Some(Self::Effort(other.to_string())),
-        }
+fn reasoning_json(setting: &ReasoningSetting) -> Value {
+    match setting {
+        ReasoningSetting::Off => json!({ "enabled": false }),
+        ReasoningSetting::Effort(effort) => json!({ "effort": effort }),
+        ReasoningSetting::MaxTokens(tokens) => json!({ "max_tokens": tokens }),
     }
-
-    fn to_json(&self) -> Value {
-        match self {
-            Self::Off => json!({ "enabled": false }),
-            Self::Effort(effort) => json!({ "effort": effort }),
-            Self::MaxTokens(tokens) => json!({ "max_tokens": tokens }),
-        }
-    }
-}
-
-pub struct ChatOutcome {
-    pub usage: ChatUsage,
-    pub cancelled: bool,
-    pub tool_calls: Vec<crate::models::ToolCallRecord>,
 }
 
 /// Credit limits reported by `GET /key` for the API key in use. Both fields are
@@ -201,6 +100,7 @@ impl OpenRouterClient {
                     input_modalities: modalities,
                     supported_parameters: parameters,
                     created: raw.created.unwrap_or(0),
+                    source: super::catalog::OPENROUTER.to_string(),
                 }
             })
             .collect();
@@ -330,7 +230,7 @@ impl OpenRouterClient {
         messages: Vec<ChatMessage>,
         reasoning: Option<ReasoningSetting>,
         routing: Option<ProviderRouting>,
-        fallback_pricing: Option<(f64, f64)>,
+        pricing: Option<Pricing>,
         tools: &[Value],
         prompt_caching: bool,
         cancel: CancellationToken,
@@ -347,7 +247,7 @@ impl OpenRouterClient {
             body["tool_choice"] = json!("auto");
         }
         if let Some(reasoning) = reasoning {
-            body["reasoning"] = reasoning.to_json();
+            body["reasoning"] = reasoning_json(&reasoning);
         }
         if let Some(routing) = routing {
             if !routing.order.is_empty() || routing.sort.is_some() {
@@ -366,236 +266,20 @@ impl OpenRouterClient {
 
         apply_prompt_cache(&mut body, prompt_caching);
 
-        let mut attempt = 0usize;
-        'attempt: loop {
-            attempt += 1;
-            let response = tokio::select! {
-                _ = cancel.cancelled() => return Ok(cancelled_outcome()),
-                response = self
-                    .request(reqwest::Method::POST, "/chat/completions", api_key)
-                    .json(&body)
-                    .send() => response,
-            };
-            let response = match response {
-                Ok(response) => response,
-                Err(error) => {
-                    if retryable_reqwest(&error) && attempt <= MAX_STREAM_RETRIES {
-                        if wait_backoff(attempt, None, &cancel).await {
-                            continue;
-                        }
-                        return Ok(cancelled_outcome());
-                    }
-                    return Err(error.into());
-                }
-            };
-
-            let status = response.status();
-            if !status.is_success() {
-                let status_code = status.as_u16();
-                let retry_after = parse_retry_after(response.headers());
-                let body_text = tokio::select! {
-                    _ = cancel.cancelled() => return Ok(cancelled_outcome()),
-                    text = response.text() => text.unwrap_or_default(),
-                };
-                if retryable_status(status_code) && attempt <= MAX_STREAM_RETRIES {
-                    if wait_backoff(attempt, retry_after, &cancel).await {
-                        continue;
-                    }
-                    return Ok(cancelled_outcome());
-                }
-                return Err(openrouter_error(status_code, &body_text));
-            }
-
-            let mut usage = ChatUsage::default();
-            // Raw bytes: a multi-byte character can be split across network
-            // chunks, so lines are only decoded once they are complete.
-            let mut buffer: Vec<u8> = Vec::new();
-            let mut cancelled = false;
-            let mut emitted = false;
-            let mut tool_calls: std::collections::BTreeMap<u64, crate::models::ToolCallRecord> =
-                std::collections::BTreeMap::new();
-            let mut stream = response.bytes_stream();
-
-            loop {
-                let next = tokio::select! {
-                    _ = cancel.cancelled() => {
-                        cancelled = true;
-                        break;
-                    }
-                    chunk = stream.next() => chunk,
-                };
-                let Some(chunk) = next else { break };
-                let bytes = match chunk {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        // A stream that already delivered content cannot be
-                        // safely replayed, so only a clean failure is retried.
-                        if !emitted && retryable_reqwest(&error) && attempt <= MAX_STREAM_RETRIES {
-                            if wait_backoff(attempt, None, &cancel).await {
-                                continue 'attempt;
-                            }
-                            return Ok(cancelled_outcome());
-                        }
-                        return Err(error.into());
-                    }
-                };
-                buffer.extend_from_slice(&bytes);
-                while let Some(line) = take_line(&mut buffer) {
-                    let Some(data) = line.strip_prefix("data:") else {
-                        continue;
-                    };
-                    let data = data.trim();
-                    if data.is_empty() {
-                        continue;
-                    }
-                    if data == "[DONE]" {
-                        continue;
-                    }
-                    let Ok(value) = serde_json::from_str::<Value>(data) else {
-                        continue;
-                    };
-                    if let Some(error) = value.get("error") {
-                        return Err(AppError::msg(describe_error(error)));
-                    }
-                    if let Some(delta) = value
-                        .get("choices")
-                        .and_then(Value::as_array)
-                        .and_then(|choices| choices.first())
-                        .and_then(|choice| choice.get("delta"))
-                    {
-                        if let Some(reasoning) = delta.get("reasoning").and_then(Value::as_str) {
-                            if !reasoning.is_empty() {
-                                emitted = true;
-                                on_chunk(ChatChunk::Reasoning(reasoning.to_string()));
-                            }
-                        } else if let Some(details) =
-                            delta.get("reasoning_details").and_then(Value::as_array)
-                        {
-                            for detail in details {
-                                if let Some(text) = detail.get("text").and_then(Value::as_str) {
-                                    if !text.is_empty() {
-                                        emitted = true;
-                                        on_chunk(ChatChunk::Reasoning(text.to_string()));
-                                    }
-                                }
-                            }
-                        }
-                        if let Some(content) = delta.get("content").and_then(Value::as_str) {
-                            if !content.is_empty() {
-                                emitted = true;
-                                on_chunk(ChatChunk::Delta(content.to_string()));
-                            }
-                        }
-                        if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
-                            for call in calls {
-                                let index = call.get("index").and_then(Value::as_u64).unwrap_or(0);
-                                let entry = tool_calls.entry(index).or_default();
-                                if let Some(id) = call.get("id").and_then(Value::as_str) {
-                                    if !id.is_empty() {
-                                        entry.id = id.to_string();
-                                    }
-                                }
-                                if let Some(function) = call.get("function") {
-                                    if let Some(name) = function.get("name").and_then(Value::as_str)
-                                    {
-                                        if !name.is_empty() {
-                                            entry.name = name.to_string();
-                                        }
-                                    }
-                                    if let Some(arguments) =
-                                        function.get("arguments").and_then(Value::as_str)
-                                    {
-                                        entry.arguments.push_str(arguments);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if let Some(raw_usage) = value.get("usage") {
-                        if !raw_usage.is_null() {
-                            usage = parse_usage(raw_usage, fallback_pricing);
-                            on_chunk(ChatChunk::Usage(usage.clone()));
-                        }
-                    }
-                }
-            }
-
-            return Ok(ChatOutcome {
-                usage,
-                cancelled,
-                tool_calls: tool_calls
-                    .into_iter()
-                    .map(|(index, mut call)| {
-                        if call.id.is_empty() {
-                            call.id = format!("call_{index}");
-                        }
-                        call
-                    })
-                    .collect(),
-            });
-        }
+        let send = |body: &Value| {
+            self.request(reqwest::Method::POST, "/chat/completions", api_key)
+                .json(body)
+        };
+        let request = chat_completions::Request {
+            send: &send,
+            label: "OpenRouter",
+            pricing,
+            optional_fields: &[],
+        };
+        Ok(chat_completions::stream(request, body, cancel, on_chunk)
+            .await?
+            .outcome)
     }
-}
-
-const MAX_STREAM_RETRIES: usize = 4;
-const RETRY_BASE_MS: u64 = 800;
-const RETRY_MAX_MS: u64 = 20_000;
-
-fn cancelled_outcome() -> ChatOutcome {
-    ChatOutcome {
-        usage: ChatUsage::default(),
-        cancelled: true,
-        tool_calls: Vec::new(),
-    }
-}
-
-fn retryable_status(status: u16) -> bool {
-    matches!(
-        status,
-        408 | 409 | 425 | 429 | 500 | 502 | 503 | 504 | 520 | 522 | 524
-    )
-}
-
-fn retryable_reqwest(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_request()
-}
-
-/// Parses a `Retry-After` header. Only the delay-in-seconds form is honoured;
-/// the HTTP-date form falls back to the computed backoff.
-fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-}
-
-/// Exponential backoff with a small jitter, capped and cancel-aware. Returns
-/// `true` when the wait completed and the caller should retry, `false` when the
-/// cancellation token fired first.
-async fn wait_backoff(
-    attempt: usize,
-    retry_after: Option<u64>,
-    cancel: &CancellationToken,
-) -> bool {
-    let exponent = attempt.saturating_sub(1).min(6) as u32;
-    let base = RETRY_BASE_MS
-        .saturating_mul(1u64 << exponent)
-        .min(RETRY_MAX_MS);
-    let delay_ms = retry_after
-        .map(|seconds| seconds.saturating_mul(1_000).min(RETRY_MAX_MS))
-        .unwrap_or(base)
-        .saturating_add(pseudo_jitter());
-    tokio::select! {
-        _ = cancel.cancelled() => false,
-        _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => true,
-    }
-}
-
-fn pseudo_jitter() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| u64::from(elapsed.subsec_nanos() % 250))
-        .unwrap_or(0)
 }
 
 /// Marks the stable prefix (the system message) as cacheable. OpenRouter
@@ -621,51 +305,6 @@ fn apply_prompt_cache(body: &mut Value, enabled: bool) {
     system["content"] = json!([
         { "type": "text", "text": text, "cache_control": { "type": "ephemeral" } }
     ]);
-}
-
-fn parse_usage(value: &Value, fallback_pricing: Option<(f64, f64)>) -> ChatUsage {
-    let prompt_tokens = value
-        .get("prompt_tokens")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let completion_tokens = value
-        .get("completion_tokens")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let cached_tokens = value
-        .get("prompt_tokens_details")
-        .and_then(|details| details.get("cached_tokens"))
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let cache_write_tokens = value
-        .get("prompt_tokens_details")
-        .and_then(|details| {
-            details
-                .get("cache_write_tokens")
-                .or_else(|| details.get("cache_creation_input_tokens"))
-        })
-        .and_then(Value::as_i64)
-        .or_else(|| {
-            value
-                .get("cache_creation_input_tokens")
-                .and_then(Value::as_i64)
-        })
-        .unwrap_or(0);
-    let mut cost = value.get("cost").and_then(Value::as_f64).unwrap_or(0.0);
-    if cost == 0.0 {
-        if let Some((prompt_price, completion_price)) = fallback_pricing {
-            let cached = cached_tokens.min(prompt_tokens);
-            cost = (prompt_tokens - cached) as f64 * prompt_price
-                + completion_tokens as f64 * completion_price;
-        }
-    }
-    ChatUsage {
-        prompt_tokens,
-        completion_tokens,
-        cached_tokens,
-        cache_write_tokens,
-        cost,
-    }
 }
 
 fn price_per_million(pricing: Option<&Value>, key: &str) -> f64 {
@@ -753,45 +392,8 @@ fn provider_icon_url(terms: Option<&str>, privacy: Option<&str>) -> Option<Strin
     ))
 }
 
-fn describe_error(error: &Value) -> String {
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown provider error");
-    let metadata = error.get("metadata");
-    let mut detail = message.to_string();
-    if let Some(error_type) = metadata
-        .and_then(|metadata| metadata.get("error_type"))
-        .and_then(Value::as_str)
-    {
-        detail.push_str(&format!(" [error_type: {error_type}]"));
-    }
-    if let Some(provider) = metadata
-        .and_then(|metadata| metadata.get("provider_name"))
-        .and_then(Value::as_str)
-    {
-        detail.push_str(&format!(" [provider: {provider}]"));
-    }
-    if let Some(raw) = metadata
-        .and_then(|metadata| metadata.get("raw"))
-        .and_then(Value::as_str)
-    {
-        detail.push_str(&format!(": {raw}"));
-    } else if let Some(provider_code) = metadata
-        .and_then(|metadata| metadata.get("provider_code"))
-        .and_then(Value::as_str)
-    {
-        detail.push_str(&format!(" [provider_code: {provider_code}]"));
-    }
-    detail
-}
-
 fn openrouter_error(status: u16, body: &str) -> AppError {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|value| value.get("error").map(describe_error))
-        .unwrap_or_else(|| body.chars().take(500).collect());
-    AppError::msg(format!("OpenRouter error ({status}): {message}"))
+    chat_completions::provider_error("OpenRouter", status, body)
 }
 
 #[derive(Deserialize)]
@@ -880,39 +482,9 @@ struct RawKey {
     limit_remaining: Option<f64>,
 }
 
-/// Removes the first complete line from `buffer` and decodes it. `\n` never
-/// occurs inside a multi-byte UTF-8 sequence, so a complete line never ends
-/// in the middle of a character.
-fn take_line(buffer: &mut Vec<u8>) -> Option<String> {
-    let index = buffer.iter().position(|byte| *byte == b'\n')?;
-    let line = String::from_utf8_lossy(&buffer[..index]).trim().to_string();
-    buffer.drain(..=index);
-    Some(line)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn take_line_keeps_characters_split_across_chunks() {
-        let text = "data: {\"content\":\"grüße 👋\"}\n";
-        let bytes = text.as_bytes();
-        // Split inside the "ü" and inside the emoji.
-        let first = text.find('ü').unwrap() + 1;
-        let second = text.find('👋').unwrap() + 2;
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(&bytes[..first]);
-        assert_eq!(take_line(&mut buffer), None);
-        buffer.extend_from_slice(&bytes[first..second]);
-        assert_eq!(take_line(&mut buffer), None);
-        buffer.extend_from_slice(&bytes[second..]);
-        assert_eq!(
-            take_line(&mut buffer).as_deref(),
-            Some("data: {\"content\":\"grüße 👋\"}")
-        );
-        assert!(buffer.is_empty());
-    }
 
     #[test]
     fn endpoint_metrics_accept_objects() {
@@ -966,26 +538,13 @@ mod tests {
         assert_eq!(parsed.data.limit_remaining, None);
     }
 
-    #[test]
-    fn provider_error_surfaces_metadata() {
-        let body = r#"{"error":{"code":400,"message":"Provider returned error","metadata":{"error_type":"context_length_exceeded","provider_name":"OpenAI","raw":"maximum context length is 128000 tokens"}}}"#;
-        let error = openrouter_error(400, body).to_string();
-        assert!(error.contains("Provider returned error"));
-        assert!(error.contains("error_type: context_length_exceeded"));
-        assert!(error.contains("provider: OpenAI"));
-        assert!(error.contains("maximum context length is 128000 tokens"));
-    }
-
-    #[test]
-    fn provider_error_falls_back_to_body() {
-        let error = openrouter_error(500, "upstream exploded").to_string();
-        assert!(error.contains("upstream exploded"));
-    }
-
     #[tokio::test]
     #[ignore = "requires network access to openrouter.ai"]
     async fn live_models_and_endpoints_parse() {
-        let client = OpenRouterClient::new(reqwest::Client::new(), DEFAULT_BASE_URL);
+        let client = OpenRouterClient::new(
+            reqwest::Client::new(),
+            crate::providers::catalog::openrouter().default_base_url,
+        );
         let models = client.list_models("").await.expect("model list");
         assert!(models.len() > 100, "expected a large model catalog");
 

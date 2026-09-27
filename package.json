@@ -8,6 +8,8 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "e2e": "playwright test",
+    "docs:screenshots": "playwright test -c playwright.docs.config.ts",
+    "docs:banners": "node scripts/banners.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "verify": "node scripts/verify.mjs",
     "tauri": "node scripts/tauri.mjs",

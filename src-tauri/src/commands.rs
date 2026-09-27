@@ -8,12 +8,13 @@ use crate::mentions;
 use crate::models::{
     Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine,
     GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus, Mention, Message,
-    ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, QuestionAnswer,
-    RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry,
-    WorkspaceFile,
+    ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, ProviderStatus,
+    QuestionAnswer, RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary, StreamEvent,
+    WorkspaceEntry, WorkspaceFile,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
-use crate::providers::openrouter::{ChatChunk, ChatMessage};
+use crate::providers::catalog::{self, ProviderDef, ProviderKind};
+use crate::providers::{compat, ChatChunk, ChatMessage, LlmClient};
 use crate::state::{AppState, SendClaim, SwappableSink};
 use crate::terminal::TerminalEvent;
 use crate::tools::ToolRuntime;
@@ -56,6 +57,12 @@ pub fn save_settings(
     settings: Settings,
 ) -> Result<Settings> {
     validate_base_url(&settings.model.openrouter_base_url).map_err(AppError::msg)?;
+    for provider in settings.model.providers.values() {
+        validate_base_url(&provider.base_url).map_err(AppError::msg)?;
+    }
+    let mut settings = settings;
+    keep_key_flags(&mut settings, &state.settings());
+    drop_default_providers(&mut settings);
     config::save_settings(&state.settings_path, &settings)?;
     state.power.set_enabled(settings.interface.keep_awake);
     crate::window::apply(&app, &settings.window);
@@ -109,21 +116,204 @@ pub fn suspend_window_shortcut(
     Ok(())
 }
 
-#[tauri::command]
-pub fn set_api_key(provider: String, key: String) -> Result<()> {
-    config::set_api_key(&provider, &key)
+fn keyed_provider(provider: &str) -> Result<&'static ProviderDef> {
+    catalog::provider(provider)
+        .filter(|def| def.needs_key())
+        .ok_or_else(|| AppError::msg(format!("Unknown provider: {provider}")))
 }
 
 #[tauri::command]
-pub fn delete_api_key(provider: String) -> Result<()> {
-    config::delete_api_key(&provider)
+pub fn set_api_key(state: State<'_, AppState>, provider: String, key: String) -> Result<()> {
+    let def = keyed_provider(&provider)?;
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(AppError::msg("The API key is empty."));
+    }
+    config::set_api_key(def.id, key)?;
+    mark_key_stored(&state, def, true)
+}
+
+#[tauri::command]
+pub fn delete_api_key(state: State<'_, AppState>, provider: String) -> Result<()> {
+    let def = keyed_provider(&provider)?;
+    config::delete_api_key(def.id)?;
+    mark_key_stored(&state, def, false)
+}
+
+/// Notes in the settings (never the key) which providers have a stored key,
+/// so only those are looked up in the keychain.
+fn mark_key_stored(state: &AppState, def: &ProviderDef, stored: bool) -> Result<()> {
+    let mut settings = state.settings();
+    let entry = settings
+        .model
+        .providers
+        .entry(def.id.to_string())
+        .or_default();
+    if entry.key_stored == stored {
+        return Ok(());
+    }
+    entry.key_stored = stored;
+    save_provider_settings(state, settings).map(|_| ())
+}
+
+fn save_provider_settings(state: &AppState, mut settings: Settings) -> Result<Settings> {
+    drop_default_providers(&mut settings);
+    config::save_settings(&state.settings_path, &settings)?;
+    state.set_settings(settings.clone());
+    Ok(settings)
+}
+
+/// Which providers have a stored key is only known here (`set_api_key`,
+/// `delete_api_key`), so settings saved from a page whose copy predates a
+/// key change must not flip it back.
+fn keep_key_flags(settings: &mut Settings, current: &Settings) {
+    let stored = |id: &str| {
+        current
+            .model
+            .providers
+            .get(id)
+            .is_some_and(|entry| entry.key_stored)
+    };
+    for (id, entry) in settings.model.providers.iter_mut() {
+        entry.key_stored = stored(id);
+    }
+    for id in current.model.providers.keys().filter(|id| stored(id)) {
+        settings
+            .model
+            .providers
+            .entry(id.clone())
+            .or_default()
+            .key_stored = true;
+    }
+}
+
+/// An entry with nothing but defaults says nothing; keep the file tidy.
+fn drop_default_providers(settings: &mut Settings) {
+    settings
+        .model
+        .providers
+        .retain(|_, entry| *entry != config::ProviderSettings::default());
 }
 
 #[tauri::command]
 pub fn has_api_key(provider: String) -> Result<bool> {
-    config::has_api_key(&provider)
+    config::has_api_key(keyed_provider(&provider)?.id)
 }
 
+/// Every provider pumr knows (built in and from models.dev), with whether it
+/// is set up and usable.
+#[tauri::command]
+pub async fn list_llm_providers(state: State<'_, AppState>) -> Result<Vec<ProviderStatus>> {
+    state.load_catalog().await;
+    let client = state.llm();
+    let errors = state.model_errors();
+    Ok(catalog::providers()
+        .into_iter()
+        .map(|def| {
+            let has_key = client.has_key(def);
+            let enabled = client.settings.provider_enabled(def);
+            ProviderStatus {
+                id: def.id.to_string(),
+                name: def.name.to_string(),
+                local: def.local,
+                popular: def.popular,
+                has_key,
+                enabled,
+                connected: enabled && (has_key || !def.needs_key()),
+                base_url: client.settings.provider_base_url(def),
+                default_base_url: def.default_base_url.to_string(),
+                key_placeholder: def.key_placeholder.to_string(),
+                keys_url: def.keys_url.to_string(),
+                error: errors.get(def.id).cloned(),
+            }
+        })
+        .collect())
+}
+
+/// Changes a provider's base URL (empty restores the default) or whether its
+/// models are listed. Saved right away, like its key.
+#[tauri::command]
+pub fn update_provider(
+    state: State<'_, AppState>,
+    provider: String,
+    base_url: Option<String>,
+    enabled: Option<bool>,
+) -> Result<Settings> {
+    let def = catalog::provider(&provider)
+        .ok_or_else(|| AppError::msg(format!("Unknown provider: {provider}")))?;
+    let mut settings = state.settings();
+    let model = &mut settings.model;
+    if let Some(url) = base_url {
+        let url = url.trim().trim_end_matches('/').to_string();
+        validate_base_url(&url).map_err(AppError::msg)?;
+        if def.kind == ProviderKind::OpenRouter {
+            model.openrouter_base_url = if url.is_empty() {
+                def.default_base_url.to_string()
+            } else {
+                url
+            };
+        } else {
+            model
+                .providers
+                .entry(def.id.to_string())
+                .or_default()
+                .base_url = url;
+        }
+    }
+    if let Some(enabled) = enabled {
+        model
+            .providers
+            .entry(def.id.to_string())
+            .or_default()
+            .enabled = Some(enabled);
+    }
+    save_provider_settings(&state, settings)
+}
+
+/// A direct provider's answer to "which models do you have".
+enum DirectModels {
+    /// Complete entries (Anthropic's list describes its models).
+    Ready(Vec<ModelInfo>),
+    /// Bare ids, completed from the OpenRouter catalog.
+    Listed(Vec<compat::ListedModel>),
+}
+
+async fn list_direct_models(client: &LlmClient, def: &'static ProviderDef) -> Result<DirectModels> {
+    let key = client.keys.get(def).unwrap_or_default();
+    let listed = match def.kind {
+        ProviderKind::Anthropic => client
+            .anthropic(def)
+            .list_models(&key)
+            .await
+            .map(DirectModels::Ready),
+        _ => client
+            .compat(def)
+            .list_models(&key)
+            .await
+            .map(DirectModels::Listed),
+    };
+    // Some compatible APIs have no model list; models.dev knows their models.
+    match listed {
+        Err(error) if is_missing_endpoint(&error) => {
+            match catalog::current().known_models(def.id) {
+                Some(known) if !known.is_empty() => {
+                    Ok(DirectModels::Listed(compat::listed_from_known(known)))
+                }
+                _ => Err(error),
+            }
+        }
+        other => other,
+    }
+}
+
+fn is_missing_endpoint(error: &AppError) -> bool {
+    let text = error.to_string();
+    text.contains("error (404)") || text.contains("error (405)")
+}
+
+/// The models of every connected provider: direct providers first, in
+/// catalog order, then OpenRouter's. One failing provider does not hide the
+/// others; its error is reported by `list_llm_providers`.
 #[tauri::command]
 pub async fn list_models(
     state: State<'_, AppState>,
@@ -134,8 +324,73 @@ pub async fn list_models(
             return Ok(models);
         }
     }
-    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?.unwrap_or_default();
-    let models = state.provider().list_models(&api_key).await?;
+    state.load_catalog().await;
+    let client = state.llm();
+    let connected: Vec<&'static ProviderDef> = catalog::providers()
+        .into_iter()
+        .filter(|def| client.connected(def))
+        .collect();
+    let openrouter = catalog::openrouter();
+    let openrouter_key = client.keys.get(openrouter).unwrap_or_default();
+    // The OpenRouter catalog is public and also prices the direct models.
+    let catalog_request = client.openrouter();
+    let (catalog_models, direct) = tokio::join!(
+        catalog_request.list_models(&openrouter_key),
+        futures_util::future::join_all(
+            connected
+                .iter()
+                .filter(|def| def.kind != ProviderKind::OpenRouter)
+                .map(|def| {
+                    let client = client.clone();
+                    async move { (*def, list_direct_models(&client, def).await) }
+                })
+        )
+    );
+
+    let mut errors = std::collections::HashMap::new();
+    let openrouter_connected = connected.iter().any(|def| def.id == openrouter.id);
+    let catalog_models = match catalog_models {
+        Ok(models) => models,
+        Err(error) => {
+            if openrouter_connected {
+                errors.insert(openrouter.id.to_string(), error.to_string());
+            }
+            Vec::new()
+        }
+    };
+    let known = catalog::current();
+    let mut models = Vec::new();
+    let mut meta = std::collections::HashMap::new();
+    for (def, result) in direct {
+        match result {
+            Ok(DirectModels::Ready(list)) => {
+                let (list, list_meta) =
+                    compat::complete_models(def, list, known.known_models(def.id));
+                models.extend(list);
+                meta.extend(list_meta);
+            }
+            Ok(DirectModels::Listed(list)) => {
+                let (list, list_meta) =
+                    compat::build_models(def, &list, &catalog_models, known.known_models(def.id));
+                models.extend(list);
+                meta.extend(list_meta);
+            }
+            Err(error) => {
+                errors.insert(def.id.to_string(), error.to_string());
+            }
+        }
+    }
+    if openrouter_connected {
+        models.extend(catalog_models);
+    }
+    state.set_direct_meta(meta);
+    let first_error = errors.values().next().cloned();
+    state.set_model_errors(errors);
+    if models.is_empty() {
+        if let Some(error) = first_error {
+            return Err(AppError::msg(error));
+        }
+    }
     state.cache_models(models.clone());
     Ok(models)
 }
@@ -146,12 +401,16 @@ pub async fn list_endpoints(
     model_id: String,
     refresh: Option<bool>,
 ) -> Result<Vec<EndpointInfo>> {
+    // Direct models have exactly one endpoint: their provider's API.
+    if catalog::provider_of(&model_id).kind != ProviderKind::OpenRouter {
+        return Ok(Vec::new());
+    }
     if !refresh.unwrap_or(false) {
         if let Some(endpoints) = state.cached_endpoints(&model_id) {
             return Ok(endpoints);
         }
     }
-    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?.unwrap_or_default();
+    let api_key = config::get_api_key(catalog::OPENROUTER)?.unwrap_or_default();
     let endpoints = state.provider().list_endpoints(&api_key, &model_id).await?;
     state.cache_endpoints(&model_id, endpoints.clone());
     Ok(endpoints)
@@ -167,7 +426,7 @@ pub async fn list_providers(
             return Ok(providers);
         }
     }
-    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?.unwrap_or_default();
+    let api_key = config::get_api_key(catalog::OPENROUTER)?.unwrap_or_default();
     let providers = state.provider().list_providers(&api_key).await?;
     state.cache_providers(providers.clone());
     Ok(providers)
@@ -1647,9 +1906,6 @@ pub async fn git_generate_commit_message(
     project_id: String,
 ) -> Result<String> {
     let settings = state.settings();
-    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?
-        .filter(|key| !key.trim().is_empty())
-        .ok_or_else(|| AppError::msg("No OpenRouter API key configured. Add one in Settings."))?;
     let model = settings
         .model
         .commit_message_model
@@ -1658,6 +1914,9 @@ pub async fn git_generate_commit_message(
         .or_else(|| settings.model.default_model.clone())
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AppError::msg("No model configured. Pick a default model in Settings."))?;
+    state.load_catalog().await;
+    let client = state.llm();
+    client.keys.require(&model)?;
     let summary = in_project(&state, &project_id, |root| {
         git::staged_summary(root, COMMIT_MESSAGE_MAX_PATCH_CHARS)
     })
@@ -1689,12 +1948,10 @@ pub async fn git_generate_commit_message(
                 entry.completion_price_per_m / 1_000_000.0,
             )
         });
-    let client = state.provider();
     let registration = state.register_cancel(&format!("commit-message:{project_id}"));
     let mut reply = String::new();
     let result = client
         .stream_chat(
-            &api_key,
             &model,
             vec![
                 ChatMessage::text("system", COMMIT_MESSAGE_SYSTEM_PROMPT),
@@ -2398,6 +2655,18 @@ fn revert_to_message_blocking(
     if message.role != "user" {
         return Err(AppError::msg("Only user prompts can be reverted to."));
     }
+    // A running turn would keep writing into the transcript and the files
+    // this takes back: the session's own, one driving it, or a subagent's.
+    let running = state.running_turns();
+    if state.running_turn_for(&message.session_id).is_some()
+        || state
+            .db
+            .session_tree(&message.session_id)?
+            .iter()
+            .any(|id| running.contains(id))
+    {
+        return Err(AppError::msg("Stop the running turn before reverting."));
+    }
     let session = state.db.get_session(&message.session_id)?;
     let mut restored = Vec::new();
     if restore_files {
@@ -2452,6 +2721,14 @@ pub async fn send_message(
         Some(SendClaim::First(publish)) => Some(publish),
         None => None,
     };
+    // Everything the turn emits goes through `events`, so `attach_session` can
+    // move the stream to a new channel if the webview reloads mid-turn. It is
+    // registered before anything slow (the catalog, the project snapshot), so
+    // Stop and a reloaded page reach the turn from its start.
+    let events = SwappableSink::new(channel_sink(channel));
+    let registration = state.register_turn(&session_id, events.clone());
+    let cancel = registration.token();
+    state.load_catalog().await;
     let result = run_send_message(
         state,
         session_id,
@@ -2462,9 +2739,12 @@ pub async fn send_message(
         attachments,
         mentions,
         resume,
-        channel,
+        events,
+        cancel,
     )
     .await;
+    // Unregisters this turn, but never a newer one that replaced it.
+    drop(registration);
     if let Some(publish) = publish {
         publish.send_replace(Some(match &result {
             Ok(message) => Ok(message.clone()),
@@ -2485,7 +2765,8 @@ async fn run_send_message(
     attachments: Option<Vec<Attachment>>,
     mentions: Option<Vec<Mention>>,
     resume: Option<bool>,
-    channel: Channel<RoutedEvent>,
+    events: SwappableSink,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Message> {
     let setup = prepare_turn(
         &state,
@@ -2499,16 +2780,8 @@ async fn run_send_message(
         resume,
     )?;
 
-    // Everything the turn emits goes through `events`, so `attach_session` can
-    // move the stream to a new channel if the webview reloads mid-turn.
-    let events = SwappableSink::new(channel_sink(channel));
     let sink = events.sink();
-
     let mode = config::resolve_mode(&setup.settings, setup.session.mode_id.as_deref());
-    // Dropped on every exit path below, unregistering this turn but never a
-    // newer one that replaced it.
-    let registration = state.register_turn(&session_id, events);
-    let cancel = registration.token();
     let file_ignore = Arc::new(FileIgnoreConfig::from_settings(&setup.settings));
 
     let (context, mcp_manager) = assemble_turn_context(
@@ -2585,7 +2858,6 @@ async fn run_send_message(
         .unwrap_or(0);
 
     let request = TurnRequest {
-        api_key: setup.api_key,
         model: model.clone(),
         reasoning_effort: setup.reasoning,
         provider: setup.selected_provider,
@@ -2643,7 +2915,7 @@ async fn run_send_message(
         broker: state.broker.clone(),
         questions: state.questions.clone(),
         permissions: state.permissions.clone(),
-        client: state.provider(),
+        client: setup.client,
         http: state.http.clone(),
         mcp: mcp_manager,
     };
@@ -2704,7 +2976,7 @@ async fn run_send_message(
 /// Everything `send_message` resolves before it starts assembling the turn.
 struct TurnSetup {
     settings: Settings,
-    api_key: String,
+    client: LlmClient,
     session: Session,
     project: Project,
     project_root: PathBuf,
@@ -2734,9 +3006,8 @@ fn prepare_turn(
     let mentions = mentions.unwrap_or_default();
     let resume = resume.unwrap_or(false);
     let settings = state.settings();
-    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?
-        .filter(|key| !key.trim().is_empty())
-        .ok_or_else(|| AppError::msg("No OpenRouter API key configured. Add one in Settings."))?;
+    let client = state.llm();
+    client.keys.require(model)?;
 
     let session = state.db.get_session(session_id)?;
     let project = state.db.get_project(&session.project_id)?;
@@ -2752,9 +3023,11 @@ fn prepare_turn(
         .filter(|value| !value.trim().is_empty())
         .or_else(|| session.reasoning_effort.clone())
         .or_else(|| settings.model.default_reasoning_effort.clone());
+    // Routing only means something on OpenRouter; direct models have none.
     let selected_provider = provider
         .filter(|value| !value.trim().is_empty())
         .or_else(|| session.provider.clone())
+        .filter(|_| catalog::provider_of(model).kind == ProviderKind::OpenRouter)
         .map(|value| resolve_provider_preset(state, model, value));
 
     let shadow = Arc::new(ShadowRepo::open(
@@ -2776,7 +3049,7 @@ fn prepare_turn(
 
     Ok(TurnSetup {
         settings,
-        api_key,
+        client,
         session,
         project,
         project_root,
@@ -3148,9 +3421,6 @@ const HANDOVER_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The curr
 #[tauri::command]
 pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -> Result<String> {
     let settings = state.settings();
-    let api_key = config::get_api_key(config::OPENROUTER_PROVIDER)?
-        .filter(|key| !key.trim().is_empty())
-        .ok_or_else(|| AppError::msg("No OpenRouter API key configured. Add one in Settings."))?;
 
     let session = state.db.get_session(&session_id)?;
     let messages = state.db.list_messages(&session_id)?;
@@ -3173,6 +3443,9 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
         .or_else(|| settings.model.default_model.clone())
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AppError::msg("No model configured. Pick a model before handing over."))?;
+    state.load_catalog().await;
+    let client = state.llm();
+    client.keys.require(&model)?;
 
     let fallback_pricing = state
         .cached_models()
@@ -3184,12 +3457,10 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
             )
         });
 
-    let client = state.provider();
     let registration = state.register_cancel(&format!("handover:{session_id}"));
     let mut summary = String::new();
     let result = client
         .stream_chat(
-            &api_key,
             &model,
             vec![
                 ChatMessage::text("system", HANDOVER_SYSTEM_PROMPT),
@@ -3346,5 +3617,88 @@ mod tests {
         ] {
             assert!(validate_base_url(url).is_err(), "{url}");
         }
+    }
+
+    #[test]
+    fn saved_settings_keep_which_provider_keys_are_stored() {
+        let entry = |base_url: &str, key_stored: bool| config::ProviderSettings {
+            base_url: base_url.to_string(),
+            enabled: None,
+            key_stored,
+        };
+        let mut current = Settings::default();
+        current
+            .model
+            .providers
+            .insert("togetherai".into(), entry("", true));
+        current
+            .model
+            .providers
+            .insert("mistral".into(), entry("https://eu.example/v1", false));
+        // Saved by a page that loaded its settings before the key changes.
+        let mut incoming = Settings::default();
+        incoming
+            .model
+            .providers
+            .insert("mistral".into(), entry("https://eu.example/v1", true));
+        incoming
+            .model
+            .providers
+            .insert("groq".into(), entry("", false));
+
+        keep_key_flags(&mut incoming, &current);
+        drop_default_providers(&mut incoming);
+
+        let providers = &incoming.model.providers;
+        assert_eq!(providers["togetherai"], entry("", true));
+        assert_eq!(providers["mistral"], entry("https://eu.example/v1", false));
+        assert!(!providers.contains_key("groq"));
+    }
+
+    fn app_state(dir: &Path) -> AppState {
+        let db = crate::db::Db::open(&dir.join("pumr.sqlite")).unwrap();
+        db.migrate().unwrap();
+        AppState::new(
+            db,
+            dir.to_path_buf(),
+            dir.join("settings.json"),
+            Settings::default(),
+        )
+    }
+
+    #[test]
+    fn reverting_is_refused_while_a_turn_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let project = state
+            .db
+            .upsert_project(&temp.path().display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let subagent = state
+            .db
+            .create_sub_session(&project.id, &chat.id, "subagent", None, None, None, None)
+            .unwrap();
+        let prompt = state
+            .db
+            .append_message(&chat.id, NewMessage::user("hi", "", None, &[], &[]))
+            .unwrap();
+        let sink = || SwappableSink::new(Arc::new(|_| {}));
+
+        // The chat's own turn, and one a subagent below it runs by itself.
+        for session_id in [&chat.id, &subagent.id] {
+            let turn = state.register_turn(session_id, sink());
+            let error = revert_to_message_blocking(&state, &prompt.id, false).unwrap_err();
+            assert!(error.to_string().contains("Stop the running turn"));
+            drop(turn);
+        }
+        assert_eq!(state.db.list_messages(&chat.id).unwrap().len(), 1);
+
+        let reverted = revert_to_message_blocking(&state, &prompt.id, false).unwrap();
+        assert_eq!(reverted.prompt, "hi");
+        assert!(state.db.list_messages(&chat.id).unwrap().is_empty());
     }
 }

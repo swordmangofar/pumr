@@ -16,7 +16,7 @@ test.describe('app shell', () => {
     expect(commands).toEqual(
       expect.arrayContaining([
         'get_settings',
-        'has_api_key',
+        'list_llm_providers',
         'list_models',
         'list_projects',
         'list_running_turns',
@@ -75,14 +75,15 @@ test.describe('app shell', () => {
       localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
       localStorage.setItem('pumr.activeTab', 'session-1');
     });
-    await app.start(seed({ hasApiKey: false, projects: [project()], sessions: [session()] }));
+    await app.start(seed({ apiKeys: [], projects: [project()], sessions: [session()] }));
 
-    const hint = page.getByText('Add your OpenRouter API key in Settings to start chatting.');
+    const hint = page.getByText('Connect a model provider in Settings to start chatting.');
     await expect(hint).toBeVisible();
     await page.getByRole('button', { name: 'Open settings' }).click();
 
     const dialog = page.getByRole('dialog');
-    const keyInput = dialog.getByPlaceholder('sk-or-v1-...');
+    const keyInput = dialog.locator('[data-provider-key="openrouter"]');
+    await expect(keyInput).toHaveAttribute('placeholder', 'sk-or-v1-...');
     await expect(keyInput).toBeFocused();
     await keyInput.fill('sk-or-v1-e2e-placeholder');
     await keyInput.press('Enter');

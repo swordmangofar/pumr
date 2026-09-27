@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="260" viewBox="0 0 1120 260" role="img" aria-label="TOOLS &amp; PERMISSIONS: Safe commands run. Risky ones ask.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#05070d"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="82%" cy="12%" r="75%">
+      <stop offset="0" stop-color="#f59e0b" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="10%" cy="110%" r="70%">
+      <stop offset="0" stop-color="#1e293b" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#1e293b" stop-opacity="0"/>
+    </radialGradient>
+    <!-- User space, so straight horizontal lines (zero-height boxes) still paint. -->
+    <linearGradient id="acc" gradientUnits="userSpaceOnUse" x1="420" y1="0" x2="1080" y2="0">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" fill-opacity="0.85"/>
+    </marker>
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.25" fill="#ffffff" fill-opacity="0.05"/>
+    </pattern>
+    <clipPath id="frame"><rect width="1120" height="260" rx="20"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="1120" height="260" fill="url(#bg)"/>
+    <rect width="1120" height="260" fill="url(#glow)"/>
+    <rect width="1120" height="260" fill="url(#glow2)"/>
+    <rect width="1120" height="260" fill="url(#dots)"/>
+    <text x="56" y="78" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#f59e0b" letter-spacing="2" font-weight="600">02 / TOOLS &amp; PERMISSIONS</text>
+    <text x="56" y="120" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="28" fill="#f8fafc" font-weight="700">Safe commands run.</text><text x="56" y="154" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="28" fill="#f8fafc" font-weight="700">Risky ones ask.</text>
+    <text x="56" y="192" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14" fill="#94a3b8">A Rust tool loop, sandboxed to the project</text>
+    <rect x="56" y="208" width="44" height="4" rx="2" fill="url(#bar)"/>
+    <rect x="440" y="40" width="136" height="26" rx="13" fill="#ffffff" fill-opacity="0.12" stroke="#e5e5e5" stroke-opacity="0.45"/><text x="508" y="57.32" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#e5e5e5" text-anchor="middle" font-weight="500">$ ls src/routes</text><path d="M 584 53 C 660 53, 660 130, 674 130" fill="none" stroke="url(#acc)" stroke-width="2" stroke-opacity="0.35" stroke-linecap="round" stroke-dasharray="2 6"/><path d="M 766 130 C 810 130, 810 53, 840 53" fill="none" stroke="#34d399" stroke-width="2" stroke-opacity="0.45" stroke-linecap="round" stroke-dasharray="2 6"/><circle cx="856" cy="53" r="9" fill="#34d399" fill-opacity="0.9"/><circle cx="856" cy="53" r="14" fill="none" stroke="#34d399" stroke-opacity="0.25"/><path d="M 852.5 53 l 3 3 l 6 -6.75" fill="none" stroke="#05070d" stroke-width="2.5" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/><text x="878" y="57" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12" fill="#34d399">runs</text><rect x="440" y="88" width="106" height="26" rx="13" fill="#ffffff" fill-opacity="0.12" stroke="#e5e5e5" stroke-opacity="0.45"/><text x="493" y="105.32" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#e5e5e5" text-anchor="middle" font-weight="500">$ pnpm test</text><path d="M 554 101 C 660 101, 660 130, 674 130" fill="none" stroke="url(#acc)" stroke-width="2" stroke-opacity="0.35" stroke-linecap="round" stroke-dasharray="2 6"/><path d="M 766 130 C 810 130, 810 101, 840 101" fill="none" stroke="#34d399" stroke-width="2" stroke-opacity="0.45" stroke-linecap="round" stroke-dasharray="2 6"/><circle cx="856" cy="101" r="9" fill="#34d399" fill-opacity="0.9"/><circle cx="856" cy="101" r="14" fill="none" stroke="#34d399" stroke-opacity="0.25"/><path d="M 852.5 101 l 3 3 l 6 -6.75" fill="none" stroke="#05070d" stroke-width="2.5" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/><text x="878" y="105" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12" fill="#34d399">runs</text><rect x="440" y="136" width="150" height="26" rx="13" fill="#ffffff" fill-opacity="0.12" stroke="#e5e5e5" stroke-opacity="0.45"/><text x="515" y="153.32" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#e5e5e5" text-anchor="middle" font-weight="500">$ git push origin</text><path d="M 598 149 C 660 149, 660 130, 674 130" fill="none" stroke="url(#acc)" stroke-width="2" stroke-opacity="0.35" stroke-linecap="round" stroke-dasharray="2 6"/><path d="M 766 130 C 810 130, 810 149, 840 149" fill="none" stroke="#f59e0b" stroke-width="2" stroke-opacity="0.45" stroke-linecap="round" stroke-dasharray="2 6"/><circle cx="856" cy="149" r="9" fill="#f59e0b" fill-opacity="0.9"/><circle cx="856" cy="149" r="14" fill="none" stroke="#f59e0b" stroke-opacity="0.25"/><text x="856" y="153" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#05070d" text-anchor="middle" font-weight="700">?</text><rect x="878" y="137" width="52" height="24" rx="12" fill="#f59e0b" fill-opacity="0.12" stroke="#f59e0b" stroke-opacity="0.45"/><text x="904" y="152.96" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#f59e0b" text-anchor="middle" font-weight="500">1 yes</text><rect x="936" y="137" width="73" height="24" rx="12" fill="#f59e0b" fill-opacity="0.12" stroke="#f59e0b" stroke-opacity="0.45"/><text x="972.5" y="152.96" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#f59e0b" text-anchor="middle" font-weight="500">2 always</text><rect x="1015" y="137" width="45" height="24" rx="12" fill="#fb7185" fill-opacity="0.12" stroke="#fb7185" stroke-opacity="0.45"/><text x="1037.5" y="152.96" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#fb7185" text-anchor="middle" font-weight="500">3 no</text><rect x="440" y="184" width="98" height="26" rx="13" fill="#ffffff" fill-opacity="0.12" stroke="#e5e5e5" stroke-opacity="0.45"/><text x="489" y="201.32" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#e5e5e5" text-anchor="middle" font-weight="500">$ rm -rf ~</text><path d="M 546 197 C 660 197, 660 130, 674 130" fill="none" stroke="url(#acc)" stroke-width="2" stroke-opacity="0.35" stroke-linecap="round" stroke-dasharray="2 6"/><path d="M 766 130 C 810 130, 810 197, 840 197" fill="none" stroke="#fb7185" stroke-width="2" stroke-opacity="0.45" stroke-linecap="round" stroke-dasharray="2 6"/><circle cx="856" cy="197" r="9" fill="#fb7185" fill-opacity="0.9"/><circle cx="856" cy="197" r="14" fill="none" stroke="#fb7185" stroke-opacity="0.25"/><path d="M 851 192 l 10 10 M 861 192 l -10 10" fill="none" stroke="#05070d" stroke-width="2.5" stroke-opacity="1" stroke-linecap="round"/><text x="878" y="201" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12" fill="#fb7185">blocked</text><path d="M 720 78 C 744 84, 756 86, 764 90 L 760 138 C 756 168, 738 182, 720 190 C 702 182, 684 168, 680 138 L 676 90 C 684 86, 696 84, 720 78 Z" fill="#f59e0b" fill-opacity="0.12" stroke="#f59e0b" stroke-opacity="0.75" stroke-width="2.5"/><path d="M 714.2 134 l 5.2 5.2 l 10.4 -11.700000000000001" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <rect x="0.5" y="0.5" width="1119" height="259" rx="20" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+</svg>

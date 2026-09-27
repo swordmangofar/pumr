@@ -121,6 +121,41 @@ export interface Message {
   durationMs: number;
 }
 
+/**
+ * Id of the provider that serves a model: `openrouter`, or a provider used
+ * directly with its own key (`anthropic`, `openai`, `ollama`, ...).
+ */
+export type ModelSource = string;
+
+/** A model provider and whether it is set up. */
+export interface ProviderStatus {
+  id: string;
+  name: string;
+  /** A server on this machine that needs no key. */
+  local: boolean;
+  /** Offered before the long tail of providers when adding one. */
+  popular: boolean;
+  hasKey: boolean;
+  enabled: boolean;
+  /** Enabled and, unless local, with a key: its models are listed. */
+  connected: boolean;
+  baseUrl: string;
+  defaultBaseUrl: string;
+  keyPlaceholder: string;
+  keysUrl: string;
+  /** Why its models could not be listed the last time. */
+  error: string | null;
+}
+
+export interface ProviderSettings {
+  /** Overrides the provider's base URL; empty uses its default. */
+  baseUrl: string;
+  /** Whether its models are listed; null is the default (on unless local). */
+  enabled: boolean | null;
+  /** Whether pumr stored a key for it (the key stays in the keychain). */
+  keyStored?: boolean;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -135,6 +170,7 @@ export interface ModelInfo {
   inputModalities: string[];
   supportedParameters: string[];
   created: number;
+  source: ModelSource;
 }
 
 export interface EndpointInfo {
@@ -259,6 +295,7 @@ export interface Settings {
   highContrast: boolean;
   extraFolders: string[];
   openrouterBaseUrl: string;
+  providers: Record<string, ProviderSettings>;
   defaultModel: string | null;
   handoverModel: string | null;
   defaultReasoningEffort: string | null;

@@ -1,8 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { TranslocoService } from '@jsverse/transloco';
-import { OPENROUTER_PROVIDER, api } from './api';
+import { api } from './api';
 import { BackgroundService } from './background.service';
 import { DefaultSystemPrompts, Mode, Settings } from './models';
+import { ProvidersService } from './providers.service';
 import { FALLBACK_SETTINGS } from './settings-defaults';
 import { SettingsService } from './settings.service';
 import { ThemeService } from './theme.service';
@@ -24,6 +25,7 @@ describe('SettingsService', () => {
   };
   let background: { apply: ReturnType<typeof vi.fn> };
   let zoom: { apply: ReturnType<typeof vi.fn> };
+  let providers: { load: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     setActiveLang = vi.fn();
@@ -36,12 +38,14 @@ describe('SettingsService', () => {
     };
     background = { apply: vi.fn() };
     zoom = { apply: vi.fn() };
+    providers = { load: vi.fn().mockResolvedValue(undefined) };
     TestBed.configureTestingModule({
       providers: [
         { provide: TranslocoService, useValue: { setActiveLang } },
         { provide: ThemeService, useValue: theme },
         { provide: BackgroundService, useValue: background },
         { provide: ZoomService, useValue: zoom },
+        { provide: ProvidersService, useValue: providers },
       ],
     });
     service = TestBed.inject(SettingsService);
@@ -74,7 +78,6 @@ describe('SettingsService', () => {
       vi.spyOn(api, 'getSettings').mockResolvedValue(loaded);
       vi.spyOn(api, 'getDefaultSystemPrompts').mockResolvedValue(defaults);
       vi.spyOn(api, 'getDefaultModes').mockResolvedValue(modes);
-      const hasApiKey = vi.spyOn(api, 'hasApiKey').mockResolvedValue(true);
 
       await service.init();
 
@@ -91,8 +94,7 @@ describe('SettingsService', () => {
       expect(service.originalSystemPrompts()).toEqual(defaults);
       expect(service.originalUserSystemPrompts()).toEqual(defaults.userSystemPrompts);
       expect(service.originalModes()).toEqual(modes);
-      expect(hasApiKey).toHaveBeenCalledWith(OPENROUTER_PROVIDER);
-      expect(service.hasApiKey()).toBe(true);
+      expect(providers.load).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to the current prompts when the defaults cannot be loaded', async () => {
@@ -103,7 +105,6 @@ describe('SettingsService', () => {
       });
       vi.spyOn(api, 'getSettings').mockResolvedValue(loaded);
       vi.spyOn(api, 'getDefaultSystemPrompts').mockRejectedValue('unavailable');
-      vi.spyOn(api, 'hasApiKey').mockResolvedValue(false);
 
       await service.init();
 
@@ -111,7 +112,6 @@ describe('SettingsService', () => {
       expect(service.originalSystemPrompts().securitySystemPrompt).toBe('sec');
       // An empty language falls back to English.
       expect(setActiveLang).toHaveBeenCalledWith('en');
-      expect(service.hasApiKey()).toBe(false);
     });
 
     it('records the error and still finishes loading when settings fail', async () => {
@@ -147,7 +147,6 @@ describe('SettingsService', () => {
     it('merges a patch into the current settings', async () => {
       vi.spyOn(api, 'getSettings').mockResolvedValue(settings({ contextMessageLimit: 10 }));
       vi.spyOn(api, 'getDefaultSystemPrompts').mockRejectedValue('skip');
-      vi.spyOn(api, 'hasApiKey').mockResolvedValue(true);
       await service.init();
       const saveSettings = vi.spyOn(api, 'saveSettings').mockImplementation(async (value) => value);
 
@@ -169,18 +168,10 @@ describe('SettingsService', () => {
     expect(service.settings()).toBe(first);
   });
 
-  it('re-checks the key after setting it and clears it after deleting it', async () => {
-    const setApiKey = vi.spyOn(api, 'setApiKey').mockResolvedValue();
-    const deleteApiKey = vi.spyOn(api, 'deleteApiKey').mockResolvedValue();
-    vi.spyOn(api, 'hasApiKey').mockResolvedValue(true);
-
-    await service.setApiKey('sk-or-test');
-    expect(setApiKey).toHaveBeenCalledWith(OPENROUTER_PROVIDER, 'sk-or-test');
-    expect(service.hasApiKey()).toBe(true);
-
-    await service.deleteApiKey();
-    expect(deleteApiKey).toHaveBeenCalledWith(OPENROUTER_PROVIDER);
-    expect(service.hasApiKey()).toBe(false);
+  it('adopts settings the backend already saved', () => {
+    const saved = settings({ providers: { ollama: { baseUrl: '', enabled: true } } });
+    service.adopt(saved);
+    expect(service.settings()).toBe(saved);
   });
 
   it('replaces the settings with the result of rule changes', async () => {

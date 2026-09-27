@@ -1,5 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { OPENROUTER_PROVIDER, providerIdOf } from '../core/api';
+import { ProvidersService } from '../core/providers.service';
 import { ModelsService } from '../core/models.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { WorkspaceEditorService } from '../core/workspace-editor.service';
@@ -150,7 +152,9 @@ import { SystemPromptsPanel } from './system-prompts-panel';
                 <div class="flex items-start justify-between gap-3">
                   <dt class="text-mist/40">{{ 'right.provider' | transloco }}</dt>
                   <dd class="text-right text-mist">
-                    @if (providerKey(active.provider); as key) {
+                    @if (directProvider(active.model); as direct) {
+                      {{ direct }}
+                    } @else if (providerKey(active.provider); as key) {
                       {{ key | transloco }}
                     } @else {
                       {{ active.provider || ('provider.auto' | transloco) }}
@@ -307,6 +311,14 @@ export class RightPanel {
 
   protected money(value: number): string {
     return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+  }
+
+  private readonly providers = inject(ProvidersService);
+
+  /** Name of the provider serving a direct (non-OpenRouter) model. */
+  protected directProvider(model: string | null): string | null {
+    const id = providerIdOf(model);
+    return id === OPENROUTER_PROVIDER ? null : this.providers.name(id);
   }
 
   protected providerKey(provider: string | null | undefined): string | null {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
 import { GitService } from './git.service';
 import {
+  Message,
   PermissionRequestEvent,
   QuestionRequestEvent,
   RoutedEvent,
@@ -236,5 +237,41 @@ describe('WorkspaceService session lifecycle', () => {
     await workspace.stop('subagent');
 
     expect(api.stopGeneration).toHaveBeenCalledWith('subagent');
+  });
+
+  it('shows a refused revert as the session error and keeps the transcript', async () => {
+    const prompt: Message = {
+      id: 'prompt',
+      sessionId: 'chat',
+      seq: 0,
+      role: 'user',
+      content: 'Fix the tests',
+      reasoning: '',
+      model: null,
+      provider: null,
+      cost: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cachedTokens: 0,
+      createdAt: 0,
+      toolCalls: [],
+      toolCallId: null,
+      toolName: null,
+      status: null,
+      changes: [],
+      baseCommit: null,
+      attachments: [],
+      mentions: [],
+      context: '',
+      durationMs: 0,
+    };
+    vi.spyOn(api, 'listMessages').mockResolvedValue([prompt]);
+    vi.spyOn(api, 'revertToMessage').mockRejectedValue('Stop the running turn before reverting.');
+    await workspace.loadMessages('chat', true);
+
+    expect(await workspace.revertToMessage('prompt', true)).toBeNull();
+
+    expect(workspace.errorFor('chat')).toBe('Stop the running turn before reverting.');
+    expect(workspace.messagesFor('chat')).toEqual([prompt]);
   });
 });

@@ -1,8 +1,9 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
-import { OPENROUTER_PROVIDER, api } from './api';
+import { api } from './api';
 import { BackgroundService } from './background.service';
 import { CommandRule, DefaultSystemPrompts, Mode, Settings, UserSystemPrompt } from './models';
+import { ProvidersService } from './providers.service';
 import { ThemeService } from './theme.service';
 import { ZoomService } from './zoom.service';
 
@@ -14,6 +15,7 @@ export class SettingsService {
   private readonly theme = inject(ThemeService);
   private readonly background = inject(BackgroundService);
   private readonly zoom = inject(ZoomService);
+  private readonly providers = inject(ProvidersService);
   private readonly state = signal<Settings | null>(null);
 
   constructor() {
@@ -21,7 +23,6 @@ export class SettingsService {
   }
 
   readonly settings = this.state.asReadonly();
-  readonly hasApiKey = signal(false);
   readonly loaded = signal(false);
   readonly error = signal<string | null>(null);
   readonly defaultSystemPrompt = computed(() => this.state()?.defaultSystemPrompt ?? '');
@@ -86,7 +87,7 @@ export class SettingsService {
         this.originalUserSystemPrompts.set(settings.userSystemPrompts);
       }
       this.transloco.setActiveLang(settings.language || 'en');
-      this.hasApiKey.set(await api.hasApiKey(OPENROUTER_PROVIDER));
+      await this.providers.load();
     } catch (error) {
       this.error.set(String(error));
     } finally {
@@ -123,14 +124,9 @@ export class SettingsService {
     }
   }
 
-  async setApiKey(key: string): Promise<void> {
-    await api.setApiKey(OPENROUTER_PROVIDER, key);
-    this.hasApiKey.set(await api.hasApiKey(OPENROUTER_PROVIDER));
-  }
-
-  async deleteApiKey(): Promise<void> {
-    await api.deleteApiKey(OPENROUTER_PROVIDER);
-    this.hasApiKey.set(false);
+  /** Takes over settings the backend already saved (e.g. a provider change). */
+  adopt(settings: Settings): void {
+    this.state.set(settings);
   }
 
   async addCommandRule(rule: CommandRule, allow: boolean): Promise<void> {

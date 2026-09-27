@@ -9,9 +9,9 @@ use crate::models::{
 };
 use crate::permissions::{FileIgnoreConfig, LivePermissions};
 use crate::processes::ProcessRegistry;
-use crate::providers::openrouter::{
-    ChatChunk, ChatMessage, ChatUsage, OpenRouterClient, ProviderRouting, ReasoningSetting,
-};
+use crate::providers::catalog::{self, ProviderKind};
+use crate::providers::openrouter::ProviderRouting;
+use crate::providers::{ChatChunk, ChatMessage, ChatUsage, LlmClient, ReasoningSetting};
 use crate::tools::{self, ToolOutcome, ToolRuntime};
 use serde_json::{json, Value};
 use std::future::Future;
@@ -24,7 +24,6 @@ const MAX_SUBAGENT_DEPTH: usize = 1;
 
 #[derive(Clone)]
 pub struct TurnRequest {
-    pub api_key: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
     pub provider: Option<String>,
@@ -77,7 +76,8 @@ pub struct TurnDeps {
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
     pub permissions: Arc<LivePermissions>,
-    pub client: OpenRouterClient,
+    /// Sends each request to the provider of its model, with that key.
+    pub client: LlmClient,
     pub http: reqwest::Client,
     pub mcp: Arc<McpManager>,
 }
@@ -187,7 +187,6 @@ pub async fn run_turn(
         let stream_result = deps
             .client
             .stream_chat(
-                &request.api_key,
                 &request.model,
                 history,
                 reasoning,
@@ -223,6 +222,10 @@ pub async fn run_turn(
             Ok(outcome) => {
                 if outcome.usage.prompt_tokens > 0 || outcome.usage.cost > 0.0 {
                     iteration_usage = outcome.usage;
+                }
+                if let Some(content) = &outcome.provider_content {
+                    deps.db
+                        .set_provider_content(&placeholder.id, &content.to_string())?;
                 }
                 tool_calls = outcome.tool_calls;
                 stream_cancelled = outcome.cancelled;
@@ -622,7 +625,6 @@ fn run_subagent<'a>(
         }
 
         let child_request = TurnRequest {
-            api_key: request.api_key.clone(),
             model: request.subagent_model.clone(),
             reasoning_effort: request.reasoning_effort.clone(),
             provider: request.provider.clone(),
@@ -753,6 +755,14 @@ async fn build_history(
         .and(latest_user.as_ref())
         .map(|message| message.id.clone());
 
+    // Turns a direct provider returned are replayed to it as they came back.
+    let mut provider_contents =
+        if catalog::provider_of(&request.model).kind == ProviderKind::Anthropic {
+            deps.db.provider_contents(&request.session_id)?
+        } else {
+            Default::default()
+        };
+
     let mut history = vec![ChatMessage::text("system", request.system_prompt.clone())];
     for message in messages {
         if pinned_id.as_deref() == Some(message.id.as_str()) {
@@ -795,6 +805,11 @@ async fn build_history(
         };
         if let Some(mut converted) = converted {
             converted.seq = Some(seq);
+            if converted.role == "assistant" {
+                converted.provider_content = provider_contents
+                    .remove(&message.id)
+                    .and_then(|content| serde_json::from_str(&content).ok());
+            }
             history.push(converted);
         }
     }
@@ -961,6 +976,7 @@ fn truncate_message(mut message: ChatMessage, budget: usize) -> ChatMessage {
         }
     }
     message.tool_calls = None;
+    message.provider_content = None;
     message
 }
 
@@ -1090,7 +1106,6 @@ async fn summarize_prefix(
     let result = deps
         .client
         .stream_chat(
-            &request.api_key,
             &request.compaction_model,
             vec![
                 ChatMessage::text("system", COMPACTION_SYSTEM_PROMPT),

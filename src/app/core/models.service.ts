@@ -17,10 +17,39 @@ export class ModelsService {
 
   readonly modelIds = computed(() => new Set(this.models().map((model) => model.id)));
 
-  async load(refresh = false): Promise<void> {
-    if (this.loading()) {
-      return;
+  private inFlight: Promise<void> | null = null;
+  private refreshAfter: Promise<void> | null = null;
+
+  /**
+   * Loads the model list; a load already running is shared. A refresh asked
+   * for meanwhile runs once more afterwards, since the running load may
+   * predate what changed (a key saved, a provider switched on).
+   */
+  load(refresh = false): Promise<void> {
+    if (!this.inFlight) {
+      return this.start(refresh);
     }
+    if (!refresh) {
+      return this.inFlight;
+    }
+    this.refreshAfter ??= this.inFlight.then(() => {
+      this.refreshAfter = null;
+      return this.load(true);
+    });
+    return this.refreshAfter;
+  }
+
+  private start(refresh: boolean): Promise<void> {
+    const run = this.fetch(refresh).finally(() => {
+      if (this.inFlight === run) {
+        this.inFlight = null;
+      }
+    });
+    this.inFlight = run;
+    return run;
+  }
+
+  private async fetch(refresh: boolean): Promise<void> {
     this.loading.set(true);
     this.error.set(null);
     try {

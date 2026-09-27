@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const KEYRING_SERVICE: &str = "pumr";
-pub const OPENROUTER_PROVIDER: &str = "openrouter";
 
 pub fn default_system_prompt() -> String {
     r#"You are pumr, an agentic coding assistant running locally on the user's machine.
@@ -417,10 +416,26 @@ impl Default for ModeSettings {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProviderSettings {
+    /// Overrides the provider's API base URL; empty uses its default.
+    pub base_url: String,
+    /// Whether the provider's models are listed. `None` is the default: on
+    /// for providers used with a key, off for local servers.
+    pub enabled: Option<bool>,
+    /// Set when pumr stored a key for this provider in the keychain, so only
+    /// those are looked up there (the key itself is never in this file).
+    pub key_stored: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelSettings {
     pub openrouter_base_url: String,
+    /// Per-provider options of the direct providers (Anthropic, OpenAI, ...),
+    /// keyed by provider id. OpenRouter keeps `openrouter_base_url`.
+    pub providers: std::collections::BTreeMap<String, ProviderSettings>,
     pub default_model: Option<String>,
     pub handover_model: Option<String>,
     pub default_reasoning_effort: Option<String>,
@@ -448,14 +463,18 @@ pub struct ModelSettings {
     /// the default model.
     pub commit_message_model: Option<String>,
     /// Whether to mark the stable prompt prefix as cacheable. OpenRouter
-    /// forwards the marker to providers that support prompt caching.
+    /// forwards the marker to providers that support prompt caching; direct
+    /// Anthropic requests also cache the conversation so far.
     pub prompt_caching: bool,
 }
 
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
-            openrouter_base_url: crate::providers::openrouter::DEFAULT_BASE_URL.to_string(),
+            openrouter_base_url: crate::providers::catalog::openrouter()
+                .default_base_url
+                .to_string(),
+            providers: std::collections::BTreeMap::new(),
             default_model: None,
             handover_model: None,
             default_reasoning_effort: Some("medium".to_string()),
@@ -470,6 +489,31 @@ impl Default for ModelSettings {
             commit_message_model: None,
             prompt_caching: true,
         }
+    }
+}
+
+impl ModelSettings {
+    pub fn provider_base_url(&self, def: &crate::providers::catalog::ProviderDef) -> String {
+        let configured = if def.id == crate::providers::catalog::OPENROUTER {
+            self.openrouter_base_url.trim()
+        } else {
+            self.providers
+                .get(def.id)
+                .map(|entry| entry.base_url.trim())
+                .unwrap_or("")
+        };
+        if configured.is_empty() {
+            def.default_base_url.to_string()
+        } else {
+            configured.to_string()
+        }
+    }
+
+    pub fn provider_enabled(&self, def: &crate::providers::catalog::ProviderDef) -> bool {
+        self.providers
+            .get(def.id)
+            .and_then(|entry| entry.enabled)
+            .unwrap_or(!def.local)
     }
 }
 

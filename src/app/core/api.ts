@@ -42,6 +42,7 @@ import {
   SendMessageArgs,
   Session,
   Settings,
+  ProviderStatus,
   SkillCandidate,
   SkillMarketplace,
   SkillRef,
@@ -54,6 +55,27 @@ import {
 } from './models';
 
 export const OPENROUTER_PROVIDER = 'openrouter';
+
+/**
+ * Id of the provider that serves `modelId`. Direct providers prefix their
+ * model ids (`openai:gpt-5`, `ollama:llama3.1:8b`); OpenRouter ids have a
+ * vendor path before any colon (`openai/gpt-5:free`) and no prefix.
+ */
+export function providerIdOf(modelId: string | null | undefined): string {
+  const colon = modelId?.indexOf(':') ?? -1;
+  if (!modelId || colon <= 0) {
+    return OPENROUTER_PROVIDER;
+  }
+  const prefix = modelId.slice(0, colon);
+  return prefix.includes('/') ? OPENROUTER_PROVIDER : prefix;
+}
+
+/** The id a provider knows `modelId` by, without pumr's provider prefix. */
+export function providerModelId(modelId: string): string {
+  return providerIdOf(modelId) === OPENROUTER_PROVIDER
+    ? modelId
+    : modelId.slice(modelId.indexOf(':') + 1);
+}
 
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -82,6 +104,9 @@ export const api = {
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
   hasApiKey: (provider: string) => invoke<boolean>('has_api_key', { provider }),
+  listLlmProviders: () => invoke<ProviderStatus[]>('list_llm_providers'),
+  updateProvider: (provider: string, change: { baseUrl?: string; enabled?: boolean }) =>
+    invoke<Settings>('update_provider', { provider, ...change }),
   listModels: (refresh = false) => invoke<ModelInfo[]>('list_models', { refresh }),
   listEndpoints: (modelId: string, refresh = false) =>
     invoke<EndpointInfo[]>('list_endpoints', { modelId, refresh }),

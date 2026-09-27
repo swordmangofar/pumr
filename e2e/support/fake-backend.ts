@@ -2,7 +2,9 @@ import type {
   FileChange,
   Message,
   ModelInfo,
+  PermissionRequestEvent,
   Project,
+  ProviderStatus,
   QuestionAnswer,
   QuestionItem,
   RoutedEvent,
@@ -28,7 +30,14 @@ export type FakeStep =
       changes?: FileChange[];
     }
   /** Asks to run `command` and waits for `resolve_permission`. */
-  | { kind: 'permission'; command: string; title?: string; justification?: string }
+  | {
+      kind: 'permission';
+      command: string;
+      title?: string;
+      justification?: string;
+      /** Overrides for the emitted request, such as `risk` or `scopeOptions`. */
+      request?: Partial<PermissionRequestEvent>;
+    }
   /** Asks one question and waits for `resolve_question`. */
   | { kind: 'question'; question: QuestionItem }
   /** Waits until the user presses Stop (`stop_generation`). */
@@ -41,7 +50,8 @@ export interface FakeReply {
 
 export interface FakeSeed {
   settings: Settings;
-  hasApiKey: boolean;
+  /** Providers with a stored API key (`openrouter`, `anthropic`, ...). */
+  apiKeys: string[];
   projects: Project[];
   sessions: Session[];
   messages: Message[];
@@ -66,7 +76,7 @@ export interface FakeHandle {
   unhandled: string[];
   state: {
     settings: Settings;
-    hasApiKey: boolean;
+    apiKeys: string[];
     projects: Project[];
     sessions: Session[];
     messages: Message[];
@@ -106,7 +116,7 @@ export function installFakeBackend(seed: FakeSeed): void {
 
   let state: FakeHandle['state'] = restored?.state ?? {
     settings: clone(seed.settings),
-    hasApiKey: seed.hasApiKey,
+    apiKeys: [...seed.apiKeys],
     projects: clone(seed.projects),
     sessions: clone(seed.sessions),
     messages: clone(seed.messages),
@@ -351,6 +361,7 @@ export function installFakeBackend(seed: FakeSeed): void {
               folders: [],
               hosts: [],
               justification: step.justification ?? null,
+              ...step.request,
             });
             const decision = await Promise.race([
               new Promise((resolve) => permissionWaiters.set(requestId, { sessionId, resolve })),
@@ -428,6 +439,138 @@ export function installFakeBackend(seed: FakeSeed): void {
 
   // --- command table --------------------------------------------------------
 
+  // Mirrors `providers::catalog` in the Rust backend.
+  const PROVIDERS = [
+    {
+      id: 'openrouter',
+      name: 'OpenRouter',
+      local: false,
+      url: 'https://openrouter.ai/api/v1',
+      key: 'sk-or-v1-...',
+      popular: true,
+    },
+    {
+      id: 'anthropic',
+      name: 'Anthropic',
+      local: false,
+      url: 'https://api.anthropic.com',
+      key: 'sk-ant-...',
+      popular: true,
+    },
+    {
+      id: 'openai',
+      name: 'OpenAI',
+      local: false,
+      url: 'https://api.openai.com/v1',
+      key: 'sk-...',
+      popular: true,
+    },
+    {
+      id: 'google',
+      name: 'Google Gemini',
+      local: false,
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      key: 'AIza...',
+      popular: true,
+    },
+    {
+      id: 'xai',
+      name: 'xAI',
+      local: false,
+      url: 'https://api.x.ai/v1',
+      key: 'xai-...',
+      popular: true,
+    },
+    {
+      id: 'mistral',
+      name: 'Mistral',
+      local: false,
+      url: 'https://api.mistral.ai/v1',
+      key: '',
+      popular: true,
+    },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      local: false,
+      url: 'https://api.deepseek.com/v1',
+      key: 'sk-...',
+      popular: true,
+    },
+    {
+      id: 'groq',
+      name: 'Groq',
+      local: false,
+      url: 'https://api.groq.com/openai/v1',
+      key: 'gsk_...',
+      popular: true,
+    },
+    {
+      id: 'ollama',
+      name: 'Ollama',
+      local: true,
+      url: 'http://localhost:11434/v1',
+      key: '',
+      popular: true,
+    },
+    {
+      id: 'lmstudio',
+      name: 'LM Studio',
+      local: true,
+      url: 'http://localhost:1234/v1',
+      key: '',
+      popular: true,
+    },
+    // A few of the providers the backend loads from models.dev.
+    {
+      id: 'togetherai',
+      name: 'Together AI',
+      local: false,
+      url: 'https://api.together.xyz/v1',
+      key: '',
+      popular: true,
+    },
+    {
+      id: 'minimax',
+      name: 'MiniMax (minimax.io)',
+      local: false,
+      url: 'https://api.minimax.io/anthropic/v1',
+      key: '',
+      popular: true,
+    },
+    {
+      id: 'wandb',
+      name: 'CoreWeave',
+      local: false,
+      url: 'https://api.inference.wandb.ai/v1',
+      key: '',
+      popular: false,
+    },
+  ];
+  type ProviderDef = (typeof PROVIDERS)[number];
+  const providerDef = (id: string): ProviderDef =>
+    PROVIDERS.find((def) => def.id === id) ?? { ...PROVIDERS[0], id, name: id };
+  const providerStatus = (def: ProviderDef): ProviderStatus => {
+    const config = state.settings.providers?.[def.id];
+    const hasKey = !def.local && state.apiKeys.includes(def.id);
+    const enabled = config?.enabled ?? !def.local;
+    const custom = def.id === 'openrouter' ? state.settings.openrouterBaseUrl : config?.baseUrl;
+    return {
+      id: def.id,
+      name: def.name,
+      local: def.local,
+      popular: def.popular,
+      hasKey,
+      enabled,
+      connected: enabled && (hasKey || def.local),
+      baseUrl: custom || def.url,
+      defaultBaseUrl: def.url,
+      keyPlaceholder: def.key,
+      keysUrl: `https://example.com/${def.id}/keys`,
+      error: null,
+    };
+  };
+
   const handlers: Record<string, (args: Args) => unknown> = {
     get_settings: () => clone(state.settings),
     save_settings: (args) => {
@@ -443,16 +586,39 @@ export function installFakeBackend(seed: FakeSeed): void {
     }),
     get_default_modes: () => clone(state.settings.modes),
     suspend_window_shortcut: () => null,
-    has_api_key: () => state.hasApiKey,
-    set_api_key: () => {
-      state.hasApiKey = true;
+    has_api_key: (args) => state.apiKeys.includes(String(args['provider'])),
+    set_api_key: (args) => {
+      const provider = String(args['provider']);
+      if (!state.apiKeys.includes(provider)) {
+        state.apiKeys.push(provider);
+      }
       return null;
     },
-    delete_api_key: () => {
-      state.hasApiKey = false;
+    delete_api_key: (args) => {
+      state.apiKeys = state.apiKeys.filter((provider) => provider !== String(args['provider']));
       return null;
     },
-    list_models: () => clone(seed.models),
+    list_llm_providers: () => PROVIDERS.map(providerStatus),
+    update_provider: (args) => {
+      const id = String(args['provider']);
+      const entry = { baseUrl: '', enabled: null as boolean | null };
+      const current = state.settings.providers?.[id] ?? entry;
+      const next = { ...current };
+      if (typeof args['baseUrl'] === 'string') {
+        next.baseUrl = args['baseUrl'];
+      }
+      if (typeof args['enabled'] === 'boolean') {
+        next.enabled = args['enabled'];
+      }
+      state.settings = {
+        ...state.settings,
+        providers: { ...state.settings.providers, [id]: next },
+      };
+      return clone(state.settings);
+    },
+    // Like the backend, only connected providers' models are listed.
+    list_models: () =>
+      clone(seed.models.filter((entry) => providerStatus(providerDef(entry.source)).connected)),
     list_endpoints: () => [],
     list_providers: () => [],
 

@@ -262,6 +262,7 @@ impl Db {
             ("mentions", "TEXT NOT NULL DEFAULT '[]'"),
             ("context", "TEXT NOT NULL DEFAULT ''"),
             ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ("provider_content", "TEXT NOT NULL DEFAULT ''"),
         ] {
             add_column_if_missing(&conn, "messages", column, definition)?;
         }
@@ -965,6 +966,35 @@ impl Db {
                 ],
             )?;
             self.message_by_id(conn, id)
+        })
+    }
+
+    /// Stores an assistant turn exactly as a direct provider returned it, so
+    /// it can be replayed to that provider (see `ChatMessage::provider_content`).
+    pub fn set_provider_content(&self, id: &str, content: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE messages SET provider_content = ?1 WHERE id = ?2",
+                params![content, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Stored provider content of a session's messages, by message id.
+    pub fn provider_contents(
+        &self,
+        session_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, provider_content FROM messages
+                  WHERE session_id = ?1 AND provider_content != ''",
+            )?;
+            let rows = statement.query_map(params![session_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
         })
     }
 

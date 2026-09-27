@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { TranslocoPipe } from '@jsverse/transloco';
 import { SettingsService } from '../../core/settings.service';
 import { SettingsDraftService } from './settings-draft.service';
+import { ModelSelect } from '../model-select';
 import { Toggle } from '../toggle';
 
 type OptionalPromptKey =
@@ -22,7 +23,7 @@ import { TypedInput } from '../typed-input';
 @Component({
   selector: 'app-agent-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe, Toggle],
+  imports: [TypedInput, TranslocoPipe, Toggle, ModelSelect],
   template: `
     <section>
       <label class="mb-2 block text-sm font-semibold text-white">
@@ -98,11 +99,12 @@ import { TypedInput } from '../typed-input';
         <label class="mb-2 block text-sm font-semibold text-white">{{
           'settings.subagentModel' | transloco
         }}</label>
-        <input
-          type="text"
-          class="field w-full rounded-xl px-4 py-2 text-sm"
-          [value]="draft.draft().subagentModel ?? ''"
-          (typedValue)="draft.patch('subagentModel', $event.trim() || null)"
+        <app-model-select
+          clearable
+          [value]="draft.draft().subagentModel"
+          [label]="'settings.subagentModel' | transloco"
+          [placeholder]="'settings.handoverModelPlaceholder' | transloco"
+          (valueChange)="draft.patch('subagentModel', $event)"
         />
         <p class="mt-2 text-xs leading-relaxed text-mist/30">
           {{ 'settings.subagentModelHint' | transloco }}
@@ -112,11 +114,12 @@ import { TypedInput } from '../typed-input';
         <label class="mb-2 block text-sm font-semibold text-white">{{
           'settings.compactionModel' | transloco
         }}</label>
-        <input
-          type="text"
-          class="field w-full rounded-xl px-4 py-2 text-sm"
-          [value]="draft.draft().compactionModel ?? ''"
-          (typedValue)="draft.patch('compactionModel', $event.trim() || null)"
+        <app-model-select
+          clearable
+          [value]="draft.draft().compactionModel"
+          [label]="'settings.compactionModel' | transloco"
+          [placeholder]="'settings.handoverModelPlaceholder' | transloco"
+          (valueChange)="draft.patch('compactionModel', $event)"
         />
         <p class="mt-2 text-xs leading-relaxed text-mist/30">
           {{ 'settings.compactionModelHint' | transloco }}

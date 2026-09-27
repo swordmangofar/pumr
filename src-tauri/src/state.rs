@@ -6,7 +6,10 @@ use crate::models::{EndpointInfo, EventSink, Message, ModelInfo, ProviderInfo, R
 use crate::permissions::{AutoApproveConfig, LivePermissions};
 use crate::power::PowerManager;
 use crate::processes::ProcessRegistry;
+use crate::providers::anthropic::CapsCache;
+use crate::providers::compat::{MetaCache, Quirks};
 use crate::providers::openrouter::{KeyInfo, OpenRouterClient};
+use crate::providers::{LlmClient, ProviderKeys};
 use crate::terminal::TerminalRegistry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -55,6 +58,16 @@ pub struct AppState {
     endpoints_cache: Mutex<HashMap<String, Vec<EndpointInfo>>>,
     providers_cache: Mutex<Option<Vec<ProviderInfo>>>,
     key_info_cache: Mutex<Option<(Instant, KeyInfo)>>,
+    /// Anthropic model capabilities, shared by every client built from here.
+    anthropic_caps: CapsCache,
+    /// Prices and capabilities of direct (non-OpenRouter) models.
+    direct_meta: MetaCache,
+    /// Request fields direct models turned out to reject.
+    quirks: Quirks,
+    /// Why a provider's models could not be listed, by provider id.
+    model_errors: Mutex<HashMap<String, String>>,
+    /// Keeps the provider catalog from models.dev loaded and current.
+    catalog_loader: crate::providers::models_dev::Loader,
 }
 
 impl AppState {
@@ -101,6 +114,11 @@ impl AppState {
             endpoints_cache: Mutex::new(HashMap::new()),
             providers_cache: Mutex::new(None),
             key_info_cache: Mutex::new(None),
+            anthropic_caps: CapsCache::default(),
+            direct_meta: MetaCache::default(),
+            quirks: Quirks::default(),
+            model_errors: Mutex::new(HashMap::new()),
+            catalog_loader: Default::default(),
         }
     }
 
@@ -121,8 +139,37 @@ impl AppState {
     }
 
     pub fn provider(&self) -> OpenRouterClient {
-        let settings = self.settings();
-        OpenRouterClient::new(self.http.clone(), settings.model.openrouter_base_url)
+        self.llm().openrouter()
+    }
+
+    /// A client for chat requests to any provider, with the current settings.
+    /// Keys are read from the keychain when a request first needs them.
+    pub fn llm(&self) -> LlmClient {
+        LlmClient {
+            http: self.http.clone(),
+            settings: self.settings().model,
+            keys: ProviderKeys::default(),
+            anthropic_caps: self.anthropic_caps.clone(),
+            direct_meta: self.direct_meta.clone(),
+            quirks: self.quirks.clone(),
+        }
+    }
+
+    /// Loads the models.dev provider catalog (cached, refreshed daily).
+    pub async fn load_catalog(&self) {
+        self.catalog_loader.ensure(&self.http, &self.data_dir).await;
+    }
+
+    pub fn set_direct_meta(&self, meta: HashMap<String, crate::providers::compat::DirectMeta>) {
+        *self.direct_meta.lock().unwrap() = meta;
+    }
+
+    pub fn model_errors(&self) -> HashMap<String, String> {
+        self.model_errors.lock().unwrap().clone()
+    }
+
+    pub fn set_model_errors(&self, errors: HashMap<String, String>) {
+        *self.model_errors.lock().unwrap() = errors;
     }
 
     pub fn cached_models(&self) -> Option<Vec<ModelInfo>> {
@@ -161,7 +208,7 @@ impl AppState {
                 return Some(info);
             }
         }
-        let api_key = crate::config::get_api_key(crate::config::OPENROUTER_PROVIDER)
+        let api_key = crate::config::get_api_key(crate::providers::catalog::OPENROUTER)
             .ok()
             .flatten()?;
         if api_key.trim().is_empty() {
@@ -214,25 +261,25 @@ impl AppState {
     /// runs inside the parent's turn. So the session's own turn is stopped
     /// when it has one, otherwise the nearest running ancestor's.
     pub fn stop_session(&self, session_id: &str) {
+        match self.running_turn_for(session_id) {
+            Some(key) => self.cancel(&key),
+            // Nothing is running; still answer anything left waiting on the user.
+            None => self.cancel(session_id),
+        }
+    }
+
+    /// The key of the turn that drives `session_id`: the session's own, else
+    /// the nearest running ancestor's. `None` when nothing runs for it.
+    pub fn running_turn_for(&self, session_id: &str) -> Option<String> {
         let mut key = session_id.to_string();
         let mut seen = HashSet::new();
         while seen.insert(key.clone()) {
             if self.cancels.is_registered(&key) {
-                self.cancel(&key);
-                return;
+                return Some(key);
             }
-            match self
-                .db
-                .get_session(&key)
-                .ok()
-                .and_then(|session| session.parent_session_id)
-            {
-                Some(parent) => key = parent,
-                None => break,
-            }
+            key = self.db.get_session(&key).ok()?.parent_session_id?;
         }
-        // Nothing is running; still answer anything left waiting on the user.
-        self.cancel(session_id);
+        None
     }
 
     /// Session ids of the chat turns that are still running.
@@ -751,6 +798,10 @@ mod tests {
         // A subagent without a turn of its own runs inside its ancestor's.
         state.stop_session(&nested.id);
         assert!(parent_turn.token().is_cancelled());
+        assert_eq!(state.running_turn_for(&nested.id), Some(chat.id.clone()));
+        drop(parent_turn);
+        assert_eq!(state.running_turn_for(&nested.id), None);
+        assert_eq!(state.running_turn_for(&chat.id), None);
     }
 
     #[tokio::test]

@@ -1377,9 +1377,18 @@ export class WorkspaceService {
     return this.gitService.loadInfo(projectId);
   }
 
-  async revertToMessage(messageId: string, restoreFiles: boolean): Promise<RevertResult> {
+  /** Reverts a session to one of its prompts; a failure shows as the session's error. */
+  async revertToMessage(messageId: string, restoreFiles: boolean): Promise<RevertResult | null> {
     const sessionId = this.sessionIdForMessage(messageId) ?? this.activeAgent()?.id ?? null;
-    const result = await api.revertToMessage(messageId, restoreFiles);
+    let result: RevertResult;
+    try {
+      result = await api.revertToMessage(messageId, restoreFiles);
+    } catch (error) {
+      if (sessionId) {
+        this.setError(sessionId, String(error));
+      }
+      return null;
+    }
     if (sessionId) {
       this.pruneMessagesFrom(sessionId, messageId);
       this.setLiveTools(sessionId, []);
