@@ -145,16 +145,22 @@ const CATEGORIES: Category[] = [
       (click)="close()"
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
         class="flex h-[82vh] w-[72rem] max-w-full flex-col overflow-hidden glass-pop rounded-2xl shadow-2xl"
         (click)="$event.stopPropagation()"
       >
         <header
           class="flex shrink-0 items-center justify-between border-b border-white/5 px-6 py-4"
         >
-          <h2 class="text-base font-semibold text-white">{{ 'settings.title' | transloco }}</h2>
+          <h2 id="settings-dialog-title" class="text-base font-semibold text-white">
+            {{ 'settings.title' | transloco }}
+          </h2>
           <button
             type="button"
             class="flex h-8 w-8 items-center justify-center rounded-full text-mist/50 transition-colors hover:bg-white/5 hover:text-white"
+            [attr.aria-label]="'settings.close' | transloco"
             (click)="close()"
           >
             ✕

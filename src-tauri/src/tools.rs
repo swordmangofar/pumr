@@ -2670,7 +2670,7 @@ fn ceil_char_boundary(text: &str, index: usize) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::permissions::AutoApproveConfig;
 
@@ -2968,7 +2968,7 @@ mod tests {
         assert_eq!(walk_relative(&root, &config), vec!["src/main.rs"]);
     }
 
-    fn test_runtime(project_root: &Path, app_data: &Path) -> ToolRuntime {
+    pub(crate) fn test_runtime(project_root: &Path, app_data: &Path) -> ToolRuntime {
         ToolRuntime {
             call_id: "call".to_string(),
             project_root: project_root.to_path_buf(),

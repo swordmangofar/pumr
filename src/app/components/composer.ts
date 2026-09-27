@@ -1753,7 +1753,7 @@ export class Composer {
     if (!editor) {
       return;
     }
-    this.insertAtCaret(editor, document.createElement('br'));
+    this.editorDom.insertLineBreak(editor);
     this.onEditorInput();
   }
 

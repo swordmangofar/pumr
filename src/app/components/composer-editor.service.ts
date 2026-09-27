@@ -279,6 +279,36 @@ export class ComposerEditorService {
     editor.appendChild(node);
   }
 
+  /**
+   * Inserts a line break at the caret. A `<br>` that ends the editor is not
+   * rendered as a line of its own and the browser moves the caret back in
+   * front of it, so the next typed text would join the previous line. A
+   * trailing placeholder `<br>` keeps the new line open; `serialize` trims it.
+   */
+  insertLineBreak(editor: HTMLElement): void {
+    const lineBreak = document.createElement('br');
+    this.insertAtCaret(editor, lineBreak);
+    if (this.endsEditor(lineBreak, editor)) {
+      // The caret sits right after `lineBreak`, so it stays before this one.
+      lineBreak.after(document.createElement('br'));
+    }
+  }
+
+  private endsEditor(node: Node, editor: HTMLElement): boolean {
+    for (
+      let current: Node | null = node;
+      current && current !== editor;
+      current = current.parentNode
+    ) {
+      for (let next = current.nextSibling; next; next = next.nextSibling) {
+        if (next.nodeType !== Node.TEXT_NODE || next.textContent) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   replaceQuery(text: string, query: MentionQuery, onDone: () => void): void {
     const value = query.node.textContent ?? '';
     const before = value.slice(0, query.start);

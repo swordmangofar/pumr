@@ -15,7 +15,7 @@ Rules:
    `bg, cs, da, de, el, es, et, fi, fr, ga, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, sk, sl, sv`.
    A key that exists in only some languages is considered incomplete.
 4. **Keep key parity.** Every locale must have exactly the same set of flat keys as
-   `en.json` (currently 931 keys). The language JSON files are flat-namespaced with
+   `en.json`. The language JSON files are flat-namespaced with
    identical nesting and ordering; insert new keys next to their English siblings.
 5. **Preserve interpolations exactly.** Placeholders such as `{{ count }}`,
    `{{ current }}`, `{{ total }}`, `{{ version }}`, `{{ progress }}` and `{{ names }}`
@@ -24,18 +24,11 @@ Rules:
 6. **Do not translate language names** in the language picker
    (`general-settings.ts`) — they stay in their own language.
 
-Before finishing any change that touches copy, verify parity. A quick check:
+Before finishing any change that touches copy, verify parity and placeholders
+(this also runs as the `i18n` gate of `pnpm verify`):
 
 ```bash
-node -e '
-const fs=require("fs");const d="public/i18n";
-const fl=o=>{const r={};(function f(x,p){for(const[k,v]of Object.entries(x)){const kk=p?p+"."+k:k;v&&typeof v==="object"?f(v,kk):r[kk]=v;}})(o,"");return r;};
-const en=Object.keys(fl(JSON.parse(fs.readFileSync(d+"/en.json"))));
-for(const f of fs.readdirSync(d).filter(f=>f.endsWith(".json")&&f!=="en.json")){
-  const k=Object.keys(fl(JSON.parse(fs.readFileSync(d+"/"+f))));
-  const miss=en.filter(x=>!k.includes(x)),extra=k.filter(x=>!en.includes(x));
-  console.log(f, miss.length||extra.length?"MISSING "+miss.length+" EXTRA "+extra.length:"OK");
-}'
+pnpm check:i18n
 ```
 
 ## Build & test
@@ -44,5 +37,24 @@ for(const f of fs.readdirSync(d).filter(f=>f.endsWith(".json")&&f!=="en.json")){
 export PATH="/opt/homebrew/bin:$PWD/node_modules/.bin:$PATH"
 cargo test --manifest-path src-tauri/Cargo.toml   # Rust backend
 ng build                                           # frontend typecheck/build
-ng test                                            # Vitest
+ng test                                            # Vitest unit/component specs
+pnpm e2e                                           # Playwright end-to-end
+pnpm verify                                        # every gate, as CI runs them
 ```
+
+### End-to-end tests (`e2e/`)
+
+Playwright drives the real Angular app in Chromium (`ng serve` on port 4310).
+The Rust backend is replaced by an in-page fake of Tauri's IPC,
+`e2e/support/fake-backend.ts`: it keeps projects, sessions, messages and
+settings in memory, streams scripted agent turns over real `Channel`s and can
+raise permission and question prompts (see `FakeStep`). First run needs
+`pnpm exec playwright install chromium`.
+
+- Seed data with the builders in `e2e/support/fixtures.ts` and start the app
+  with `app.start(seed({...}))`; assert on backend traffic with `app.backend`.
+- A test fails if the app calls a Tauri command the fake does not handle. When
+  you add a command to `api.ts`, add a handler to the fake's `handlers` table
+  that mirrors the Rust command.
+- `installFakeBackend` is serialised into the page, so it must stay
+  self-contained (no runtime imports; types are fine).

@@ -36,6 +36,9 @@ yarn-error.log
 /coverage
 /libpeerconnection.log
 testem.log
+/test-results
+/playwright-report
+/blob-report
 /typings
 __screenshots__/
 

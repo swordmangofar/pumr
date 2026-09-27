@@ -70,6 +70,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 
     @if (splashVisible()) {
       <div
+        data-testid="splash"
         class="fixed inset-0 z-50 flex items-center justify-center bg-ink transition-opacity duration-300"
         [class.pointer-events-none]="!booting()"
         [class.opacity-0]="!booting()"

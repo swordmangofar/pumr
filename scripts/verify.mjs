@@ -13,9 +13,13 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const gates = [
+  { name: 'i18n', cmd: 'node', args: ['scripts/check-i18n.mjs'] },
   { name: 'frontend-build', cmd: 'pnpm', args: ['exec', 'ng', 'build'] },
   { name: 'frontend-test', cmd: 'pnpm', args: ['exec', 'ng', 'test', '--watch=false'] },
   { name: 'rust-test', cmd: 'cargo', args: ['test', '--manifest-path', 'src-tauri/Cargo.toml'] },
+  { name: 'e2e-typecheck', cmd: 'pnpm', args: ['exec', 'tsc', '-p', 'e2e/tsconfig.json'] },
+  // Needs a Playwright browser once: pnpm exec playwright install chromium
+  { name: 'e2e', cmd: 'pnpm', args: ['exec', 'playwright', 'test'] },
 ];
 
 const argv = process.argv.slice(2);

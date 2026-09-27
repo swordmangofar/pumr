@@ -44,5 +44,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify (build, tests, backend)
+      - name: Install Playwright browser
+        run: pnpm exec playwright install chromium
+
+      - name: Verify (i18n, build, tests, backend, e2e)
         run: pnpm verify
