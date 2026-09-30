@@ -124,6 +124,45 @@ test.describe('chat', () => {
     expect(call.args['content']).toBe('first line\nsecond line');
   });
 
+  test('turns an image the webview pastes into the editor into an attachment', async ({
+    app,
+    page,
+  }) => {
+    const composer = await openSession(page, app.start);
+    await composer.click();
+    await page.keyboard.type('Look at this');
+
+    // WebKitGTK on X11: the paste event carries no files, items or text, and
+    // the webview's own paste then inserts the image as a full-size <img>.
+    await composer.evaluate(async (editor) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1920;
+      canvas.height = 1080;
+      canvas.getContext('2d')!.fillRect(0, 0, 1920, 1080);
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!)));
+      const paste = new ClipboardEvent('paste', {
+        clipboardData: new DataTransfer(),
+        bubbles: true,
+        cancelable: true,
+      });
+      if (editor.dispatchEvent(paste)) {
+        document.execCommand('insertHTML', false, `<img src="${URL.createObjectURL(blob)}">`);
+      }
+    });
+
+    const chip = page.locator('app-composer').getByText('image.png');
+    await expect(chip).toBeVisible();
+    await expect(composer.locator('img')).toHaveCount(0);
+
+    await page.keyboard.press('Enter');
+    const call = await app.backend.waitForCall('send_message');
+    expect(call.args['content']).toBe('Look at this');
+    const attachments = call.args['attachments'] as { mimeType: string; kind: string }[];
+    expect(attachments).toEqual([
+      expect.objectContaining({ kind: 'image', mimeType: 'image/png' }),
+    ]);
+  });
+
   test('does not send an empty prompt', async ({ app, page }) => {
     const composer = await openSession(page, app.start);
 

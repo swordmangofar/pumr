@@ -3350,7 +3350,9 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "gdkx11",
  "globset",
+ "gtk",
  "ignore",
  "keepawake",
  "keyring",
@@ -3377,6 +3379,7 @@ dependencies = [
  "tokio-util",
  "toml 1.1.6+spec-1.1.0",
  "uuid",
+ "webkit2gtk-sys",
 ]
 
 [[package]]

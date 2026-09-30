@@ -116,6 +116,13 @@ pub fn suspend_window_shortcut(
     Ok(())
 }
 
+/// Applies an interface zoom to the webview, e.g. while previewing it in the
+/// settings. The backend applies it so platform corrections stay in one place.
+#[tauri::command]
+pub fn set_interface_zoom(app: tauri::AppHandle, zoom: f64) {
+    crate::window::apply_zoom(&app, zoom);
+}
+
 fn keyed_provider(provider: &str) -> Result<&'static ProviderDef> {
     catalog::provider(provider)
         .filter(|def| def.needs_key())

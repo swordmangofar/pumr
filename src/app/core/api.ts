@@ -101,6 +101,7 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   suspendWindowShortcut: (suspended: boolean) =>
     invoke<void>('suspend_window_shortcut', { suspended }),
+  setInterfaceZoom: (zoom: number) => invoke<void>('set_interface_zoom', { zoom }),
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
   hasApiKey: (provider: string) => invoke<boolean>('has_api_key', { provider }),

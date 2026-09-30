@@ -69,6 +69,8 @@ pub fn run() {
                 commands::allow_asset_path(app.handle(), path);
             }
             window::apply(app.handle(), &settings.window);
+            #[cfg(target_os = "linux")]
+            window::follow_desktop_dpi(app.handle());
             let state = state::AppState::new(db, data_dir, settings_path, settings);
             // Each chat gets a scratch folder here (see `LivePermissions`);
             // ones whose chat is gone are cleared on start.
@@ -88,6 +90,7 @@ pub fn run() {
             commands::get_default_modes,
             commands::save_settings,
             commands::suspend_window_shortcut,
+            commands::set_interface_zoom,
             commands::set_api_key,
             commands::delete_api_key,
             commands::has_api_key,

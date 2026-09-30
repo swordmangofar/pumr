@@ -586,6 +586,7 @@ export function installFakeBackend(seed: FakeSeed): void {
     }),
     get_default_modes: () => clone(state.settings.modes),
     suspend_window_shortcut: () => null,
+    set_interface_zoom: () => null,
     has_api_key: (args) => state.apiKeys.includes(String(args['provider'])),
     set_api_key: (args) => {
       const provider = String(args['provider']);

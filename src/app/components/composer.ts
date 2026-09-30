@@ -136,6 +136,26 @@ const PROVIDER_PRESETS = [
   },
 ] as const;
 
+/**
+ * Re-encodes an image element as a PNG file. Pasted images arrive as blob:
+ * URLs that the CSP's connect-src keeps fetch() from reading, but a
+ * same-origin image can always be drawn. Resolves to null for an image that
+ * fails to load or would taint the canvas.
+ */
+async function imageToFile(image: HTMLImageElement): Promise<File | null> {
+  try {
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    canvas.getContext('2d')?.drawImage(image, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    return blob ? new File([blob], 'image.png', { type: 'image/png' }) : null;
+  } catch {
+    return null;
+  }
+}
+
 @Component({
   selector: 'app-composer',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -1711,7 +1731,31 @@ export class Composer {
         this.insertAtCaret(editor, document.createTextNode(text));
       }
       this.onEditorInput();
+      return;
     }
+    // WebKitGTK (Linux) hands a copied image to the page neither as a file nor
+    // as a clipboard item; its only way in is the browser's own paste, which
+    // drops it into the editor as a full-size <img> that is never sent. Let
+    // that paste happen, then move the image into the attachments.
+    setTimeout(() => this.adoptPastedImages());
+  }
+
+  /** Turns images pasted straight into the editor into attachments. */
+  private adoptPastedImages(): void {
+    const editor = this.editorRef()?.nativeElement;
+    const images = editor ? Array.from(editor.querySelectorAll('img')) : [];
+    if (images.length === 0) {
+      return;
+    }
+    images.forEach((image) => image.remove());
+    this.onEditorInput();
+    void Promise.all(images.map((image) => imageToFile(image))).then(async (files) => {
+      const pasted = files.filter((file): file is File => file !== null);
+      await this.addFiles(pasted);
+      if (pasted.length < images.length) {
+        this.attachmentError.set('composer.attachmentUnsupported');
+      }
+    });
   }
 
   protected onDragOver(event: DragEvent): void {

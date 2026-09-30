@@ -55,6 +55,9 @@ keyring = { version = "3.6.3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6.3", features = ["sync-secret-service", "crypto-rust"] }
+gtk = "0.18"
+gdkx11 = "0.18"
+webkit2gtk-sys = "2.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
