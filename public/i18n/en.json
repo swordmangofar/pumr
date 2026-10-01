@@ -297,6 +297,7 @@
     "openSettings": "Open settings",
     "error": "Error",
     "retry": "Retry",
+    "exportDebugLog": "Export debug log",
     "revert": "Revert to this prompt",
     "revertTitle": "Revert conversation to this prompt?",
     "revertDetail": "All messages after this prompt are removed and the prompt is placed back into your input box. You can also restore the files to the state before this prompt ran.",
@@ -442,6 +443,61 @@
         "timeout": "Timed out",
         "cancelled": "Cancelled"
       }
+    },
+    "export": {
+      "button": "Export log",
+      "buttonHint": "Save this chat's debug log with your OS and app version to analyse errors with an AI agent",
+      "title": "Export debug log",
+      "description": "Saves this chat as a Markdown file: your OS, app and WebView versions, every step with its errors, and the permission log. Give it to an AI agent of your choice to find out what went wrong.",
+      "warningTitle": "The log can contain sensitive information",
+      "warning": "Your prompts, the model's replies and reasoning, tool arguments and outputs (such as file contents and command output), system prompts, project rules and file paths are in the file as plain text. They can include source code, secrets, names or email addresses. Check the log before you share it.",
+      "anonymize": {
+        "title": "Anonymize with AI (optional)",
+        "description": "A model of your choice looks for personal and secret data such as names, user names, email addresses, API keys, tokens, passwords, IP addresses and private URLs, which are then replaced with placeholders such as [EMAIL_1]. Your home folder becomes ~. The log is sent to the model's provider; pick a local model to keep it on this computer.",
+        "model": "Model for anonymizing",
+        "pickModel": "Pick a model",
+        "run": "Anonymize",
+        "again": "Anonymize again",
+        "progress": "Scanning part {{ current }} of {{ total }}…",
+        "found": "{{ count }} values will be replaced. Untick any that should stay.",
+        "none": "The model found no personal or secret data.",
+        "undo": "Discard",
+        "review": "Automatic anonymization can miss things. Check the preview before you share the log."
+      },
+      "kinds": {
+        "home": "Home folder",
+        "name": "Name",
+        "username": "User name",
+        "email": "Email",
+        "phone": "Phone",
+        "address": "Address",
+        "secret": "Secret",
+        "ip": "IP address",
+        "url": "URL",
+        "path": "Path",
+        "org": "Organization",
+        "other": "Other"
+      },
+      "preview": "Preview",
+      "previewAnonymized": "Preview (anonymized)",
+      "search": {
+        "placeholder": "Search the log",
+        "matches": "{{ current }} of {{ total }}",
+        "none": "No matches",
+        "lines": "{{ count }} lines",
+        "previous": "Previous match",
+        "next": "Next match"
+      },
+      "changes": {
+        "tab": "Changes ({{ count }})",
+        "description": "Every line the anonymization changes: the original in red, the anonymized version in green. The original values are only shown here and are not saved."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Copy log",
+      "save": "Save log…",
+      "saveAnonymized": "Save anonymized log…",
+      "saveDialogTitle": "Save debug log",
+      "saved": "Saved to {{ path }}"
     }
   },
   "agents": {

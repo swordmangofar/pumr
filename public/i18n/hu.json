@@ -297,6 +297,7 @@
     "openSettings": "Beállítások megnyitása",
     "error": "Hiba",
     "retry": "Újrapróbálás",
+    "exportDebugLog": "Hibakeresési napló exportálása",
     "revert": "Visszaállás erre a promptra",
     "revertTitle": "Visszaállítja a beszélgetést erre a promptra?",
     "revertDetail": "A prompt utáni összes üzenet eltávolításra kerül, és a prompt visszakerül a beviteli mezőbe. A fájlokat is visszaállíthatja a prompt futtatása előtti állapotra.",
@@ -442,6 +443,61 @@
         "timeout": "Időtúllépés",
         "cancelled": "Megszakítva"
       }
+    },
+    "export": {
+      "button": "Napló exportálása",
+      "buttonHint": "A csevegés hibakeresési naplójának mentése az operációs rendszer és az alkalmazás verziójával, a hibák MI-ügynökkel történő elemzéséhez",
+      "title": "Hibakeresési napló exportálása",
+      "description": "Markdown-fájlba menti ezt a csevegést: az operációs rendszer, az alkalmazás és a WebView verzióját, minden lépést a hibáival együtt, valamint az engedélynaplót. Adja át egy tetszőleges MI-ügynöknek, hogy kiderítse, mi romlott el.",
+      "warningTitle": "A napló érzékeny adatokat tartalmazhat",
+      "warning": "A promptjai, a modell válaszai és gondolatmenete, az eszközök argumentumai és kimenetei (például fájltartalmak és parancskimenetek), a rendszerpromptok, a projektszabályok és a fájlelérési utak egyszerű szövegként szerepelnek a fájlban. Tartalmazhatnak forráskódot, titkos adatokat, neveket vagy e-mail-címeket. Megosztás előtt ellenőrizze a naplót.",
+      "anonymize": {
+        "title": "Anonimizálás MI-vel (nem kötelező)",
+        "description": "Egy tetszőleges modell személyes és titkos adatokat keres, például neveket, felhasználóneveket, e-mail-címeket, API-kulcsokat, tokeneket, jelszavakat, IP-címeket és privát URL-eket, amelyeket aztán helyőrzők, például [EMAIL_1] váltanak fel. A saját mappájából ~ lesz. A napló a modell szolgáltatójához kerül; válasszon helyi modellt, ha a gépen szeretné tartani.",
+        "model": "Modell az anonimizáláshoz",
+        "pickModel": "Modell kiválasztása",
+        "run": "Anonimizálás",
+        "again": "Anonimizálás újra",
+        "progress": "{{ current }}. rész ellenőrzése ({{ total }} közül)…",
+        "found": "{{ count }} érték lesz lecserélve. Vegye ki a pipát azokból, amelyeknek maradniuk kell.",
+        "none": "A modell nem talált személyes vagy titkos adatot.",
+        "undo": "Elvetés",
+        "review": "Az automatikus anonimizálás kihagyhat dolgokat. Megosztás előtt ellenőrizze az előnézetet."
+      },
+      "kinds": {
+        "home": "Saját mappa",
+        "name": "Név",
+        "username": "Felhasználónév",
+        "email": "E-mail",
+        "phone": "Telefon",
+        "address": "Cím",
+        "secret": "Titok",
+        "ip": "IP-cím",
+        "url": "URL",
+        "path": "Elérési út",
+        "org": "Szervezet",
+        "other": "Egyéb"
+      },
+      "preview": "Előnézet",
+      "previewAnonymized": "Előnézet (anonimizált)",
+      "search": {
+        "placeholder": "Keresés a naplóban",
+        "matches": "{{ current }}/{{ total }}",
+        "none": "Nincs találat",
+        "lines": "{{ count }} sor",
+        "previous": "Előző találat",
+        "next": "Következő találat"
+      },
+      "changes": {
+        "tab": "Változások ({{ count }})",
+        "description": "Minden sor, amelyet az anonimizálás módosít: az eredeti pirossal, az anonimizált változat zölddel. Az eredeti értékek csak itt jelennek meg, és nem kerülnek mentésre."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Napló másolása",
+      "save": "Napló mentése…",
+      "saveAnonymized": "Anonimizált napló mentése…",
+      "saveDialogTitle": "Hibakeresési napló mentése",
+      "saved": "Mentve ide: {{ path }}"
     }
   },
   "agents": {

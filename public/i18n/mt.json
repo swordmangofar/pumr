@@ -297,6 +297,7 @@
     "openSettings": "Iftaħ is-settings",
     "error": "Żball",
     "retry": "Erġa' pprova",
+    "exportDebugLog": "Esporta l-log tad-debug",
     "revert": "Irriverti għal dan il-prompt",
     "revertTitle": "Tirriverti l-konversazzjoni għal dan il-prompt?",
     "revertDetail": "Il-messaġġi kollha wara dan il-prompt jitneħħew u l-prompt jerġa' jitpoġġa fil-kaxxa tal-input tiegħek. Tista' wkoll treġġa' l-fajls għall-istat qabel ma nħadem dan il-prompt.",
@@ -442,6 +443,61 @@
         "timeout": "Skada l-ħin",
         "cancelled": "Ikkanċellat"
       }
+    },
+    "export": {
+      "button": "Esporta l-log",
+      "buttonHint": "Issejvja l-log tad-debug ta' din iċ-chat bil-verżjoni tas-sistema operattiva u tal-app biex tanalizza l-iżbalji b'aġent tal-IA",
+      "title": "Esporta l-log tad-debug",
+      "description": "Jissejvja din iċ-chat bħala fajl Markdown: il-verżjonijiet tas-sistema operattiva tiegħek, tal-app u tal-WebView, kull pass bl-iżbalji tiegħu, u l-log tal-permessi. Agħtih lil aġent tal-IA tal-għażla tiegħek biex isib x'mar ħażin.",
+      "warningTitle": "Il-log jista' jkun fih informazzjoni sensittiva",
+      "warning": "Il-prompts tiegħek, it-tweġibiet u r-raġunament tal-mudell, l-argumenti u l-outputs tal-għodod (bħall-kontenut tal-fajls u l-output tal-kmandi), il-prompts tas-sistema, ir-regoli tal-proġett u l-mogħdijiet tal-fajls jinsabu fil-fajl bħala test sempliċi. Jistgħu jinkludu kodiċi tas-sors, sigrieti, ismijiet jew indirizzi tal-email. Iċċekkja l-log qabel ma taqsmu.",
+      "anonymize": {
+        "title": "Anonimizza bl-IA (fakultattiv)",
+        "description": "Mudell tal-għażla tiegħek ifittex data personali u sigrieta bħal ismijiet, ismijiet tal-utent, indirizzi tal-email, ċwievet tal-API, tokens, passwords, indirizzi IP u URLs privati, li mbagħad jiġu sostitwiti b'placeholders bħal [EMAIL_1]. Il-folder tad-dar tiegħek isir ~. Il-log jintbagħat lill-fornitur tal-mudell; agħżel mudell lokali biex iżżommu fuq dan il-kompjuter.",
+        "model": "Mudell għall-anonimizzazzjoni",
+        "pickModel": "Agħżel mudell",
+        "run": "Anonimizza",
+        "again": "Anonimizza mill-ġdid",
+        "progress": "Qed tiġi skenjata l-parti {{ current }} minn {{ total }}…",
+        "found": "Se jiġu sostitwiti {{ count }} valuri. Neħħi l-marka minn dawk li għandhom jibqgħu.",
+        "none": "Il-mudell ma sab l-ebda data personali jew sigrieta.",
+        "undo": "Warrab",
+        "review": "L-anonimizzazzjoni awtomatika tista' titlef xi affarijiet. Iċċekkja l-preview qabel ma taqsam il-log."
+      },
+      "kinds": {
+        "home": "Folder tad-dar",
+        "name": "Isem",
+        "username": "Isem tal-utent",
+        "email": "Email",
+        "phone": "Telefon",
+        "address": "Indirizz",
+        "secret": "Sigriet",
+        "ip": "Indirizz IP",
+        "url": "URL",
+        "path": "Mogħdija",
+        "org": "Organizzazzjoni",
+        "other": "Oħrajn"
+      },
+      "preview": "Preview",
+      "previewAnonymized": "Preview (anonimizzat)",
+      "search": {
+        "placeholder": "Fittex fil-log",
+        "matches": "{{ current }} minn {{ total }}",
+        "none": "L-ebda riżultat",
+        "lines": "{{ count }} linji",
+        "previous": "Riżultat preċedenti",
+        "next": "Riżultat li jmiss"
+      },
+      "changes": {
+        "tab": "Bidliet ({{ count }})",
+        "description": "Kull linja li l-anonimizzazzjoni tbiddel: l-oriġinal bl-aħmar, il-verżjoni anonimizzata bl-aħdar. Il-valuri oriġinali jintwerew hawn biss u ma jiġux issejvjati."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Ikkopja l-log",
+      "save": "Issejvja l-log…",
+      "saveAnonymized": "Issejvja l-log anonimizzat…",
+      "saveDialogTitle": "Issejvja l-log tad-debug",
+      "saved": "Issejvjat f'{{ path }}"
     }
   },
   "agents": {

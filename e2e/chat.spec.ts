@@ -268,4 +268,98 @@ test.describe('chat', () => {
     await expect(page.getByRole('main')).toContainText('OpenRouter returned 429: rate limited');
     await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
   });
+
+  test('exports an anonymized debug log after an error', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        { steps: [{ kind: 'error', message: 'OpenRouter returned 400: invalid tool_result' }] },
+      ],
+    });
+
+    await composer.click();
+    await page.keyboard.type(
+      'Email jane.doe@example.com about /Users/e2e/code/demo-app with sk-test-4242',
+    );
+    await page.keyboard.press('Enter');
+
+    const alert = page.getByRole('alert').filter({ hasText: 'invalid tool_result' });
+    await alert.getByRole('button', { name: 'Export debug log' }).click();
+
+    const dialog = page.getByTestId('debug-export');
+    await expect(dialog).toContainText('The log can contain sensitive information');
+    const preview = dialog.getByTestId('debug-export-preview');
+    await expect(preview).toContainText('- OS: macOS 15.6 (24G84)');
+    await expect(preview).toContainText('- App: pumr 0.0.0-e2e');
+    await expect(preview).toContainText('OpenRouter returned 400: invalid tool_result');
+    await expect(preview).toContainText('jane.doe@example.com');
+
+    // Full-text search highlights matches and steps through them; Escape clears it.
+    const search = dialog.getByRole('searchbox', { name: 'Search the log' });
+    const matches = dialog.getByTestId('debug-export-matches');
+    await search.fill('JANE.doe');
+    await expect(matches).toHaveText(/\b1 of [2-9]\b/);
+    await expect(preview.locator('mark').first()).toHaveText('jane.doe');
+    await search.press('Enter');
+    await expect(matches).toHaveText(/\b2 of [2-9]\b/);
+    await search.press('Shift+Enter');
+    await expect(matches).toHaveText(/\b1 of [2-9]\b/);
+    await search.fill('no such text');
+    await expect(matches).toHaveText('No matches');
+    await search.press('Escape');
+    await expect(search).toHaveValue('');
+    await expect(dialog).toBeVisible();
+
+    // The chat's own model is preselected for the anonymization.
+    await expect(dialog.getByRole('button', { name: 'Model for anonymizing' })).toContainText(
+      'Claude Sonnet 5',
+    );
+    await dialog.getByRole('button', { name: 'Anonymize', exact: true }).click();
+
+    const redactions = dialog.getByTestId('redactions');
+    await expect(redactions).toContainText('3 values will be replaced');
+    await expect(preview).toContainText('Email [EMAIL_1] about ~/code/demo-app with [SECRET_1]');
+    await expect(preview).not.toContainText('jane.doe@example.com');
+    expect((await app.backend.lastCall('find_sensitive_data'))?.args['model']).toBe(MODEL_ID);
+
+    // Unticked values stay in the log.
+    const secret = redactions.getByRole('listitem').filter({ hasText: 'sk-test-4242' });
+    await secret.getByRole('checkbox').uncheck();
+    await expect(preview).toContainText('Email [EMAIL_1] about ~/code/demo-app with sk-test-4242');
+    await secret.getByRole('checkbox').check();
+
+    // The changes view shows each changed line before and after.
+    await dialog.getByRole('tab', { name: /^Changes \(\d+\)$/ }).click();
+    const changes = dialog.getByTestId('debug-export-changes');
+    const promptLine = changes
+      .getByTestId('debug-export-change')
+      .filter({ hasText: 'sk-test-4242' });
+    await expect(promptLine.locator('del')).toHaveText([
+      'jane.doe@example.com',
+      '/Users/e2e',
+      'sk-test-4242',
+    ]);
+    await expect(promptLine.locator('ins')).toHaveText(['[EMAIL_1]', '~', '[SECRET_1]']);
+    await search.fill('sk-test');
+    await expect(matches).toHaveText('1 lines');
+    await expect(changes.getByTestId('debug-export-change')).toHaveCount(1);
+    await search.fill('');
+    await dialog.getByRole('tab', { name: 'Preview (anonymized)' }).click();
+    await expect(preview).toContainText('Email [EMAIL_1] about ~/code/demo-app with [SECRET_1]');
+
+    await dialog.getByRole('button', { name: 'Save anonymized log…' }).click();
+    await expect(dialog).toContainText('Saved to /Users/e2e/Downloads/pumr-debug-log-');
+    const [saved] = (await app.backend.handle()).savedLogs;
+    expect(saved.fileName).toMatch(/^pumr-debug-log-\d{4}-\d{2}-\d{2}-\d{4}-anonymized\.md$/);
+    expect(saved.content).toContain('> Anonymized before export: 3 personal or secret values');
+    expect(saved.content).toContain('OpenRouter returned 400: invalid tool_result');
+    expect(saved.content).not.toContain('jane.doe@example.com');
+    expect(saved.content).not.toContain('sk-test-4242');
+
+    // Escape closes the export first, then the debugger.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Session debugger' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('heading', { name: 'Session debugger' })).toHaveCount(0);
+  });
 });

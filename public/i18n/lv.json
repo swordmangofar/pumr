@@ -297,6 +297,7 @@
     "openSettings": "Atvērt iestatījumus",
     "error": "Kļūda",
     "retry": "Mēģināt vēlreiz",
+    "exportDebugLog": "Eksportēt atkļūdošanas žurnālu",
     "revert": "Atgriezt uz šo uzvedni",
     "revertTitle": "Atgriezt sarunu uz šo uzvedni?",
     "revertDetail": "Visi ziņojumi pēc šīs uzvednes tiek noņemti, un uzvedne tiek ievietota atpakaļ ievades laukā. Varat arī atjaunot failus stāvoklī pirms šīs uzvednes izpildes.",
@@ -442,6 +443,61 @@
         "timeout": "Iestājās noildze",
         "cancelled": "Atcelts"
       }
+    },
+    "export": {
+      "button": "Eksportēt žurnālu",
+      "buttonHint": "Saglabājiet šīs tērzēšanas atkļūdošanas žurnālu ar OS un lietotnes versiju, lai analizētu kļūdas ar MI aģentu",
+      "title": "Eksportēt atkļūdošanas žurnālu",
+      "description": "Saglabā šo tērzēšanu kā Markdown failu: jūsu OS, lietotnes un WebView versijas, katru soli ar tā kļūdām un atļauju žurnālu. Nododiet to jūsu izvēlētam MI aģentam, lai noskaidrotu, kas nogāja greizi.",
+      "warningTitle": "Žurnālā var būt sensitīva informācija",
+      "warning": "Jūsu uzvednes, modeļa atbildes un spriedumi, rīku argumenti un izvades (piemēram, failu saturs un komandu izvade), sistēmas uzvednes, projekta noteikumi un failu ceļi failā ir kā vienkāršs teksts. Tajos var būt pirmkods, noslēpumi, vārdi vai e-pasta adreses. Pirms kopīgošanas pārbaudiet žurnālu.",
+      "anonymize": {
+        "title": "Anonimizēt ar MI (neobligāti)",
+        "description": "Jūsu izvēlēts modelis meklē personas un slepenus datus, piemēram, vārdus, lietotājvārdus, e-pasta adreses, API atslēgas, pilnvaras, paroles, IP adreses un privātus URL, kas pēc tam tiek aizstāti ar vietturiem, piemēram, [EMAIL_1]. Jūsu mājas mape kļūst par ~. Žurnāls tiek nosūtīts modeļa nodrošinātājam; izvēlieties lokālu modeli, lai tas paliktu šajā datorā.",
+        "model": "Modelis anonimizēšanai",
+        "pickModel": "Izvēlieties modeli",
+        "run": "Anonimizēt",
+        "again": "Anonimizēt vēlreiz",
+        "progress": "Tiek pārbaudīta {{ current }}. daļa no {{ total }}…",
+        "found": "Tiks aizstātas vērtības: {{ count }}. Noņemiet atzīmi tām, kurām jāpaliek.",
+        "none": "Modelis neatrada personas vai slepenus datus.",
+        "undo": "Atmest",
+        "review": "Automātiskā anonimizēšana var kaut ko palaist garām. Pirms žurnāla kopīgošanas pārbaudiet priekšskatījumu."
+      },
+      "kinds": {
+        "home": "Mājas mape",
+        "name": "Vārds",
+        "username": "Lietotājvārds",
+        "email": "E-pasts",
+        "phone": "Tālrunis",
+        "address": "Adrese",
+        "secret": "Noslēpums",
+        "ip": "IP adrese",
+        "url": "URL",
+        "path": "Ceļš",
+        "org": "Organizācija",
+        "other": "Cits"
+      },
+      "preview": "Priekšskatījums",
+      "previewAnonymized": "Priekšskatījums (anonimizēts)",
+      "search": {
+        "placeholder": "Meklēt žurnālā",
+        "matches": "{{ current }} no {{ total }}",
+        "none": "Nav atbilstību",
+        "lines": "Rindas: {{ count }}",
+        "previous": "Iepriekšējā atbilstība",
+        "next": "Nākamā atbilstība"
+      },
+      "changes": {
+        "tab": "Izmaiņas ({{ count }})",
+        "description": "Katra rinda, ko anonimizēšana maina: oriģināls sarkanā krāsā, anonimizētā versija zaļā krāsā. Sākotnējās vērtības tiek rādītas tikai šeit un netiek saglabātas."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopēt žurnālu",
+      "save": "Saglabāt žurnālu…",
+      "saveAnonymized": "Saglabāt anonimizētu žurnālu…",
+      "saveDialogTitle": "Saglabāt atkļūdošanas žurnālu",
+      "saved": "Saglabāts: {{ path }}"
     }
   },
   "agents": {

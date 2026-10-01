@@ -297,6 +297,7 @@
     "openSettings": "Odpri nastavitve",
     "error": "Napaka",
     "retry": "Poskusi znova",
+    "exportDebugLog": "Izvozi dnevnik razhroščevanja",
     "revert": "Povrni na ta poziv",
     "revertTitle": "Povrni pogovor na ta poziv?",
     "revertDetail": "Vsa sporočila po tem pozivu so odstranjena in poziv se vrne v vaše vnosno polje. Datoteke lahko tudi obnovite na stanje pred izvedbo tega poziva.",
@@ -442,6 +443,61 @@
         "timeout": "Časovna omejitev",
         "cancelled": "Preklicano"
       }
+    },
+    "export": {
+      "button": "Izvozi dnevnik",
+      "buttonHint": "Shranite dnevnik razhroščevanja tega klepeta z različico sistema in aplikacije, da napake analizirate z agentom UI",
+      "title": "Izvozi dnevnik razhroščevanja",
+      "description": "Shrani ta klepet kot datoteko Markdown: različice vašega operacijskega sistema, aplikacije in WebView, vsak korak z njegovimi napakami in dnevnik dovoljenj. Predajte jo agentu UI po svoji izbiri, da ugotovi, kaj je šlo narobe.",
+      "warningTitle": "Dnevnik lahko vsebuje občutljive podatke",
+      "warning": "Vaši pozivi, odgovori in razmišljanje modela, argumenti in izhodi orodij (na primer vsebina datotek in izhod ukazov), sistemski pozivi, pravila projekta in poti do datotek so v datoteki kot navadno besedilo. Lahko vsebujejo izvorno kodo, skrivnosti, imena ali e-poštne naslove. Preden dnevnik delite, ga preverite.",
+      "anonymize": {
+        "title": "Anonimiziraj z UI (neobvezno)",
+        "description": "Model po vaši izbiri poišče osebne in skrivne podatke, kot so imena, uporabniška imena, e-poštni naslovi, ključi API, žetoni, gesla, naslovi IP in zasebni URL-ji, ki se nato zamenjajo z nadomestnimi oznakami, na primer [EMAIL_1]. Vaša domača mapa postane ~. Dnevnik se pošlje ponudniku modela; izberite lokalni model, da ostane v tem računalniku.",
+        "model": "Model za anonimizacijo",
+        "pickModel": "Izberite model",
+        "run": "Anonimiziraj",
+        "again": "Znova anonimiziraj",
+        "progress": "Pregledovanje dela {{ current }} od {{ total }}…",
+        "found": "Zamenjanih bo vrednosti: {{ count }}. Odstranite kljukico pri tistih, ki naj ostanejo.",
+        "none": "Model ni našel osebnih ali skrivnih podatkov.",
+        "undo": "Zavrzi",
+        "review": "Samodejna anonimizacija lahko kaj spregleda. Preden dnevnik delite, preverite predogled."
+      },
+      "kinds": {
+        "home": "Domača mapa",
+        "name": "Ime",
+        "username": "Uporabniško ime",
+        "email": "E-pošta",
+        "phone": "Telefon",
+        "address": "Naslov",
+        "secret": "Skrivnost",
+        "ip": "Naslov IP",
+        "url": "URL",
+        "path": "Pot",
+        "org": "Organizacija",
+        "other": "Drugo"
+      },
+      "preview": "Predogled",
+      "previewAnonymized": "Predogled (anonimiziran)",
+      "search": {
+        "placeholder": "Išči po dnevniku",
+        "matches": "{{ current }} od {{ total }}",
+        "none": "Ni zadetkov",
+        "lines": "Vrstice: {{ count }}",
+        "previous": "Prejšnji zadetek",
+        "next": "Naslednji zadetek"
+      },
+      "changes": {
+        "tab": "Spremembe ({{ count }})",
+        "description": "Vsaka vrstica, ki jo anonimizacija spremeni: izvirnik rdeče, anonimizirana različica zeleno. Izvirne vrednosti so prikazane samo tukaj in se ne shranijo."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopiraj dnevnik",
+      "save": "Shrani dnevnik…",
+      "saveAnonymized": "Shrani anonimiziran dnevnik…",
+      "saveDialogTitle": "Shrani dnevnik razhroščevanja",
+      "saved": "Shranjeno v {{ path }}"
     }
   },
   "agents": {

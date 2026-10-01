@@ -84,6 +84,8 @@ export interface FakeHandle {
   replies: FakeReply[];
   pickFolder: string | null;
   confirm: boolean;
+  /** Debug logs written through the save dialog of `save_debug_log`. */
+  savedLogs: { fileName: string; content: string }[];
 }
 
 /**
@@ -133,6 +135,7 @@ export function installFakeBackend(seed: FakeSeed): void {
     replies: restored?.replies ?? clone(seed.replies),
     pickFolder: restored ? restored.pickFolder : seed.pickFolder,
     confirm: restored?.confirm ?? seed.confirm,
+    savedLogs: restored?.savedLogs ?? [],
   };
   (window as unknown as { __pumrFake: FakeHandle }).__pumrFake = handle;
   const persist = () => {
@@ -773,6 +776,31 @@ export function installFakeBackend(seed: FakeSeed): void {
       return null;
     },
     summarize_session: () => 'Summary of the previous session.',
+    get_system_info: () => ({
+      osName: 'macOS',
+      osVersion: '15.6 (24G84)',
+      kernel: 'Darwin 25.6.0',
+      arch: 'aarch64',
+      appVersion: '0.0.0-e2e',
+      webviewVersion: '20621.3.11',
+      desktop: null,
+      appImage: false,
+    }),
+    // Stands in for the model: finds email addresses and `sk-` keys.
+    find_sensitive_data: (args) => {
+      const text = String(args['text']);
+      const emails = text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? [];
+      const keys = text.match(/\bsk-[\w-]+/g) ?? [];
+      return [
+        ...emails.map((value) => ({ text: value, kind: 'email' })),
+        ...keys.map((value) => ({ text: value, kind: 'secret' })),
+      ];
+    },
+    save_debug_log: (args) => {
+      const fileName = String(args['fileName']);
+      handle.savedLogs.push({ fileName, content: String(args['content']) });
+      return `/Users/e2e/Downloads/${fileName}`;
+    },
 
     list_processes: () => [],
     get_session_changes: () => [],

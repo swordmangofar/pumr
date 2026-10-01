@@ -297,6 +297,7 @@
     "openSettings": "Otevřít nastavení",
     "error": "Chyba",
     "retry": "Zkusit znovu",
+    "exportDebugLog": "Exportovat ladicí protokol",
     "revert": "Vrátit se k tomuto promptu",
     "revertTitle": "Vrátit konverzaci k tomuto promptu?",
     "revertDetail": "Všechny zprávy po tomto promptu budou odebrány a prompt se vrátí do vstupního pole. Můžete také obnovit soubory do stavu před spuštěním tohoto promptu.",
@@ -442,6 +443,61 @@
         "timeout": "Vypršel čas",
         "cancelled": "Zrušeno"
       }
+    },
+    "export": {
+      "button": "Exportovat protokol",
+      "buttonHint": "Uložte ladicí protokol tohoto chatu s verzí systému a aplikace a analyzujte chyby s agentem AI",
+      "title": "Exportovat ladicí protokol",
+      "description": "Uloží tento chat jako soubor Markdown: verze vašeho operačního systému, aplikace a WebView, každý krok s jeho chybami a protokol oprávnění. Předejte jej agentovi AI podle svého výběru, aby zjistil, co se pokazilo.",
+      "warningTitle": "Protokol může obsahovat citlivé údaje",
+      "warning": "Vaše prompty, odpovědi a uvažování modelu, argumenty a výstupy nástrojů (například obsah souborů a výstup příkazů), systémové prompty, pravidla projektu a cesty k souborům jsou v souboru jako prostý text. Mohou obsahovat zdrojový kód, tajné údaje, jména nebo e-mailové adresy. Před sdílením protokol zkontrolujte.",
+      "anonymize": {
+        "title": "Anonymizovat pomocí AI (volitelné)",
+        "description": "Model podle vašeho výběru vyhledá osobní a tajné údaje, jako jsou jména, uživatelská jména, e-mailové adresy, klíče API, tokeny, hesla, IP adresy a soukromé adresy URL, které se pak nahradí zástupnými symboly, například [EMAIL_1]. Z vaší domovské složky se stane ~. Protokol se odešle poskytovateli modelu; zvolte místní model, aby zůstal v tomto počítači.",
+        "model": "Model pro anonymizaci",
+        "pickModel": "Vyberte model",
+        "run": "Anonymizovat",
+        "again": "Anonymizovat znovu",
+        "progress": "Kontroluje se část {{ current }} z {{ total }}…",
+        "found": "Bude nahrazeno hodnot: {{ count }}. Zrušte zaškrtnutí u těch, které mají zůstat.",
+        "none": "Model nenašel žádné osobní ani tajné údaje.",
+        "undo": "Zahodit",
+        "review": "Automatická anonymizace může něco přehlédnout. Před sdílením protokolu zkontrolujte náhled."
+      },
+      "kinds": {
+        "home": "Domovská složka",
+        "name": "Jméno",
+        "username": "Uživatelské jméno",
+        "email": "E-mail",
+        "phone": "Telefon",
+        "address": "Adresa",
+        "secret": "Tajný údaj",
+        "ip": "IP adresa",
+        "url": "URL",
+        "path": "Cesta",
+        "org": "Organizace",
+        "other": "Jiné"
+      },
+      "preview": "Náhled",
+      "previewAnonymized": "Náhled (anonymizovaný)",
+      "search": {
+        "placeholder": "Hledat v protokolu",
+        "matches": "{{ current }} z {{ total }}",
+        "none": "Žádné shody",
+        "lines": "Řádky: {{ count }}",
+        "previous": "Předchozí shoda",
+        "next": "Další shoda"
+      },
+      "changes": {
+        "tab": "Změny ({{ count }})",
+        "description": "Každý řádek, který anonymizace mění: originál červeně, anonymizovaná verze zeleně. Původní hodnoty se zobrazují jen zde a neukládají se."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopírovat protokol",
+      "save": "Uložit protokol…",
+      "saveAnonymized": "Uložit anonymizovaný protokol…",
+      "saveDialogTitle": "Uložit ladicí protokol",
+      "saved": "Uloženo do {{ path }}"
     }
   },
   "agents": {

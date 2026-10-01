@@ -40,6 +40,7 @@ import {
   RoutedEvent,
   RunningTurns,
   SendMessageArgs,
+  SensitiveFinding,
   Session,
   Settings,
   ProviderStatus,
@@ -48,6 +49,7 @@ import {
   SkillRef,
   SpendStats,
   SpendSummary,
+  SystemInfo,
   TerminalEvent,
   UpdateSessionArgs,
   WorkspaceEntry,
@@ -55,6 +57,9 @@ import {
 } from './models';
 
 export const OPENROUTER_PROVIDER = 'openrouter';
+
+/** Cancel key of the debug log's anonymization request (see `find_sensitive_data`). */
+export const ANONYMIZE_CANCEL_KEY = 'debug-log:anonymize';
 
 /**
  * Id of the provider that serves `modelId`. Direct providers prefix their
@@ -382,6 +387,13 @@ export const api = {
   revertToMessage: (messageId: string, restoreFiles: boolean) =>
     invoke<RevertResult>('revert_to_message', { messageId, restoreFiles }),
   summarizeSession: (sessionId: string) => invoke<string>('summarize_session', { sessionId }),
+  getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
+  /** Cancel a running call with `stopGeneration(ANONYMIZE_CANCEL_KEY)`. */
+  findSensitiveData: (model: string, text: string) =>
+    invoke<SensitiveFinding[]>('find_sensitive_data', { model, text }),
+  /** Opens a native save dialog; resolves to the saved path, or `null` when cancelled. */
+  saveDebugLog: (title: string, fileName: string, content: string) =>
+    invoke<string | null>('save_debug_log', { title, fileName, content }),
   sendMessage: (args: SendMessageArgs, channel: Channel<RoutedEvent>) =>
     invoke<Message>('send_message', { ...args, requestId: newRequestId(), channel }),
 };

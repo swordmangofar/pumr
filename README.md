@@ -42,6 +42,8 @@ sessions in SQLite. No project files leave the machine except the requests you a
 - Sub-agents: delegated tasks show up as their own sessions you can open and follow.
 - Per-message and per-session cost, budget with remaining balance, cache-hit rate.
 - Prompt queueing and reverting: drop later messages, restore files, resend a prompt.
+- Export a chat's debug log as Markdown, with OS and app versions, every step, errors and
+  permission decisions, to hand to an AI agent. A model you pick can anonymize it first.
 
 </td>
 </tr>

@@ -297,6 +297,7 @@
     "openSettings": "Oscail na socruithe",
     "error": "Earráid",
     "retry": "Bain triail eile as",
+    "exportDebugLog": "Easpórtáil an loga dífhabhtaithe",
     "revert": "Fill ar an leid seo",
     "revertTitle": "Fill an comhrá ar an leid seo?",
     "revertDetail": "Baintear gach teachtaireacht i ndiaidh an leid seo agus cuirtear an leid ar ais sa bhosca ionchuir. Is féidir leat na comhaid a athchóiriú freisin go dtí an staid roimh an leid seo a rith.",
@@ -442,6 +443,61 @@
         "timeout": "Imithe thar am",
         "cancelled": "Cealaithe"
       }
+    },
+    "export": {
+      "button": "Easpórtáil an loga",
+      "buttonHint": "Sábháil loga dífhabhtaithe an chomhrá seo le leagan an chórais oibriúcháin agus na feidhmchláir chun earráidí a anailísiú le gníomhaire IS",
+      "title": "Easpórtáil an loga dífhabhtaithe",
+      "description": "Sábhálann sé an comhrá seo mar chomhad Markdown: leaganacha do chórais oibriúcháin, na feidhmchláir agus WebView, gach céim lena hearráidí, agus loga na gceadanna. Tabhair é do ghníomhaire IS de do rogha féin chun a fháil amach cad a chuaigh mícheart.",
+      "warningTitle": "D'fhéadfadh faisnéis íogair a bheith sa loga",
+      "warning": "Tá do leideanna, freagraí agus réasúnaíocht an mhúnla, argóintí agus aschuir na n-uirlisí (mar ábhar comhad agus aschur orduithe), leideanna córais, rialacha an tionscadail agus cosáin comhad sa chomhad mar ghnáth-théacs. D'fhéadfadh cód foinseach, rúin, ainmneacha nó seoltaí ríomhphoist a bheith iontu. Seiceáil an loga sula roinnfidh tú é.",
+      "anonymize": {
+        "title": "Anaithnidigh le IS (roghnach)",
+        "description": "Cuardaíonn múnla de do rogha féin sonraí pearsanta agus rúnda amhail ainmneacha, ainmneacha úsáideora, seoltaí ríomhphoist, eochracha API, comharthaí, pasfhocail, seoltaí IP agus URLanna príobháideacha, a chuirtear ionadchoinneálaithe amhail [EMAIL_1] ina n-áit ansin. Éiríonn d'fhillteán baile ina ~. Seoltar an loga chuig soláthraí an mhúnla; roghnaigh múnla áitiúil chun é a choinneáil ar an ríomhaire seo.",
+        "model": "Múnla le haghaidh anaithnidithe",
+        "pickModel": "Roghnaigh múnla",
+        "run": "Anaithnidigh",
+        "again": "Anaithnidigh arís",
+        "progress": "Cuid {{ current }} de {{ total }} á scanadh…",
+        "found": "Athchuirfear {{ count }} luach. Bain an tic díobh siúd ar cheart dóibh fanacht.",
+        "none": "Níor aimsigh an múnla aon sonraí pearsanta ná rúnda.",
+        "undo": "Caith i leataobh",
+        "review": "D'fhéadfadh anaithnidiú uathoibríoch rudaí a ligean thar ceal. Seiceáil an réamhamharc sula roinnfidh tú an loga."
+      },
+      "kinds": {
+        "home": "Fillteán baile",
+        "name": "Ainm",
+        "username": "Ainm úsáideora",
+        "email": "Ríomhphost",
+        "phone": "Fón",
+        "address": "Seoladh",
+        "secret": "Rún",
+        "ip": "Seoladh IP",
+        "url": "URL",
+        "path": "Cosán",
+        "org": "Eagraíocht",
+        "other": "Eile"
+      },
+      "preview": "Réamhamharc",
+      "previewAnonymized": "Réamhamharc (anaithnidithe)",
+      "search": {
+        "placeholder": "Cuardaigh an loga",
+        "matches": "{{ current }} as {{ total }}",
+        "none": "Gan torthaí",
+        "lines": "{{ count }} líne",
+        "previous": "An toradh roimhe seo",
+        "next": "An chéad toradh eile"
+      },
+      "changes": {
+        "tab": "Athruithe ({{ count }})",
+        "description": "Gach líne a athraíonn an t-anaithnidiú: an bunleagan i ndearg, an leagan anaithnidithe i nglas. Ní thaispeántar na bunluachanna ach anseo agus ní shábháiltear iad."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Cóipeáil an loga",
+      "save": "Sábháil an loga…",
+      "saveAnonymized": "Sábháil an loga anaithnidithe…",
+      "saveDialogTitle": "Sábháil an loga dífhabhtaithe",
+      "saved": "Sábháilte i {{ path }}"
     }
   },
   "agents": {

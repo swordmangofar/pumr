@@ -297,6 +297,7 @@
     "openSettings": "Einstellungen öffnen",
     "error": "Fehler",
     "retry": "Erneut versuchen",
+    "exportDebugLog": "Debug-Log exportieren",
     "revert": "Zu diesem Prompt zurücksetzen",
     "revertTitle": "Unterhaltung zu diesem Prompt zurücksetzen?",
     "revertDetail": "Alle Nachrichten nach diesem Prompt werden entfernt und der Prompt landet wieder in deinem Eingabefeld. Optional können die Dateien auf den Stand vor diesem Prompt zurückgesetzt werden.",
@@ -442,6 +443,61 @@
         "timeout": "Zeitüberschreitung",
         "cancelled": "Abgebrochen"
       }
+    },
+    "export": {
+      "button": "Log exportieren",
+      "buttonHint": "Das Debug-Log dieses Chats mit OS- und App-Version speichern, um Fehler mit einem KI-Agenten zu analysieren",
+      "title": "Debug-Log exportieren",
+      "description": "Speichert diesen Chat als Markdown-Datei: deine OS-, App- und WebView-Version, jeden Schritt mit seinen Fehlern und das Berechtigungsprotokoll. Gib sie einem KI-Agenten deiner Wahl, um herauszufinden, was schiefgelaufen ist.",
+      "warningTitle": "Das Log kann sensible Daten enthalten",
+      "warning": "Deine Prompts, die Antworten und Überlegungen des Modells, Tool-Argumente und -Ausgaben (etwa Dateiinhalte und Befehlsausgaben), System-Prompts, Projektregeln und Dateipfade stehen im Klartext in der Datei. Sie können Quellcode, Geheimnisse, Namen oder E-Mail-Adressen enthalten. Prüfe das Log, bevor du es weitergibst.",
+      "anonymize": {
+        "title": "Mit KI anonymisieren (optional)",
+        "description": "Ein Modell deiner Wahl sucht nach persönlichen und geheimen Daten wie Namen, Benutzernamen, E-Mail-Adressen, API-Schlüsseln, Tokens, Passwörtern, IP-Adressen und privaten URLs, die dann durch Platzhalter wie [EMAIL_1] ersetzt werden. Dein Home-Ordner wird zu ~. Das Log wird an den Anbieter des Modells gesendet; wähle ein lokales Modell, damit es auf diesem Computer bleibt.",
+        "model": "Modell zum Anonymisieren",
+        "pickModel": "Modell auswählen",
+        "run": "Anonymisieren",
+        "again": "Erneut anonymisieren",
+        "progress": "Teil {{ current }} von {{ total }} wird geprüft…",
+        "found": "{{ count }} Werte werden ersetzt. Entferne den Haken bei allen, die bleiben sollen.",
+        "none": "Das Modell hat keine persönlichen oder geheimen Daten gefunden.",
+        "undo": "Verwerfen",
+        "review": "Automatisches Anonymisieren kann etwas übersehen. Prüfe die Vorschau, bevor du das Log weitergibst."
+      },
+      "kinds": {
+        "home": "Home-Ordner",
+        "name": "Name",
+        "username": "Benutzername",
+        "email": "E-Mail",
+        "phone": "Telefon",
+        "address": "Adresse",
+        "secret": "Geheimnis",
+        "ip": "IP-Adresse",
+        "url": "URL",
+        "path": "Pfad",
+        "org": "Organisation",
+        "other": "Sonstiges"
+      },
+      "preview": "Vorschau",
+      "previewAnonymized": "Vorschau (anonymisiert)",
+      "search": {
+        "placeholder": "Log durchsuchen",
+        "matches": "{{ current }} von {{ total }}",
+        "none": "Keine Treffer",
+        "lines": "{{ count }} Zeilen",
+        "previous": "Vorheriger Treffer",
+        "next": "Nächster Treffer"
+      },
+      "changes": {
+        "tab": "Änderungen ({{ count }})",
+        "description": "Jede Zeile, die das Anonymisieren ändert: das Original in Rot, die anonymisierte Fassung in Grün. Die Originalwerte werden nur hier angezeigt und nicht gespeichert."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Log kopieren",
+      "save": "Log speichern…",
+      "saveAnonymized": "Anonymisiertes Log speichern…",
+      "saveDialogTitle": "Debug-Log speichern",
+      "saved": "Gespeichert unter {{ path }}"
     }
   },
   "agents": {

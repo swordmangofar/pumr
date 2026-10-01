@@ -297,6 +297,7 @@
     "openSettings": "Ava seaded",
     "error": "Viga",
     "retry": "Proovi uuesti",
+    "exportDebugLog": "Ekspordi silumislogi",
     "revert": "Taasta selle viiba juurde",
     "revertTitle": "Kas taastada vestlus selle viiba juurde?",
     "revertDetail": "Kõik pärast seda viipa olevad sõnumid eemaldatakse ja viip pannakse tagasi sisestusväljale. Samuti saate failid taastada selle viiba käivitamiseelsele seisundile.",
@@ -442,6 +443,61 @@
         "timeout": "Aeg sai läbi",
         "cancelled": "Tühistatud"
       }
+    },
+    "export": {
+      "button": "Ekspordi logi",
+      "buttonHint": "Salvestage selle vestluse silumislogi koos operatsioonisüsteemi ja rakenduse versiooniga, et vigu tehisintellekti agendiga analüüsida",
+      "title": "Ekspordi silumislogi",
+      "description": "Salvestab selle vestluse Markdown-failina: teie operatsioonisüsteemi, rakenduse ja WebView versioonid, iga sammu koos selle vigadega ning õiguste logi. Andke see enda valitud tehisintellekti agendile, et välja selgitada, mis läks valesti.",
+      "warningTitle": "Logi võib sisaldada tundlikku teavet",
+      "warning": "Teie viibad, mudeli vastused ja arutluskäik, tööriistade argumendid ja väljundid (nt failide sisu ja käskude väljund), süsteemiviibad, projekti reeglid ja failiteed on failis lihttekstina. Need võivad sisaldada lähtekoodi, saladusi, nimesid või e-posti aadresse. Kontrollige logi enne selle jagamist.",
+      "anonymize": {
+        "title": "Anonüümi tehisintellektiga (valikuline)",
+        "description": "Teie valitud mudel otsib isiku- ja salajasi andmeid, nagu nimed, kasutajanimed, e-posti aadressid, API-võtmed, žetoonid, paroolid, IP-aadressid ja privaatsed URL-id, mis asendatakse seejärel kohatäidetega, nagu [EMAIL_1]. Teie kodukaustast saab ~. Logi saadetakse mudeli pakkujale; valige kohalik mudel, et see jääks sellesse arvutisse.",
+        "model": "Mudel anonüümimiseks",
+        "pickModel": "Valige mudel",
+        "run": "Anonüümi",
+        "again": "Anonüümi uuesti",
+        "progress": "Kontrollitakse osa {{ current }}/{{ total }}…",
+        "found": "Asendatakse {{ count }} väärtust. Eemaldage märge nendelt, mis peavad jääma.",
+        "none": "Mudel ei leidnud isiku- ega salajasi andmeid.",
+        "undo": "Loobu",
+        "review": "Automaatne anonüümimine võib midagi märkamata jätta. Kontrollige eelvaadet enne logi jagamist."
+      },
+      "kinds": {
+        "home": "Kodukaust",
+        "name": "Nimi",
+        "username": "Kasutajanimi",
+        "email": "E-post",
+        "phone": "Telefon",
+        "address": "Aadress",
+        "secret": "Saladus",
+        "ip": "IP-aadress",
+        "url": "URL",
+        "path": "Tee",
+        "org": "Organisatsioon",
+        "other": "Muu"
+      },
+      "preview": "Eelvaade",
+      "previewAnonymized": "Eelvaade (anonüümitud)",
+      "search": {
+        "placeholder": "Otsi logist",
+        "matches": "{{ current }}/{{ total }}",
+        "none": "Vasteid pole",
+        "lines": "{{ count }} rida",
+        "previous": "Eelmine vaste",
+        "next": "Järgmine vaste"
+      },
+      "changes": {
+        "tab": "Muudatused ({{ count }})",
+        "description": "Iga rida, mida anonüümimine muudab: originaal punasega, anonüümitud versioon rohelisega. Algseid väärtusi näidatakse ainult siin ja neid ei salvestata."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopeeri logi",
+      "save": "Salvesta logi…",
+      "saveAnonymized": "Salvesta anonüümitud logi…",
+      "saveDialogTitle": "Salvesta silumislogi",
+      "saved": "Salvestatud: {{ path }}"
     }
   },
   "agents": {

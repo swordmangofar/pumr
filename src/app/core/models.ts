@@ -829,6 +829,31 @@ export interface PermissionAuditEntry {
   rule: string | null;
 }
 
+/** The machine a chat's debug log is exported on. */
+export interface SystemInfo {
+  /** `macOS`, `Windows`, `Linux`, or the OS's own name elsewhere. */
+  osName: string;
+  /** e.g. `15.6 (24G84)`, `11 23H2 (10.0.22631.4037)`, `Ubuntu 24.04.1 LTS`. */
+  osVersion: string | null;
+  /** e.g. `Darwin 25.6.0`; `null` on Windows. */
+  kernel: string | null;
+  arch: string;
+  appVersion: string;
+  webviewVersion: string | null;
+  /** Linux: the session type and desktop, e.g. `wayland (GNOME)`. */
+  desktop: string | null;
+  /** Linux: whether pumr runs from an AppImage. */
+  appImage: boolean;
+}
+
+/** A personal or secret value a model found in a debug log excerpt. */
+export interface SensitiveFinding {
+  /** Copied verbatim from the excerpt. */
+  text: string;
+  /** `name`, `username`, `email`, `phone`, `address`, `secret`, `ip`, `url`, `path`, `org` or `other`. */
+  kind: string;
+}
+
 export type QuestionRequestEvent = Extract<StreamEvent, { kind: 'questionRequest' }>;
 
 export interface ContextUsageInfo {

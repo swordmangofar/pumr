@@ -297,6 +297,7 @@
     "openSettings": "Deschide setările",
     "error": "Eroare",
     "retry": "Reîncearcă",
+    "exportDebugLog": "Exportați jurnalul de depanare",
     "revert": "Revino la acest prompt",
     "revertTitle": "Revii conversația la acest prompt?",
     "revertDetail": "Toate mesajele de după acest prompt sunt eliminate și promptul este plasat înapoi în caseta de introducere. De asemenea, poți restaura fișierele la starea de dinainte de rularea acestui prompt.",
@@ -442,6 +443,61 @@
         "timeout": "Timp expirat",
         "cancelled": "Anulat"
       }
+    },
+    "export": {
+      "button": "Exportați jurnalul",
+      "buttonHint": "Salvați jurnalul de depanare al acestui chat cu versiunea sistemului de operare și a aplicației, pentru a analiza erorile cu un agent AI",
+      "title": "Exportați jurnalul de depanare",
+      "description": "Salvează acest chat ca fișier Markdown: versiunile sistemului de operare, ale aplicației și ale WebView, fiecare pas cu erorile sale și jurnalul permisiunilor. Dați-l unui agent AI ales de dumneavoastră pentru a afla ce nu a funcționat.",
+      "warningTitle": "Jurnalul poate conține informații sensibile",
+      "warning": "Prompturile dumneavoastră, răspunsurile și raționamentul modelului, argumentele și rezultatele instrumentelor (cum ar fi conținutul fișierelor și ieșirea comenzilor), prompturile de sistem, regulile proiectului și căile fișierelor apar în fișier ca text simplu. Ele pot include cod sursă, secrete, nume sau adrese de e-mail. Verificați jurnalul înainte de a-l partaja.",
+      "anonymize": {
+        "title": "Anonimizați cu AI (opțional)",
+        "description": "Un model ales de dumneavoastră caută date personale și secrete, cum ar fi nume, nume de utilizator, adrese de e-mail, chei API, tokenuri, parole, adrese IP și URL-uri private, care sunt apoi înlocuite cu substituenți precum [EMAIL_1]. Folderul dumneavoastră personal devine ~. Jurnalul este trimis furnizorului modelului; alegeți un model local pentru a-l păstra pe acest computer.",
+        "model": "Model pentru anonimizare",
+        "pickModel": "Alegeți un model",
+        "run": "Anonimizați",
+        "again": "Anonimizați din nou",
+        "progress": "Se scanează partea {{ current }} din {{ total }}…",
+        "found": "Vor fi înlocuite {{ count }} valori. Debifați-le pe cele care trebuie să rămână.",
+        "none": "Modelul nu a găsit date personale sau secrete.",
+        "undo": "Renunțați",
+        "review": "Anonimizarea automată poate omite lucruri. Verificați previzualizarea înainte de a partaja jurnalul."
+      },
+      "kinds": {
+        "home": "Folder personal",
+        "name": "Nume",
+        "username": "Nume de utilizator",
+        "email": "E-mail",
+        "phone": "Telefon",
+        "address": "Adresă",
+        "secret": "Secret",
+        "ip": "Adresă IP",
+        "url": "URL",
+        "path": "Cale",
+        "org": "Organizație",
+        "other": "Altele"
+      },
+      "preview": "Previzualizare",
+      "previewAnonymized": "Previzualizare (anonimizată)",
+      "search": {
+        "placeholder": "Căutați în jurnal",
+        "matches": "{{ current }} din {{ total }}",
+        "none": "Niciun rezultat",
+        "lines": "{{ count }} rânduri",
+        "previous": "Rezultatul anterior",
+        "next": "Rezultatul următor"
+      },
+      "changes": {
+        "tab": "Modificări ({{ count }})",
+        "description": "Fiecare rând modificat de anonimizare: originalul cu roșu, versiunea anonimizată cu verde. Valorile originale sunt afișate doar aici și nu sunt salvate."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Copiați jurnalul",
+      "save": "Salvați jurnalul…",
+      "saveAnonymized": "Salvați jurnalul anonimizat…",
+      "saveDialogTitle": "Salvați jurnalul de depanare",
+      "saved": "Salvat în {{ path }}"
     }
   },
   "agents": {

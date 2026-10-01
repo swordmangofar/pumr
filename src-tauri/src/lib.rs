@@ -4,6 +4,7 @@ mod broker;
 mod commands;
 mod config;
 mod db;
+mod debug_log;
 mod discovery;
 mod error;
 mod git;
@@ -211,6 +212,9 @@ pub fn run() {
             commands::get_project_rules,
             commands::revert_to_message,
             commands::summarize_session,
+            commands::get_system_info,
+            commands::find_sensitive_data,
+            commands::save_debug_log,
             commands::send_message,
         ])
         .build(context)

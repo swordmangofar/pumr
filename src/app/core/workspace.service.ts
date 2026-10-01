@@ -120,6 +120,7 @@ export class WorkspaceService {
   private readonly draftState = signal<string | null>(null);
   private readonly handoverState = signal<Record<string, boolean>>({});
   private readonly debugSessionState = signal<string | null>(null);
+  private readonly debugExportState = signal(false);
   private readonly scrollTargetState = signal<{ id: string; nonce: number } | null>(null);
   private readonly subAgentsState = signal<Record<string, string[]>>({});
   private readonly viewingState = signal<Record<string, string>>({});
@@ -184,6 +185,8 @@ export class WorkspaceService {
   readonly pendingDraft = this.draftState.asReadonly();
   readonly debugSessionId = this.debugSessionState.asReadonly();
   readonly debugOpen = computed(() => this.debugSessionState() !== null);
+  /** Whether the debugger shows its log export dialog. */
+  readonly debugExportOpen = this.debugExportState.asReadonly();
   readonly scrollTarget = this.scrollTargetState.asReadonly();
   readonly showArchived = this.showArchivedState.asReadonly();
   readonly projectEditorId = this.projectEditorState.asReadonly();
@@ -671,17 +674,24 @@ export class WorkspaceService {
     void this.activateSession(sessionId);
   }
 
-  openDebug(): void {
+  /** Opens the debugger for the active session, with `exportLog` on its export dialog. */
+  openDebug(exportLog = false): void {
     const sessionId = this.activeState();
     if (!sessionId) {
       return;
     }
     this.debugSessionState.set(sessionId);
+    this.debugExportState.set(exportLog);
     void this.loadAgentTree(sessionId);
+  }
+
+  setDebugExport(open: boolean): void {
+    this.debugExportState.set(open);
   }
 
   closeDebug(): void {
     this.debugSessionState.set(null);
+    this.debugExportState.set(false);
   }
 
   closeTab(sessionId: string, deleteIfEmpty = false): void {

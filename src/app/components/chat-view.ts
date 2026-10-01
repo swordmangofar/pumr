@@ -481,6 +481,14 @@ import { TypedInput } from './typed-input';
                     [text]="err"
                     buttonClass="h-7 w-7 border-rose-400/30 bg-rose-500/10 text-rose-300/70 hover:border-rose-300/60 hover:text-rose-200"
                   />
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-full px-3 py-1 text-sm text-rose-200/80 transition-colors hover:bg-rose-500/20 hover:text-rose-100"
+                    [attr.title]="'debug.export.buttonHint' | transloco"
+                    (click)="workspace.openDebug(true)"
+                  >
+                    {{ 'chat.exportDebugLog' | transloco }}
+                  </button>
                   @if (!streaming()) {
                     <button
                       type="button"

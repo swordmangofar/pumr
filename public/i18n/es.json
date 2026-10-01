@@ -297,6 +297,7 @@
     "openSettings": "Abrir ajustes",
     "error": "Error",
     "retry": "Reintentar",
+    "exportDebugLog": "Exportar registro de depuración",
     "revert": "Revertir a este prompt",
     "revertTitle": "¿Revertir la conversación a este prompt?",
     "revertDetail": "Se eliminan todos los mensajes posteriores a este prompt y el prompt vuelve a tu cuadro de entrada. También puedes restaurar los archivos al estado anterior a la ejecución de este prompt.",
@@ -442,6 +443,61 @@
         "timeout": "Tiempo agotado",
         "cancelled": "Cancelado"
       }
+    },
+    "export": {
+      "button": "Exportar registro",
+      "buttonHint": "Guardar el registro de depuración de este chat con la versión del sistema operativo y de la app para analizar errores con un agente de IA",
+      "title": "Exportar registro de depuración",
+      "description": "Guarda este chat como archivo Markdown: las versiones de su sistema operativo, de la app y de WebView, cada paso con sus errores y el registro de permisos. Entrégueselo al agente de IA que prefiera para averiguar qué salió mal.",
+      "warningTitle": "El registro puede contener información sensible",
+      "warning": "Sus prompts, las respuestas y el razonamiento del modelo, los argumentos y resultados de las herramientas (como el contenido de archivos y la salida de comandos), los prompts del sistema, las reglas del proyecto y las rutas de archivos aparecen en texto plano en el archivo. Pueden incluir código fuente, secretos, nombres o direcciones de correo electrónico. Revise el registro antes de compartirlo.",
+      "anonymize": {
+        "title": "Anonimizar con IA (opcional)",
+        "description": "Un modelo de su elección busca datos personales y secretos como nombres, nombres de usuario, direcciones de correo, claves de API, tokens, contraseñas, direcciones IP y URL privadas, que luego se sustituyen por marcadores como [EMAIL_1]. Su carpeta personal pasa a ser ~. El registro se envía al proveedor del modelo; elija un modelo local para que no salga de este equipo.",
+        "model": "Modelo para anonimizar",
+        "pickModel": "Elegir un modelo",
+        "run": "Anonimizar",
+        "again": "Anonimizar de nuevo",
+        "progress": "Analizando la parte {{ current }} de {{ total }}…",
+        "found": "Se sustituirán {{ count }} valores. Desmarque los que deban quedarse.",
+        "none": "El modelo no encontró datos personales ni secretos.",
+        "undo": "Descartar",
+        "review": "La anonimización automática puede pasar cosas por alto. Revise la vista previa antes de compartir el registro."
+      },
+      "kinds": {
+        "home": "Carpeta personal",
+        "name": "Nombre",
+        "username": "Nombre de usuario",
+        "email": "Correo electrónico",
+        "phone": "Teléfono",
+        "address": "Dirección",
+        "secret": "Secreto",
+        "ip": "Dirección IP",
+        "url": "URL",
+        "path": "Ruta",
+        "org": "Organización",
+        "other": "Otro"
+      },
+      "preview": "Vista previa",
+      "previewAnonymized": "Vista previa (anonimizada)",
+      "search": {
+        "placeholder": "Buscar en el registro",
+        "matches": "{{ current }} de {{ total }}",
+        "none": "Sin resultados",
+        "lines": "{{ count }} líneas",
+        "previous": "Resultado anterior",
+        "next": "Resultado siguiente"
+      },
+      "changes": {
+        "tab": "Cambios ({{ count }})",
+        "description": "Cada línea que cambia la anonimización: el original en rojo y la versión anonimizada en verde. Los valores originales solo se muestran aquí y no se guardan."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Copiar registro",
+      "save": "Guardar registro…",
+      "saveAnonymized": "Guardar registro anonimizado…",
+      "saveDialogTitle": "Guardar registro de depuración",
+      "saved": "Guardado en {{ path }}"
     }
   },
   "agents": {

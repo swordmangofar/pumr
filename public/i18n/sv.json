@@ -297,6 +297,7 @@
     "openSettings": "Öppna inställningar",
     "error": "Fel",
     "retry": "Försök igen",
+    "exportDebugLog": "Exportera felsökningslogg",
     "revert": "Återgå till denna prompt",
     "revertTitle": "Återgå konversationen till denna prompt?",
     "revertDetail": "Alla meddelanden efter denna prompt tas bort och prompten läggs tillbaka i din inmatningsruta. Du kan också återställa filerna till tillståndet innan denna prompt kördes.",
@@ -442,6 +443,61 @@
         "timeout": "Tidsgränsen nådd",
         "cancelled": "Avbruten"
       }
+    },
+    "export": {
+      "button": "Exportera logg",
+      "buttonHint": "Spara chattens felsökningslogg med operativsystemets och appens version för att analysera fel med en AI-agent",
+      "title": "Exportera felsökningslogg",
+      "description": "Sparar chatten som en Markdown-fil: versionerna av ditt operativsystem, appen och WebView, varje steg med dess fel och behörighetsloggen. Ge den till en AI-agent du väljer för att ta reda på vad som gick fel.",
+      "warningTitle": "Loggen kan innehålla känslig information",
+      "warning": "Dina prompter, modellens svar och resonemang, verktygsargument och -utdata (som filinnehåll och kommandoutdata), systemprompter, projektregler och filsökvägar finns i klartext i filen. De kan innehålla källkod, hemligheter, namn eller e-postadresser. Granska loggen innan du delar den.",
+      "anonymize": {
+        "title": "Anonymisera med AI (valfritt)",
+        "description": "En modell du väljer letar efter personliga och hemliga uppgifter som namn, användarnamn, e-postadresser, API-nycklar, token, lösenord, IP-adresser och privata URL:er, som sedan ersätts med platshållare som [EMAIL_1]. Din hemmapp blir ~. Loggen skickas till modellens leverantör; välj en lokal modell för att behålla den på den här datorn.",
+        "model": "Modell för anonymisering",
+        "pickModel": "Välj en modell",
+        "run": "Anonymisera",
+        "again": "Anonymisera igen",
+        "progress": "Skannar del {{ current }} av {{ total }}…",
+        "found": "{{ count }} värden ersätts. Avmarkera de som ska vara kvar.",
+        "none": "Modellen hittade inga personliga eller hemliga uppgifter.",
+        "undo": "Förkasta",
+        "review": "Automatisk anonymisering kan missa saker. Granska förhandsvisningen innan du delar loggen."
+      },
+      "kinds": {
+        "home": "Hemmapp",
+        "name": "Namn",
+        "username": "Användarnamn",
+        "email": "E-post",
+        "phone": "Telefon",
+        "address": "Adress",
+        "secret": "Hemlighet",
+        "ip": "IP-adress",
+        "url": "URL",
+        "path": "Sökväg",
+        "org": "Organisation",
+        "other": "Övrigt"
+      },
+      "preview": "Förhandsvisning",
+      "previewAnonymized": "Förhandsvisning (anonymiserad)",
+      "search": {
+        "placeholder": "Sök i loggen",
+        "matches": "{{ current }} av {{ total }}",
+        "none": "Inga träffar",
+        "lines": "{{ count }} rader",
+        "previous": "Föregående träff",
+        "next": "Nästa träff"
+      },
+      "changes": {
+        "tab": "Ändringar ({{ count }})",
+        "description": "Varje rad som anonymiseringen ändrar: originalet i rött, den anonymiserade versionen i grönt. De ursprungliga värdena visas bara här och sparas inte."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopiera logg",
+      "save": "Spara logg…",
+      "saveAnonymized": "Spara anonymiserad logg…",
+      "saveDialogTitle": "Spara felsökningslogg",
+      "saved": "Sparad i {{ path }}"
     }
   },
   "agents": {

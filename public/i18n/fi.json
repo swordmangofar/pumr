@@ -297,6 +297,7 @@
     "openSettings": "Avaa asetukset",
     "error": "Virhe",
     "retry": "Yritä uudelleen",
+    "exportDebugLog": "Vie virheenkorjausloki",
     "revert": "Palauta tähän kehotteeseen",
     "revertTitle": "Palautetaanko keskustelu tähän kehotteeseen?",
     "revertDetail": "Kaikki tämän kehotteen jälkeiset viestit poistetaan ja kehote palautetaan syöttökenttään. Voit myös palauttaa tiedostot tilaan ennen tämän kehotteen suorittamista.",
@@ -442,6 +443,61 @@
         "timeout": "Aikakatkaisu",
         "cancelled": "Peruttu"
       }
+    },
+    "export": {
+      "button": "Vie loki",
+      "buttonHint": "Tallenna tämän keskustelun virheenkorjausloki käyttöjärjestelmän ja sovelluksen version kanssa virheiden analysointia varten tekoälyagentilla",
+      "title": "Vie virheenkorjausloki",
+      "description": "Tallentaa tämän keskustelun Markdown-tiedostoksi: käyttöjärjestelmäsi, sovelluksen ja WebViewin versiot, jokaisen vaiheen virheineen sekä käyttöoikeuslokin. Anna se valitsemallesi tekoälyagentille selvittääksesi, mikä meni vikaan.",
+      "warningTitle": "Loki voi sisältää arkaluonteisia tietoja",
+      "warning": "Kehotteesi, mallin vastaukset ja päättely, työkalujen argumentit ja tulosteet (kuten tiedostojen sisältö ja komentojen tulosteet), järjestelmäkehotteet, projektin säännöt ja tiedostopolut ovat tiedostossa selväkielisinä. Ne voivat sisältää lähdekoodia, salaisuuksia, nimiä tai sähköpostiosoitteita. Tarkista loki ennen kuin jaat sen.",
+      "anonymize": {
+        "title": "Anonymisoi tekoälyllä (valinnainen)",
+        "description": "Valitsemasi malli etsii henkilö- ja salaisia tietoja, kuten nimiä, käyttäjänimiä, sähköpostiosoitteita, API-avaimia, tunnisteita, salasanoja, IP-osoitteita ja yksityisiä URL-osoitteita, jotka korvataan sitten paikkamerkeillä, kuten [EMAIL_1]. Kotikansiostasi tulee ~. Loki lähetetään mallin palveluntarjoajalle; valitse paikallinen malli, jos haluat pitää sen tällä tietokoneella.",
+        "model": "Anonymisointiin käytettävä malli",
+        "pickModel": "Valitse malli",
+        "run": "Anonymisoi",
+        "again": "Anonymisoi uudelleen",
+        "progress": "Tarkistetaan osaa {{ current }}/{{ total }}…",
+        "found": "{{ count }} arvoa korvataan. Poista valinta niistä, joiden pitää jäädä.",
+        "none": "Malli ei löytänyt henkilö- tai salaisia tietoja.",
+        "undo": "Hylkää",
+        "review": "Automaattinen anonymisointi voi ohittaa jotain. Tarkista esikatselu ennen kuin jaat lokin."
+      },
+      "kinds": {
+        "home": "Kotikansio",
+        "name": "Nimi",
+        "username": "Käyttäjänimi",
+        "email": "Sähköposti",
+        "phone": "Puhelin",
+        "address": "Osoite",
+        "secret": "Salaisuus",
+        "ip": "IP-osoite",
+        "url": "URL",
+        "path": "Polku",
+        "org": "Organisaatio",
+        "other": "Muu"
+      },
+      "preview": "Esikatselu",
+      "previewAnonymized": "Esikatselu (anonymisoitu)",
+      "search": {
+        "placeholder": "Hae lokista",
+        "matches": "{{ current }}/{{ total }}",
+        "none": "Ei osumia",
+        "lines": "{{ count }} riviä",
+        "previous": "Edellinen osuma",
+        "next": "Seuraava osuma"
+      },
+      "changes": {
+        "tab": "Muutokset ({{ count }})",
+        "description": "Jokainen rivi, jota anonymisointi muuttaa: alkuperäinen punaisella, anonymisoitu versio vihreällä. Alkuperäiset arvot näytetään vain täällä, eikä niitä tallenneta."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopioi loki",
+      "save": "Tallenna loki…",
+      "saveAnonymized": "Tallenna anonymisoitu loki…",
+      "saveDialogTitle": "Tallenna virheenkorjausloki",
+      "saved": "Tallennettu: {{ path }}"
     }
   },
   "agents": {

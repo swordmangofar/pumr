@@ -16,6 +16,7 @@ import {
   buildAgentGraph,
 } from '../core/agent-graph';
 import { api } from '../core/api';
+import { enabledGlobalPrompts } from '../core/debug-log';
 import {
   FileChange,
   LiveToolCall,
@@ -26,6 +27,7 @@ import {
 } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
+import { DebugExportDialog } from './debug-export-dialog';
 
 type DebugKind =
   'context' | 'user' | 'assistant' | 'tool' | 'subagent' | 'question' | 'mcp' | 'skill' | 'error';
@@ -101,9 +103,9 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
 @Component({
   selector: 'app-debug-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe],
+  imports: [DebugExportDialog, TranslocoPipe],
   host: {
-    '(document:keydown.escape)': 'close()',
+    '(document:keydown.escape)': 'onEscape()',
   },
   template: `
     <div
@@ -143,6 +145,28 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
               <span class="h-2 w-2 animate-pulse rounded-full bg-accent"></span>
               {{ 'debug.live' | transloco }}
             </span>
+          }
+          @if (session()) {
+            <button
+              type="button"
+              class="flex shrink-0 items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs font-medium text-mist/70 ring-1 ring-white/10 ring-inset transition-colors hover:bg-white/10 hover:text-white"
+              [attr.title]="'debug.export.buttonHint' | transloco"
+              (click)="workspace.setDebugExport(true)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                class="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+              </svg>
+              {{ 'debug.export.button' | transloco }}
+            </button>
           }
           <button
             type="button"
@@ -632,10 +656,17 @@ const DEBUG_STATUSES: readonly DebugStatus[] = ['ok', 'error', 'running'];
         }
       </div>
     </div>
+    @if (workspace.debugExportOpen() && session(); as active) {
+      <app-debug-export-dialog
+        [sessionId]="active.id"
+        [conversationId]="conversationId()"
+        (closed)="workspace.setDebugExport(false)"
+      />
+    }
   `,
 })
 export class DebugView {
-  private readonly workspace = inject(WorkspaceService);
+  protected readonly workspace = inject(WorkspaceService);
   private readonly settings = inject(SettingsService);
 
   protected readonly selectedId = signal<string | null>(null);
@@ -709,21 +740,7 @@ export class DebugView {
       }
 
       if (mode?.includeGlobalPrompts && settings) {
-        const globals: string[] = [];
-        for (const [enabled, prompt] of [
-          [settings.securitySystemPromptEnabled, settings.securitySystemPrompt],
-          [settings.testingSystemPromptEnabled, settings.testingSystemPrompt],
-          [settings.architectureSystemPromptEnabled, settings.architectureSystemPrompt],
-        ] as [boolean, string][]) {
-          if (enabled && prompt.trim()) {
-            globals.push(prompt);
-          }
-        }
-        for (const prompt of settings.userSystemPrompts) {
-          if (prompt.enabled && prompt.prompt.trim()) {
-            globals.push(prompt.prompt);
-          }
-        }
+        const globals = enabledGlobalPrompts(settings);
         if (globals.length > 0) {
           steps.push({
             id: `${session.id}:context:globals`,
@@ -1136,6 +1153,15 @@ export class DebugView {
 
   protected close(): void {
     this.workspace.closeDebug();
+  }
+
+  /** Escape closes the export dialog first, then the debugger. */
+  protected onEscape(): void {
+    if (this.workspace.debugExportOpen()) {
+      this.workspace.setDebugExport(false);
+    } else {
+      this.close();
+    }
   }
 
   protected select(id: string): void {

@@ -297,6 +297,7 @@
     "openSettings": "Atidaryti nustatymus",
     "error": "Klaida",
     "retry": "Bandyti dar kartą",
+    "exportDebugLog": "Eksportuoti derinimo žurnalą",
     "revert": "Grąžinti į šią užklausą",
     "revertTitle": "Grąžinti pokalbį į šią užklausą?",
     "revertDetail": "Visi pranešimai po šios užklausos bus pašalinti, o užklausa grąžinama į įvesties lauką. Taip pat galite atkurti failus į būseną prieš šios užklausos vykdymą.",
@@ -442,6 +443,61 @@
         "timeout": "Baigėsi laikas",
         "cancelled": "Atšaukta"
       }
+    },
+    "export": {
+      "button": "Eksportuoti žurnalą",
+      "buttonHint": "Išsaugokite šio pokalbio derinimo žurnalą su OS ir programos versija, kad galėtumėte analizuoti klaidas su DI agentu",
+      "title": "Eksportuoti derinimo žurnalą",
+      "description": "Išsaugo šį pokalbį kaip Markdown failą: jūsų OS, programos ir WebView versijas, kiekvieną žingsnį su jo klaidomis ir leidimų žurnalą. Perduokite jį pasirinktam DI agentui, kad išsiaiškintų, kas nepavyko.",
+      "warningTitle": "Žurnale gali būti neskelbtinos informacijos",
+      "warning": "Jūsų raginimai, modelio atsakymai ir samprotavimai, įrankių argumentai ir išvestys (pvz., failų turinys ir komandų išvestis), sistemos raginimai, projekto taisyklės ir failų keliai faile pateikiami paprastu tekstu. Juose gali būti šaltinio kodo, slaptų duomenų, vardų ar el. pašto adresų. Prieš bendrindami žurnalą, jį patikrinkite.",
+      "anonymize": {
+        "title": "Anonimizuoti su DI (neprivaloma)",
+        "description": "Jūsų pasirinktas modelis ieško asmeninių ir slaptų duomenų, pavyzdžiui, vardų, naudotojų vardų, el. pašto adresų, API raktų, prieigos raktų, slaptažodžių, IP adresų ir privačių URL, kurie tada pakeičiami žymekliais, pvz., [EMAIL_1]. Jūsų namų aplankas tampa ~. Žurnalas siunčiamas modelio teikėjui; pasirinkite vietinį modelį, kad jis liktų šiame kompiuteryje.",
+        "model": "Anonimizavimo modelis",
+        "pickModel": "Pasirinkite modelį",
+        "run": "Anonimizuoti",
+        "again": "Anonimizuoti dar kartą",
+        "progress": "Tikrinama {{ current }} dalis iš {{ total }}…",
+        "found": "Bus pakeista reikšmių: {{ count }}. Nuimkite žymėjimą nuo tų, kurios turi likti.",
+        "none": "Modelis nerado asmeninių ar slaptų duomenų.",
+        "undo": "Atmesti",
+        "review": "Automatinis anonimizavimas gali ką nors praleisti. Prieš bendrindami žurnalą, patikrinkite peržiūrą."
+      },
+      "kinds": {
+        "home": "Namų aplankas",
+        "name": "Vardas",
+        "username": "Naudotojo vardas",
+        "email": "El. paštas",
+        "phone": "Telefonas",
+        "address": "Adresas",
+        "secret": "Slaptas duomuo",
+        "ip": "IP adresas",
+        "url": "URL",
+        "path": "Kelias",
+        "org": "Organizacija",
+        "other": "Kita"
+      },
+      "preview": "Peržiūra",
+      "previewAnonymized": "Peržiūra (anonimizuota)",
+      "search": {
+        "placeholder": "Ieškoti žurnale",
+        "matches": "{{ current }} iš {{ total }}",
+        "none": "Atitikmenų nėra",
+        "lines": "Eilutės: {{ count }}",
+        "previous": "Ankstesnis atitikmuo",
+        "next": "Kitas atitikmuo"
+      },
+      "changes": {
+        "tab": "Pakeitimai ({{ count }})",
+        "description": "Kiekviena eilutė, kurią pakeičia anonimizavimas: originalas raudonai, anonimizuota versija žaliai. Pradinės reikšmės rodomos tik čia ir neišsaugomos."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopijuoti žurnalą",
+      "save": "Išsaugoti žurnalą…",
+      "saveAnonymized": "Išsaugoti anonimizuotą žurnalą…",
+      "saveDialogTitle": "Išsaugoti derinimo žurnalą",
+      "saved": "Išsaugota: {{ path }}"
     }
   },
   "agents": {

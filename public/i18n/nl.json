@@ -297,6 +297,7 @@
     "openSettings": "Instellingen openen",
     "error": "Fout",
     "retry": "Opnieuw proberen",
+    "exportDebugLog": "Foutopsporingslog exporteren",
     "revert": "Terug naar deze prompt",
     "revertTitle": "Gesprek terugzetten naar deze prompt?",
     "revertDetail": "Alle berichten na deze prompt worden verwijderd en de prompt wordt teruggeplaatst in je invoervak. Je kunt ook de bestanden terugzetten naar de staat voordat deze prompt werd uitgevoerd.",
@@ -442,6 +443,61 @@
         "timeout": "Time-out",
         "cancelled": "Geannuleerd"
       }
+    },
+    "export": {
+      "button": "Log exporteren",
+      "buttonHint": "Sla het foutopsporingslog van deze chat op met de versie van je besturingssysteem en de app om fouten met een AI-agent te analyseren",
+      "title": "Foutopsporingslog exporteren",
+      "description": "Slaat deze chat op als Markdown-bestand: de versies van je besturingssysteem, de app en WebView, elke stap met de bijbehorende fouten en het toestemmingslogboek. Geef het aan een AI-agent naar keuze om uit te zoeken wat er misging.",
+      "warningTitle": "Het log kan gevoelige informatie bevatten",
+      "warning": "Je prompts, de antwoorden en redeneringen van het model, toolargumenten en -uitvoer (zoals bestandsinhoud en opdrachtuitvoer), systeemprompts, projectregels en bestandspaden staan als platte tekst in het bestand. Ze kunnen broncode, geheimen, namen of e-mailadressen bevatten. Controleer het log voordat je het deelt.",
+      "anonymize": {
+        "title": "Anonimiseren met AI (optioneel)",
+        "description": "Een model naar keuze zoekt naar persoonlijke en geheime gegevens zoals namen, gebruikersnamen, e-mailadressen, API-sleutels, tokens, wachtwoorden, IP-adressen en privé-URL's, die vervolgens worden vervangen door plaatshouders zoals [EMAIL_1]. Je thuismap wordt ~. Het log wordt naar de aanbieder van het model gestuurd; kies een lokaal model om het op deze computer te houden.",
+        "model": "Model om te anonimiseren",
+        "pickModel": "Kies een model",
+        "run": "Anonimiseren",
+        "again": "Opnieuw anonimiseren",
+        "progress": "Deel {{ current }} van {{ total }} wordt gescand…",
+        "found": "{{ count }} waarden worden vervangen. Vink uit wat moet blijven staan.",
+        "none": "Het model heeft geen persoonlijke of geheime gegevens gevonden.",
+        "undo": "Verwerpen",
+        "review": "Automatisch anonimiseren kan iets missen. Controleer de voorbeeldweergave voordat je het log deelt."
+      },
+      "kinds": {
+        "home": "Thuismap",
+        "name": "Naam",
+        "username": "Gebruikersnaam",
+        "email": "E-mail",
+        "phone": "Telefoon",
+        "address": "Adres",
+        "secret": "Geheim",
+        "ip": "IP-adres",
+        "url": "URL",
+        "path": "Pad",
+        "org": "Organisatie",
+        "other": "Overig"
+      },
+      "preview": "Voorbeeld",
+      "previewAnonymized": "Voorbeeld (geanonimiseerd)",
+      "search": {
+        "placeholder": "Zoeken in het log",
+        "matches": "{{ current }} van {{ total }}",
+        "none": "Geen resultaten",
+        "lines": "{{ count }} regels",
+        "previous": "Vorig resultaat",
+        "next": "Volgend resultaat"
+      },
+      "changes": {
+        "tab": "Wijzigingen ({{ count }})",
+        "description": "Elke regel die het anonimiseren wijzigt: het origineel in rood, de geanonimiseerde versie in groen. De oorspronkelijke waarden worden alleen hier getoond en niet opgeslagen."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Log kopiëren",
+      "save": "Log opslaan…",
+      "saveAnonymized": "Geanonimiseerd log opslaan…",
+      "saveDialogTitle": "Foutopsporingslog opslaan",
+      "saved": "Opgeslagen in {{ path }}"
     }
   },
   "agents": {

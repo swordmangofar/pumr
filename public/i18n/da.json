@@ -297,6 +297,7 @@
     "openSettings": "Åbn indstillinger",
     "error": "Fejl",
     "retry": "Prøv igen",
+    "exportDebugLog": "Eksportér fejlsøgningslog",
     "revert": "Gå tilbage til denne prompt",
     "revertTitle": "Gå tilbage til denne prompt i samtalen?",
     "revertDetail": "Alle beskeder efter denne prompt fjernes, og prompten lægges tilbage i dit inputfelt. Du kan også gendanne filerne til tilstanden før denne prompt blev kørt.",
@@ -442,6 +443,61 @@
         "timeout": "Tidsgrænse nået",
         "cancelled": "Annulleret"
       }
+    },
+    "export": {
+      "button": "Eksportér log",
+      "buttonHint": "Gem denne chats fejlsøgningslog med styresystem- og appversion for at analysere fejl med en AI-agent",
+      "title": "Eksportér fejlsøgningslog",
+      "description": "Gemmer denne chat som en Markdown-fil: versionerne af dit styresystem, appen og WebView, hvert trin med dets fejl og tilladelsesloggen. Giv den til en AI-agent efter eget valg for at finde ud af, hvad der gik galt.",
+      "warningTitle": "Loggen kan indeholde følsomme oplysninger",
+      "warning": "Dine prompts, modellens svar og ræsonnement, værktøjsargumenter og -output (såsom filindhold og kommandooutput), systemprompts, projektregler og filstier står som ren tekst i filen. De kan indeholde kildekode, hemmeligheder, navne eller e-mailadresser. Tjek loggen, før du deler den.",
+      "anonymize": {
+        "title": "Anonymisér med AI (valgfrit)",
+        "description": "En model efter eget valg leder efter personlige og hemmelige data som navne, brugernavne, e-mailadresser, API-nøgler, tokens, adgangskoder, IP-adresser og private URL'er, som derefter erstattes med pladsholdere som [EMAIL_1]. Din hjemmemappe bliver til ~. Loggen sendes til modellens udbyder; vælg en lokal model for at beholde den på denne computer.",
+        "model": "Model til anonymisering",
+        "pickModel": "Vælg en model",
+        "run": "Anonymisér",
+        "again": "Anonymisér igen",
+        "progress": "Scanner del {{ current }} af {{ total }}…",
+        "found": "{{ count }} værdier bliver erstattet. Fjern fluebenet ved dem, der skal blive.",
+        "none": "Modellen fandt ingen personlige eller hemmelige data.",
+        "undo": "Kassér",
+        "review": "Automatisk anonymisering kan overse noget. Tjek forhåndsvisningen, før du deler loggen."
+      },
+      "kinds": {
+        "home": "Hjemmemappe",
+        "name": "Navn",
+        "username": "Brugernavn",
+        "email": "E-mail",
+        "phone": "Telefon",
+        "address": "Adresse",
+        "secret": "Hemmelighed",
+        "ip": "IP-adresse",
+        "url": "URL",
+        "path": "Sti",
+        "org": "Organisation",
+        "other": "Andet"
+      },
+      "preview": "Forhåndsvisning",
+      "previewAnonymized": "Forhåndsvisning (anonymiseret)",
+      "search": {
+        "placeholder": "Søg i loggen",
+        "matches": "{{ current }} af {{ total }}",
+        "none": "Ingen resultater",
+        "lines": "{{ count }} linjer",
+        "previous": "Forrige resultat",
+        "next": "Næste resultat"
+      },
+      "changes": {
+        "tab": "Ændringer ({{ count }})",
+        "description": "Hver linje, som anonymiseringen ændrer: originalen med rødt, den anonymiserede version med grønt. De oprindelige værdier vises kun her og gemmes ikke."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopiér log",
+      "save": "Gem log…",
+      "saveAnonymized": "Gem anonymiseret log…",
+      "saveDialogTitle": "Gem fejlsøgningslog",
+      "saved": "Gemt i {{ path }}"
     }
   },
   "agents": {

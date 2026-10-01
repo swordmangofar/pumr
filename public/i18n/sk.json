@@ -297,6 +297,7 @@
     "openSettings": "Otvoriť nastavenia",
     "error": "Chyba",
     "retry": "Skúsiť znova",
+    "exportDebugLog": "Exportovať ladiaci záznam",
     "revert": "Vrátiť sa k tomuto promptu",
     "revertTitle": "Vrátiť konverzáciu k tomuto promptu?",
     "revertDetail": "Všetky správy po tomto prompte budú odstránené a prompt sa vráti do vstupného poľa. Môžete tiež obnoviť súbory do stavu pred spustením tohto promptu.",
@@ -442,6 +443,61 @@
         "timeout": "Vypršal čas",
         "cancelled": "Zrušené"
       }
+    },
+    "export": {
+      "button": "Exportovať záznam",
+      "buttonHint": "Uložte ladiaci záznam tohto chatu s verziou systému a aplikácie a analyzujte chyby s agentom AI",
+      "title": "Exportovať ladiaci záznam",
+      "description": "Uloží tento chat ako súbor Markdown: verzie vášho operačného systému, aplikácie a WebView, každý krok s jeho chybami a záznam povolení. Odovzdajte ho agentovi AI podľa vlastného výberu, aby zistil, čo sa pokazilo.",
+      "warningTitle": "Záznam môže obsahovať citlivé údaje",
+      "warning": "Vaše prompty, odpovede a uvažovanie modelu, argumenty a výstupy nástrojov (napríklad obsah súborov a výstup príkazov), systémové prompty, pravidlá projektu a cesty k súborom sú v súbore ako obyčajný text. Môžu obsahovať zdrojový kód, tajné údaje, mená alebo e-mailové adresy. Pred zdieľaním záznam skontrolujte.",
+      "anonymize": {
+        "title": "Anonymizovať pomocou AI (voliteľné)",
+        "description": "Model podľa vášho výberu vyhľadá osobné a tajné údaje, ako sú mená, používateľské mená, e-mailové adresy, kľúče API, tokeny, heslá, IP adresy a súkromné adresy URL, ktoré sa potom nahradia zástupnými symbolmi, napríklad [EMAIL_1]. Z vášho domovského priečinka sa stane ~. Záznam sa odošle poskytovateľovi modelu; zvoľte lokálny model, aby zostal v tomto počítači.",
+        "model": "Model na anonymizáciu",
+        "pickModel": "Vyberte model",
+        "run": "Anonymizovať",
+        "again": "Anonymizovať znova",
+        "progress": "Kontroluje sa časť {{ current }} z {{ total }}…",
+        "found": "Nahradí sa hodnôt: {{ count }}. Zrušte začiarknutie pri tých, ktoré majú zostať.",
+        "none": "Model nenašiel žiadne osobné ani tajné údaje.",
+        "undo": "Zahodiť",
+        "review": "Automatická anonymizácia môže niečo prehliadnuť. Pred zdieľaním záznamu skontrolujte ukážku."
+      },
+      "kinds": {
+        "home": "Domovský priečinok",
+        "name": "Meno",
+        "username": "Používateľské meno",
+        "email": "E-mail",
+        "phone": "Telefón",
+        "address": "Adresa",
+        "secret": "Tajný údaj",
+        "ip": "IP adresa",
+        "url": "URL",
+        "path": "Cesta",
+        "org": "Organizácia",
+        "other": "Iné"
+      },
+      "preview": "Ukážka",
+      "previewAnonymized": "Ukážka (anonymizovaná)",
+      "search": {
+        "placeholder": "Hľadať v zázname",
+        "matches": "{{ current }} z {{ total }}",
+        "none": "Žiadne zhody",
+        "lines": "Riadky: {{ count }}",
+        "previous": "Predchádzajúca zhoda",
+        "next": "Ďalšia zhoda"
+      },
+      "changes": {
+        "tab": "Zmeny ({{ count }})",
+        "description": "Každý riadok, ktorý anonymizácia mení: originál červenou, anonymizovaná verzia zelenou. Pôvodné hodnoty sa zobrazujú len tu a neukladajú sa."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopírovať záznam",
+      "save": "Uložiť záznam…",
+      "saveAnonymized": "Uložiť anonymizovaný záznam…",
+      "saveDialogTitle": "Uložiť ladiaci záznam",
+      "saved": "Uložené do {{ path }}"
     }
   },
   "agents": {

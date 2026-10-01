@@ -297,6 +297,7 @@
     "openSettings": "Apri impostazioni",
     "error": "Errore",
     "retry": "Riprova",
+    "exportDebugLog": "Esporta log di debug",
     "revert": "Torna a questo prompt",
     "revertTitle": "Riportare la conversazione a questo prompt?",
     "revertDetail": "Tutti i messaggi successivi a questo prompt vengono rimossi e il prompt viene reinserito nella tua casella di input. Puoi anche ripristinare i file allo stato precedente all'esecuzione di questo prompt.",
@@ -442,6 +443,61 @@
         "timeout": "Tempo scaduto",
         "cancelled": "Annullato"
       }
+    },
+    "export": {
+      "button": "Esporta log",
+      "buttonHint": "Salva il log di debug di questa chat con la versione del sistema operativo e dell'app per analizzare gli errori con un agente IA",
+      "title": "Esporta log di debug",
+      "description": "Salva questa chat come file Markdown: le versioni del tuo sistema operativo, dell'app e della WebView, ogni passaggio con i suoi errori e il registro dei permessi. Dallo a un agente IA a tua scelta per capire cosa è andato storto.",
+      "warningTitle": "Il log può contenere informazioni sensibili",
+      "warning": "I tuoi prompt, le risposte e il ragionamento del modello, gli argomenti e gli output degli strumenti (come contenuti dei file e output dei comandi), i prompt di sistema, le regole del progetto e i percorsi dei file sono nel file in chiaro. Possono includere codice sorgente, segreti, nomi o indirizzi email. Controlla il log prima di condividerlo.",
+      "anonymize": {
+        "title": "Anonimizza con l'IA (facoltativo)",
+        "description": "Un modello a tua scelta cerca dati personali e segreti come nomi, nomi utente, indirizzi email, chiavi API, token, password, indirizzi IP e URL privati, che vengono poi sostituiti da segnaposto come [EMAIL_1]. La tua cartella home diventa ~. Il log viene inviato al provider del modello; scegli un modello locale per tenerlo su questo computer.",
+        "model": "Modello per l'anonimizzazione",
+        "pickModel": "Scegli un modello",
+        "run": "Anonimizza",
+        "again": "Anonimizza di nuovo",
+        "progress": "Analisi della parte {{ current }} di {{ total }}…",
+        "found": "Verranno sostituiti {{ count }} valori. Togli la spunta a quelli da mantenere.",
+        "none": "Il modello non ha trovato dati personali o segreti.",
+        "undo": "Scarta",
+        "review": "L'anonimizzazione automatica può tralasciare qualcosa. Controlla l'anteprima prima di condividere il log."
+      },
+      "kinds": {
+        "home": "Cartella home",
+        "name": "Nome",
+        "username": "Nome utente",
+        "email": "Email",
+        "phone": "Telefono",
+        "address": "Indirizzo",
+        "secret": "Segreto",
+        "ip": "Indirizzo IP",
+        "url": "URL",
+        "path": "Percorso",
+        "org": "Organizzazione",
+        "other": "Altro"
+      },
+      "preview": "Anteprima",
+      "previewAnonymized": "Anteprima (anonimizzata)",
+      "search": {
+        "placeholder": "Cerca nel log",
+        "matches": "{{ current }} di {{ total }}",
+        "none": "Nessun risultato",
+        "lines": "{{ count }} righe",
+        "previous": "Risultato precedente",
+        "next": "Risultato successivo"
+      },
+      "changes": {
+        "tab": "Modifiche ({{ count }})",
+        "description": "Ogni riga modificata dall'anonimizzazione: l'originale in rosso, la versione anonimizzata in verde. I valori originali sono mostrati solo qui e non vengono salvati."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Copia log",
+      "save": "Salva log…",
+      "saveAnonymized": "Salva log anonimizzato…",
+      "saveDialogTitle": "Salva log di debug",
+      "saved": "Salvato in {{ path }}"
     }
   },
   "agents": {

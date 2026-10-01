@@ -297,6 +297,7 @@
     "openSettings": "Abrir configurações",
     "error": "Erro",
     "retry": "Tentar novamente",
+    "exportDebugLog": "Exportar log de depuração",
     "revert": "Voltar a este prompt",
     "revertTitle": "Voltar a conversa para este prompt?",
     "revertDetail": "Todas as mensagens após este prompt são removidas e o prompt volta para a sua caixa de entrada. Você também pode restaurar os arquivos ao estado anterior à execução deste prompt.",
@@ -442,6 +443,61 @@
         "timeout": "Tempo esgotado",
         "cancelled": "Cancelado"
       }
+    },
+    "export": {
+      "button": "Exportar log",
+      "buttonHint": "Salvar o log de depuração deste chat com a versão do sistema operacional e do app para analisar erros com um agente de IA",
+      "title": "Exportar log de depuração",
+      "description": "Salva este chat como arquivo Markdown: as versões do seu sistema operacional, do app e da WebView, cada etapa com seus erros e o registro de permissões. Entregue-o ao agente de IA de sua escolha para descobrir o que deu errado.",
+      "warningTitle": "O log pode conter informações sensíveis",
+      "warning": "Seus prompts, as respostas e o raciocínio do modelo, os argumentos e saídas das ferramentas (como conteúdo de arquivos e saída de comandos), os prompts de sistema, as regras do projeto e os caminhos de arquivos ficam no arquivo em texto simples. Eles podem incluir código-fonte, segredos, nomes ou endereços de e-mail. Verifique o log antes de compartilhá-lo.",
+      "anonymize": {
+        "title": "Anonimizar com IA (opcional)",
+        "description": "Um modelo de sua escolha procura dados pessoais e secretos como nomes, nomes de usuário, endereços de e-mail, chaves de API, tokens, senhas, endereços IP e URLs privadas, que são então substituídos por marcadores como [EMAIL_1]. Sua pasta pessoal vira ~. O log é enviado ao provedor do modelo; escolha um modelo local para mantê-lo neste computador.",
+        "model": "Modelo para anonimizar",
+        "pickModel": "Escolher um modelo",
+        "run": "Anonimizar",
+        "again": "Anonimizar novamente",
+        "progress": "Analisando a parte {{ current }} de {{ total }}…",
+        "found": "{{ count }} valores serão substituídos. Desmarque os que devem permanecer.",
+        "none": "O modelo não encontrou dados pessoais nem secretos.",
+        "undo": "Descartar",
+        "review": "A anonimização automática pode deixar passar algo. Verifique a pré-visualização antes de compartilhar o log."
+      },
+      "kinds": {
+        "home": "Pasta pessoal",
+        "name": "Nome",
+        "username": "Nome de usuário",
+        "email": "E-mail",
+        "phone": "Telefone",
+        "address": "Endereço",
+        "secret": "Segredo",
+        "ip": "Endereço IP",
+        "url": "URL",
+        "path": "Caminho",
+        "org": "Organização",
+        "other": "Outro"
+      },
+      "preview": "Pré-visualização",
+      "previewAnonymized": "Pré-visualização (anonimizada)",
+      "search": {
+        "placeholder": "Pesquisar no log",
+        "matches": "{{ current }} de {{ total }}",
+        "none": "Nenhum resultado",
+        "lines": "{{ count }} linhas",
+        "previous": "Resultado anterior",
+        "next": "Próximo resultado"
+      },
+      "changes": {
+        "tab": "Alterações ({{ count }})",
+        "description": "Cada linha que a anonimização altera: o original em vermelho, a versão anonimizada em verde. Os valores originais só aparecem aqui e não são salvos."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Copiar log",
+      "save": "Salvar log…",
+      "saveAnonymized": "Salvar log anonimizado…",
+      "saveDialogTitle": "Salvar log de depuração",
+      "saved": "Salvo em {{ path }}"
     }
   },
   "agents": {

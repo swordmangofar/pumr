@@ -297,6 +297,7 @@
     "openSettings": "Ouvrir les paramètres",
     "error": "Erreur",
     "retry": "Réessayer",
+    "exportDebugLog": "Exporter le journal de débogage",
     "revert": "Revenir à ce prompt",
     "revertTitle": "Revenir la conversation à ce prompt ?",
     "revertDetail": "Tous les messages après ce prompt sont supprimés et le prompt est replacé dans ta zone de saisie. Tu peux aussi restaurer les fichiers à l'état où ils étaient avant l'exécution de ce prompt.",
@@ -442,6 +443,61 @@
         "timeout": "Délai dépassé",
         "cancelled": "Annulé"
       }
+    },
+    "export": {
+      "button": "Exporter le journal",
+      "buttonHint": "Enregistrer le journal de débogage de ce chat avec la version de l'OS et de l'app pour analyser les erreurs avec un agent IA",
+      "title": "Exporter le journal de débogage",
+      "description": "Enregistre ce chat dans un fichier Markdown : les versions de votre OS, de l'app et de la WebView, chaque étape avec ses erreurs, et le journal des autorisations. Confiez-le à l'agent IA de votre choix pour trouver ce qui n'a pas fonctionné.",
+      "warningTitle": "Le journal peut contenir des informations sensibles",
+      "warning": "Vos prompts, les réponses et le raisonnement du modèle, les arguments et sorties des outils (comme le contenu des fichiers et la sortie des commandes), les prompts système, les règles du projet et les chemins de fichiers figurent en clair dans le fichier. Ils peuvent contenir du code source, des secrets, des noms ou des adresses e-mail. Vérifiez le journal avant de le partager.",
+      "anonymize": {
+        "title": "Anonymiser avec l'IA (facultatif)",
+        "description": "Un modèle de votre choix recherche les données personnelles et secrètes comme les noms, noms d'utilisateur, adresses e-mail, clés API, jetons, mots de passe, adresses IP et URL privées, qui sont ensuite remplacés par des marqueurs comme [EMAIL_1]. Votre dossier personnel devient ~. Le journal est envoyé au fournisseur du modèle ; choisissez un modèle local pour le garder sur cet ordinateur.",
+        "model": "Modèle pour l'anonymisation",
+        "pickModel": "Choisir un modèle",
+        "run": "Anonymiser",
+        "again": "Anonymiser à nouveau",
+        "progress": "Analyse de la partie {{ current }} sur {{ total }}…",
+        "found": "{{ count }} valeurs seront remplacées. Décochez celles qui doivent rester.",
+        "none": "Le modèle n'a trouvé aucune donnée personnelle ou secrète.",
+        "undo": "Rejeter",
+        "review": "L'anonymisation automatique peut omettre des éléments. Vérifiez l'aperçu avant de partager le journal."
+      },
+      "kinds": {
+        "home": "Dossier personnel",
+        "name": "Nom",
+        "username": "Nom d'utilisateur",
+        "email": "E-mail",
+        "phone": "Téléphone",
+        "address": "Adresse",
+        "secret": "Secret",
+        "ip": "Adresse IP",
+        "url": "URL",
+        "path": "Chemin",
+        "org": "Organisation",
+        "other": "Autre"
+      },
+      "preview": "Aperçu",
+      "previewAnonymized": "Aperçu (anonymisé)",
+      "search": {
+        "placeholder": "Rechercher dans le journal",
+        "matches": "{{ current }} sur {{ total }}",
+        "none": "Aucun résultat",
+        "lines": "{{ count }} lignes",
+        "previous": "Résultat précédent",
+        "next": "Résultat suivant"
+      },
+      "changes": {
+        "tab": "Modifications ({{ count }})",
+        "description": "Chaque ligne modifiée par l'anonymisation : l'original en rouge, la version anonymisée en vert. Les valeurs d'origine ne sont affichées qu'ici et ne sont pas enregistrées."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Copier le journal",
+      "save": "Enregistrer le journal…",
+      "saveAnonymized": "Enregistrer le journal anonymisé…",
+      "saveDialogTitle": "Enregistrer le journal de débogage",
+      "saved": "Enregistré dans {{ path }}"
     }
   },
   "agents": {

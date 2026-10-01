@@ -1,6 +1,7 @@
 use crate::agent::{self, TurnDeps, TurnRequest};
 use crate::config::{self, Settings};
 use crate::db::NewMessage;
+use crate::debug_log;
 use crate::error::{AppError, Result};
 use crate::git::{self, language_for, ShadowRepo};
 use crate::mcp::McpManager;
@@ -3558,6 +3559,97 @@ fn truncate(text: &str, max: usize) -> String {
     }
     let head: String = trimmed.chars().take(max).collect();
     format!("{head}… [truncated]")
+}
+
+/// The OS, app and webview versions for a chat's debug log.
+#[tauri::command]
+pub async fn get_system_info(app: AppHandle) -> Result<debug_log::SystemInfo> {
+    let app_version = app.package_info().version.to_string();
+    blocking(move || Ok(debug_log::system_info(app_version))).await
+}
+
+/// Asks `model` which parts of `text`, one excerpt of a chat's debug log, are
+/// personal or secret, so the export can replace them with placeholders. The
+/// user picks the model; `stop_generation` with
+/// [`debug_log::ANONYMIZE_CANCEL_KEY`] cancels the request.
+#[tauri::command]
+pub async fn find_sensitive_data(
+    state: State<'_, AppState>,
+    model: String,
+    text: String,
+) -> Result<Vec<debug_log::SensitiveFinding>> {
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err(AppError::msg("Pick a model to anonymize the log with."));
+    }
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    state.load_catalog().await;
+    let client = state.llm();
+    client.keys.require(&model)?;
+
+    let registration = state.register_cancel(debug_log::ANONYMIZE_CANCEL_KEY);
+    let mut reply = String::new();
+    let result = client
+        .stream_chat(
+            &model,
+            vec![
+                ChatMessage::text("system", debug_log::ANONYMIZE_SYSTEM_PROMPT),
+                ChatMessage::text("user", format!("<log>\n{text}\n</log>")),
+            ],
+            None,
+            None,
+            None,
+            &[],
+            false,
+            registration.token(),
+            &mut |chunk| {
+                if let ChatChunk::Delta(delta) = chunk {
+                    reply.push_str(&delta);
+                }
+            },
+        )
+        .await;
+    drop(registration);
+    if result?.cancelled {
+        return Err(AppError::msg("Anonymization was cancelled."));
+    }
+    debug_log::parse_findings(&reply, &text).ok_or_else(|| {
+        AppError::msg("The model did not answer with a list of findings. Try another model.")
+    })
+}
+
+/// Saves a chat's debug log where the user picks in a native save dialog.
+/// Writing only after the dialog keeps the webview from choosing a path.
+/// `None` when the dialog is cancelled.
+#[tauri::command]
+pub async fn save_debug_log(
+    app: AppHandle,
+    title: String,
+    file_name: String,
+    content: String,
+) -> Result<Option<String>> {
+    // `blocking_save_file` waits for the dialog and must not run on the main
+    // thread, which is where synchronous commands run.
+    blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title(title)
+            .set_file_name(debug_log::log_file_name(&file_name))
+            .add_filter("Markdown", &["md"])
+            .blocking_save_file();
+        let Some(file_path) = picked else {
+            return Ok(None);
+        };
+        let path = file_path
+            .into_path()
+            .map_err(|error| AppError::msg(error.to_string()))?;
+        std::fs::write(&path, content)?;
+        Ok(Some(path.to_string_lossy().to_string()))
+    })
+    .await
 }
 
 fn truncate_title(content: &str) -> String {

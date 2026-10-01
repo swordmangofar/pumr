@@ -297,6 +297,7 @@
     "openSettings": "Otwórz ustawienia",
     "error": "Błąd",
     "retry": "Spróbuj ponownie",
+    "exportDebugLog": "Eksportuj log debugowania",
     "revert": "Przywróć do tego promptu",
     "revertTitle": "Przywrócić rozmowę do tego promptu?",
     "revertDetail": "Wszystkie wiadomości po tym prompcie zostaną usunięte, a prompt wróci do pola wprowadzania. Możesz także przywrócić pliki do stanu sprzed uruchomienia tego promptu.",
@@ -442,6 +443,61 @@
         "timeout": "Przekroczono limit czasu",
         "cancelled": "Anulowane"
       }
+    },
+    "export": {
+      "button": "Eksportuj log",
+      "buttonHint": "Zapisz log debugowania tego czatu z wersją systemu i aplikacji, aby przeanalizować błędy z agentem AI",
+      "title": "Eksportuj log debugowania",
+      "description": "Zapisuje ten czat jako plik Markdown: wersje systemu operacyjnego, aplikacji i WebView, każdy krok z jego błędami oraz dziennik uprawnień. Przekaż go wybranemu agentowi AI, aby ustalić, co poszło nie tak.",
+      "warningTitle": "Log może zawierać poufne informacje",
+      "warning": "Twoje prompty, odpowiedzi i rozumowanie modelu, argumenty i wyniki narzędzi (np. zawartość plików i wyniki poleceń), prompty systemowe, reguły projektu i ścieżki plików są w pliku zapisane zwykłym tekstem. Mogą zawierać kod źródłowy, sekrety, nazwiska lub adresy e-mail. Sprawdź log, zanim go udostępnisz.",
+      "anonymize": {
+        "title": "Anonimizuj za pomocą AI (opcjonalnie)",
+        "description": "Wybrany przez ciebie model szuka danych osobowych i poufnych, takich jak imiona i nazwiska, nazwy użytkowników, adresy e-mail, klucze API, tokeny, hasła, adresy IP i prywatne adresy URL, które są następnie zastępowane symbolami zastępczymi, np. [EMAIL_1]. Twój folder domowy staje się ~. Log jest wysyłany do dostawcy modelu; wybierz model lokalny, aby pozostał na tym komputerze.",
+        "model": "Model do anonimizacji",
+        "pickModel": "Wybierz model",
+        "run": "Anonimizuj",
+        "again": "Anonimizuj ponownie",
+        "progress": "Skanowanie części {{ current }} z {{ total }}…",
+        "found": "Zostanie zastąpionych {{ count }} wartości. Odznacz te, które mają zostać.",
+        "none": "Model nie znalazł danych osobowych ani poufnych.",
+        "undo": "Odrzuć",
+        "review": "Automatyczna anonimizacja może coś przeoczyć. Sprawdź podgląd, zanim udostępnisz log."
+      },
+      "kinds": {
+        "home": "Folder domowy",
+        "name": "Imię i nazwisko",
+        "username": "Nazwa użytkownika",
+        "email": "E-mail",
+        "phone": "Telefon",
+        "address": "Adres",
+        "secret": "Sekret",
+        "ip": "Adres IP",
+        "url": "URL",
+        "path": "Ścieżka",
+        "org": "Organizacja",
+        "other": "Inne"
+      },
+      "preview": "Podgląd",
+      "previewAnonymized": "Podgląd (zanonimizowany)",
+      "search": {
+        "placeholder": "Szukaj w logu",
+        "matches": "{{ current }} z {{ total }}",
+        "none": "Brak wyników",
+        "lines": "Wiersze: {{ count }}",
+        "previous": "Poprzedni wynik",
+        "next": "Następny wynik"
+      },
+      "changes": {
+        "tab": "Zmiany ({{ count }})",
+        "description": "Każdy wiersz zmieniony przez anonimizację: oryginał na czerwono, wersja zanonimizowana na zielono. Oryginalne wartości są widoczne tylko tutaj i nie są zapisywane."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopiuj log",
+      "save": "Zapisz log…",
+      "saveAnonymized": "Zapisz zanonimizowany log…",
+      "saveDialogTitle": "Zapisz log debugowania",
+      "saved": "Zapisano w {{ path }}"
     }
   },
   "agents": {

@@ -297,6 +297,7 @@
     "openSettings": "Otvori postavke",
     "error": "Greška",
     "retry": "Pokušaj ponovno",
+    "exportDebugLog": "Izvezi zapisnik ispravljanja pogrešaka",
     "revert": "Vrati na ovaj prompt",
     "revertTitle": "Vratiti razgovor na ovaj prompt?",
     "revertDetail": "Sve poruke nakon ovog prompta se uklanjaju i prompt se vraća u vaš okvir za unos. Također možete vratiti datoteke u stanje prije nego što je ovaj prompt izvršen.",
@@ -442,6 +443,61 @@
         "timeout": "Isteklo vrijeme",
         "cancelled": "Otkazano"
       }
+    },
+    "export": {
+      "button": "Izvezi zapisnik",
+      "buttonHint": "Spremite zapisnik ispravljanja pogrešaka ovog chata s verzijom sustava i aplikacije kako biste analizirali pogreške s AI agentom",
+      "title": "Izvezi zapisnik ispravljanja pogrešaka",
+      "description": "Sprema ovaj chat kao Markdown datoteku: verzije vašeg operacijskog sustava, aplikacije i WebViewa, svaki korak s njegovim pogreškama i zapisnik dopuštenja. Predajte je AI agentu po izboru kako biste saznali što je pošlo po zlu.",
+      "warningTitle": "Zapisnik može sadržavati osjetljive podatke",
+      "warning": "Vaši upiti, odgovori i razmišljanje modela, argumenti i izlazi alata (poput sadržaja datoteka i izlaza naredbi), sistemski upiti, pravila projekta i putanje datoteka nalaze se u datoteci kao običan tekst. Mogu sadržavati izvorni kod, tajne, imena ili adrese e-pošte. Provjerite zapisnik prije dijeljenja.",
+      "anonymize": {
+        "title": "Anonimiziraj pomoću AI-ja (neobavezno)",
+        "description": "Model po vašem izboru traži osobne i tajne podatke poput imena, korisničkih imena, adresa e-pošte, API ključeva, tokena, lozinki, IP adresa i privatnih URL-ova, koji se zatim zamjenjuju rezerviranim oznakama poput [EMAIL_1]. Vaša početna mapa postaje ~. Zapisnik se šalje pružatelju modela; odaberite lokalni model da ostane na ovom računalu.",
+        "model": "Model za anonimizaciju",
+        "pickModel": "Odaberite model",
+        "run": "Anonimiziraj",
+        "again": "Ponovno anonimiziraj",
+        "progress": "Pregledava se dio {{ current }} od {{ total }}…",
+        "found": "Bit će zamijenjeno vrijednosti: {{ count }}. Uklonite kvačicu s onih koje trebaju ostati.",
+        "none": "Model nije pronašao osobne ni tajne podatke.",
+        "undo": "Odbaci",
+        "review": "Automatska anonimizacija može nešto propustiti. Provjerite pretpregled prije dijeljenja zapisnika."
+      },
+      "kinds": {
+        "home": "Početna mapa",
+        "name": "Ime",
+        "username": "Korisničko ime",
+        "email": "E-pošta",
+        "phone": "Telefon",
+        "address": "Adresa",
+        "secret": "Tajna",
+        "ip": "IP adresa",
+        "url": "URL",
+        "path": "Putanja",
+        "org": "Organizacija",
+        "other": "Ostalo"
+      },
+      "preview": "Pretpregled",
+      "previewAnonymized": "Pretpregled (anonimizirano)",
+      "search": {
+        "placeholder": "Pretraži zapisnik",
+        "matches": "{{ current }} od {{ total }}",
+        "none": "Nema rezultata",
+        "lines": "Retci: {{ count }}",
+        "previous": "Prethodni rezultat",
+        "next": "Sljedeći rezultat"
+      },
+      "changes": {
+        "tab": "Promjene ({{ count }})",
+        "description": "Svaki redak koji anonimizacija mijenja: izvornik crveno, anonimizirana verzija zeleno. Izvorne vrijednosti prikazuju se samo ovdje i ne spremaju se."
+      },
+      "size": "Markdown, {{ size }}",
+      "copy": "Kopiraj zapisnik",
+      "save": "Spremi zapisnik…",
+      "saveAnonymized": "Spremi anonimizirani zapisnik…",
+      "saveDialogTitle": "Spremi zapisnik ispravljanja pogrešaka",
+      "saved": "Spremljeno u {{ path }}"
     }
   },
   "agents": {
