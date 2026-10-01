@@ -3380,6 +3380,7 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "uuid",
  "webkit2gtk-sys",
+ "x11-dl",
 ]
 
 [[package]]

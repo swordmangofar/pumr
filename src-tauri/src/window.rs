@@ -61,6 +61,20 @@ fn set_webview_zoom(window: &tauri::WebviewWindow, zoom: f64) {
     }
 }
 
+/// Makes Xlib safe to use from more than one thread. The toolkit talks to the
+/// X server on the main thread while the window library listens for raw key
+/// events on a thread of its own. libX11 before 1.8 (Ubuntu 22.04, Pop!_OS
+/// 22.04) does not lock between them unless asked to, and aborts the process
+/// with "Unknown sequence number while processing queue" once they collide;
+/// later releases do this on their own. Must run before any other Xlib call.
+#[cfg(target_os = "linux")]
+pub fn init_x11_threads() {
+    if let Ok(xlib) = x11_dl::xlib::Xlib::open() {
+        // SAFETY: no arguments, and nothing has used Xlib yet.
+        unsafe { (xlib.XInitThreads)() };
+    }
+}
+
 /// Re-applies the interface zoom whenever the desktop font DPI changes, so the
 /// correction in [`linux_dpi`] follows the desktop's text scaling. Must be
 /// called on the main thread.
@@ -138,9 +152,15 @@ pub fn toggle(app: &AppHandle) {
         return;
     };
 
-    let focused = is_frontmost(&window);
     let visible = window.is_visible().unwrap_or(true);
-    log::info!("window toggle fired (focused={focused}, visible={visible})");
+    let minimized = window.is_minimized().unwrap_or(false);
+    // A window that is not on screen cannot be the one in use. On X11 a hidden
+    // window still counts as active when no other window took the focus, and
+    // the shortcut would hide it again instead of bringing it back.
+    let focused = visible && !minimized && is_frontmost(&window);
+    log::info!(
+        "window toggle fired (focused={focused}, visible={visible}, minimized={minimized})"
+    );
 
     let settings = app.state::<AppState>().settings();
     if focused {

@@ -15,6 +15,7 @@ mod permissions;
 mod power;
 mod processes;
 mod providers;
+mod rendering;
 mod shell_lex;
 mod state;
 mod terminal;
@@ -25,8 +26,11 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    window::init_x11_threads();
     let context = tauri::generate_context!();
     appimage::isolate_gstreamer_registry(&context.config().identifier);
+    let startup = rendering::prepare(&context.config().identifier);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -209,6 +213,12 @@ pub fn run() {
             commands::summarize_session,
             commands::send_message,
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while running tauri application")
+        .run(move |_app, event| {
+            // Quitting before the start has settled is not a failed start.
+            if let tauri::RunEvent::Exit = event {
+                startup.settled();
+            }
+        });
 }

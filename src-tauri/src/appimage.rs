@@ -29,18 +29,21 @@ fn private_registry(identifier: &str, var: impl Fn(&str) -> Option<OsString>) ->
     {
         return None;
     }
-    // The XDG cache directory, resolved the way GStreamer resolves its own.
-    let cache = var("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .filter(|path| path.is_absolute())?;
     Some(
-        cache
+        xdg_cache_home(&var)?
             .join(identifier)
             .join("gstreamer-1.0")
             .join(format!("registry.{}.bin", std::env::consts::ARCH)),
     )
+}
+
+/// The XDG cache directory, resolved the way GStreamer resolves its own.
+pub(crate) fn xdg_cache_home(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    var("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .filter(|path| path.is_absolute())
 }
 
 #[cfg(test)]

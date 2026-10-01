@@ -57,6 +57,7 @@ keyring = { version = "3.6.3", features = ["windows-native"] }
 keyring = { version = "3.6.3", features = ["sync-secret-service", "crypto-rust"] }
 gtk = "0.18"
 gdkx11 = "0.18"
+x11-dl = "2.21"
 webkit2gtk-sys = "2.0"
 
 [dev-dependencies]
