@@ -45,6 +45,7 @@ function session(patch: Partial<Session> = {}): Session {
     modeId: 'coding',
     limitReached: false,
     autoContinue: false,
+    interrupted: false,
     ...patch,
   };
 }

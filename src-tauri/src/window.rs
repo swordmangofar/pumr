@@ -1,7 +1,7 @@
 use crate::config::{clamp_zoom, WindowSettings, WINDOW_TOGGLE_MINIMIZE};
 use crate::state::AppState;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 /// Reconciles the webview zoom and the system-wide window-toggle shortcut with
@@ -144,6 +144,10 @@ pub fn suspend(app: &AppHandle) {
     }
 }
 
+/// Sent to the frontend when the toggle shortcut brings the window back, so it
+/// can put keyboard focus in the chat.
+pub const SUMMONED_EVENT: &str = "window-summoned";
+
 /// Summons pumr to the screen under the cursor, or hides/minimizes it when it
 /// is already the focused window.
 pub fn toggle(app: &AppHandle) {
@@ -186,6 +190,9 @@ pub fn toggle(app: &AppHandle) {
     bring_to_front(&window);
     if maximize {
         let _ = window.maximize();
+    }
+    if let Err(error) = window.emit(SUMMONED_EVENT, ()) {
+        log::warn!("could not announce the summoned window: {error}");
     }
 }
 
@@ -264,6 +271,7 @@ fn bring_to_front(window: &tauri::WebviewWindow) {
             // Wayland has no global timestamp to refresh.
             None => gtk_window.present(),
         }
+        focus_webview(&target);
     });
     if let Err(error) = result {
         log::warn!("could not bring window to front: {error}");
@@ -273,6 +281,17 @@ fn bring_to_front(window: &tauri::WebviewWindow) {
 #[cfg(not(target_os = "linux"))]
 fn bring_to_front(window: &tauri::WebviewWindow) {
     let _ = window.set_focus();
+    focus_webview(window);
+}
+
+/// Hands keyboard focus to the page. A window that comes back from being
+/// hidden is focused itself, but its webview is not necessarily the widget
+/// that receives the keys, and the page cannot take that focus on its own.
+fn focus_webview(window: &tauri::WebviewWindow) {
+    let webview: &tauri::Webview = window.as_ref();
+    if let Err(error) = webview.set_focus() {
+        log::warn!("could not focus the webview: {error}");
+    }
 }
 
 /// Moves the window to the monitor that currently contains the mouse cursor and

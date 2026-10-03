@@ -8,6 +8,8 @@ import {
   signal,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { displayBindings, HotkeyAction, hotkeyBindings } from '../core/hotkeys';
+import { SettingsService } from '../core/settings.service';
 import { TERMINAL_MIN_HEIGHT, TerminalService } from '../core/terminal.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { TerminalView } from './terminal-view';
@@ -71,7 +73,10 @@ const MIN_CONTENT_HEIGHT = 160;
               type="button"
               class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-mist/40 transition-all hover:bg-white/10 hover:text-white focus-visible:opacity-100"
               [class]="tab.key === terminals.activeKey() ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
-              [title]="'terminal.close' | transloco"
+              [title]="
+                ('terminal.close' | transloco) +
+                (tab.key === terminals.activeKey() ? closeHotkeyHint() : '')
+              "
               [attr.aria-label]="'terminal.close' | transloco"
               (click)="close($event, tab.key)"
             >
@@ -93,7 +98,7 @@ const MIN_CONTENT_HEIGHT = 160;
           <button
             type="button"
             class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-mist/50 transition-colors hover:bg-white/10 hover:text-accent"
-            [title]="'terminal.new' | transloco"
+            [title]="('terminal.new' | transloco) + newHotkeyHint()"
             [attr.aria-label]="'terminal.new' | transloco"
             (click)="terminals.createForActiveProject()"
           >
@@ -149,16 +154,24 @@ const MIN_CONTENT_HEIGHT = 160;
 export class TerminalDock {
   protected readonly terminals = inject(TerminalService);
   protected readonly workspace = inject(WorkspaceService);
+  private readonly settings = inject(SettingsService);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
   protected readonly resizing = signal(false);
   protected readonly visible = computed(() => this.terminals.open());
+  protected readonly newHotkeyHint = computed(() => this.hotkeyHint('terminalNewTab'));
+  protected readonly closeHotkeyHint = computed(() => this.hotkeyHint('terminalCloseTab'));
 
   private startY = 0;
   private startHeight = 0;
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.stopResize());
+  }
+
+  private hotkeyHint(action: HotkeyAction): string {
+    const hotkey = displayBindings(hotkeyBindings(this.settings.settings(), action));
+    return hotkey ? ` (${hotkey})` : '';
   }
 
   protected close(event: Event, key: string): void {

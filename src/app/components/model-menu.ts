@@ -65,7 +65,7 @@ export function formatModelContext(value: number): string {
       [attr.aria-label]="'composer.searchModel' | transloco"
       (input)="onFilter($event)"
     />
-    @if (pickerProviders().length > 1) {
+    @if (pickerProviders().length > 1 && !only()) {
       <div
         class="flex shrink-0 gap-1 overflow-x-auto border-b border-white/5 px-3 py-2"
         role="group"
@@ -230,6 +230,8 @@ export class ModelMenu {
   readonly selected = input<string | null>(null);
   /** When set, a first row with this label picks "no model" (`null`). */
   readonly clearLabel = input<string | null>(null);
+  /** When set, only the models with these ids are listed. */
+  readonly only = input<readonly string[] | null>(null);
   readonly picked = output<string | null>();
 
   protected readonly providerModelId = providerModelId;
@@ -242,11 +244,17 @@ export class ModelMenu {
   private readonly searchRef = viewChild<ElementRef<HTMLInputElement>>('search');
 
   private readonly favoriteModels = computed(() => this.settings.settings()?.favoriteModels ?? []);
+  /** The models the picker offers: all of them, or the ones named by `only`. */
+  private readonly offered = computed(() => {
+    const only = this.only();
+    const models = this.modelsService.models();
+    return only ? models.filter((model) => only.includes(model.id)) : models;
+  });
 
   /** Providers that have models in the picker, in catalog order, with counts. */
   protected readonly pickerProviders = computed(() => {
     const counts = new Map<string, number>();
-    for (const model of this.modelsService.models()) {
+    for (const model of this.offered()) {
       counts.set(model.source, (counts.get(model.source) ?? 0) + 1);
     }
     const order = this.providers.providers().map((provider) => provider.id);
@@ -266,18 +274,18 @@ export class ModelMenu {
     const term = this.filter().trim().toLowerCase();
     const providers = this.pickerProviders();
     const selected = this.providerFilter();
-    const active = providers.some((entry) => entry.id === selected) ? selected : 'all';
+    // A short list of suggestions is shown whole, whatever provider was picked last.
+    const active =
+      !this.only() && providers.some((entry) => entry.id === selected) ? selected : 'all';
     const favorites = new Set(this.favoriteModels());
-    const matches = this.modelsService
-      .models()
-      .filter(
-        (model) =>
-          (active === 'all' || model.source === active) &&
-          (!term ||
-            model.name.toLowerCase().includes(term) ||
-            model.id.toLowerCase().includes(term) ||
-            this.providers.name(model.source).toLowerCase().includes(term)),
-      );
+    const matches = this.offered().filter(
+      (model) =>
+        (active === 'all' || model.source === active) &&
+        (!term ||
+          model.name.toLowerCase().includes(term) ||
+          model.id.toLowerCase().includes(term) ||
+          this.providers.name(model.source).toLowerCase().includes(term)),
+    );
     const groups: { id: string; name: string; models: ModelInfo[] }[] = [];
     let budget = MAX_PICKER_ROWS;
     const favored = matches.filter((model) => favorites.has(model.id)).slice(0, budget);

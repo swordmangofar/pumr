@@ -32,8 +32,9 @@ jobs:
             bundles: app,dmg
             osLabel: mac
             archLabel: silicone
+          # Cross-compiled on Apple Silicon: the Intel runners are far slower.
           - platform: macos-x64
-            os: macos-15-intel
+            os: macos-latest
             target: x86_64-apple-darwin
             bundles: app,dmg
             osLabel: mac
@@ -98,11 +99,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # A cache saved by a tag run is only readable by that tag, so tag builds
+      # restore the one from the default branch and save nothing.
       - name: Cache Rust
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: src-tauri
           key: ${{ matrix.target }}
+          save-if: ${{ github.ref_type != 'tag' }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

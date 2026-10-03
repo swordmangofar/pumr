@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import {
   CommandRule,
+  CompactResult,
   CreateSessionArgs,
   DefaultSystemPrompts,
   DirectoryPage,
@@ -173,6 +174,9 @@ export const api = {
     invoke<void>('clear_permission_audit', { conversationId }),
   resolveQuestion: (requestId: string, answers: QuestionAnswer[] | null) =>
     invoke<void>('resolve_question', { requestId, answers }),
+  /** Picks the model of a `modelChoiceRequest`; `null` skips it. */
+  resolveModelChoice: (requestId: string, model: string | null) =>
+    invoke<void>('resolve_model_choice', { requestId, model }),
   addCommandRule: (rule: CommandRule, allow: boolean) =>
     invoke<Settings>('add_command_rule', { rule, allow }),
   deleteCommandRule: (rule: CommandRule, allow: boolean) =>
@@ -387,6 +391,7 @@ export const api = {
   revertToMessage: (messageId: string, restoreFiles: boolean) =>
     invoke<RevertResult>('revert_to_message', { messageId, restoreFiles }),
   summarizeSession: (sessionId: string) => invoke<string>('summarize_session', { sessionId }),
+  compactSession: (sessionId: string) => invoke<CompactResult>('compact_session', { sessionId }),
   getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
   /** Cancel a running call with `stopGeneration(ANONYMIZE_CANCEL_KEY)`. */
   findSensitiveData: (model: string, text: string) =>

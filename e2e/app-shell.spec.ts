@@ -24,6 +24,25 @@ test.describe('app shell', () => {
     );
   });
 
+  test('gives the panels a height of their own rather than stretching them', async ({
+    app,
+    page,
+  }) => {
+    await app.start();
+
+    // A stretched panel renders the same here, but WebKit lays it out twice
+    // on every pass and repaints both times, which WebKitGTK's renderer
+    // without GPU compositing does on the CPU for most of the window.
+    const heights = await page
+      .getByRole('main')
+      .evaluate((main) =>
+        Array.from(main.parentElement?.children ?? [], (panel) =>
+          String(panel.computedStyleMap().get('height')),
+        ),
+      );
+    expect(heights).toEqual(['100%', '100%', '100%']);
+  });
+
   test('restores open tabs and the active session after a restart', async ({ app, page }) => {
     await page.addInitScript(() => {
       localStorage.setItem('pumr.tabs', JSON.stringify(['session-1', 'session-2']));

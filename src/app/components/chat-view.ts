@@ -10,8 +10,10 @@ import {
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { providerModelId } from '../core/api';
 import { formatTokenCount } from '../core/format';
-import { FileChange, LiveToolCall, Message, MessageAttachment } from '../core/models';
+import { FileChange, LiveToolCall, Message, MessageAttachment, Session } from '../core/models';
+import { ModelsService } from '../core/models.service';
 import { ProvidersService } from '../core/providers.service';
 import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
@@ -23,10 +25,12 @@ import { MarkdownView } from './markdown-view';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
 import { ProjectIcon } from './project-icon';
+import { ModelChoiceOverlay } from './model-choice-overlay';
 import { QuestionOverlay } from './question-overlay';
 import { StickToBottom } from './stick-to-bottom';
 import { ToolCard } from './tool-card';
 import { ToolGroup, ToolGroupItem } from './tool-group';
+import { WaitingChatsBanner } from './waiting-chats-banner';
 
 /** How close to the bottom (px) still counts as "at the bottom". */
 const AT_BOTTOM_THRESHOLD_PX = 48;
@@ -48,8 +52,12 @@ interface ToolEntry {
   summary: string;
   command: string;
   output: string;
+  /** Still running and printing: its output is shown as it arrives. */
+  live: boolean;
   status: string;
   changes: FileChange[];
+  /** Pictures the call shows the user (the `screenshot` tool). */
+  images: MessageAttachment[];
 }
 
 interface ToolGroupEntry {
@@ -62,6 +70,11 @@ interface ToolGroupEntry {
 type ChatEntry = MessageEntry | ToolEntry | ToolGroupEntry;
 
 const HIDDEN_TOOLS = new Set(['ls']);
+
+/** The pictures among a tool result's attachments. */
+function imagesOf(attachments: MessageAttachment[] | undefined): MessageAttachment[] {
+  return (attachments ?? []).filter((attachment) => attachment.kind === 'image');
+}
 const GROUPABLE_TOOLS = new Set(['read', 'write', 'edit', 'bash']);
 
 /**
@@ -89,6 +102,8 @@ import { TypedInput } from './typed-input';
     AttachmentPreview,
     PermissionOverlay,
     QuestionOverlay,
+    ModelChoiceOverlay,
+    WaitingChatsBanner,
     ToolCard,
     ToolGroup,
     AgentStatus,
@@ -355,13 +370,69 @@ import { TypedInput } from './typed-input';
                           </div>
                         </div>
                       }
+                      @case ('compaction') {
+                        <details class="group/compaction">
+                          <summary
+                            class="flex cursor-pointer items-center gap-3 text-xs text-mist/40 select-none hover:text-mist/70 [&::-webkit-details-marker]:hidden"
+                          >
+                            <span class="h-px flex-1 bg-white/10"></span>
+                            <svg
+                              viewBox="0 0 16 16"
+                              class="h-3 w-3 shrink-0 transition-transform group-open/compaction:rotate-90"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M6 3.5 10.5 8 6 12.5" />
+                            </svg>
+                            {{ 'chat.compacted' | transloco }}
+                            <span class="h-px flex-1 bg-white/10"></span>
+                          </summary>
+                          <div class="glass-inset mt-3 rounded-xl px-4 py-3">
+                            <p class="mb-2 text-xs text-mist/40">
+                              {{ 'chat.compactedHint' | transloco }}
+                            </p>
+                            <div
+                              class="max-h-80 overflow-y-auto text-sm leading-relaxed break-words text-mist/60"
+                            >
+                              <app-markdown
+                                class="markdown-muted"
+                                [content]="entry.message.content"
+                                [caret]="false"
+                              />
+                            </div>
+                          </div>
+                        </details>
+                      }
+                      @case ('note') {
+                        <p
+                          class="border-l-2 border-white/10 pl-3 text-xs leading-relaxed break-words text-mist/40"
+                        >
+                          {{ entry.message.content }}
+                        </p>
+                      }
                       @default {
                         <div class="group">
                           @if (entry.message.reasoning) {
-                            <details class="glass-inset mb-3 rounded-xl">
+                            <details class="group/thinking glass-inset mb-3 rounded-xl">
                               <summary
-                                class="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-mist/50 select-none hover:text-mist"
+                                class="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm text-mist/50 select-none hover:text-mist [&::-webkit-details-marker]:hidden"
                               >
+                                <svg
+                                  viewBox="0 0 16 16"
+                                  class="h-3 w-3 shrink-0 transition-transform group-open/thinking:rotate-90"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="1.6"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M6 3.5 10.5 8 6 12.5" />
+                                </svg>
                                 @if (streaming() && isLast(entry.message)) {
                                   <app-puma-loader [compact]="true" />
                                   {{ 'chat.thinking' | transloco }}…
@@ -411,6 +482,14 @@ import { TypedInput } from './typed-input';
                                   {{ money(entry.message.cost) }}</span
                                 >
                               }
+                              @if (cacheRate(entry.message); as rate) {
+                                <span
+                                  class="tabular-nums"
+                                  data-testid="cache-rate"
+                                  [attr.title]="exactCache(entry.message)"
+                                  >{{ 'chat.cache' | transloco }} {{ rate }}%</span
+                                >
+                              }
                               <span
                                 class="flex items-center gap-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
                               >
@@ -424,12 +503,6 @@ import { TypedInput } from './typed-input';
                                     }}
                                     {{ 'chat.tokens' | transloco }}
                                   </span>
-                                }
-                                @if (entry.message.cachedTokens > 0) {
-                                  <span
-                                    >{{ 'chat.cache' | transloco }}
-                                    {{ cacheRate(entry.message) }}%</span
-                                  >
                                 }
                               </span>
                               <app-copy-button
@@ -455,14 +528,36 @@ import { TypedInput } from './typed-input';
                     [summary]="entry.summary"
                     [command]="entry.command"
                     [output]="entry.output"
+                    [live]="entry.live"
                     [status]="entry.status"
                     [changes]="entry.changes"
                     [sessionId]="active.id"
                   />
+                  @for (image of entry.images; track image.id) {
+                    <figure class="my-3">
+                      <button
+                        type="button"
+                        class="block max-w-full cursor-pointer overflow-hidden rounded-xl border border-white/10 transition hover:border-accent/50"
+                        (click)="previewAttachment.set(image)"
+                      >
+                        <img
+                          [src]="attachmentPreview(image)"
+                          [alt]="image.name"
+                          class="max-h-[28rem] max-w-full object-contain"
+                        />
+                      </button>
+                      <figcaption class="mt-1.5 text-xs text-mist/40">{{ image.name }}</figcaption>
+                    </figure>
+                  }
                 }
               }
 
-              @if (streaming() && waiting()) {
+              @if (compacting()) {
+                <div class="mb-6 flex items-center gap-2 text-sm text-mist/50">
+                  <app-puma-loader [compact]="true" />
+                  {{ 'chat.compacting' | transloco }}…
+                </div>
+              } @else if (streaming() && waiting()) {
                 <div class="mb-6 flex items-center gap-2 text-sm text-mist/50">
                   <app-puma-loader [compact]="true" />
                   {{ 'chat.thinking' | transloco }}…
@@ -498,6 +593,24 @@ import { TypedInput } from './typed-input';
                       {{ 'chat.retry' | transloco }}
                     </button>
                   }
+                </div>
+              }
+
+              @if (interrupted()) {
+                <div
+                  class="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200"
+                  data-testid="chat-interrupted"
+                >
+                  <p class="min-w-0 flex-1 leading-relaxed">
+                    {{ 'chat.interrupted' | transloco }}
+                  </p>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-full bg-amber-400/90 px-4 py-1.5 text-sm font-semibold text-ink transition-colors hover:bg-amber-300"
+                    (click)="continueGeneration()"
+                  >
+                    {{ 'chat.continue' | transloco }}
+                  </button>
                 </div>
               }
 
@@ -555,11 +668,16 @@ import { TypedInput } from './typed-input';
             </button>
           }
 
+          <app-waiting-chats-banner />
+
           @if (workspace.permission(); as request) {
             <app-permission-overlay [request]="request" />
           }
           @if (workspace.question(); as request) {
             <app-question-overlay [request]="request" />
+          }
+          @if (workspace.modelChoice(); as request) {
+            <app-model-choice-overlay [request]="request" />
           }
         </div>
 
@@ -591,6 +709,11 @@ import { TypedInput } from './typed-input';
               >
                 <app-agent-status [status]="agent.agentStatus" [small]="true" />
                 <span class="truncate">{{ agent.title }}</span>
+                @if (agentModel(agent); as model) {
+                  <span class="max-w-28 shrink-0 truncate text-mist/40" data-testid="agent-model">
+                    {{ model }}
+                  </span>
+                }
               </button>
             }
           </div>
@@ -662,6 +785,7 @@ export class ChatView {
   protected readonly workspace = inject(WorkspaceService);
   protected readonly settings = inject(SettingsService);
   protected readonly providers = inject(ProvidersService);
+  private readonly models = inject(ModelsService);
   protected readonly tauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
   protected readonly revertTarget = signal<Message | null>(null);
@@ -682,6 +806,16 @@ export class ChatView {
   protected readonly session = this.workspace.activeAgent;
   protected readonly subAgents = this.workspace.activeSubAgents;
   protected readonly fromSubAgent = computed(() => this.session()?.parentSessionId != null);
+
+  /** The model a subagent runs on, named when it is not the chat's own. */
+  protected agentModel(agent: Session): string | null {
+    const chat =
+      this.workspace.activeSession()?.model ?? this.settings.settings()?.defaultModel ?? null;
+    if (!agent.model || agent.model === chat) {
+      return null;
+    }
+    return this.models.byId(agent.model)?.name ?? providerModelId(agent.model);
+  }
   protected readonly viewingSubAgent = computed(() => {
     const root = this.workspace.activeSession();
     const agent = this.workspace.activeAgentId();
@@ -690,6 +824,19 @@ export class ChatView {
   protected readonly messages = computed(() => {
     const session = this.session();
     return session ? this.workspace.messagesFor(session.id) : [];
+  });
+  /**
+   * Models that reported cache hits in this chat. Only for those does a request
+   * without cached tokens mean a miss rather than a provider that reports nothing.
+   */
+  private readonly cacheReportingModels = computed(() => {
+    const models = new Set<string | null>();
+    for (const message of this.messages()) {
+      if (message.cachedTokens > 0) {
+        models.add(message.model);
+      }
+    }
+    return models;
   });
   protected readonly delegatedPromptId = computed(() => {
     if (!this.fromSubAgent()) {
@@ -756,6 +903,11 @@ export class ChatView {
     const session = this.session();
     return session ? this.workspace.isStreaming(session.id) : false;
   });
+  /** The history is being summarised, by the running turn or on request. */
+  protected readonly compacting = computed(() => {
+    const session = this.session();
+    return session ? this.workspace.isCompacting(session.id) : false;
+  });
   protected readonly waiting = computed(() => {
     if (!this.streaming()) {
       return false;
@@ -771,6 +923,13 @@ export class ChatView {
   protected readonly limitReached = computed(() => {
     const session = this.session();
     return session ? this.workspace.limitReachedFor(session.id) && !this.streaming() : false;
+  });
+  /** The last turn was cut off (app closed, machine slept) and can go on. */
+  protected readonly interrupted = computed(() => {
+    const session = this.session();
+    return session
+      ? this.workspace.interruptedFor(session.id) && !this.streaming() && !this.limitReached()
+      : false;
   });
   protected readonly limitIterations = computed(() => this.maxToolIterations());
   protected readonly maxToolIterations = computed(
@@ -898,8 +1057,10 @@ export class ChatView {
         summary: this.toolSummary(message.toolName ?? 'tool', command, summary ?? message.content),
         command,
         output: message.content,
+        live: false,
         status: message.status ?? 'ok',
         changes: message.changes,
+        images: imagesOf(message.attachments),
       };
     }
     return { kind: 'message', key: message.id, message };
@@ -914,8 +1075,10 @@ export class ChatView {
       summary: this.toolSummary(tool.name, meta.command, tool.summary),
       command: meta.command,
       output: tool.output,
+      live: tool.live && tool.status === 'running',
       status: tool.status,
       changes: tool.changes,
+      images: imagesOf(tool.attachments),
     };
   }
 
@@ -952,6 +1115,7 @@ export class ChatView {
             key: tool.key,
             label: tool.summary,
             output: tool.output,
+            live: tool.live,
             status: tool.status,
             additions: tool.changes.reduce((sum, change) => sum + change.additions, 0),
             deletions: tool.changes.reduce((sum, change) => sum + change.deletions, 0),
@@ -1018,6 +1182,10 @@ export class ChatView {
         return text('query');
       case 'task':
         return text('description');
+      case 'bash_output':
+        return text('id');
+      case 'screenshot':
+        return text('caption') || text('url') || this.relativePath(text('path'));
       default:
         return null;
     }
@@ -1057,11 +1225,22 @@ export class ChatView {
     return `${message.promptTokens.toLocaleString()} → ${message.completionTokens.toLocaleString()}`;
   }
 
-  protected cacheRate(message: Message): string {
-    if (!message.promptTokens) {
-      return '0';
+  protected exactCache(message: Message): string {
+    return `${message.cachedTokens.toLocaleString()} / ${message.promptTokens.toLocaleString()}`;
+  }
+
+  /**
+   * Share of a request's input that came from the provider's cache, in percent,
+   * or null when the provider did not say.
+   */
+  protected cacheRate(message: Message): string | null {
+    if (message.promptTokens <= 0) {
+      return null;
     }
-    return ((message.cachedTokens / message.promptTokens) * 100).toFixed(1);
+    if (message.cachedTokens <= 0 && !this.cacheReportingModels().has(message.model)) {
+      return null;
+    }
+    return Math.min(100, (message.cachedTokens / message.promptTokens) * 100).toFixed(1);
   }
 
   protected money(value: number): string {

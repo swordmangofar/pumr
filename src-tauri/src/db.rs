@@ -126,6 +126,22 @@ impl<'a> NewMessage<'a> {
     }
 }
 
+/// Role of the message that records a compaction checkpoint. It is shown in
+/// the chat but never sent to the model as a message of its own.
+pub const COMPACTION_ROLE: &str = "compaction";
+
+/// Role of a message the harness wrote to the agent, such as the request to
+/// check a change before finishing. The model is sent it as a user message;
+/// the chat shows it as a note, not as something the user said.
+pub const NOTE_ROLE: &str = "note";
+
+/// A compaction checkpoint: `summary` replaces every message up to and
+/// including `upto_seq` in the model history.
+pub struct Checkpoint {
+    pub upto_seq: i64,
+    pub summary: String,
+}
+
 /// How many permission decisions the audit log keeps.
 const AUDIT_MAX_ROWS: i64 = 10_000;
 /// How long permission decisions are kept (90 days).
@@ -263,6 +279,7 @@ impl Db {
             ("context", "TEXT NOT NULL DEFAULT ''"),
             ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
             ("provider_content", "TEXT NOT NULL DEFAULT ''"),
+            ("compacted_upto", "INTEGER"),
         ] {
             add_column_if_missing(&conn, "messages", column, definition)?;
         }
@@ -273,6 +290,10 @@ impl Db {
             ("mode_id", "TEXT"),
             ("limit_reached", "INTEGER NOT NULL DEFAULT 0"),
             ("auto_continue", "INTEGER NOT NULL DEFAULT 0"),
+            ("cleared_upto", "INTEGER NOT NULL DEFAULT -1"),
+            ("todos", "TEXT NOT NULL DEFAULT '[]'"),
+            ("turn_running", "INTEGER NOT NULL DEFAULT 0"),
+            ("interrupted", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             add_column_if_missing(&conn, "sessions", column, definition)?;
         }
@@ -282,6 +303,12 @@ impl Db {
         // A run that was interrupted by an app restart can never resume.
         conn.execute(
             "UPDATE sessions SET agent_status = 'stopped' WHERE agent_status = 'running'",
+            [],
+        )?;
+        // A chat turn that was still running when the app closed was cut off.
+        // The chat offers to continue it.
+        conn.execute(
+            "UPDATE sessions SET interrupted = 1, turn_running = 0 WHERE turn_running = 1",
             [],
         )?;
         // Earlier versions deleted a chat without its subagent sessions. They
@@ -568,6 +595,31 @@ impl Db {
         })
     }
 
+    /// Marks the start of a chat turn, which also settles an earlier turn that
+    /// was cut off. The mark is what `migrate` finds after the app closed
+    /// mid-turn.
+    pub fn begin_turn(&self, session_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET turn_running = 1, interrupted = 0 WHERE id = ?1",
+                params![session_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Marks the end of a chat turn. `interrupted` records that it was cut
+    /// off before the agent finished, so the chat offers to continue it.
+    pub fn end_turn(&self, session_id: &str, interrupted: bool) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET turn_running = 0, interrupted = ?1 WHERE id = ?2",
+                params![interrupted as i64, session_id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn set_session_auto_continue(&self, session_id: &str, value: bool) -> Result<Session> {
         self.with_conn(|conn| {
             conn.execute(
@@ -822,37 +874,127 @@ impl Db {
         })
     }
 
-    /// Returns at most the newest `limit` messages in chronological order. When
-    /// `limit` is 0 all messages are returned. Avoids deserializing the entire
-    /// transcript (including large base64 attachments) when only a window is
-    /// needed, e.g. when building the model history.
-    pub fn list_messages_limited(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
-        if limit == 0 {
-            return self.list_messages(session_id);
-        }
+    /// The messages of a session after `seq`, in chronological order. The
+    /// model history starts after the last compaction checkpoint, so nothing
+    /// older has to be deserialized (including large base64 attachments).
+    pub fn list_messages_after(&self, session_id: &str, seq: i64) -> Result<Vec<Message>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 r#"SELECT id, session_id, seq, role, content, reasoning, model, provider,
                           cost, prompt_tokens, completion_tokens, cached_tokens, created_at,
                           tool_calls, tool_call_id, tool_name, status, changes, base_commit,
                           attachments, mentions, context, duration_ms
-                   FROM messages WHERE session_id = ?1
-                   ORDER BY seq DESC LIMIT ?2"#,
+                   FROM messages WHERE session_id = ?1 AND seq > ?2 ORDER BY seq ASC"#,
             )?;
-            let rows = stmt.query_map(params![session_id, limit as i64], map_message)?;
+            let rows = stmt.query_map(params![session_id, seq], map_message)?;
             let mut messages = Vec::new();
             for row in rows {
                 messages.push(row?);
             }
-            messages.reverse();
             Ok(messages)
         })
     }
 
+    /// Stores a compaction checkpoint: `summary` stands in for every message
+    /// up to and including `upto_seq` when the model history is built. It is
+    /// kept as a message of its own, so the chat shows where it happened and
+    /// reverting to an earlier message removes it again.
+    pub fn append_checkpoint(
+        &self,
+        session_id: &str,
+        summary: &str,
+        upto_seq: i64,
+        model: &str,
+        usage: (f64, i64, i64, i64),
+    ) -> Result<Message> {
+        let (cost, prompt_tokens, completion_tokens, cached_tokens) = usage;
+        let message = self.append_message(
+            session_id,
+            NewMessage {
+                role: COMPACTION_ROLE,
+                content: summary,
+                cost,
+                prompt_tokens,
+                completion_tokens,
+                cached_tokens,
+                ..NewMessage::assistant(Some(model), None)
+            },
+        )?;
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE messages SET compacted_upto = ?1 WHERE id = ?2",
+                params![upto_seq, message.id],
+            )?;
+            Ok(())
+        })?;
+        Ok(message)
+    }
+
+    /// The newest compaction checkpoint of a session, if it has one.
+    pub fn latest_checkpoint(&self, session_id: &str) -> Result<Option<Checkpoint>> {
+        self.with_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT compacted_upto, content FROM messages
+                      WHERE session_id = ?1 AND role = ?2 AND compacted_upto IS NOT NULL
+                      ORDER BY seq DESC LIMIT 1",
+                    params![session_id, COMPACTION_ROLE],
+                    |row| {
+                        Ok(Checkpoint {
+                            upto_seq: row.get(0)?,
+                            summary: row.get(1)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+    }
+
+    /// Tool outputs up to this message position are sent to the model as a
+    /// short stub instead of in full (-1 when none are).
+    pub fn cleared_upto(&self, session_id: &str) -> Result<i64> {
+        self.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT cleared_upto FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )?)
+        })
+    }
+
+    pub fn set_cleared_upto(&self, session_id: &str, seq: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET cleared_upto = ?1 WHERE id = ?2",
+                params![seq, session_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The task list the agent keeps for a session, as the JSON array it wrote.
+    pub fn session_todos(&self, session_id: &str) -> Result<String> {
+        self.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT todos FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )?)
+        })
+    }
+
+    pub fn set_session_todos(&self, session_id: &str, todos: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET todos = ?1 WHERE id = ?2",
+                params![todos, session_id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Returns the newest user message for a session, even when many assistant
-    /// and tool messages have been recorded since. The model history is capped
-    /// to the newest `limit` messages, so without this a long tool loop can drop
-    /// the user's instruction entirely and leave the model without a user turn.
+    /// and tool messages have been recorded since.
     pub fn latest_user_message(&self, session_id: &str) -> Result<Option<Message>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
@@ -1002,6 +1144,14 @@ impl Db {
         self.with_conn(|conn| {
             conn.execute(
                 "DELETE FROM messages WHERE session_id = ?1 AND seq >= ?2",
+                params![session_id, seq],
+            )?;
+            // Messages added from here on take these positions again and must
+            // not inherit the cleared mark of the ones they replace. A turn
+            // that was cut off is among the removed ones.
+            conn.execute(
+                "UPDATE sessions SET cleared_upto = MIN(cleared_upto, ?2 - 1), interrupted = 0
+                 WHERE id = ?1",
                 params![session_id, seq],
             )?;
             Ok(())
@@ -1309,7 +1459,7 @@ const SESSION_COLUMNS: &str = "\
     s.completion_tokens, s.cached_tokens, \
     (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id), \
     s.parent_session_id, s.agent_status, s.archived, s.mode_id, \
-    s.limit_reached, s.auto_continue";
+    s.limit_reached, s.auto_continue, s.interrupted";
 
 fn session_select(clause: &str) -> String {
     format!("SELECT {SESSION_COLUMNS} FROM sessions s {clause}")
@@ -1337,6 +1487,7 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<Session> {
         mode_id: row.get(17)?,
         limit_reached: row.get::<_, i64>(18)? != 0,
         auto_continue: row.get::<_, i64>(19)? != 0,
+        interrupted: row.get::<_, i64>(20)? != 0,
     })
 }
 
@@ -1553,5 +1704,108 @@ mod tests {
         assert!(db.get_session(&sub.id).is_err());
         assert!(db.get_session(&nested.id).is_err());
         assert!(db.get_session(&kept.id).is_ok());
+    }
+
+    #[test]
+    fn a_turn_left_running_when_the_app_closed_is_marked_interrupted() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-interrupted").unwrap();
+        let session = |title: &str| {
+            db.create_session(&project.id, title, None, None, None, None, None)
+                .unwrap()
+        };
+        let (cut_off, finished, idle) = (session("cut off"), session("finished"), session("idle"));
+        db.begin_turn(&cut_off.id).unwrap();
+        db.begin_turn(&finished.id).unwrap();
+        db.end_turn(&finished.id, false).unwrap();
+        let interrupted = |id: &str| db.get_session(id).unwrap().interrupted;
+        // Still running, as far as this run of the app knows.
+        assert!(!interrupted(&cut_off.id));
+
+        // The next start of the app.
+        db.migrate().unwrap();
+        assert!(interrupted(&cut_off.id));
+        assert!(!interrupted(&finished.id));
+        assert!(!interrupted(&idle.id));
+        // It stays until the chat goes on, however often the app restarts.
+        db.migrate().unwrap();
+        assert!(interrupted(&cut_off.id));
+
+        db.begin_turn(&cut_off.id).unwrap();
+        assert!(!interrupted(&cut_off.id));
+        // Cut off while the app kept running: the machine slept mid-reply.
+        db.end_turn(&cut_off.id, true).unwrap();
+        assert!(interrupted(&cut_off.id));
+
+        // Reverting removes the turn that was cut off.
+        db.delete_messages_from(&cut_off.id, 0).unwrap();
+        assert!(!interrupted(&cut_off.id));
+    }
+
+    #[test]
+    fn reverting_takes_back_checkpoints_and_the_cleared_mark() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-checkpoints").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        assert_eq!(db.cleared_upto(&chat.id).unwrap(), -1);
+        assert!(db.latest_checkpoint(&chat.id).unwrap().is_none());
+        for text in ["one", "two", "three", "four"] {
+            db.append_message(&chat.id, NewMessage::user(text, "", None, &[], &[]))
+                .unwrap();
+        }
+
+        let first = db
+            .append_checkpoint(&chat.id, "first summary", 1, "model", (0.5, 10, 5, 0))
+            .unwrap();
+        assert_eq!((first.seq, first.cost), (4, 0.5));
+        db.append_message(&chat.id, NewMessage::user("five", "", None, &[], &[]))
+            .unwrap();
+        db.append_checkpoint(&chat.id, "second summary", 5, "model", (0.0, 0, 0, 0))
+            .unwrap();
+        db.set_cleared_upto(&chat.id, 5).unwrap();
+        let latest = db.latest_checkpoint(&chat.id).unwrap().unwrap();
+        assert_eq!(
+            (latest.upto_seq, latest.summary.as_str()),
+            (5, "second summary")
+        );
+        assert_eq!(db.list_messages_after(&chat.id, 5).unwrap().len(), 1);
+
+        // Reverting to "five" removes the second checkpoint, and the first
+        // one counts again. Positions from there on are free for new messages.
+        db.delete_messages_from(&chat.id, 5).unwrap();
+        let latest = db.latest_checkpoint(&chat.id).unwrap().unwrap();
+        assert_eq!(
+            (latest.upto_seq, latest.summary.as_str()),
+            (1, "first summary")
+        );
+        assert_eq!(db.cleared_upto(&chat.id).unwrap(), 4);
+
+        db.delete_messages_from(&chat.id, 2).unwrap();
+        assert!(db.latest_checkpoint(&chat.id).unwrap().is_none());
+        assert_eq!(db.cleared_upto(&chat.id).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_session_keeps_the_task_list_it_was_given() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-todos").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        assert_eq!(db.session_todos(&chat.id).unwrap(), "[]");
+        db.set_session_todos(&chat.id, r#"[{"content":"a","status":"pending"}]"#)
+            .unwrap();
+        assert_eq!(
+            db.session_todos(&chat.id).unwrap(),
+            r#"[{"content":"a","status":"pending"}]"#
+        );
     }
 }

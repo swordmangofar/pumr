@@ -18,10 +18,13 @@ pub struct OutputBuffer {
     head: String,
     tail: String,
     dropped: usize,
+    /// Bytes pushed so far, kept or not.
+    total: usize,
 }
 
 impl OutputBuffer {
     pub fn push(&mut self, text: &str) {
+        self.total += text.len();
         let mut rest = text;
         if self.tail.is_empty() && self.head.len() < OUTPUT_HEAD_BYTES {
             let room = floor_char_boundary(rest, OUTPUT_HEAD_BYTES - self.head.len());
@@ -48,6 +51,31 @@ impl OutputBuffer {
         format!(
             "{}\n\n…({} bytes of output omitted)…\n\n{}",
             self.head, self.dropped, self.tail
+        )
+    }
+
+    /// Bytes pushed so far. Handed back to `since` to read on from here.
+    pub fn total(&self) -> usize {
+        self.total
+    }
+
+    /// The output written after the first `position` bytes, as far as it is
+    /// still kept.
+    pub fn since(&self, position: usize) -> String {
+        let tail_start = self.head.len() + self.dropped;
+        if position >= tail_start {
+            let from = floor_char_boundary(&self.tail, position - tail_start);
+            return self.tail[from..].to_string();
+        }
+        let from = floor_char_boundary(&self.head, position.min(self.head.len()));
+        if self.dropped == 0 {
+            return format!("{}{}", &self.head[from..], self.tail);
+        }
+        format!(
+            "{}\n\n…({} bytes of output omitted)…\n\n{}",
+            &self.head[from..],
+            self.dropped,
+            self.tail
         )
     }
 }
@@ -107,7 +135,15 @@ pub struct RunningProcess {
     /// The shell's process id, which is also its process group on Unix.
     pub pid: Option<u32>,
     pub running: Arc<AtomicBool>,
+    /// How the command ended, once it has.
+    pub exit_code: Arc<Mutex<Option<i32>>>,
+    /// How much of the output the agent has been given.
+    pub read_upto: Mutex<usize>,
 }
+
+/// Commands that have ended are kept, for the agent to read how they went,
+/// until this many newer ones have ended too.
+const KEPT_FINISHED: usize = 12;
 
 #[derive(Default)]
 pub struct ProcessRegistry {
@@ -126,13 +162,52 @@ impl ProcessRegistry {
             .insert(process.id.clone(), process);
     }
 
+    /// The commands that are still running.
     pub fn list(&self) -> Vec<ProcessInfo> {
         let mut guard = self.processes.lock().unwrap();
-        guard.retain(|_, process| process.running.load(Ordering::SeqCst));
-        let mut processes: Vec<ProcessInfo> =
-            guard.values().map(|process| process.to_info()).collect();
+        let mut finished: Vec<(i64, String)> = guard
+            .values()
+            .filter(|process| !process.running.load(Ordering::SeqCst))
+            .map(|process| (process.started_at, process.id.clone()))
+            .collect();
+        if finished.len() > KEPT_FINISHED {
+            finished.sort();
+            for (_, id) in &finished[..finished.len() - KEPT_FINISHED] {
+                guard.remove(id);
+            }
+        }
+        let mut processes: Vec<ProcessInfo> = guard
+            .values()
+            .filter(|process| process.running.load(Ordering::SeqCst))
+            .map(|process| process.to_info())
+            .collect();
         processes.sort_by_key(|process| process.started_at);
         processes
+    }
+
+    /// A background command of `session_id`, running or ended, by its id.
+    pub fn find(&self, id: &str, session_id: &str) -> Option<Arc<RunningProcess>> {
+        self.processes
+            .lock()
+            .unwrap()
+            .get(id)
+            .filter(|process| process.session_id == session_id)
+            .cloned()
+    }
+
+    /// Ids and commands of the background commands of `session_id`, the
+    /// oldest first.
+    pub fn known(&self, session_id: &str) -> Vec<(String, String)> {
+        let guard = self.processes.lock().unwrap();
+        let mut known: Vec<&Arc<RunningProcess>> = guard
+            .values()
+            .filter(|process| process.session_id == session_id)
+            .collect();
+        known.sort_by_key(|process| process.started_at);
+        known
+            .into_iter()
+            .map(|process| (process.id.clone(), process.command.clone()))
+            .collect()
     }
 
     pub fn stop(&self, id: &str) -> Result<()> {
@@ -208,6 +283,30 @@ mod tests {
         assert!(text.ends_with("end\n"));
         assert!(text.contains("bytes of output omitted"));
         assert!(text.len() < OUTPUT_HEAD_BYTES + 2 * OUTPUT_TAIL_BYTES + 100);
+    }
+
+    #[test]
+    fn output_buffer_reads_on_from_a_position() {
+        let mut buffer = OutputBuffer::default();
+        buffer.push("first\n");
+        let seen = buffer.total();
+        assert_eq!(buffer.since(seen), "");
+        buffer.push("second\n");
+        assert_eq!(buffer.since(seen), "second\n");
+        assert_eq!(buffer.since(0), "first\nsecond\n");
+
+        // Once the middle was dropped, an old position gets what is left.
+        let line = "x".repeat(1023) + "\n";
+        for _ in 0..2_000 {
+            buffer.push(&line);
+        }
+        let before_end = buffer.total();
+        buffer.push("end\n");
+        assert_eq!(buffer.since(before_end), "end\n");
+        let rest = buffer.since(seen);
+        assert!(rest.starts_with("second\n"));
+        assert!(rest.contains("bytes of output omitted"));
+        assert!(rest.ends_with("end\n"));
     }
 
     #[test]

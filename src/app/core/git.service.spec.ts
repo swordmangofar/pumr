@@ -443,6 +443,37 @@ describe('GitService', () => {
     expect(loadStatus).toHaveBeenCalledWith('p1', true);
   });
 
+  it('follows files changed outside of the git views', async () => {
+    const git = service();
+    stubReloads();
+    const hunks = vi.spyOn(api, 'getGitFileHunks').mockResolvedValue(hunkDiff('a'));
+    const changed = { path: 'a', additions: 1, deletions: 0, status: 'M' };
+
+    // A project whose status nothing shows only has its branch read again.
+    await git.followWorkingTree('p1');
+    expect(api.getGitInfo).toHaveBeenCalledTimes(1);
+    expect(api.getGitStatus).not.toHaveBeenCalled();
+
+    vi.mocked(api.getGitStatus).mockResolvedValue({ ...status, unstaged: [changed] });
+    await git.loadStatus('p1');
+    await git.selectChange('p1', 'a', false);
+    vi.mocked(api.getGitStatus).mockResolvedValue({
+      ...status,
+      unstaged: [changed, { ...changed, path: 'b' }],
+    });
+
+    await git.followWorkingTree('p1');
+
+    expect(git.statusFor('p1')?.unstaged.map((change) => change.path)).toEqual(['a', 'b']);
+    expect(hunks).toHaveBeenCalledTimes(2);
+    expect(git.diffFor('p1')?.path).toBe('a');
+
+    // The viewed change is gone once the file is back to what git has.
+    vi.mocked(api.getGitStatus).mockResolvedValue(status);
+    await git.followWorkingTree('p1');
+    expect(git.diffFor('p1')).toBeNull();
+  });
+
   it('reloads status after a batch discard even when the command fails', async () => {
     const git = service();
     vi.spyOn(api, 'gitDiscardPaths').mockRejectedValue(new Error('boom'));

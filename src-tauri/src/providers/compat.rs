@@ -27,7 +27,7 @@ pub type MetaCache = Arc<Mutex<HashMap<String, DirectMeta>>>;
 pub type Quirks = Arc<Mutex<HashSet<String>>>;
 
 /// Body fields some compatible servers reject; dropped and retried then.
-const OPTIONAL_FIELDS: &[&str] = &["stream_options", "reasoning_effort"];
+const OPTIONAL_FIELDS: &[&str] = &["stream_options", "reasoning_effort", "prompt_cache_key"];
 
 /// Model id fragments that never mean a chat model.
 const NOT_CHAT: &[&str] = &[
@@ -137,11 +137,12 @@ impl CompatClient {
         reasoning: Option<ReasoningSetting>,
         tools: &[Value],
         meta: Option<DirectMeta>,
+        cache_key: Option<&str>,
         cancel: CancellationToken,
         on_chunk: &mut (dyn FnMut(ChatChunk) + Send),
     ) -> Result<ChatOutcome> {
         let effort = reasoning_effort(self.def, reasoning.as_ref(), meta);
-        let body = self.request_body(model, &messages, tools, effort);
+        let body = self.request_body(model, &messages, tools, effort, cache_key);
         let send = |body: &Value| {
             self.request(reqwest::Method::POST, "/chat/completions", api_key)
                 .json(body)
@@ -172,6 +173,7 @@ impl CompatClient {
         messages: &[ChatMessage],
         tools: &[Value],
         effort: Option<&str>,
+        cache_key: Option<&str>,
     ) -> Value {
         let accepts = |field: &str| {
             !self
@@ -195,6 +197,13 @@ impl CompatClient {
             effort.filter(|effort| accepts(&quirk("reasoning_effort", Some(effort))))
         {
             body["reasoning_effort"] = json!(effort);
+        }
+        // OpenAI caches prompts on its own. The key keeps the requests of one
+        // conversation on the machine that holds its cache.
+        if let Some(key) =
+            cache_key.filter(|_| self.def.id == "openai" && accepts("prompt_cache_key"))
+        {
+            body["prompt_cache_key"] = json!(key);
         }
         body
     }
@@ -751,7 +760,7 @@ mod tests {
                          "function": { "name": "ls", "arguments": "{}" } }]),
             ),
         ];
-        let body = client.request_body("grok-4", &messages, &[], Some("high"));
+        let body = client.request_body("grok-4", &messages, &[], Some("high"), None);
         assert_eq!(body["reasoning_effort"], "high");
         assert_eq!(body["stream_options"]["include_usage"], true);
         assert!(body["messages"][1]["content"].is_null());
@@ -762,10 +771,37 @@ mod tests {
             .lock()
             .unwrap()
             .insert(client.quirk_key("grok-4", &quirk("reasoning_effort", Some("high"))));
-        let body = client.request_body("grok-4", &messages, &[], Some("high"));
+        let body = client.request_body("grok-4", &messages, &[], Some("high"), None);
         assert!(body.get("reasoning_effort").is_none());
         // Only the rejected level is left out; the model still takes others.
-        let body = client.request_body("grok-4", &messages, &[], Some("low"));
+        let body = client.request_body("grok-4", &messages, &[], Some("low"), None);
         assert_eq!(body["reasoning_effort"], "low");
+        // The cache key is OpenAI's own field.
+        let body = client.request_body("grok-4", &messages, &[], None, Some("chat-1"));
+        assert!(body.get("prompt_cache_key").is_none());
+    }
+
+    #[test]
+    fn openai_requests_name_their_conversation_for_the_cache() {
+        let client = CompatClient::new(
+            reqwest::Client::new(),
+            provider("openai").unwrap(),
+            "https://api.openai.com/v1",
+            Quirks::default(),
+        );
+        let messages = vec![ChatMessage::text("user", "Hi")];
+        let body = client.request_body("gpt-5", &messages, &[], None, Some("chat-1"));
+        assert_eq!(body["prompt_cache_key"], "chat-1");
+        let body = client.request_body("gpt-5", &messages, &[], None, None);
+        assert!(body.get("prompt_cache_key").is_none());
+
+        // A server behind the same API that rejects the field is not sent it again.
+        client
+            .quirks
+            .lock()
+            .unwrap()
+            .insert(client.quirk_key("gpt-5", "prompt_cache_key"));
+        let body = client.request_body("gpt-5", &messages, &[], None, Some("chat-1"));
+        assert!(body.get("prompt_cache_key").is_none());
     }
 }

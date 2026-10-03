@@ -4,8 +4,10 @@ import { FALLBACK_SETTINGS } from '../../src/app/core/settings-defaults';
 import {
   installFakeBackend,
   type FakeCall,
+  type FakeEmit,
   type FakeHandle,
   type FakeReply,
+  type FakeResume,
   type FakeSeed,
 } from './fake-backend';
 
@@ -68,6 +70,7 @@ export function session(patch: Partial<Session> = {}): Session {
     modeId: 'coding',
     limitReached: false,
     autoContinue: false,
+    interrupted: false,
     ...patch,
   };
 }
@@ -119,6 +122,8 @@ export function seed(patch: Partial<FakeSeed> = {}): FakeSeed {
     sessions: [],
     messages: [],
     models: [model()],
+    files: {},
+    repo: false,
     pickFolder: null,
     confirm: true,
     replies: [],
@@ -158,6 +163,23 @@ export class Backend {
     return this.page.evaluate((next) => {
       (window as unknown as { __pumrFake: FakeHandle }).__pumrFake.replies.push(next);
     }, reply);
+  }
+
+  /** Delivers a backend event to the app, as the Rust side would emit it. */
+  emit(event: string, payload: unknown = null): Promise<void> {
+    return this.page.evaluate(
+      ([name, data]) => {
+        (window as unknown as { __pumrFakeEmit: FakeEmit }).__pumrFakeEmit(name as string, data);
+      },
+      [event, payload],
+    );
+  }
+
+  /** Lets every turn waiting in a `pause` step go on. */
+  resume(): Promise<void> {
+    return this.page.evaluate(() => {
+      (window as unknown as { __pumrFakeResume: FakeResume }).__pumrFakeResume();
+    });
   }
 
   setPickFolder(path: string | null): Promise<void> {

@@ -15,6 +15,7 @@ use crate::error::{AppError, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -96,9 +97,33 @@ pub struct LlmClient {
     pub anthropic_caps: CapsCache,
     pub direct_meta: MetaCache,
     pub quirks: Quirks,
+    /// Requests of this client (and its clones) that wait on a provider now.
+    pub in_flight: Arc<AtomicUsize>,
+}
+
+/// Counts a request as in flight until it is dropped.
+struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl LlmClient {
+    /// Whether a request is waiting on a provider: its connection is what a
+    /// sleeping machine loses.
+    pub fn is_streaming(&self) -> bool {
+        self.in_flight.load(Ordering::SeqCst) > 0
+    }
+
     pub fn openrouter(&self) -> OpenRouterClient {
         OpenRouterClient::new(
             self.http.clone(),
@@ -157,12 +182,13 @@ impl LlmClient {
         routing: Option<ProviderRouting>,
         fallback_pricing: Option<(f64, f64)>,
         tools: &[Value],
-        prompt_caching: bool,
+        cache: PromptCache<'_>,
         cancel: CancellationToken,
         on_chunk: &mut (dyn FnMut(ChatChunk) + Send),
     ) -> Result<ChatOutcome> {
         let api_key = self.keys.require(model)?;
         let (def, id) = catalog::split_model(model);
+        let _in_flight = InFlight::new(&self.in_flight);
         match def.kind {
             ProviderKind::OpenRouter => {
                 let pricing = fallback_pricing.map(|(prompt, completion)| Pricing {
@@ -172,15 +198,7 @@ impl LlmClient {
                 });
                 self.openrouter()
                     .stream_chat(
-                        &api_key,
-                        id,
-                        messages,
-                        reasoning,
-                        routing,
-                        pricing,
-                        tools,
-                        prompt_caching,
-                        cancel,
+                        &api_key, id, messages, reasoning, routing, pricing, tools, cache, cancel,
                         on_chunk,
                     )
                     .await
@@ -199,7 +217,7 @@ impl LlmClient {
                         messages,
                         reasoning,
                         tools,
-                        prompt_caching,
+                        cache.enabled,
                         price,
                         cancel,
                         on_chunk,
@@ -210,7 +228,15 @@ impl LlmClient {
                 let meta = self.direct_meta.lock().unwrap().get(model).copied();
                 self.compat(def)
                     .stream_chat(
-                        &api_key, id, messages, reasoning, tools, meta, cancel, on_chunk,
+                        &api_key,
+                        id,
+                        messages,
+                        reasoning,
+                        tools,
+                        meta,
+                        cache.conversation.filter(|_| cache.enabled),
+                        cancel,
+                        on_chunk,
                     )
                     .await
             }
@@ -265,6 +291,23 @@ impl ChatMessage {
             tool_call_id: Some(call_id.to_string()),
             ..Self::text("tool", content)
         }
+    }
+}
+
+/// How a request may use a provider's prompt cache.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PromptCache<'a> {
+    /// Marks the prompt as cacheable for the providers that have to be told.
+    pub enabled: bool,
+    /// Names the conversation, so that its requests reach the machine that
+    /// holds its cache. Only used when `enabled`.
+    pub conversation: Option<&'a str>,
+}
+
+impl PromptCache<'_> {
+    /// For a one-off request, which has no prefix worth caching.
+    pub fn off() -> Self {
+        Self::default()
     }
 }
 

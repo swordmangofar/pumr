@@ -13,6 +13,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
+import { listen } from '@tauri-apps/api/event';
 import { AgentStatus } from './components/agent-status';
 import { AttentionIndicator } from './components/attention-indicator';
 import { ChatView } from './components/chat-view';
@@ -40,6 +41,9 @@ import { stepZoom, ZOOM_DEFAULT } from './core/zoom';
 import { ZoomService } from './core/zoom.service';
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+/** Sent by the backend when the window-toggle shortcut brings the window back. */
+const WINDOW_SUMMONED_EVENT = 'window-summoned';
 
 @Component({
   selector: 'app-root',
@@ -401,10 +405,17 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
         </div>
       </header>
 
+      <!-- The panels take their height as a percentage instead of being
+           stretched by this row. A stretched panel is laid out twice by WebKit
+           on every layout pass, at its content height and then at its real
+           one, because the views inside size themselves with h-full. Both
+           passes repaint, which without GPU compositing (WebKitGTK's fallback
+           renderer on Linux) redraws most of the window for a single
+           keystroke. -->
       <div class="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         @if (workspace.leftPanelOpen()) {
           <div
-            class="relative shrink-0 rounded-2xl"
+            class="relative h-full shrink-0 rounded-2xl"
             [class]="workspace.focusedPanel() === 'left' ? 'ring-2 ring-accent/40' : ''"
             [style.width.px]="workspace.leftPanelWidth()"
             (mousedown)="workspace.setFocusedPanel('left')"
@@ -421,7 +432,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
         }
 
         <main
-          class="glass flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl"
+          class="glass flex h-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl"
           [class]="workspace.focusedPanel() === 'center' ? 'ring-2 ring-accent/40' : ''"
           (mousedown)="workspace.setFocusedPanel('center')"
         >
@@ -437,7 +448,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 
         @if (workspace.rightPanelOpen() && workspace.leftTab() !== 'git') {
           <div
-            class="relative shrink-0 rounded-2xl"
+            class="relative h-full shrink-0 rounded-2xl"
             [class]="workspace.focusedPanel() === 'right' ? 'ring-2 ring-accent/40' : ''"
             [style.width.px]="workspace.rightPanelWidth()"
             (mousedown)="workspace.setFocusedPanel('right')"
@@ -540,6 +551,7 @@ export class App implements OnInit {
     if (this.tauri) {
       await Promise.all([this.models.load(), this.workspace.init()]);
       this.updater.start();
+      void this.focusChatWhenSummoned();
     }
     const remaining = this.minSplashMs - (Date.now() - started);
     if (remaining > 0) {
@@ -547,6 +559,23 @@ export class App implements OnInit {
     }
     this.booting.set(false);
     setTimeout(() => this.splashVisible.set(false), this.splashFadeMs);
+  }
+
+  /**
+   * Puts the caret in the composer when the window-toggle shortcut brings the
+   * window back, so the user can type straight away. A dialog keeps its focus.
+   */
+  private async focusChatWhenSummoned(): Promise<void> {
+    const unlisten = await listen(WINDOW_SUMMONED_EVENT, () => {
+      if (this.workspace.debugOpen() || document.querySelector('[role="dialog"]')) {
+        return;
+      }
+      if (this.workspace.focusedPanel()) {
+        this.workspace.setFocusedPanel('center');
+      }
+      this.workspace.requestComposerFocus();
+    });
+    this.destroyRef.onDestroy(unlisten);
   }
 
   protected startResize(event: MouseEvent, side: 'left' | 'right'): void {
@@ -771,6 +800,19 @@ export class App implements OnInit {
       event.preventDefault();
       this.terminals.toggle();
       return;
+    }
+    if (this.terminals.open() && this.isTerminalTarget(event.target)) {
+      // A focused terminal takes the tab hotkeys for its own tabs.
+      if (matchesAction(settings, 'terminalNewTab', event)) {
+        event.preventDefault();
+        this.terminals.createForActiveProject();
+        return;
+      }
+      if (matchesAction(settings, 'terminalCloseTab', event)) {
+        event.preventDefault();
+        this.terminals.closeActive();
+        return;
+      }
     }
     if (this.isTerminalTarget(event.target) && !event.metaKey) {
       // Keys typed in a terminal belong to its shell; only Cmd shortcuts,

@@ -13,12 +13,13 @@ import {
 } from '../../core/sound.service';
 import { SettingsDraftService } from './settings-draft.service';
 
+import { Toggle } from '../toggle';
 import { TypedInput } from '../typed-input';
 
 @Component({
   selector: 'app-notifications-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe, NgTemplateOutlet],
+  imports: [Toggle, TypedInput, TranslocoPipe, NgTemplateOutlet],
   host: {
     '(document:click)': 'closeSoundDropdown()',
   },
@@ -283,6 +284,21 @@ import { TypedInput } from '../typed-input';
 
         <p class="mt-2 text-xs text-mist/30">{{ 'settings.sounds.builtinHint' | transloco }}</p>
       }
+    </section>
+
+    <section class="mt-8 flex items-center justify-between gap-4">
+      <div>
+        <h3 class="text-sm font-semibold text-white">
+          {{ 'settings.waitingChats.title' | transloco }}
+        </h3>
+        <p class="mt-1 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.waitingChats.hint' | transloco }}
+        </p>
+      </div>
+      <app-toggle
+        [checked]="draft.draft().waitingChatsBanner"
+        (toggled)="draft.patch('waitingChatsBanner', $event)"
+      />
     </section>
   `,
 })

@@ -164,6 +164,14 @@ export class TerminalService {
     }
   }
 
+  /** Closes the terminal shown for the active project. */
+  closeActive(): void {
+    const key = this.activeKey();
+    if (key) {
+      this.close(key);
+    }
+  }
+
   setTitle(key: string, title: string): void {
     this.updateTab(key, { title: title.trim() || null });
   }

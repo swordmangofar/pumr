@@ -1,5 +1,14 @@
 import type { Page } from '@playwright/test';
-import { expect, model, MODEL_ID, project, seed, session, test } from './support/fixtures';
+import {
+  chatMessage,
+  expect,
+  model,
+  MODEL_ID,
+  project,
+  seed,
+  session,
+  test,
+} from './support/fixtures';
 import type { FakeSeed } from './support/fake-backend';
 
 async function openSession(
@@ -56,6 +65,37 @@ test.describe('chat', () => {
     await page.reload();
     await expect(main.getByText('How do I run the checks?')).toBeVisible();
     await expect(main.locator('strong', { hasText: 'pnpm verify' })).toBeVisible();
+  });
+
+  test('shows a collapse chevron on the thinking box', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        {
+          steps: [
+            { kind: 'reasoning', text: 'Looking at the config first.' },
+            { kind: 'text', text: 'Done.' },
+          ],
+        },
+      ],
+    });
+
+    await composer.click();
+    await page.keyboard.type('How do I run the checks?');
+    await page.keyboard.press('Enter');
+
+    const main = page.getByRole('main');
+    const summary = main.locator('summary', { hasText: 'Thinking process' });
+    const chevron = summary.locator('svg');
+    await expect(chevron).toBeVisible();
+    await expect(main.getByText('Looking at the config first.')).toBeHidden();
+    await expect(chevron).not.toHaveClass(/(^|\s)rotate-90/);
+    const closed = await chevron.evaluate((el) => getComputedStyle(el).rotate);
+
+    await summary.click();
+    await expect(main.getByText('Looking at the config first.')).toBeVisible();
+    await expect
+      .poll(() => chevron.evaluate((el) => getComputedStyle(el).rotate))
+      .not.toBe(closed);
   });
 
   test('shows and filters models by provider', async ({ app, page }) => {
@@ -124,6 +164,43 @@ test.describe('chat', () => {
     expect(call.args['content']).toBe('first line\nsecond line');
   });
 
+  test('the composer follows the height of its text without sizing it from script', async ({
+    app,
+    page,
+  }) => {
+    const composer = await openSession(page, app.start);
+    await composer.click();
+    const height = () => composer.evaluate((editor) => editor.getBoundingClientRect().height);
+    const empty = await height();
+
+    // An inline height written per keystroke forces a full layout of the app,
+    // which WebKitGTK's renderer without GPU compositing repaints on the CPU.
+    await composer.evaluate((editor) => {
+      const writes: string[] = [];
+      new MutationObserver((records) => {
+        for (const record of records) {
+          writes.push((record.target as HTMLElement).getAttribute('style') ?? '');
+        }
+      }).observe(editor, { attributes: true, attributeFilter: ['style'] });
+      (window as unknown as { composerStyleWrites: string[] }).composerStyleWrites = writes;
+    });
+
+    for (let line = 1; line <= 8; line += 1) {
+      await page.keyboard.type(`line ${line}`);
+      await page.keyboard.press('Shift+Enter');
+    }
+    await expect.poll(height).toBeGreaterThan(empty);
+
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Backspace');
+    await expect.poll(height).toBe(empty);
+
+    const writes = await page.evaluate(
+      () => (window as unknown as { composerStyleWrites: string[] }).composerStyleWrites,
+    );
+    expect(writes).toEqual([]);
+  });
+
   test('turns an image the webview pastes into the editor into an attachment', async ({
     app,
     page,
@@ -161,6 +238,35 @@ test.describe('chat', () => {
     expect(attachments).toEqual([
       expect.objectContaining({ kind: 'image', mimeType: 'image/png' }),
     ]);
+  });
+
+  test('puts the caret in the composer when the toggle shortcut brings the window back', async ({
+    app,
+    page,
+  }) => {
+    const composer = await openSession(page, app.start);
+    await composer.click();
+    await composer.evaluate((editor) => editor.blur());
+    await expect(composer).not.toBeFocused();
+
+    await app.backend.emit('window-summoned');
+
+    await expect(composer).toBeFocused();
+    await page.keyboard.type('typed straight away');
+    await expect(composer).toHaveText('typed straight away');
+  });
+
+  test('leaves focus in an open dialog when the window comes back', async ({ app, page }) => {
+    await openSession(page, app.start, { apiKeys: [] });
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    const keyInput = page.getByRole('dialog').locator('[data-provider-key="openrouter"]');
+    await expect(keyInput).toBeFocused();
+
+    await app.backend.emit('window-summoned');
+    await page.keyboard.type('sk-or');
+
+    await expect(keyInput).toBeFocused();
+    await expect(keyInput).toHaveValue('sk-or');
   });
 
   test('does not send an empty prompt', async ({ app, page }) => {
@@ -254,6 +360,224 @@ test.describe('chat', () => {
     await expect(main).toContainText('The app bootstraps in main.ts.');
     await expect(main.getByText('read_file')).toBeVisible();
     await expect(main).toContainText('bootstrapApplication(App, appConfig)');
+  });
+
+  test('shows what a running command prints as it arrives', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        {
+          steps: [
+            {
+              kind: 'tool',
+              name: 'bash',
+              summary: 'pnpm test',
+              arguments: { command: 'pnpm test' },
+              output: ['RUN v3.2.4\n', '✓ src/app/core/format.spec.ts (4 tests)\n'],
+              hold: true,
+              result: 'Command finished successfully.\nTest Files 1 passed',
+            },
+            { kind: 'text', text: 'All tests pass.' },
+          ],
+        },
+      ],
+    });
+
+    await composer.click();
+    await page.keyboard.type('Run the tests');
+    await page.keyboard.press('Enter');
+
+    // The output opens by itself while the command is still running.
+    const main = page.getByRole('main');
+    await expect(main.getByText('✓ src/app/core/format.spec.ts (4 tests)')).toBeVisible();
+    await expect(main.getByText('RUN v3.2.4')).toBeVisible();
+
+    // Once the command is over the card closes again and holds its result.
+    await app.backend.resume();
+    await expect(main).toContainText('All tests pass.');
+    await expect(main.getByText('RUN v3.2.4')).toBeHidden();
+    await main.getByRole('button', { name: /pnpm test/ }).click();
+    await expect(main.getByText('Test Files 1 passed')).toBeVisible();
+  });
+
+  test('shows a screenshot the agent took in the chat', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        {
+          steps: [
+            {
+              kind: 'tool',
+              name: 'screenshot',
+              summary: 'Settings page',
+              arguments: { url: 'http://localhost:4200/settings', caption: 'Settings page' },
+              result: 'Shown to the user in the chat: Settings page (1280×800).',
+              attachments: [
+                {
+                  id: 'shot-1',
+                  name: 'Settings page',
+                  mimeType: 'image/png',
+                  size: 68,
+                  kind: 'image',
+                  lines: null,
+                  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+                },
+              ],
+            },
+            { kind: 'text', text: 'Here is the new settings page.' },
+          ],
+        },
+      ],
+    });
+
+    await composer.click();
+    await page.keyboard.type('Restyle the settings page');
+    await page.keyboard.press('Enter');
+
+    const main = page.getByRole('main');
+    await expect(main).toContainText('Here is the new settings page.');
+    // The picture stays in the chat once the turn's messages are reloaded.
+    const picture = main.getByRole('img', { name: 'Settings page' });
+    await expect(picture).toBeVisible();
+    await expect(picture).toHaveAttribute('src', /^data:image\/png;base64,/);
+
+    await picture.click();
+    await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeVisible();
+  });
+
+  test('shows where a turn compacted the conversation', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        {
+          steps: [
+            { kind: 'compact', summary: 'The parser bug is in **tokenize()**.' },
+            { kind: 'text', text: 'Picking up from the summary.' },
+          ],
+        },
+      ],
+    });
+
+    await composer.click();
+    await page.keyboard.type('Keep going');
+    await page.keyboard.press('Enter');
+
+    const main = page.getByRole('main');
+    await expect(main).toContainText('Picking up from the summary.');
+    const divider = main.getByText('Context compacted');
+    await expect(divider).toBeVisible();
+    // The summary the model continues from is one click away.
+    await expect(main.locator('strong', { hasText: 'tokenize()' })).toBeHidden();
+    await divider.click();
+    await expect(main.locator('strong', { hasText: 'tokenize()' })).toBeVisible();
+
+    // It is part of the transcript, so it is still there after a restart.
+    await page.reload();
+    await expect(main.getByText('Context compacted')).toBeVisible();
+  });
+
+  test('shows how much of each request came from the cache', async ({ app, page }) => {
+    await openSession(page, app.start, {
+      messages: [
+        chatMessage('user', 'First question'),
+        chatMessage('assistant', 'Cold answer', { seq: 2, promptTokens: 1000 }),
+        chatMessage('user', 'Second question', { seq: 3 }),
+        chatMessage('assistant', 'Warm answer', {
+          seq: 4,
+          promptTokens: 2000,
+          cachedTokens: 1500,
+        }),
+      ],
+    });
+
+    // The first request had nothing to reuse; the model reports hits, so it reads as a miss.
+    const rates = page.getByRole('main').getByTestId('cache-rate');
+    await expect(rates).toHaveText(['Cache 0.0%', 'Cache 75.0%']);
+    await expect(rates.last()).toHaveAttribute('title', '1,500 / 2,000');
+  });
+
+  test('compacts a conversation on request', async ({ app, page }) => {
+    const composer = await openSession(page, app.start);
+    const compact = page.getByRole('button', { name: 'Compact context' });
+    // There is nothing to compact in an empty chat.
+    await expect(compact).toBeDisabled();
+
+    await composer.click();
+    await page.keyboard.type('Hello');
+    await page.keyboard.press('Enter');
+    const main = page.getByRole('main');
+    await expect(main).toContainText('Echo: Hello');
+
+    await compact.click();
+    await expect(main.getByText('Context compacted')).toBeVisible();
+    expect((await app.backend.lastCall('compact_session'))?.args).toMatchObject({
+      sessionId: 'session-1',
+    });
+    await main.getByText('Context compacted').click();
+    await expect(main).toContainText('Summary of the conversation so far.');
+  });
+
+  test('offers to continue a chat that was cut off when the app closed', async ({ app, page }) => {
+    await openSession(page, app.start, {
+      sessions: [session({ title: 'Refactor the parser', interrupted: true })],
+      messages: [
+        chatMessage('user', 'Refactor the parser'),
+        chatMessage('assistant', 'Starting with the tokenizer.', { seq: 2 }),
+      ],
+      replies: [{ steps: [{ kind: 'text', text: 'The parser is refactored.' }] }],
+    });
+
+    const notice = page.getByTestId('chat-interrupted');
+    await expect(notice).toContainText('interrupted before the agent finished');
+
+    await notice.getByRole('button', { name: 'Continue' }).click();
+
+    await expect(page.getByRole('main')).toContainText('The parser is refactored.');
+    await expect(notice).toHaveCount(0);
+    // It goes on from where it was cut off, without a new prompt.
+    expect((await app.backend.lastCall('send_message'))?.args).toMatchObject({
+      sessionId: 'session-1',
+      content: '',
+      resume: true,
+    });
+    await expect(page.getByRole('main').getByText('Refactor the parser')).toHaveCount(1);
+  });
+
+  test('offers to continue a turn that the sleeping machine cut off', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        { steps: [{ kind: 'text', text: 'Reading the config.' }, { kind: 'interrupt' }] },
+        { steps: [{ kind: 'text', text: 'All gates pass.' }] },
+      ],
+    });
+    const notice = page.getByTestId('chat-interrupted');
+    await expect(notice).toHaveCount(0);
+
+    await composer.click();
+    await page.keyboard.type('Run every gate');
+    await page.keyboard.press('Enter');
+
+    await expect(notice).toBeVisible();
+    await expect(page.getByRole('main')).toContainText('Reading the config.');
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+
+    await notice.getByRole('button', { name: 'Continue' }).click();
+
+    await expect(page.getByRole('main')).toContainText('All gates pass.');
+    await expect(notice).toHaveCount(0);
+  });
+
+  test('a new prompt settles a chat that was cut off', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      sessions: [session({ title: 'Refactor the parser', interrupted: true })],
+      messages: [chatMessage('user', 'Refactor the parser')],
+    });
+    const notice = page.getByTestId('chat-interrupted');
+    await expect(notice).toBeVisible();
+
+    await composer.click();
+    await page.keyboard.type('Never mind, list the files');
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('main')).toContainText('Echo: Never mind, list the files');
+    await expect(notice).toHaveCount(0);
   });
 
   test('surfaces a backend error', async ({ app, page }) => {

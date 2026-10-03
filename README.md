@@ -58,7 +58,12 @@ sessions in SQLite. No project files leave the machine except the requests you a
 <td valign="top">
 
 - A real tool loop in Rust: `read`, `write`, `edit`, `glob`, `grep`, `ls`, `bash`,
-  `webfetch`, `websearch`, plus MCP tools.
+  `bash_output`, `webfetch`, `websearch`, `screenshot`, plus MCP tools.
+- The loop checks the agent's work as it goes: an edit answers with the lines around
+  the change, a long build or test run can be waited for instead of run twice, and an
+  agent that wants to finish with code it never ran anything against is asked once to
+  run one of the project's checks. `screenshot` renders a page of the running app and
+  shows the picture in the chat, so interface changes can be judged right there.
 - Non-dangerous commands inside the project just run. When a prompt does appear it
   shows the command, why it asks and numbered choices, like Claude Code: yes; yes
   and don't ask again for `git push *` (this chat, or always); no. The scope can be

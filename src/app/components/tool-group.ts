@@ -4,12 +4,15 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { ansiToHtml, stripAnsi } from '../core/ansi';
 import { WorkspaceService } from '../core/workspace.service';
 import { CopyButton } from './copy-button';
+import { StickToBottom } from './stick-to-bottom';
 import { ToolStatus } from './tool-status';
 
 export interface ToolGroupItem {
   key: string;
   label: string;
   output: string;
+  /** Still running and printing: its output is shown as it arrives. */
+  live: boolean;
   status: string;
   additions: number;
   deletions: number;
@@ -19,7 +22,7 @@ export interface ToolGroupItem {
 @Component({
   selector: 'app-tool-group',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, ToolStatus, CopyButton],
+  imports: [TranslocoPipe, ToolStatus, CopyButton, StickToBottom],
   template: `
     <div class="my-3 overflow-hidden glass-inset rounded-xl">
       <div class="flex items-center gap-3 px-4 py-2.5">
@@ -55,16 +58,22 @@ export interface ToolGroupItem {
               <button
                 type="button"
                 class="text-xs text-mist/30 hover:text-mist"
-                [attr.aria-expanded]="expanded().has(item.key)"
+                [attr.aria-expanded]="isOpen(item)"
                 [attr.aria-label]="'tools.output' | transloco"
-                (click)="toggle(item.key)"
+                (click)="toggle(item)"
               >
-                {{ expanded().has(item.key) ? '▾' : '▸' }}
+                {{ isOpen(item) ? '▾' : '▸' }}
               </button>
             </div>
-            @if (expanded().has(item.key)) {
+            @if (isOpen(item)) {
               <div class="relative border-t border-white/5 bg-ink/60">
-                @if (item.output) {
+                @if (item.status === 'running' && item.output) {
+                  <pre
+                    class="max-h-72 overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
+                    [appStickToBottom]="item.output"
+                    [innerHTML]="rendered().get(item.key)?.html"
+                  ></pre>
+                } @else if (item.output) {
                   <app-copy-button
                     class="absolute top-2 right-2"
                     [text]="rendered().get(item.key)?.plain ?? ''"
@@ -92,7 +101,8 @@ export class ToolGroup {
   readonly items = input.required<ToolGroupItem[]>();
   readonly sessionId = input<string | null>(null);
 
-  protected readonly expanded = signal<Set<string>>(new Set());
+  /** Entries the user opened or closed. Without a choice a live entry is open. */
+  protected readonly choices = signal<Map<string, boolean>>(new Map());
   private readonly workspace = inject(WorkspaceService);
   private readonly sanitizer = inject(DomSanitizer);
 
@@ -112,12 +122,11 @@ export class ToolGroup {
     return 'text-emerald-400';
   });
 
-  /** Output of the expanded items only, so collapsed output is never parsed. */
+  /** Output of the open items only, so collapsed output is never parsed. */
   protected readonly rendered = computed(() => {
-    const open = this.expanded();
     const rendered = new Map<string, { html: SafeHtml; plain: string }>();
     for (const item of this.items()) {
-      if (open.has(item.key) && item.output) {
+      if (this.isOpen(item) && item.output) {
         rendered.set(item.key, {
           html: this.sanitizer.bypassSecurityTrustHtml(ansiToHtml(item.output)),
           plain: stripAnsi(item.output),
@@ -127,16 +136,13 @@ export class ToolGroup {
     return rendered;
   });
 
-  protected toggle(key: string): void {
-    this.expanded.update((set) => {
-      const next = new Set(set);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
+  protected isOpen(item: ToolGroupItem): boolean {
+    return this.choices().get(item.key) ?? item.live;
+  }
+
+  protected toggle(item: ToolGroupItem): void {
+    const open = !this.isOpen(item);
+    this.choices.update((choices) => new Map(choices).set(item.key, open));
   }
 
   /** Opens the diff of a changed file; entries without one (reads, commands) expand instead. */
@@ -145,7 +151,7 @@ export class ToolGroup {
     if (item.path && sessionId) {
       void this.workspace.selectChange(sessionId, item.path);
     } else {
-      this.toggle(item.key);
+      this.toggle(item);
     }
   }
 }

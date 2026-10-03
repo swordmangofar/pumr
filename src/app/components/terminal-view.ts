@@ -13,7 +13,7 @@ import { TranslocoService } from '@jsverse/transloco';
 import type { FitAddon } from '@xterm/addon-fit';
 import type { ITheme, Terminal } from '@xterm/xterm';
 import { api } from '../core/api';
-import { isMacPlatform, matchesHotkey } from '../core/hotkeys';
+import { isMacPlatform, matchesAction, matchesHotkey } from '../core/hotkeys';
 import { TerminalEvent } from '../core/models';
 import { SettingsService } from '../core/settings.service';
 import { TerminalService, TerminalTab } from '../core/terminal.service';
@@ -237,15 +237,21 @@ export class TerminalView {
 
   /**
    * Decides which keys the shell gets. Returning `false` leaves the key to
-   * the app: the terminal hotkey, and on macOS every `Cmd` shortcut (copy,
-   * paste, zoom, tabs) except `Cmd+K`, which clears the terminal. Elsewhere `Ctrl+Shift+C`/`V` copy and paste, as in
-   * other terminals, since plain `Ctrl+C`/`V` belong to the shell.
+   * the app: the terminal and terminal tab hotkeys, and on macOS every `Cmd`
+   * shortcut (copy, paste, zoom, tabs) except `Cmd+K`, which clears the
+   * terminal. Elsewhere `Ctrl+Shift+C`/`V` copy and paste, as in other
+   * terminals, since plain `Ctrl+C`/`V` belong to the shell.
    */
   private handleKey(event: KeyboardEvent): boolean {
     if (event.type !== 'keydown') {
       return true;
     }
-    if (matchesHotkey(this.settings.settings()?.terminalHotkey, event)) {
+    const settings = this.settings.settings();
+    if (
+      matchesHotkey(settings?.terminalHotkey, event) ||
+      matchesAction(settings, 'terminalNewTab', event) ||
+      matchesAction(settings, 'terminalCloseTab', event)
+    ) {
       return false;
     }
     if (isMacPlatform()) {

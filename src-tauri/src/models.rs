@@ -78,6 +78,11 @@ pub struct Session {
     /// limit without asking.
     #[serde(default)]
     pub auto_continue: bool,
+    /// True when the last turn was cut off before the agent finished (the app
+    /// closed, or the machine slept mid-reply) and is waiting for the user to
+    /// continue.
+    #[serde(default)]
+    pub interrupted: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -741,6 +746,16 @@ pub enum StreamEvent {
     Assistant {
         message: Message,
     },
+    /// The harness told the agent something; `message` records it.
+    Note {
+        message: Message,
+    },
+    /// The history is being summarised before the next request.
+    Compacting,
+    /// The history was compacted; `message` records the checkpoint.
+    Compacted {
+        message: Message,
+    },
     ToolStart {
         call_id: String,
         name: String,
@@ -757,6 +772,8 @@ pub enum StreamEvent {
         status: String,
         result: String,
         changes: Vec<FileChange>,
+        /// Pictures the call shows in the chat (see the `screenshot` tool).
+        attachments: Vec<Attachment>,
     },
     PermissionRequest {
         request_id: String,
@@ -791,6 +808,19 @@ pub enum StreamEvent {
         request_id: String,
         answers: Option<Vec<QuestionAnswer>>,
     },
+    /// The model the agent named for a subagent fits several models.
+    ModelChoiceRequest {
+        request_id: String,
+        /// The model as the agent named it.
+        query: String,
+        /// Ids of the models that fit, the closest first.
+        candidates: Vec<String>,
+    },
+    ModelChoiceResolved {
+        request_id: String,
+        /// The picked model id; `None` when the user skipped.
+        model: Option<String>,
+    },
     Changes {
         changes: Vec<FileChange>,
     },
@@ -799,6 +829,11 @@ pub enum StreamEvent {
         session: Session,
     },
     Stopped {
+        message: Message,
+    },
+    /// The turn was cut off without the user asking for it and can be
+    /// continued.
+    Interrupted {
         message: Message,
     },
     SubAgentStarted {
@@ -814,6 +849,16 @@ pub enum StreamEvent {
     Error {
         message: String,
     },
+}
+
+/// What compacting a chat on request left behind.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactResult {
+    /// The checkpoint's record in the chat.
+    pub message: Message,
+    /// Estimated tokens of the messages the model is sent from now on.
+    pub used_tokens: i64,
 }
 
 /// A stream event tagged with the session it belongs to. Subagents stream their
@@ -839,4 +884,6 @@ pub struct RunningTurns {
     pub permissions: Vec<RoutedEvent>,
     /// Pending `QuestionRequest` events, oldest first.
     pub questions: Vec<RoutedEvent>,
+    /// Pending `ModelChoiceRequest` events, oldest first.
+    pub model_choices: Vec<RoutedEvent>,
 }

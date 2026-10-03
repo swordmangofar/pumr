@@ -1,10 +1,11 @@
 use crate::broker::{PermissionBroker, PermissionOperation, PermissionPrompt, QuestionBroker};
+use crate::db::Db;
 use crate::error::{AppError, Result};
 use crate::git::{count_line_changes, ignored_paths, GitProbe, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::models::{
-    EventSink, FileChange, PermissionAuditEntry, PermissionDecision, QuestionItem, QuestionOption,
-    RoutedEvent, SkillEntry, StreamEvent,
+    Attachment, EventSink, FileChange, PermissionAuditEntry, PermissionDecision, QuestionItem,
+    QuestionOption, RoutedEvent, SkillEntry, StreamEvent,
 };
 use crate::permissions::{
     self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
@@ -12,13 +13,13 @@ use crate::permissions::{
 use crate::processes::{kill_tree, OutputBuffer, ProcessRegistry, RunningProcess};
 use globset::Glob;
 use ignore::WalkBuilder;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
@@ -26,6 +27,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const MAX_TOOL_OUTPUT: usize = 30_000;
+/// How much of an output saved to a file its tool result still shows.
+const SPILLED_OUTPUT_BYTES: usize = 16_000;
 const BACKGROUND_AFTER_SECONDS: u64 = 10;
 const MAX_WEB_BYTES: usize = 2_000_000;
 const WEB_TIMEOUT_SECONDS: u64 = 30;
@@ -42,6 +45,8 @@ pub struct ToolRuntime {
     pub conversation_id: String,
     pub shadow: Arc<ShadowRepo>,
     pub processes: Arc<ProcessRegistry>,
+    /// The files this chat's agents have seen (see `FileLedger`).
+    pub files: Arc<FileLedger>,
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
     pub http: reqwest::Client,
@@ -67,6 +72,9 @@ pub struct ToolOutcome {
     pub result: String,
     pub status: String,
     pub changes: Vec<FileChange>,
+    /// Images the call shows the user in the chat. They are stored with the
+    /// result and never sent to the model.
+    pub attachments: Vec<Attachment>,
 }
 
 impl ToolOutcome {
@@ -75,6 +83,7 @@ impl ToolOutcome {
             result: truncate(result),
             status: "ok".to_string(),
             changes: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -83,6 +92,7 @@ impl ToolOutcome {
             result: truncate(result.into()),
             status: "error".to_string(),
             changes: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -91,6 +101,7 @@ impl ToolOutcome {
             result: "Command cancelled.".to_string(),
             status: "canceled".to_string(),
             changes: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -98,7 +109,7 @@ impl ToolOutcome {
     /// user's own denial is reported as one: a prompt that was cancelled,
     /// stopped or timed out says so, otherwise the transcript and the model
     /// (which is told not to retry denied actions) blame the user for it.
-    fn refused(decision: &PermissionDecision) -> Self {
+    pub(crate) fn refused(decision: &PermissionDecision) -> Self {
         let (status, result) = match decision.decided_by.as_str() {
             "" | "user" => ("denied", "The user denied this action."),
             "cascade" => (
@@ -122,6 +133,7 @@ impl ToolOutcome {
             result: result.to_string(),
             status: status.to_string(),
             changes: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -130,8 +142,176 @@ impl ToolOutcome {
             result: reason.into(),
             status: "denied".to_string(),
             changes: Vec::new(),
+            attachments: Vec::new(),
         }
     }
+}
+
+/// The files each session's agent has read or written, so that `write` does
+/// not replace a file whose content the agent has never seen. A session is
+/// forgotten when its history is compacted: what it read is then gone from
+/// its context too.
+#[derive(Default)]
+pub struct FileLedger {
+    seen: Mutex<HashMap<String, HashSet<PathBuf>>>,
+}
+
+impl FileLedger {
+    pub fn note(&self, session_id: &str, path: &Path) {
+        self.seen
+            .lock()
+            .unwrap()
+            .entry(session_id.to_string())
+            .or_default()
+            .insert(permission_path(path));
+    }
+
+    pub fn knows(&self, session_id: &str, path: &Path) -> bool {
+        self.seen
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .is_some_and(|paths| paths.contains(&permission_path(path)))
+    }
+
+    pub fn forget(&self, session_id: &str) {
+        self.seen.lock().unwrap().remove(session_id);
+    }
+}
+
+/// Other names models use for an argument of a built-in tool. A model that
+/// was trained on another agent's tools answers with that agent's names, and
+/// would otherwise be told that an argument it did send is missing.
+fn argument_aliases(tool: &str) -> &'static [(&'static str, &'static [&'static str])] {
+    const PATH: (&str, &[&str]) = (
+        "path",
+        &["file_path", "filePath", "filepath", "file", "filename"],
+    );
+    const FOLDER: (&str, &[&str]) = ("path", &["directory", "dir", "folder"]);
+    match tool {
+        "read" => &[
+            PATH,
+            ("offset", &["start_line", "line"]),
+            ("limit", &["max_lines", "line_count"]),
+        ],
+        "write" => &[PATH, ("content", &["contents", "text", "file_text"])],
+        "edit" => &[
+            PATH,
+            ("old_string", &["old_str", "oldString", "old_text"]),
+            ("new_string", &["new_str", "newString", "new_text"]),
+            ("replace_all", &["replaceAll"]),
+        ],
+        "ls" | "glob" => &[FOLDER],
+        "grep" => &[
+            FOLDER,
+            ("pattern", &["regex", "query"]),
+            ("include", &["glob", "file_pattern"]),
+            ("ignore_case", &["case_insensitive", "-i"]),
+            ("context", &["context_lines", "-C"]),
+        ],
+        "bash" => &[
+            ("command", &["cmd", "script"]),
+            ("cwd", &["workdir", "working_directory"]),
+        ],
+        "bash_output" => &[("id", &["process_id", "processId", "bash_id"])],
+        "webfetch" => &[("url", &["link"])],
+        "websearch" => &[("query", &["q", "search"])],
+        _ => &[],
+    }
+}
+
+/// The declared type of every argument of the built-in tools, by tool.
+fn argument_types(tool: &str) -> Option<&'static HashMap<String, String>> {
+    static TYPES: OnceLock<HashMap<String, HashMap<String, String>>> = OnceLock::new();
+    TYPES
+        .get_or_init(|| {
+            base_tool_schemas()
+                .iter()
+                .filter_map(|schema| {
+                    let name = schema.pointer("/function/name")?.as_str()?;
+                    let properties = schema
+                        .pointer("/function/parameters/properties")?
+                        .as_object()?;
+                    let types = properties
+                        .iter()
+                        .filter_map(|(key, property)| {
+                            Some((key.clone(), property.get("type")?.as_str()?.to_string()))
+                        })
+                        .collect();
+                    Some((name.to_string(), types))
+                })
+                .collect()
+        })
+        .get(tool)
+}
+
+/// Parses the arguments of a tool call as the model sent them. Arguments
+/// that are not a JSON object are an error the model is told about, so it
+/// can send the call again instead of guessing at a "missing argument". For
+/// built-in tools, well-known other names of an argument are accepted and
+/// values of a near-miss type (`"10"` for an integer) are converted.
+pub fn parse_arguments(tool: &str, raw: &str) -> std::result::Result<Value, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(json!({}));
+    }
+    let mut value: Value = serde_json::from_str(raw).map_err(|error| {
+        let cut_off = if error.is_eof() {
+            " Your output ended before the call was complete: send less in one call, for example a long file in several parts."
+        } else {
+            ""
+        };
+        format!(
+            "The arguments of this {tool} call are not valid JSON ({error}), so it was not run.{cut_off} Send the call again with the arguments as one JSON object."
+        )
+    })?;
+    // Some models send the arguments object once more encoded as a string.
+    if let Value::String(inner) = &value {
+        if let Ok(parsed @ Value::Object(_)) = serde_json::from_str::<Value>(inner) {
+            value = parsed;
+        }
+    }
+    let Value::Object(arguments) = &mut value else {
+        return Err(format!(
+            "The arguments of this {tool} call must be a JSON object, so it was not run. Send the call again with the arguments as one JSON object."
+        ));
+    };
+    for (name, aliases) in argument_aliases(tool) {
+        if arguments.contains_key(*name) {
+            continue;
+        }
+        if let Some(alias) = aliases.iter().find(|alias| arguments.contains_key(**alias)) {
+            if let Some(found) = arguments.remove(*alias) {
+                arguments.insert(name.to_string(), found);
+            }
+        }
+    }
+    if let Some(types) = argument_types(tool) {
+        for (key, argument) in arguments.iter_mut() {
+            let converted = match (types.get(key).map(String::as_str), &*argument) {
+                (Some("integer"), Value::String(text)) => {
+                    text.trim().parse::<i64>().ok().map(Value::from)
+                }
+                (Some("integer"), Value::Number(number)) if !number.is_i64() => number
+                    .as_f64()
+                    .filter(|float| float.fract() == 0.0)
+                    .map(|float| Value::from(float as i64)),
+                (Some("boolean"), Value::String(text)) => {
+                    match text.trim().to_ascii_lowercase().as_str() {
+                        "true" => Some(Value::Bool(true)),
+                        "false" => Some(Value::Bool(false)),
+                        _ => None,
+                    }
+                }
+                (Some("string"), Value::Number(number)) => Some(Value::from(number.to_string())),
+                _ => None,
+            };
+            if let Some(converted) = converted {
+                *argument = converted;
+            }
+        }
+    }
+    Ok(value)
 }
 
 /// Argument a tool call uses to tell the user, in one sentence, why it needs
@@ -143,7 +323,7 @@ const MAX_JUSTIFICATION_CHARS: usize = 300;
 
 /// Built-in tools whose calls can raise a permission prompt, and whether the
 /// model must always explain itself (the tool usually or always asks).
-const PROMPTING_TOOLS: [(&str, bool); 9] = [
+const PROMPTING_TOOLS: [(&str, bool); 10] = [
     ("read", false),
     ("write", false),
     ("edit", false),
@@ -153,6 +333,7 @@ const PROMPTING_TOOLS: [(&str, bool); 9] = [
     ("bash", true),
     ("webfetch", true),
     ("websearch", false),
+    ("screenshot", false),
 ];
 
 /// Adds the `reason` argument to a tool schema. Leaves schemas that already
@@ -236,7 +417,7 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "read",
-                "description": "Read a file from the filesystem. Returns line-numbered content.",
+                "description": "Read a file from the filesystem. Returns line-numbered content. Read a file before you change it. For a large file, find the place with grep first and read only that part with offset and limit.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -252,7 +433,7 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "write",
-                "description": "Create or overwrite a file with the given content. Prefer edit for existing files.",
+                "description": "Create a new file, or replace all of an existing one, with the given content. Prefer edit for existing files: it sends only what changes. An existing file has to be read before it can be replaced.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -267,7 +448,7 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "edit",
-                "description": "Replace a string in an existing file. old_string must be the exact current text without the line-number prefix from read; minor indentation and whitespace differences are tolerated. It must match uniquely unless replace_all is true.",
+                "description": "Replace a string in an existing file. old_string must be the exact current text without the line-number prefix from read; minor indentation and whitespace differences are tolerated. It must match uniquely unless replace_all is true: include a few neighbouring lines when the text occurs more than once. The result shows the lines around the change, so the file need not be read again to check it.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -284,7 +465,7 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "glob",
-                "description": "Find files by glob pattern, e.g. '**/*.ts'. Respects .gitignore.",
+                "description": "Find files by name with a glob pattern, e.g. '**/*.ts'. Respects .gitignore. Use it instead of find or ls -R in bash.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -299,13 +480,17 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "grep",
-                "description": "Search file contents with a regular expression. Returns path:line: text.",
+                "description": "Search file contents with a regular expression. Returns path:line: text. Set context to see the code around each match instead of reading the whole file, and output \"files\" to find where something lives before looking closer.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "pattern": { "type": "string", "description": "Rust/RE2-style regular expression" },
                         "path": { "type": "string", "description": "Directory to search in (default project root)" },
-                        "include": { "type": "string", "description": "Glob filter for file paths, e.g. '*.ts'" }
+                        "include": { "type": "string", "description": "Glob filter for file paths, e.g. '*.ts'" },
+                        "ignore_case": { "type": "boolean", "description": "Match letters whatever their case" },
+                        "context": { "type": "integer", "description": "Lines to show before and after each match (default 0, max 10)" },
+                        "output": { "type": "string", "enum": ["lines", "files"], "description": "\"lines\" (default) returns every matching line; \"files\" returns only the matching files, each with its number of matches" },
+                        "limit": { "type": "integer", "description": "Maximum number of matches, or of files with output \"files\" (default 200, max 1000)" }
                     },
                     "required": ["pattern"]
                 }
@@ -328,15 +513,47 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "bash",
-                "description": "Run a shell command in the project. Long-running commands (dev servers, watchers) are moved to the background automatically and can be stopped by the user. Keep each call to one task: when one part of a long `;`/`&&` chain needs approval, the whole line waits. Put temporary files in the scratch folder named in the environment section, not in /tmp.",
+                "description": "Run a shell command in the project: tests, builds, git and other project commands. To read, search or change files use read, grep, glob and edit instead of cat, grep, find or sed. A command still running after timeout_seconds keeps running in the background (dev servers, watchers) and can be stopped by the user; read the rest of its output with bash_output. Keep each call to one task: when one part of a long `;`/`&&` chain needs approval, the whole line waits. Put temporary files in the scratch folder named in the environment section, not in /tmp.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": { "type": "string", "description": "Shell command to run" },
                         "cwd": { "type": "string", "description": "Working directory (default project root)" },
-                        "timeout_seconds": { "type": "integer", "description": "Seconds before moving to background (default 10, max 120)" }
+                        "timeout_seconds": { "type": "integer", "description": "Seconds to wait for the command before it is moved to the background (default 10, max 600). Set it for builds and test runs that take longer." }
                     },
                     "required": ["command"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "bash_output",
+                "description": "Wait for a command that bash moved to the background and read what it has printed since you last looked, with how it ended. Use it to get the result of a long build or test run instead of running the command again.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "The process id from the bash result" },
+                        "wait_seconds": { "type": "integer", "description": "Wait up to this long for the command to finish (default 30, max 300). 0 answers at once." }
+                    },
+                    "required": ["id"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "screenshot",
+                "description": "Show the user a picture in the chat: a page of the running app rendered in a headless browser (url), or an image or HTML file (path). Use it after a change to the user interface so the user sees the result and can react to it. You do not see the picture yourself; the result lists what the page logged to the browser console, errors included. To get the user's verdict, follow up with the question tool.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": { "type": "string", "description": "Page to render, e.g. http://localhost:4200/settings. Start the dev server with bash first." },
+                        "path": { "type": "string", "description": "Instead of url: an image (png, jpg, webp, gif) to show as it is, or an HTML file to render" },
+                        "caption": { "type": "string", "description": "A few words on what the picture shows" },
+                        "width": { "type": "integer", "description": "Viewport width in pixels (default 1280)" },
+                        "height": { "type": "integer", "description": "Viewport height in pixels (default 800). Use a tall viewport to show a long page." }
+                    }
                 }
             }
         }),
@@ -412,18 +629,91 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "task",
-                "description": "Spawn a subagent to work on a focused task in parallel with the main agent. The subagent has the same tools and project access, runs its own tool loop, and returns a concise report when done. Use this to parallelize independent work (e.g. investigate several areas at once, or offload a self-contained subtask). Multiple task calls in one turn run concurrently.",
+                "description": "Spawn a subagent to work on a focused task in parallel with the main agent. The subagent has the same tools and project access, runs its own tool loop, and returns a concise report when done. Use this to parallelize independent work (e.g. investigate several areas at once, or offload a self-contained subtask). Multiple task calls in one turn run concurrently. For a question that takes searching or reading many files, use mode \"explore\": the files stay out of your own context and you get back only what matters. After a larger or risky change, mode \"verify\" has a second agent check it with fresh eyes.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "description": { "type": "string", "description": "Short 3-5 word name for the subagent, shown in the UI" },
-                        "prompt": { "type": "string", "description": "Detailed instructions for the subagent. Include everything it needs; it cannot see this conversation." }
+                        "prompt": { "type": "string", "description": "Detailed instructions for the subagent. Include everything it needs; it cannot see this conversation." },
+                        "mode": { "type": "string", "enum": ["explore", "verify"], "description": "Set to \"explore\" for a subagent that only searches and reads: it cannot edit files and reports what it found as path:line references. Set to \"verify\" for one that checks your work: it is given the list of changed files, runs the project's checks without editing, and reports PASS or FAIL per check; say in prompt what the change is meant to do. Omit for a subagent that does the work itself." },
+                        "model": { "type": "string", "description": "Set only when the user asked for a specific model for this subagent: the model as the user named it (e.g. \"deepseek flash\"), or an exact model id. Do not guess or complete an id; pumr matches the name against the connected providers and asks the user when it fits several models. Omit to use the default subagent model." }
                     },
                     "required": ["description", "prompt"]
                 }
             }
         }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "todo",
+                "description": "Keep a task list for work that takes three or more steps. The user sees it, and it is handed back to you when earlier messages are compacted, so progress survives a long session. Send the whole list every time. Mark a task in_progress before you start it and completed as soon as it is done, with one task in_progress at a time. Leave it out for small tasks.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "description": "The whole task list, in the order the tasks are worked on.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": { "type": "string", "description": "What to do, in a few words" },
+                                    "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] }
+                                },
+                                "required": ["content", "status"]
+                            }
+                        }
+                    },
+                    "required": ["todos"]
+                }
+            }
+        }),
     ]
+}
+
+/// The agent's `todo` call: stores the task list it sent for the session and
+/// answers with the list as it now stands. Handled apart from `execute`,
+/// which has no database.
+pub fn write_todos(db: &Db, session_id: &str, arguments: &Value) -> ToolOutcome {
+    let Some(entries) = arguments.get("todos").and_then(Value::as_array) else {
+        return ToolOutcome::error("The todo tool requires a 'todos' array.");
+    };
+    let todos: Vec<Value> = entries
+        .iter()
+        .filter_map(|entry| {
+            let content = entry.get("content").and_then(Value::as_str)?.trim();
+            let status = entry
+                .get("status")
+                .and_then(Value::as_str)
+                .filter(|status| matches!(*status, "in_progress" | "completed"))
+                .unwrap_or("pending");
+            (!content.is_empty()).then(|| json!({ "content": content, "status": status }))
+        })
+        .collect();
+    let stored = Value::Array(todos).to_string();
+    if let Err(error) = db.set_session_todos(session_id, &stored) {
+        return ToolOutcome::error(format!("Could not store the task list: {error}"));
+    }
+    match render_todos(&stored) {
+        Some(list) => ToolOutcome::ok(format!("Task list updated.\n{list}")),
+        None => ToolOutcome::ok("Task list cleared.".to_string()),
+    }
+}
+
+/// A stored task list as a checklist, or `None` when it is empty.
+pub fn render_todos(stored: &str) -> Option<String> {
+    let todos: Vec<Value> = serde_json::from_str(stored).unwrap_or_default();
+    let lines: Vec<String> = todos
+        .iter()
+        .filter_map(|entry| {
+            let content = entry.get("content").and_then(Value::as_str)?;
+            Some(match entry.get("status").and_then(Value::as_str) {
+                Some("completed") => format!("- [x] {content}"),
+                Some("in_progress") => format!("- [ ] {content} (in progress)"),
+                _ => format!("- [ ] {content}"),
+            })
+        })
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -> ToolOutcome {
@@ -439,6 +729,8 @@ pub async fn execute(runtime: &mut ToolRuntime, name: &str, arguments: &Value) -
         "grep" => grep_files(runtime, arguments).await,
         "ls" => list_dir(runtime, arguments).await,
         "bash" => run_bash(runtime, arguments).await,
+        "bash_output" => bash_output(runtime, arguments).await,
+        "screenshot" => crate::screenshot::take(runtime, arguments).await,
         "webfetch" => web_fetch(runtime, arguments).await,
         "websearch" => web_search(runtime, arguments).await,
         "question" => ask_question(runtime, arguments).await,
@@ -813,7 +1105,7 @@ fn strip_recommended_suffix(label: &str) -> (&str, bool) {
     (label, false)
 }
 
-fn arg_str(arguments: &Value, key: &str) -> Result<String> {
+pub(crate) fn arg_str(arguments: &Value, key: &str) -> Result<String> {
     arguments
         .get(key)
         .and_then(Value::as_str)
@@ -821,7 +1113,7 @@ fn arg_str(arguments: &Value, key: &str) -> Result<String> {
         .ok_or_else(|| AppError::msg(format!("Missing argument '{key}'")))
 }
 
-fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
+pub(crate) fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(&runtime.project_root) {
         return relative.to_string_lossy().replace('\\', "/");
     }
@@ -857,7 +1149,7 @@ fn permission_path(path: &Path) -> PathBuf {
         .unwrap_or_else(|_| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
-async fn ensure_path_access(
+pub(crate) async fn ensure_path_access(
     runtime: &mut ToolRuntime,
     absolute: &Path,
     label: &str,
@@ -1042,6 +1334,7 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             shown_end + 1
         ));
     }
+    runtime.files.note(&runtime.session_id, &absolute);
     ToolOutcome::ok(output)
 }
 
@@ -1067,9 +1360,18 @@ async fn write_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     let old = tokio::fs::read_to_string(&absolute)
         .await
         .unwrap_or_default();
+    // Replacing a file the agent never looked at loses whatever is in it.
+    if !old.trim().is_empty() && !runtime.files.knows(&runtime.session_id, &absolute) {
+        let relative = relative_display(runtime, &absolute);
+        return ToolOutcome::error(format!(
+            "{relative} already exists ({} lines) and you have not read it in this chat, so it was not replaced. Read it first; then change it with edit, or call write again to replace all of it.",
+            old.lines().count()
+        ));
+    }
     if let Err(error) = tokio::fs::write(&absolute, &content).await {
         return ToolOutcome::error(format!("Cannot write {}: {error}", absolute.display()));
     }
+    runtime.files.note(&runtime.session_id, &absolute);
     let (additions, deletions) = count_line_changes(&old, &content);
     let relative = relative_display(runtime, &absolute);
     ToolOutcome {
@@ -1084,6 +1386,7 @@ async fn write_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             deletions,
             status: if existed { "M" } else { "A" }.to_string(),
         }],
+        attachments: Vec::new(),
     }
 }
 
@@ -1114,7 +1417,15 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             return ToolOutcome::error(format!("Cannot read {}: {error}", absolute.display()))
         }
     };
-    let (updated, occurrences) = match apply_edit(&current, &old_string, &new_string, replace_all) {
+    let mut applied = apply_edit(&current, &old_string, &new_string, replace_all);
+    // Text copied from `read` output with its line numbers still on it.
+    if matches!(applied, Err(EditError::NotFound)) {
+        if let Some(old) = strip_line_numbers(&old_string) {
+            let new = strip_line_numbers(&new_string).unwrap_or_else(|| new_string.clone());
+            applied = apply_edit(&current, &old, &new, replace_all);
+        }
+    }
+    let (updated, occurrences) = match applied {
         Ok(applied) => applied,
         Err(EditError::EmptyOldString) => {
             return ToolOutcome::error(
@@ -1123,9 +1434,14 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         }
         Err(EditError::NotFound) => {
             let relative = relative_display(runtime, &absolute);
-            return ToolOutcome::error(format!(
-                "old_string was not found in {relative}. Read the file with the read tool and copy the exact current text, without line-number prefixes or surrounding quotes."
-            ));
+            return ToolOutcome::error(match closest_text(&current, &old_string) {
+                Some(closest) => format!(
+                    "old_string was not found in {relative}. The closest text is:\n{closest}\nCopy the text to replace exactly from there, without the line numbers."
+                ),
+                None => format!(
+                    "old_string was not found in {relative}, and nothing in the file is close to it. Read the file with the read tool and copy the exact current text, without line-number prefixes or surrounding quotes."
+                ),
+            });
         }
         Err(EditError::NotUnique(count)) => {
             return ToolOutcome::error(format!(
@@ -1136,12 +1452,19 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
     if let Err(error) = tokio::fs::write(&absolute, &updated).await {
         return ToolOutcome::error(format!("Cannot write {}: {error}", absolute.display()));
     }
+    runtime.files.note(&runtime.session_id, &absolute);
     let (additions, deletions) = count_line_changes(&current, &updated);
     let relative = relative_display(runtime, &absolute);
+    let loose = if current.contains(&old_string) {
+        ""
+    } else {
+        " old_string matched only with its whitespace or line numbers ignored."
+    };
     ToolOutcome {
         result: truncate(format!(
-            "Edited {relative} ({occurrences} replacement{}).",
-            if occurrences == 1 { "" } else { "s" }
+            "Edited {relative} ({occurrences} replacement{}).{loose}{}",
+            if occurrences == 1 { "" } else { "s" },
+            edited_region(&current, &updated)
         )),
         status: "ok".to_string(),
         changes: vec![FileChange {
@@ -1150,7 +1473,140 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             deletions,
             status: "M".to_string(),
         }],
+        attachments: Vec::new(),
     }
+}
+
+/// Lines of context shown around an edit, and how many lines of it at most.
+const EDIT_CONTEXT_LINES: usize = 2;
+const EDIT_SHOWN_LINES: usize = 16;
+/// Longest line shown in an edit result, in characters.
+const EDIT_SHOWN_COLUMNS: usize = 200;
+
+fn numbered_line(number: usize, line: &str) -> String {
+    if line.chars().count() <= EDIT_SHOWN_COLUMNS {
+        return format!("{number}\t{line}\n");
+    }
+    let shown: String = line.chars().take(EDIT_SHOWN_COLUMNS).collect();
+    format!("{number}\t{shown}…\n")
+}
+
+/// What an edit left behind, as the numbered lines around the change: the
+/// agent sees where the edit landed and how it sits in its surroundings
+/// without reading the file again.
+fn edited_region(before: &str, after: &str) -> String {
+    let old: Vec<&str> = before.lines().collect();
+    let new: Vec<&str> = after.lines().collect();
+    let same_start = old
+        .iter()
+        .zip(&new)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let same_end = old[same_start..]
+        .iter()
+        .rev()
+        .zip(new[same_start..].iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let changed_end = new.len() - same_end;
+    let from = same_start.saturating_sub(EDIT_CONTEXT_LINES);
+    let upto = (changed_end + EDIT_CONTEXT_LINES).min(new.len());
+    if from >= upto {
+        return String::new();
+    }
+    let shown = (upto - from).min(EDIT_SHOWN_LINES);
+    let mut region = format!(" It now reads, from line {}:\n", from + 1);
+    for (index, line) in new[from..from + shown].iter().enumerate() {
+        region.push_str(&numbered_line(from + index + 1, line));
+    }
+    if upto - from > shown {
+        region.push_str(&format!(
+            "… ({} more lines changed, up to line {upto})\n",
+            upto - from - shown
+        ));
+    }
+    region
+}
+
+/// `text` without the line numbers `read` puts in front of every line, when
+/// every line of it carries one.
+fn strip_line_numbers(text: &str) -> Option<String> {
+    let mut stripped = Vec::new();
+    let mut numbered = false;
+    for line in text.lines() {
+        let rest = line.trim_start_matches(|character: char| character.is_ascii_digit());
+        if rest.len() < line.len() && rest.starts_with('\t') {
+            numbered = true;
+            stripped.push(&rest[1..]);
+        } else if line.trim().is_empty() {
+            stripped.push(line);
+        } else {
+            return None;
+        }
+    }
+    numbered.then(|| stripped.join("\n"))
+}
+
+/// How alike two lines are, from 0 to 1: the share of neighbouring character
+/// pairs they have in common, whitespace aside.
+fn line_similarity(left: &str, right: &str) -> f64 {
+    let pairs = |text: &str| -> Vec<(char, char)> {
+        let characters: Vec<char> = text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .take(EDIT_SHOWN_COLUMNS)
+            .collect();
+        characters.windows(2).map(|pair| (pair[0], pair[1])).collect()
+    };
+    let (left, mut right) = (pairs(left), pairs(right));
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let total = left.len() + right.len();
+    let mut shared = 0usize;
+    for pair in left {
+        if let Some(index) = right.iter().position(|other| *other == pair) {
+            right.swap_remove(index);
+            shared += 1;
+        }
+    }
+    2.0 * shared as f64 / total as f64
+}
+
+/// The part of `content` that an `old_string` which matched nowhere most
+/// likely meant, as numbered lines: the lines from the one most like its
+/// first line. `None` when nothing in the file comes close.
+fn closest_text(content: &str, old: &str) -> Option<String> {
+    /// Files longer than this are not searched for a near match.
+    const MAX_LINES: usize = 20_000;
+    let wanted: Vec<&str> = old.lines().collect();
+    // The first line with enough on it to tell lines apart.
+    let (anchor_at, anchor) = wanted
+        .iter()
+        .map(|line| line.trim())
+        .enumerate()
+        .find(|(_, line)| line.len() >= 4)?;
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() > MAX_LINES {
+        return None;
+    }
+    // Reversed, so that of equally close lines the first one wins.
+    let (found, score) = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(index, line)| (index, line_similarity(line.trim(), anchor)))
+        .max_by(|left, right| left.1.total_cmp(&right.1))?;
+    if score < 0.6 {
+        return None;
+    }
+    let start = found.saturating_sub(anchor_at);
+    let length = wanted.len().clamp(1, EDIT_SHOWN_LINES);
+    let mut closest = String::new();
+    for (index, line) in lines.iter().enumerate().skip(start).take(length) {
+        closest.push_str(&numbered_line(index + 1, line));
+    }
+    Some(closest)
 }
 
 #[derive(Debug)]
@@ -1508,10 +1964,26 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Ok(pattern) => pattern,
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
-    let regex = match Regex::new(&pattern) {
+    let ignore_case = arguments
+        .get("ignore_case")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let regex = match RegexBuilder::new(&pattern)
+        .case_insensitive(ignore_case)
+        .build()
+    {
         Ok(regex) => regex,
         Err(error) => return ToolOutcome::error(format!("Invalid regex: {error}")),
     };
+    let context = arguments
+        .get("context")
+        .and_then(Value::as_u64)
+        .map_or(0, |lines| lines.min(10) as usize);
+    let files_only = arguments.get("output").and_then(Value::as_str) == Some("files");
+    let limit = arguments
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(200, |limit| limit.clamp(1, 1_000) as usize);
     let include = match arguments.get("include").and_then(Value::as_str) {
         Some(include) => match Glob::new(include) {
             Ok(glob) => Some(glob.compile_matcher()),
@@ -1545,12 +2017,17 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             candidates.push(entry.path().to_path_buf());
         }
     }
+    // The same search lists its matches in the same order every time.
+    candidates.sort();
     let ignored = if runtime.file_ignore.respect_gitignore {
         ignored_paths(&runtime.project_root, &candidates)
     } else {
         HashSet::new()
     };
     let mut results: Vec<String> = Vec::new();
+    // Matches reported, or files with `output: "files"`.
+    let mut found = 0usize;
+    let mut capped = false;
     // Credential files are read only after a prompt (see `read_file`), so grep
     // leaves them out instead of printing their contents.
     let mut sensitive_skipped = 0usize;
@@ -1587,14 +2064,55 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             Ok(content) => content,
             Err(_) => continue,
         };
+        let lines: Vec<&str> = content.lines().collect();
+        let hits: Vec<usize> = (0..lines.len())
+            .filter(|index| regex.is_match(lines[*index]))
+            .collect();
+        if hits.is_empty() {
+            continue;
+        }
+        if found >= limit {
+            capped = true;
+            break;
+        }
         let display = relative_display(runtime, path);
-        for (index, line) in content.lines().enumerate() {
-            if regex.is_match(line) {
-                results.push(format!("{display}:{}: {}", index + 1, line.trim_end()));
-                if results.len() >= 200 {
-                    break 'outer;
-                }
+        if files_only {
+            found += 1;
+            results.push(format!("{display}: {}", hits.len()));
+            continue;
+        }
+        // End of what was printed of this file, so the context of two close
+        // matches is not printed twice.
+        let mut printed = 0usize;
+        for hit in &hits {
+            if found >= limit {
+                capped = true;
+                break 'outer;
             }
+            found += 1;
+            if context == 0 {
+                results.push(format!("{display}:{}: {}", hit + 1, lines[*hit].trim_end()));
+                continue;
+            }
+            let start = hit.saturating_sub(context).max(printed);
+            let end = (hit + context + 1).min(lines.len());
+            if !results.is_empty() && (printed == 0 || start > printed) {
+                results.push("--".to_string());
+            }
+            for (index, line) in lines.iter().enumerate().take(end).skip(start) {
+                // Like ripgrep: `:` marks a matching line, `-` one of context.
+                let mark = if hits.binary_search(&index).is_ok() {
+                    ':'
+                } else {
+                    '-'
+                };
+                results.push(format!(
+                    "{display}{mark}{}{mark} {}",
+                    index + 1,
+                    line.trim_end()
+                ));
+            }
+            printed = end;
         }
     }
     let skipped_note = (sensitive_skipped > 0).then(|| {
@@ -1610,12 +2128,12 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         }
         return ToolOutcome::ok(output);
     }
-    let capped = results.len() >= 200;
     let mut output = results.join("\n");
     if capped {
-        output.push_str(
-            "\n\n… showing the first 200 matches only. Narrow the pattern or add include/path to see more.",
-        );
+        output.push_str(&format!(
+            "\n\n… showing the first {limit} {} only. Narrow the pattern or add include/path to see more.",
+            if files_only { "files" } else { "matches" }
+        ));
     }
     if let Some(note) = skipped_note {
         output.push_str(&format!("\n\n{note}"));
@@ -1701,7 +2219,7 @@ fn audit_unprompted(
     });
 }
 
-enum WebsiteAccess {
+pub(crate) enum WebsiteAccess {
     Allowed,
     DeniedByRule(String),
     /// The prompt ended without an allow; `decided_by` says who ended it.
@@ -1710,7 +2228,11 @@ enum WebsiteAccess {
 
 /// Ask the user for permission before the agent reaches a website. Rules are
 /// matched against the host: deny rules win, then allow rules, then the user.
-async fn ensure_website_access(runtime: &mut ToolRuntime, url: &str, kind: &str) -> WebsiteAccess {
+pub(crate) async fn ensure_website_access(
+    runtime: &mut ToolRuntime,
+    url: &str,
+    kind: &str,
+) -> WebsiteAccess {
     let Some(host) = reqwest::Url::parse(url)
         .ok()
         .and_then(|parsed| parsed.host_str().map(str::to_string))
@@ -2391,17 +2913,28 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         }
     }
 
+    #[cfg(unix)]
+    let preview = TailPreview::open(&command);
+    #[cfg(unix)]
+    let script = preview
+        .as_ref()
+        .map_or_else(|| command.clone(), |preview| preview.script(&command));
+    #[cfg(not(unix))]
+    let script = command.clone();
     let mut process = if cfg!(windows) {
         let mut process = Command::new("cmd");
-        process.arg("/C").arg(&command);
+        process.arg("/C").arg(&script);
         process
     } else {
         let mut process = Command::new("/bin/sh");
-        process.arg("-c").arg(&command);
+        process.arg("-c").arg(&script);
         process
     };
     process
         .current_dir(&cwd)
+        // Python holds back what it prints to a pipe until it has a few
+        // kilobytes; the chat shows a command's output as it is printed.
+        .env("PYTHONUNBUFFERED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -2409,6 +2942,10 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     // started (see `kill_tree`).
     #[cfg(unix)]
     process.process_group(0);
+    #[cfg(unix)]
+    if let Some(preview) = &preview {
+        preview.inherit(&mut process);
+    }
 
     let mut child = match process.spawn() {
         Ok(child) => child,
@@ -2418,20 +2955,25 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
 
     let output = Arc::new(Mutex::new(OutputBuffer::default()));
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
-    spawn_reader(child.stdout.take(), output.clone(), sender.clone());
-    spawn_reader(child.stderr.take(), output.clone(), sender.clone());
+    spawn_reader(child.stdout.take(), Some(output.clone()), sender.clone());
+    spawn_reader(child.stderr.take(), Some(output.clone()), sender.clone());
+    // Shown in the chat only: the result is what the command itself printed.
+    #[cfg(unix)]
+    spawn_reader(preview.map(|preview| preview.reader), None, sender.clone());
     drop(sender);
 
     let child_handle: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
     let running = Arc::new(AtomicBool::new(true));
     let (exit_sender, mut exit_receiver) = tokio::sync::oneshot::channel::<i32>();
-    spawn_waiter(child_handle.clone(), running.clone(), exit_sender);
+    let exited: Arc<Mutex<Option<i32>>> = Arc::new(Mutex::new(None));
+    spawn_waiter(
+        child_handle.clone(),
+        running.clone(),
+        exited.clone(),
+        exit_sender,
+    );
 
-    let timeout = arguments
-        .get("timeout_seconds")
-        .and_then(Value::as_u64)
-        .unwrap_or(BACKGROUND_AFTER_SECONDS)
-        .clamp(1, 120);
+    let timeout = foreground_seconds(arguments);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout);
     let mut exit_code: Option<i32> = None;
     let mut moved_to_background = false;
@@ -2480,10 +3022,15 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             }
         }
     }
-    let buffered = output.lock().unwrap().text();
+    let (so_far, seen) = {
+        let buffer = output.lock().unwrap();
+        (buffer.text(), buffer.total())
+    };
+    let buffered = spill_output(runtime, so_far);
 
     if moved_to_background {
-        let id = Uuid::new_v4().to_string();
+        // Short enough for a model to copy without a slip.
+        let id: String = Uuid::new_v4().simple().to_string().chars().take(8).collect();
         runtime.processes.insert(Arc::new(RunningProcess {
             id: id.clone(),
             session_id: runtime.session_id.clone(),
@@ -2494,9 +3041,11 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             child: child_handle,
             pid,
             running,
+            exit_code: exited,
+            read_upto: Mutex::new(seen),
         }));
         return ToolOutcome::ok(format!(
-            "Command is still running after {timeout}s and was moved to the background (process id: {id}). The user can stop it from the running processes indicator.\n\nOutput so far:\n{buffered}"
+            "Command is still running after {timeout}s and was moved to the background (process id: {id}). Call bash_output with this id to wait for it and read the rest of its output; do not run the command again. The user can stop it from the running processes indicator.\n\nOutput so far:\n{buffered}"
         ));
     }
 
@@ -2510,14 +3059,166 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             result: truncate(format!("Command failed with exit code {code}.\n{buffered}")),
             status: "error".to_string(),
             changes: Vec::new(),
+            attachments: Vec::new(),
         },
         None => ToolOutcome::error("Command did not report an exit code."),
     }
 }
 
+/// Longest a command may run before it is moved to the background, in seconds.
+const MAX_FOREGROUND_SECONDS: u64 = 600;
+
+/// How long a `bash` call waits for its command before moving it to the
+/// background. `timeout` is accepted next to `timeout_seconds`, in seconds
+/// or, as other agents' shell tools take it, in milliseconds.
+fn foreground_seconds(arguments: &Value) -> u64 {
+    let seconds = arguments.get("timeout_seconds").and_then(Value::as_u64);
+    let other = arguments
+        .get("timeout")
+        .and_then(Value::as_u64)
+        .map(|value| {
+            if value > MAX_FOREGROUND_SECONDS {
+                value / 1_000
+            } else {
+                value
+            }
+        });
+    seconds
+        .or(other)
+        .unwrap_or(BACKGROUND_AFTER_SECONDS)
+        .clamp(1, MAX_FOREGROUND_SECONDS)
+}
+
+/// Longest a `bash_output` call waits for a background command, in seconds.
+const MAX_OUTPUT_WAIT_SECONDS: u64 = 300;
+
+/// The agent's `bash_output` call: waits for a command `bash` moved to the
+/// background and hands over what it has printed since the agent last looked,
+/// with how it ended. Without it a build or test run that outlasts `bash` is
+/// lost to the agent, which then guesses at the result or runs it again.
+async fn bash_output(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
+    let id = match arg_str(arguments, "id") {
+        Ok(id) => id.trim().to_string(),
+        Err(error) => return ToolOutcome::error(error.to_string()),
+    };
+    let Some(process) = runtime.processes.find(&id, &runtime.session_id) else {
+        let known: Vec<String> = runtime
+            .processes
+            .known(&runtime.session_id)
+            .into_iter()
+            .map(|(id, command)| format!("{id} ({})", head_tail(&command, 80)))
+            .collect();
+        return ToolOutcome::error(if known.is_empty() {
+            format!("No background command has the id '{id}'. None is known for this chat: the user may have stopped it.")
+        } else {
+            format!(
+                "No background command has the id '{id}'. Known: {}.",
+                known.join(", ")
+            )
+        });
+    };
+    let wait = arguments
+        .get("wait_seconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(30)
+        .min(MAX_OUTPUT_WAIT_SECONDS);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(wait);
+    while process.running.load(Ordering::SeqCst) && tokio::time::Instant::now() < deadline {
+        tokio::select! {
+            _ = runtime.cancel.cancelled() => return ToolOutcome::cancelled(),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+        }
+    }
+    let running = process.running.load(Ordering::SeqCst);
+    if !running {
+        // The readers may still be delivering what was left in the pipes.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    let fresh = {
+        let buffer = process.output.lock().unwrap();
+        let mut read_upto = process.read_upto.lock().unwrap();
+        let fresh = buffer.since(*read_upto);
+        *read_upto = buffer.total();
+        fresh
+    };
+    let fresh = spill_output(runtime, fresh);
+    let exit_code = *process.exit_code.lock().unwrap();
+    let state = match (running, exit_code) {
+        (true, _) => format!(
+            "Command is still running after {}s (process id: {id}). Call bash_output again to keep waiting.",
+            (crate::db::now_ms() - process.started_at).max(0) / 1_000
+        ),
+        (false, Some(0)) => "Command finished successfully.".to_string(),
+        (false, Some(code)) => format!("Command failed with exit code {code}."),
+        (false, None) => "Command has ended.".to_string(),
+    };
+    let result = if fresh.trim().is_empty() {
+        format!("{state}\nNo new output.")
+    } else {
+        format!("{state}\nNew output:\n{fresh}")
+    };
+    if !running && !matches!(exit_code, Some(0)) {
+        return ToolOutcome::error(result);
+    }
+    ToolOutcome::ok(result)
+}
+
+/// What a `tail` in a pipeline reads, copied to the chat while the command
+/// runs. Models end most builds and test runs with `| tail -n`, which prints
+/// nothing until its input ends, so the user would watch an empty panel for
+/// minutes. The command gets a `tail` that also writes what it reads to a pipe
+/// of its own: the chat shows that live, while the result the model reads and
+/// the command's exit code stay exactly what the real `tail` makes them.
+#[cfg(unix)]
+struct TailPreview {
+    reader: tokio::net::unix::pipe::Receiver,
+    writer: std::os::fd::OwnedFd,
+}
+
+#[cfg(unix)]
+impl TailPreview {
+    /// `None` for a command without `tail`, which runs as it is.
+    fn open(command: &str) -> Option<Self> {
+        if !command.contains("tail") {
+            return None;
+        }
+        let (writer, reader) = tokio::net::unix::pipe::pipe().ok()?;
+        // `tee` writes to this end and must wait for the reader, not fail.
+        let writer = writer.into_blocking_fd().ok()?;
+        Some(Self { reader, writer })
+    }
+
+    /// `command` after the definition of the previewing `tail`. Both share a
+    /// line, so the line numbers in the shell's messages stay the command's.
+    fn script(&self, command: &str) -> String {
+        use std::os::fd::AsRawFd;
+        format!(
+            "tail() {{ if [ -p /dev/stdin ]; then tee /dev/fd/{} 2>/dev/null | command tail \"$@\"; else command tail \"$@\"; fi; }}; {command}",
+            self.writer.as_raw_fd()
+        )
+    }
+
+    /// Hands the pipe's write end to the command `process` starts.
+    fn inherit(&self, process: &mut Command) {
+        use std::os::fd::AsRawFd;
+        let fd = self.writer.as_raw_fd();
+        // SAFETY: the closure runs in the forked child before `exec` and only
+        // calls `fcntl`, which is async-signal-safe. Should it fail, `tee`
+        // cannot open the pipe and passes its input on without a copy.
+        unsafe {
+            process.pre_exec(move || {
+                libc::fcntl(fd, libc::F_SETFD, 0);
+                Ok(())
+            });
+        }
+    }
+}
+
+/// Reads a command's output as it is printed and sends it on to the chat.
+/// `output` collects it for the tool result; a preview has none.
 fn spawn_reader<R>(
     reader: Option<R>,
-    output: Arc<Mutex<OutputBuffer>>,
+    output: Option<Arc<Mutex<OutputBuffer>>>,
     sender: tokio::sync::mpsc::UnboundedSender<String>,
 ) where
     R: AsyncReadExt + Unpin + Send + 'static,
@@ -2543,7 +3244,9 @@ fn spawn_reader<R>(
                 take_utf8(&mut pending)
             };
             if !text.is_empty() {
-                output.lock().unwrap().push(&text);
+                if let Some(output) = &output {
+                    output.lock().unwrap().push(&text);
+                }
                 // Nobody listens once the command moved to the background.
                 let _ = sender.send(text);
             }
@@ -2585,6 +3288,7 @@ pub(crate) fn take_utf8(pending: &mut Vec<u8>) -> String {
 fn spawn_waiter(
     child: Arc<Mutex<Option<Child>>>,
     running: Arc<AtomicBool>,
+    exited: Arc<Mutex<Option<i32>>>,
     exit_sender: tokio::sync::oneshot::Sender<i32>,
 ) {
     tokio::spawn(async move {
@@ -2595,9 +3299,11 @@ fn spawn_waiter(
                 if let Some(inner) = guard.as_mut() {
                     match inner.try_wait() {
                         Ok(Some(status)) => {
+                            let code = status.code().unwrap_or(-1);
+                            *exited.lock().unwrap() = Some(code);
                             running.store(false, Ordering::SeqCst);
                             if let Some(sender) = exit_sender.take() {
-                                let _ = sender.send(status.code().unwrap_or(-1));
+                                let _ = sender.send(code);
                             }
                             break;
                         }
@@ -2627,10 +3333,39 @@ fn truncate(text: String) -> String {
     head_tail(&text, MAX_TOOL_OUTPUT)
 }
 
+/// Fits a command's output into a tool result. An output longer than a result
+/// may be is saved whole to the chat's scratch folder, and the result keeps
+/// its beginning and end with the path: the model then reads or searches the
+/// rest when it needs it, instead of carrying all of it in its context.
+fn spill_output(runtime: &ToolRuntime, text: String) -> String {
+    if text.len() <= MAX_TOOL_OUTPUT {
+        return text;
+    }
+    let name: String = runtime
+        .call_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        .collect();
+    let saved = runtime
+        .permissions
+        .ensure_scratch_dir(&runtime.conversation_id)
+        .map(|folder| folder.join(format!("output-{name}.txt")))
+        .filter(|path| std::fs::write(path, &text).is_ok());
+    match saved {
+        Some(path) => format!(
+            "{}\n\nThe whole output ({} bytes) is saved to {}. Read it with the read tool (offset and limit) or search it with grep.",
+            head_tail(&text, SPILLED_OUTPUT_BYTES),
+            text.len(),
+            path.display()
+        ),
+        None => truncate(text),
+    }
+}
+
 /// Truncates to at most `max_bytes` while keeping both the beginning and the
 /// end of the output, since failures and errors usually appear at the tail.
 /// The split favours the head slightly (~55/45) to preserve the leading context.
-fn head_tail(text: &str, max_bytes: usize) -> String {
+pub(crate) fn head_tail(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_string();
     }
@@ -2985,6 +3720,7 @@ pub(crate) mod tests {
             conversation_id: "session".to_string(),
             shadow: Arc::new(ShadowRepo::open(app_data, "project", project_root).unwrap()),
             processes: Arc::new(ProcessRegistry::new()),
+            files: Arc::new(FileLedger::default()),
             broker: Arc::new(PermissionBroker::new()),
             questions: Arc::new(QuestionBroker::new()),
             http: reqwest::Client::new(),
@@ -3012,6 +3748,115 @@ pub(crate) mod tests {
         assert_eq!(grepped.result, "src/main.rs:1: fn main() {}");
         let listed = list_dir(&mut runtime, &json!({})).await;
         assert_eq!(listed.result, "src/");
+    }
+
+    #[tokio::test]
+    async fn grep_shows_context_lists_files_and_ignores_case() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/a.rs"),
+            "use std::fmt;\n\nfn alpha() {}\nfn beta() {}\n\n\n\nfn gamma() {}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/b.rs"), "fn Delta() {}\n").unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        // Context lines carry `-`, matches `:`; two close matches share their
+        // context and a gap gets a separator.
+        let around = grep_files(
+            &mut runtime,
+            &json!({ "pattern": "fn (alpha|beta|gamma)", "context": 1 }),
+        )
+        .await;
+        assert_eq!(
+            around.result,
+            "src/a.rs-2- \nsrc/a.rs:3: fn alpha() {}\nsrc/a.rs:4: fn beta() {}\nsrc/a.rs-5- \n--\nsrc/a.rs-7- \nsrc/a.rs:8: fn gamma() {}"
+        );
+
+        let files = grep_files(
+            &mut runtime,
+            &json!({ "pattern": "^fn ", "output": "files" }),
+        )
+        .await;
+        assert_eq!(files.result, "src/a.rs: 3\nsrc/b.rs: 1");
+
+        let exact = grep_files(&mut runtime, &json!({ "pattern": "fn delta" })).await;
+        assert_eq!(exact.result, "No matches for 'fn delta'.");
+        let any_case = grep_files(
+            &mut runtime,
+            &json!({ "pattern": "fn delta", "ignore_case": true }),
+        )
+        .await;
+        assert_eq!(any_case.result, "src/b.rs:1: fn Delta() {}");
+
+        let limited = grep_files(&mut runtime, &json!({ "pattern": "^fn ", "limit": 2 })).await;
+        assert!(limited
+            .result
+            .starts_with("src/a.rs:3: fn alpha() {}\nsrc/a.rs:4: fn beta() {}\n\n… showing the first 2 matches only."));
+    }
+
+    #[test]
+    fn a_long_command_output_is_saved_and_the_result_points_to_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = test_runtime(&root, &directory.path().join("app-data"));
+        runtime
+            .permissions
+            .set_scratch_root(directory.path().join("scratch"));
+
+        assert_eq!(spill_output(&runtime, "short".to_string()), "short");
+
+        let long = format!("start\n{}end\n", "line of a build log\n".repeat(4_000));
+        let result = spill_output(&runtime, long.clone());
+        assert!(result.len() < MAX_TOOL_OUTPUT);
+        assert!(result.starts_with("start\n"));
+        // The scratch root is stored as its canonical path.
+        let saved = directory
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("scratch/session/output-call.txt");
+        assert!(result.contains(&format!("is saved to {}", saved.display())));
+        assert_eq!(std::fs::read_to_string(saved).unwrap(), long);
+    }
+
+    #[test]
+    fn the_task_list_is_stored_and_rendered_as_a_checklist() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-task-list").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+
+        let written = write_todos(
+            &db,
+            &chat.id,
+            &json!({ "todos": [
+                { "content": "Read the parser", "status": "completed" },
+                { "content": " Fix the off-by-one ", "status": "in_progress" },
+                { "content": "Add a test", "status": "someday" },
+                { "content": "  ", "status": "pending" }
+            ] }),
+        );
+        assert_eq!(written.status, "ok");
+        assert_eq!(
+            written.result,
+            "Task list updated.\n- [x] Read the parser\n- [ ] Fix the off-by-one (in progress)\n- [ ] Add a test"
+        );
+        assert_eq!(
+            render_todos(&db.session_todos(&chat.id).unwrap()).as_deref(),
+            Some("- [x] Read the parser\n- [ ] Fix the off-by-one (in progress)\n- [ ] Add a test")
+        );
+
+        let cleared = write_todos(&db, &chat.id, &json!({ "todos": [] }));
+        assert_eq!(cleared.result, "Task list cleared.");
+        assert_eq!(render_todos(&db.session_todos(&chat.id).unwrap()), None);
+        assert_eq!(write_todos(&db, &chat.id, &json!({})).status, "error");
     }
 
     #[test]
@@ -3226,3 +4071,312 @@ mod output_tests {
         assert_eq!(pending, vec![0xc3]);
     }
 }
+
+#[cfg(test)]
+mod guidance_tests {
+    use super::tests::test_runtime;
+    use super::*;
+
+    #[test]
+    fn arguments_under_other_names_and_types_are_understood() {
+        let read = parse_arguments(
+            "read",
+            r#"{ "file_path": "src/a.rs", "offset": "12", "limit": 40.0 }"#,
+        )
+        .unwrap();
+        assert_eq!(read, json!({ "path": "src/a.rs", "offset": 12, "limit": 40 }));
+
+        let edit = parse_arguments(
+            "edit",
+            r#"{ "path": "a", "old_str": "x", "new_str": "y", "replace_all": "true" }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            edit,
+            json!({ "path": "a", "old_string": "x", "new_string": "y", "replace_all": true })
+        );
+
+        // The tool's own name for an argument wins over another one.
+        let grep = parse_arguments("grep", r#"{ "pattern": "a", "query": "b" }"#).unwrap();
+        assert_eq!(grep, json!({ "pattern": "a", "query": "b" }));
+
+        // No arguments at all, and an object sent as a string.
+        assert_eq!(parse_arguments("ls", "  ").unwrap(), json!({}));
+        assert_eq!(
+            parse_arguments("ls", r#""{\"path\": \"src\"}""#).unwrap(),
+            json!({ "path": "src" })
+        );
+
+        // An MCP tool's arguments are its own business.
+        let mcp = parse_arguments("mcp__x__y", r#"{ "file_path": "a", "limit": "3" }"#).unwrap();
+        assert_eq!(mcp, json!({ "file_path": "a", "limit": "3" }));
+    }
+
+    #[test]
+    fn arguments_that_are_no_json_object_are_reported() {
+        let cut_off = parse_arguments("write", r#"{ "path": "a.rs", "content": "fn main"#)
+            .unwrap_err();
+        assert!(cut_off.contains("not valid JSON"), "{cut_off}");
+        assert!(cut_off.contains("ended before the call was complete"));
+
+        let broken = parse_arguments("read", r#"{ "path": a.rs }"#).unwrap_err();
+        assert!(broken.contains("not valid JSON"));
+        assert!(!broken.contains("ended before"));
+
+        let list = parse_arguments("read", r#"["a.rs"]"#).unwrap_err();
+        assert!(list.contains("must be a JSON object"));
+    }
+
+    #[test]
+    fn a_command_may_wait_longer_than_the_default() {
+        assert_eq!(foreground_seconds(&json!({})), BACKGROUND_AFTER_SECONDS);
+        assert_eq!(foreground_seconds(&json!({ "timeout_seconds": 300 })), 300);
+        assert_eq!(foreground_seconds(&json!({ "timeout_seconds": 9_000 })), 600);
+        // Other agents' shell tools take milliseconds.
+        assert_eq!(foreground_seconds(&json!({ "timeout": 120_000 })), 120);
+        assert_eq!(foreground_seconds(&json!({ "timeout": 45 })), 45);
+    }
+
+    #[tokio::test]
+    async fn an_unread_file_is_not_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("kept.rs"), "fn kept() {}\n").unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        let refused = write_file(
+            &mut runtime,
+            &json!({ "path": "kept.rs", "content": "fn other() {}\n" }),
+        )
+        .await;
+        assert_eq!(refused.status, "error");
+        assert!(refused.result.contains("have not read it"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("kept.rs")).unwrap(),
+            "fn kept() {}\n"
+        );
+
+        // Once read, it may be replaced.
+        let read = read_file(&mut runtime, &json!({ "path": "kept.rs" })).await;
+        assert_eq!(read.status, "ok");
+        let written = write_file(
+            &mut runtime,
+            &json!({ "path": "kept.rs", "content": "fn other() {}\n" }),
+        )
+        .await;
+        assert_eq!(written.status, "ok", "{}", written.result);
+
+        // A new file, and a file the agent wrote itself, need no reading.
+        for content in ["one\n", "two\n"] {
+            let outcome = write_file(
+                &mut runtime,
+                &json!({ "path": "new.rs", "content": content }),
+            )
+            .await;
+            assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        }
+
+        // After a compaction the agent no longer knows what it read.
+        runtime.files.forget(&runtime.session_id);
+        let refused = write_file(
+            &mut runtime,
+            &json!({ "path": "new.rs", "content": "three\n" }),
+        )
+        .await;
+        assert_eq!(refused.status, "error");
+    }
+
+    #[tokio::test]
+    async fn an_edit_shows_where_it_landed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let lines: String = (1..=20).map(|line| format!("line {line}\n")).collect();
+        std::fs::write(root.join("a.txt"), &lines).unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        let outcome = edit_file(
+            &mut runtime,
+            &json!({ "path": "a.txt", "old_string": "line 10\n", "new_string": "ten\nten and a half\n" }),
+        )
+        .await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert_eq!(
+            outcome.result,
+            "Edited a.txt (1 replacement). It now reads, from line 8:\n8\tline 8\n9\tline 9\n10\tten\n11\tten and a half\n12\tline 11\n13\tline 12\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_edit_shows_the_closest_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("a.rs"),
+            "fn main() {\n    let total = compute(1, 2);\n    println!(\"{total}\");\n}\n",
+        )
+        .unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        let outcome = edit_file(
+            &mut runtime,
+            &json!({ "path": "a.rs", "old_string": "let total = compute(1, 3);\nprintln!(\"{total}\");", "new_string": "x" }),
+        )
+        .await;
+        assert_eq!(outcome.status, "error");
+        assert!(
+            outcome.result.contains(
+                "The closest text is:\n2\t    let total = compute(1, 2);\n3\t    println!(\"{total}\");\n"
+            ),
+            "{}",
+            outcome.result
+        );
+
+        let outcome = edit_file(
+            &mut runtime,
+            &json!({ "path": "a.rs", "old_string": "class Unrelated extends Thing", "new_string": "x" }),
+        )
+        .await;
+        assert_eq!(outcome.status, "error");
+        assert!(outcome.result.contains("nothing in the file is close to it"));
+    }
+
+    #[tokio::test]
+    async fn text_copied_with_its_line_numbers_still_matches() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.rs"), "fn a() {}\nfn b() {}\nfn c() {}\n").unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+
+        let outcome = edit_file(
+            &mut runtime,
+            &json!({ "path": "a.rs", "old_string": "2\tfn b() {}\n3\tfn c() {}", "new_string": "2\tfn b() { run() }\n3\tfn c() {}" }),
+        )
+        .await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(outcome.result.contains("line numbers ignored"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.rs")).unwrap(),
+            "fn a() {}\nfn b() { run() }\nfn c() {}\n"
+        );
+        assert_eq!(strip_line_numbers("fn a() {}\n12\tfn b() {}"), None);
+    }
+
+    fn background(runtime: &ToolRuntime, id: &str, output: &str) -> Arc<RunningProcess> {
+        let mut buffer = OutputBuffer::default();
+        buffer.push(output);
+        let seen = buffer.total();
+        let process = Arc::new(RunningProcess {
+            id: id.to_string(),
+            session_id: runtime.session_id.clone(),
+            command: "pnpm run test".to_string(),
+            cwd: String::new(),
+            started_at: crate::db::now_ms(),
+            output: Arc::new(Mutex::new(buffer)),
+            child: Arc::new(Mutex::new(None)),
+            pid: None,
+            running: Arc::new(AtomicBool::new(true)),
+            exit_code: Arc::new(Mutex::new(None)),
+            read_upto: Mutex::new(seen),
+        });
+        runtime.processes.insert(process.clone());
+        process
+    }
+
+    #[tokio::test]
+    async fn the_rest_of_a_background_command_can_be_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+        let process = background(&runtime, "ab12cd34", "compiling\n");
+
+        // Still running: only what is new since the bash result is handed over.
+        process.output.lock().unwrap().push("test a ... ok\n");
+        let running = bash_output(&mut runtime, &json!({ "id": "ab12cd34", "wait_seconds": 0 })).await;
+        assert_eq!(running.status, "ok");
+        assert!(running.result.starts_with("Command is still running"));
+        assert!(running.result.ends_with("New output:\ntest a ... ok\n"));
+
+        // It ends while the agent waits for it.
+        let ending = process.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            ending.output.lock().unwrap().push("test b ... FAILED\n");
+            *ending.exit_code.lock().unwrap() = Some(1);
+            ending.running.store(false, Ordering::SeqCst);
+        });
+        let failed = bash_output(&mut runtime, &json!({ "id": "ab12cd34" })).await;
+        assert_eq!(failed.status, "error");
+        assert_eq!(
+            failed.result,
+            "Command failed with exit code 1.\nNew output:\ntest b ... FAILED\n"
+        );
+
+        // It stays readable after it has ended, with nothing new to say.
+        assert!(runtime.processes.list().is_empty());
+        let again = bash_output(&mut runtime, &json!({ "id": "ab12cd34" })).await;
+        assert!(again.result.ends_with("No new output."));
+
+        let unknown = bash_output(&mut runtime, &json!({ "id": "nope" })).await;
+        assert_eq!(unknown.status, "error");
+        assert!(unknown.result.contains("Known: ab12cd34 (pnpm run test)"));
+    }
+
+    /// What `command` streamed to the chat while it ran, and its result.
+    #[cfg(unix)]
+    async fn streamed(command: &str) -> (String, ToolOutcome) {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("log.txt"), "one\ntwo\n").unwrap();
+        let mut runtime = test_runtime(&root, workspace.path());
+        let shown = Arc::new(Mutex::new(String::new()));
+        let sink = shown.clone();
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::ToolDelta { text, .. } = routed.event {
+                sink.lock().unwrap().push_str(&text);
+            }
+        });
+        let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+        let shown = shown.lock().unwrap().clone();
+        (shown, outcome)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_chat_sees_what_a_tail_holds_back() {
+        let (shown, outcome) = streamed("printf 'one\\ntwo\\nthree\\n' | tail -n 1").await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        // The model reads what `tail` kept, the chat every line as it came.
+        assert_eq!(outcome.result, "Command finished successfully.\nthree\n");
+        assert!(shown.starts_with("one\ntwo\nthree\n"), "{shown}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_tail_of_a_file_and_other_commands_run_as_they_are() {
+        let (shown, outcome) = streamed("tail -n 1 log.txt").await;
+        assert_eq!(outcome.result, "Command finished successfully.\ntwo\n");
+        assert_eq!(shown, "two\n");
+
+        let (shown, outcome) = streamed("printf 'one\\ntwo\\n' | head -n 1").await;
+        assert_eq!(outcome.result, "Command finished successfully.\none\n");
+        assert_eq!(shown, "one\n");
+    }
+
+    #[test]
+    fn the_tools_for_output_and_pictures_are_offered() {
+        let offered: Vec<String> = base_tool_schemas()
+            .iter()
+            .filter_map(|schema| schema.pointer("/function/name")?.as_str().map(str::to_string))
+            .collect();
+        for name in ["bash_output", "screenshot", "read", "edit", "todo"] {
+            assert!(offered.iter().any(|tool| tool == name), "{name} is not offered");
+        }
+    }
+}
+

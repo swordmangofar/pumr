@@ -4,6 +4,7 @@ import {
   formatHotkey,
   HOTKEY_DEFINITIONS,
   hotkeyBindings,
+  isMacPlatform,
   matchesAction,
   matchesHotkey,
   splitHotkey,
@@ -74,6 +75,16 @@ describe('matchesAction', () => {
     expect(matchesAction(custom, 'chatSend', keydown({ key: 'Enter', ctrlKey: true }))).toBe(
       true,
     );
+  });
+
+  it('binds the terminal tab hotkeys to the tab keys of the platform', () => {
+    const newTab = isMacPlatform() ? 'Cmd+T' : 'Ctrl+Shift+T';
+    const closeTab = isMacPlatform() ? 'Cmd+W' : 'Ctrl+Shift+W';
+    expect(hotkeyBindings(settings({}), 'terminalNewTab')).toEqual([newTab]);
+    expect(hotkeyBindings(settings({}), 'terminalCloseTab')).toEqual([closeTab]);
+    expect(hotkeyBindings(settings({ terminalNewTab: 'Alt+N' }), 'terminalNewTab')).toEqual([
+      'Alt+N',
+    ]);
   });
 
   it('reads single-hotkey settings fields', () => {

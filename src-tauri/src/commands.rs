@@ -1,21 +1,21 @@
 use crate::agent::{self, TurnDeps, TurnRequest};
 use crate::config::{self, Settings};
-use crate::db::NewMessage;
+use crate::db::{Db, NewMessage};
 use crate::debug_log;
 use crate::error::{AppError, Result};
 use crate::git::{self, language_for, ShadowRepo};
 use crate::mcp::McpManager;
 use crate::mentions;
 use crate::models::{
-    Attachment, CommandRule, EndpointInfo, EventSink, FileChange, FileDiff, GitBlameLine,
-    GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus, Mention, Message,
-    ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo, ProviderStatus,
-    QuestionAnswer, RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary, StreamEvent,
-    WorkspaceEntry, WorkspaceFile,
+    Attachment, CommandRule, CompactResult, EndpointInfo, EventSink, FileChange, FileDiff,
+    GitBlameLine, GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus, Mention,
+    Message, ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo,
+    ProviderStatus, QuestionAnswer, RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary,
+    StreamEvent, WorkspaceEntry, WorkspaceFile,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::catalog::{self, ProviderDef, ProviderKind};
-use crate::providers::{compat, ChatChunk, ChatMessage, LlmClient};
+use crate::providers::{compat, ChatChunk, ChatMessage, LlmClient, PromptCache};
 use crate::state::{AppState, SendClaim, SwappableSink};
 use crate::terminal::TerminalEvent;
 use crate::tools::ToolRuntime;
@@ -480,6 +480,7 @@ async fn stop_for_deletion(state: &AppState, session_ids: &[String]) {
     }
     for id in session_ids {
         state.permissions.remove_scratch_dir(id);
+        state.files.forget(id);
     }
 }
 
@@ -667,6 +668,7 @@ pub fn list_running_turns(state: State<'_, AppState>) -> RunningTurns {
         session_ids: state.running_turns(),
         permissions: state.broker.pending_requests(),
         questions: state.questions.pending_requests(),
+        model_choices: state.model_choices.pending_requests(),
     }
 }
 
@@ -1450,6 +1452,17 @@ pub fn resolve_question(
     Ok(())
 }
 
+/// Answers a `ModelChoiceRequest` with the picked model id; `None` skips it.
+#[tauri::command]
+pub fn resolve_model_choice(
+    state: State<'_, AppState>,
+    request_id: String,
+    model: Option<String>,
+) -> Result<()> {
+    state.model_choices.resolve(&request_id, model);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn add_website_rule(state: State<'_, AppState>, rule: String, allow: bool) -> Result<Settings> {
     let mut settings = state.settings();
@@ -1969,7 +1982,7 @@ pub async fn git_generate_commit_message(
             None,
             fallback_pricing,
             &[],
-            false,
+            PromptCache::off(),
             registration.token(),
             &mut |chunk| {
                 if let ChatChunk::Delta(text) = chunk {
@@ -2624,10 +2637,13 @@ fn best_value_provider(state: &AppState, model: &str) -> Option<String> {
 /// tracking have no record yet; derive one once and pin it to a snapshot so it
 /// can never drift into another session's working-tree edits.
 fn session_changes_resolved(state: &AppState, session_id: &str) -> Result<Vec<FileChange>> {
+    let session = state.db.get_session(session_id)?;
+    if let Some(changes) = running_session_changes(state, &session) {
+        return Ok(changes);
+    }
     if let Some((changes, _)) = state.db.session_changes_record(session_id)? {
         return Ok(changes);
     }
-    let session = state.db.get_session(session_id)?;
     let Some(base) = state.db.session_base_commit(session_id)? else {
         return Ok(Vec::new());
     };
@@ -2638,6 +2654,24 @@ fn session_changes_resolved(state: &AppState, session_id: &str) -> Result<Vec<Fi
         .db
         .set_session_changes_record(session_id, &changes, boundary.as_deref())?;
     Ok(changes)
+}
+
+/// The change set of a session whose turn is still running, as it stands now:
+/// the stored record only covers the turns that have finished. `None` when
+/// nothing runs for the session.
+fn running_session_changes(state: &AppState, session: &Session) -> Option<Vec<FileChange>> {
+    let turn = state.running_turn_for(&session.id)?;
+    // The turn of a chat outlasts the subagents that have reported back.
+    if turn != session.id && session.agent_status.as_deref() != Some("running") {
+        return None;
+    }
+    let base = state
+        .db
+        .latest_user_message(&session.id)
+        .ok()??
+        .base_commit?;
+    let shadow = open_shadow(state, &session.project_id).ok()?;
+    agent::live_changes(&state.db, &shadow, &session.id, &base, false)
 }
 
 /// Restoring files stages and checks out the whole project in the shadow
@@ -2806,6 +2840,10 @@ async fn run_send_message(
     )
     .await;
 
+    // From here on the turn counts as running: if the app closes before it
+    // ends, the next start finds the mark and the chat offers to continue.
+    let mut running = RunningTurn::begin(state.db.clone(), &session_id)?;
+
     if !setup.resume {
         append_user_message(&state, &session_id, &setup, &context)?;
     }
@@ -2840,6 +2878,10 @@ async fn run_send_message(
             .as_deref()
             .unwrap_or(&session_id),
     );
+    let cached_model = state
+        .cached_models()
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model));
+    let facts = crate::environment::detect(&setup.project_root);
     let system_prompt = build_system_prompt(
         &setup.settings,
         &setup.session,
@@ -2849,11 +2891,9 @@ async fn run_send_message(
         &skills,
         &setup.project_root,
         scratch_dir.as_deref(),
+        &facts,
+        crate::environment::is_guided(cached_model.as_ref()),
     );
-
-    let cached_model = state
-        .cached_models()
-        .and_then(|models| models.into_iter().find(|entry| entry.id == model));
     let fallback_pricing = cached_model.as_ref().map(|entry| {
         (
             entry.prompt_price_per_m / 1_000_000.0,
@@ -2887,8 +2927,9 @@ async fn run_send_message(
             .map(PathBuf::from)
             .collect(),
         file_ignore,
-        context_message_limit: setup.settings.model.context_message_limit,
         context_length,
+        auto_compact_threshold: setup.settings.model.auto_compact_threshold,
+        auto_compact_max_tokens: setup.settings.model.auto_compact_max_tokens,
         max_tool_iterations: setup.settings.model.max_tool_iterations,
         auto_continue: setup.session.auto_continue
             || setup.settings.model.auto_continue_all_sessions,
@@ -2914,14 +2955,22 @@ async fn run_send_message(
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| model.clone()),
-        cancel,
+        completion_checks: if setup.settings.model.verify_before_finish {
+            facts.checks
+        } else {
+            Vec::new()
+        },
+        cancel: cancel.clone(),
     };
     let deps = TurnDeps {
         db: state.db.clone(),
         shadow: setup.shadow,
         processes: state.processes.clone(),
+        files: state.files.clone(),
         broker: state.broker.clone(),
         questions: state.questions.clone(),
+        model_choices: state.model_choices.clone(),
+        models: Arc::new(state.cached_models().unwrap_or_default()),
         permissions: state.permissions.clone(),
         client: setup.client,
         http: state.http.clone(),
@@ -2930,7 +2979,25 @@ async fn run_send_message(
 
     let result = {
         let _keep_awake = state.power.acquire();
-        agent::run_turn(&deps, request, sink.clone()).await
+        let mut woke = state.sleep.subscribe();
+        let mut cut_off = false;
+        let turn = agent::run_turn(&deps, request, sink.clone());
+        tokio::pin!(turn);
+        loop {
+            tokio::select! {
+                result = &mut turn => break result.map(|turn| (turn, cut_off)),
+                Ok(()) = woke.changed() => {
+                    // A reply that was on its way when the machine went to
+                    // sleep never arrives: the connection is gone, often
+                    // without an error. Tools and open prompts are local and
+                    // carry on, so only a waiting request ends the turn.
+                    if deps.client.is_streaming() && !cancel.is_cancelled() {
+                        cut_off = true;
+                        state.stop_session(&session_id);
+                    }
+                }
+            }
+        }
     };
 
     let send = |event: StreamEvent| {
@@ -2941,7 +3008,7 @@ async fn run_send_message(
     };
 
     match result {
-        Ok(turn) => {
+        Ok((turn, cut_off)) => {
             state.db.add_session_usage(
                 &session_id,
                 turn.usage.cost,
@@ -2949,6 +3016,16 @@ async fn run_send_message(
                 turn.usage.completion_tokens,
                 turn.usage.cached_tokens,
             )?;
+            // Stopped above because the machine slept, or the connection that
+            // broke in its sleep failed before the wake was noticed.
+            let failed_on_wake = turn.error.is_some() && (cut_off || state.sleep.just_woke());
+            if failed_on_wake || (turn.cancelled && cut_off) {
+                running.interrupted = true;
+                send(StreamEvent::Interrupted {
+                    message: turn.message.clone(),
+                });
+                return Ok(turn.message);
+            }
             if let Some(error) = turn.error {
                 send(StreamEvent::Error {
                     message: error.clone(),
@@ -2977,6 +3054,35 @@ async fn run_send_message(
                 message: error.to_string(),
             });
             Err(error)
+        }
+    }
+}
+
+/// Marks a chat turn as running in the database until it is dropped, however
+/// the turn ends. A turn whose mark is still there on the next start of the
+/// app was cut off by the app closing (see `Db::migrate`).
+struct RunningTurn {
+    db: Arc<Db>,
+    session_id: String,
+    /// Set when the turn is cut off while the app keeps running.
+    interrupted: bool,
+}
+
+impl RunningTurn {
+    fn begin(db: Arc<Db>, session_id: &str) -> Result<Self> {
+        db.begin_turn(session_id)?;
+        Ok(Self {
+            db,
+            session_id: session_id.to_string(),
+            interrupted: false,
+        })
+    }
+}
+
+impl Drop for RunningTurn {
+    fn drop(&mut self) {
+        if let Err(error) = self.db.end_turn(&self.session_id, self.interrupted) {
+            log::warn!("could not end the turn of {}: {error}", self.session_id);
         }
     }
 }
@@ -3100,6 +3206,7 @@ async fn assemble_turn_context(
             conversation_id: session_id.to_string(),
             shadow,
             processes: state.processes.clone(),
+            files: state.files.clone(),
             broker: state.broker.clone(),
             questions: state.questions.clone(),
             http: state.http.clone(),
@@ -3288,6 +3395,8 @@ fn build_system_prompt(
     skills: &[crate::models::SkillEntry],
     project_root: &Path,
     scratch_dir: Option<&Path>,
+    facts: &crate::environment::ProjectFacts,
+    guided: bool,
 ) -> String {
     let mut system_prompt = session
         .system_prompt
@@ -3359,7 +3468,11 @@ fn build_system_prompt(
         system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
     }
 
-    system_prompt.push_str(&environment_section(project_root, scratch_dir));
+    system_prompt.push_str(&crate::environment::section(
+        project_root,
+        scratch_dir,
+        facts,
+    ));
 
     if !rules.is_empty() {
         system_prompt.push_str("\n\n# Project rules\n");
@@ -3402,26 +3515,82 @@ fn build_system_prompt(
         }
     }
 
+    // Last, where it weighs most. Modes that do not change code have their
+    // own instructions, and the bare mode is sent nothing it can do without.
+    if mode.include_global_prompts && !mode.plan_only && !mode.read_only {
+        system_prompt.push_str(&crate::environment::method_section(guided));
+    }
+
     system_prompt
 }
 
-/// Tells the model where it runs, so it does not probe the filesystem with
-/// guessed paths (`cd /Users/*/project || cd ../project; pwd`) that only
-/// trigger permission prompts.
-fn environment_section(project_root: &Path, scratch_dir: Option<&Path>) -> String {
-    let mut section = format!(
-        "\n\n# Environment\n- Project root: {}\n- bash commands already run in the project root unless you pass `cwd`; do not `cd` into it or probe for it with `pwd`/`ls`.\n- Relative paths in tools resolve against the project root. Paths outside it require user approval.",
-        project_root.display()
-    );
-    // Agents reach for `/tmp` for downloads and throwaway files, which is
-    // outside the project and asks every time.
-    if let Some(scratch) = scratch_dir {
-        section.push_str(&format!(
-            "\n- Scratch folder for temporary files (downloads, experiments, notes): {}. It needs no approval and is deleted with this chat. Use it instead of `/tmp`, and never for files the project needs.",
-            scratch.display()
+#[tauri::command]
+pub async fn compact_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<CompactResult> {
+    let settings = state.settings();
+    let session = state.db.get_session(&session_id)?;
+    // A running turn builds its requests from the same messages.
+    if state.running_turn_for(&session_id).is_some() {
+        return Err(AppError::msg(
+            "Wait for the running turn to finish before compacting.",
         ));
     }
-    section
+    let configured = |value: &String| !value.trim().is_empty();
+    let model = settings
+        .model
+        .compaction_model
+        .clone()
+        .filter(configured)
+        .or_else(|| session.model.clone().filter(configured))
+        .or_else(|| settings.model.default_model.clone().filter(configured))
+        .ok_or_else(|| AppError::msg("No model configured. Pick a model before compacting."))?;
+    state.load_catalog().await;
+    let client = state.llm();
+    client.keys.require(&model)?;
+    let info = state
+        .cached_models()
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model));
+
+    let registration = state.register_cancel(&format!("compact:{session_id}"));
+    let cancel = registration.token();
+    let outcome = agent::compact_now(&agent::Compactor {
+        db: &state.db,
+        client: &client,
+        session_id: &session_id,
+        model: &model,
+        context_length: info.as_ref().map_or(0, |entry| entry.context_length),
+        fallback_pricing: info.as_ref().map(|entry| {
+            (
+                entry.prompt_price_per_m / 1_000_000.0,
+                entry.completion_price_per_m / 1_000_000.0,
+            )
+        }),
+        cancel: &cancel,
+    })
+    .await;
+    drop(registration);
+
+    match outcome? {
+        agent::Compaction::Done { message, usage } => {
+            // What the agent read is gone from its context too.
+            state.files.forget(&session_id);
+            state.db.add_session_usage(
+                &session_id,
+                usage.cost,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.cached_tokens,
+            )?;
+            Ok(CompactResult {
+                message: *message,
+                used_tokens: agent::stored_tokens(&state.db, &session_id)? as i64,
+            })
+        }
+        agent::Compaction::Skipped => Err(AppError::msg("There is too little to compact yet.")),
+        agent::Compaction::Failed(reason) => Err(AppError::msg(reason)),
+    }
 }
 
 const HANDOVER_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The current working session is being handed off to a fresh session. Write a self-contained handover briefing that lets the next assistant continue seamlessly. Cover, when relevant:\n- The user's overall goal and any constraints or decisions already made.\n- What has been completed so far, with concrete file paths and key changes.\n- The current state of the work: what works, what is untested, what is still in progress.\n- Important commands, findings, errors or gotchas discovered.\n- Open questions or decisions that still need the user.\n- Clear next steps.\nWrite it as a message from the user to the new assistant and begin by stating the goal. Use concise bullet points. Output only the briefing and do not call any tools.";
@@ -3478,7 +3647,7 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
             None,
             fallback_pricing,
             &[],
-            false,
+            PromptCache::off(),
             registration.token(),
             &mut |chunk| {
                 if let ChatChunk::Delta(text) = chunk {
@@ -3602,7 +3771,7 @@ pub async fn find_sensitive_data(
             None,
             None,
             &[],
-            false,
+            PromptCache::off(),
             registration.token(),
             &mut |chunk| {
                 if let ChatChunk::Delta(delta) = chunk {
@@ -3766,6 +3935,39 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_that_is_cut_off_leaves_its_chat_interrupted() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let project = state
+            .db
+            .upsert_project(&temp.path().display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let interrupted = || state.db.get_session(&chat.id).unwrap().interrupted;
+
+        // A turn that ends, however it ends, leaves nothing to continue.
+        drop(RunningTurn::begin(state.db.clone(), &chat.id).unwrap());
+        assert!(!interrupted());
+
+        // The machine slept while the reply was on its way.
+        let mut running = RunningTurn::begin(state.db.clone(), &chat.id).unwrap();
+        running.interrupted = true;
+        drop(running);
+        assert!(interrupted());
+
+        // Continuing settles it. This time the app closes mid-turn, so the
+        // turn never ends, and the next start finds its mark.
+        let running = RunningTurn::begin(state.db.clone(), &chat.id).unwrap();
+        assert!(!interrupted());
+        std::mem::forget(running);
+        state.db.migrate().unwrap();
+        assert!(interrupted());
+    }
+
+    #[test]
     fn reverting_is_refused_while_a_turn_runs() {
         let temp = tempfile::tempdir().unwrap();
         let state = app_state(temp.path());
@@ -3799,5 +4001,77 @@ mod tests {
         let reverted = revert_to_message_blocking(&state, &prompt.id, false).unwrap();
         assert_eq!(reverted.prompt, "hi");
         assert!(state.db.list_messages(&chat.id).unwrap().is_empty());
+    }
+
+    fn changed_paths(state: &AppState, session_id: &str) -> Vec<String> {
+        let mut paths: Vec<String> = session_changes_resolved(state, session_id)
+            .unwrap()
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn session_changes_follow_a_running_turn() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let project_dir = root.join("project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("kept.txt"), "kept\n").unwrap();
+        let state = app_state(&root);
+        let project = state
+            .db
+            .upsert_project(&project_dir.display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let shadow = open_shadow(&state, &project.id).unwrap();
+        let sink = || SwappableSink::new(Arc::new(|_| {}));
+        let prompt = |text: &str| {
+            let base = shadow.snapshot(text).unwrap();
+            state
+                .db
+                .append_message(&chat.id, NewMessage::user(text, "", Some(&base), &[], &[]))
+                .unwrap();
+        };
+
+        // First turn: the list is read twice while the agent keeps editing.
+        prompt("first");
+        let turn = state.register_turn(&chat.id, sink());
+        std::fs::write(project_dir.join("one.txt"), "one\n").unwrap();
+        assert_eq!(changed_paths(&state, &chat.id), ["one.txt"]);
+        std::fs::write(project_dir.join("two.txt"), "two\n").unwrap();
+        assert_eq!(changed_paths(&state, &chat.id), ["one.txt", "two.txt"]);
+        drop(turn);
+
+        // The turn is over and its record frozen, as `finalize_changes` does.
+        let after = shadow.snapshot("change set").unwrap();
+        let frozen = shadow
+            .changes_between(
+                &state.db.session_base_commit(&chat.id).unwrap().unwrap(),
+                &after,
+            )
+            .unwrap();
+        state
+            .db
+            .set_session_changes_record(&chat.id, &frozen, Some(&after))
+            .unwrap();
+        // Edits made outside of a turn are not the session's.
+        std::fs::write(project_dir.join("manual.txt"), "manual\n").unwrap();
+        assert_eq!(changed_paths(&state, &chat.id), ["one.txt", "two.txt"]);
+
+        // Second turn: what it changes shows up on top of the frozen record.
+        prompt("second");
+        let turn = state.register_turn(&chat.id, sink());
+        std::fs::write(project_dir.join("three.txt"), "three\n").unwrap();
+        assert_eq!(
+            changed_paths(&state, &chat.id),
+            ["one.txt", "three.txt", "two.txt"]
+        );
+        drop(turn);
     }
 }

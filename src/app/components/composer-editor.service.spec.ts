@@ -39,6 +39,30 @@ describe('ComposerEditorService', () => {
       expect(service.serialize(editor, []).content).toBe('first line\nsecond line');
     });
 
+    it('sets the caret once the new line can hold it', () => {
+      editor.textContent = 'first line';
+      caretAt(editor.firstChild!, 'first line'.length);
+      // WebKit decides where typing goes when the caret is set and does not
+      // revisit that when the placeholder follows, so a caret set before the
+      // placeholder exists leaves the next typed text on the previous line.
+      const selection = window.getSelection()!;
+      const addRange = selection.addRange.bind(selection);
+      const editorWhenSet: string[] = [];
+      const spy = vi.spyOn(selection, 'addRange').mockImplementation((range) => {
+        editorWhenSet.push(editor.innerHTML);
+        addRange(range);
+      });
+
+      service.insertLineBreak(editor);
+      spy.mockRestore();
+
+      const placeholder = editor.querySelectorAll('br')[1];
+      expect(editorWhenSet.at(-1)).toBe('first line<br><br>');
+      expect(selection.isCollapsed).toBe(true);
+      expect(selection.anchorNode).toBe(editor);
+      expect(editor.childNodes[selection.anchorOffset]).toBe(placeholder);
+    });
+
     it('does not add a placeholder when breaking in the middle of text', () => {
       editor.textContent = 'firstsecond';
       caretAt(editor.firstChild!, 'first'.length);

@@ -149,6 +149,19 @@ export function defaultTerminalHotkey(): string {
   return isMacPlatform() ? 'Cmd+J' : 'Ctrl+`';
 }
 
+/**
+ * `Cmd+T` on macOS, where the terminal leaves `Cmd` shortcuts to the app.
+ * Elsewhere `Ctrl+T` and `Ctrl+W` belong to the shell, so `Shift` is added as
+ * in other terminals.
+ */
+export function defaultTerminalNewTabHotkey(): string {
+  return isMacPlatform() ? 'Cmd+T' : 'Ctrl+Shift+T';
+}
+
+export function defaultTerminalCloseTabHotkey(): string {
+  return isMacPlatform() ? 'Cmd+W' : 'Ctrl+Shift+W';
+}
+
 export function defaultWindowToggleHotkey(): string {
   return isMacPlatform() ? 'Cmd+Shift+Space' : 'Ctrl+Shift+Space';
 }
@@ -167,6 +180,8 @@ export type HotkeyAction =
   | 'zoomIn'
   | 'zoomOut'
   | 'zoomReset'
+  | 'terminalNewTab'
+  | 'terminalCloseTab'
   | 'focusNextPanel'
   | 'focusPreviousPanel'
   | 'nextPanelTab'
@@ -278,6 +293,24 @@ export const HOTKEY_DEFINITIONS: readonly HotkeyDefinition[] = [
     label: 'settings.hotkeys.terminal',
     hint: 'settings.hotkeys.terminalHint',
     defaults: () => [defaultTerminalHotkey()],
+  },
+  // Only while the terminal has keyboard focus; elsewhere the same keys open
+  // and close session tabs.
+  {
+    kind: 'action',
+    id: 'terminalNewTab',
+    category: 'general',
+    label: 'settings.hotkeys.terminalNewTab',
+    hint: 'settings.hotkeys.terminalNewTabHint',
+    defaults: () => [defaultTerminalNewTabHotkey()],
+  },
+  {
+    kind: 'action',
+    id: 'terminalCloseTab',
+    category: 'general',
+    label: 'settings.hotkeys.terminalCloseTab',
+    hint: 'settings.hotkeys.terminalCloseTabHint',
+    defaults: () => [defaultTerminalCloseTabHotkey()],
   },
   // Handled by the terminal itself (see TerminalView). On macOS Cmd+C/V are
   // the webview's own copy and paste; elsewhere Ctrl+C/V belong to the shell.

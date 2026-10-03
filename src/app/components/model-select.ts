@@ -18,6 +18,10 @@ import { ProviderMark } from './provider-mark';
 
 /** Room the menu needs below the field before it opens upwards instead. */
 const MENU_ROOM = 320;
+/** Space a docked menu keeps to the edge of the area that clips it. */
+const MENU_GAP = 16;
+/** A docked menu is never squeezed below this height. */
+const MIN_MENU_HEIGHT = 160;
 
 /** A form field that picks a model with the same menu as the composer. */
 @Component({
@@ -53,7 +57,9 @@ const MENU_ROOM = 320;
       <app-model-menu
         class="absolute left-0 z-40 max-h-[min(28rem,60vh)] w-full min-w-72"
         [class]="upwards() ? 'bottom-full mb-2' : 'top-full mt-2'"
+        [style.max-height]="room() === null ? null : 'min(28rem, 60vh, ' + room() + 'px)'"
         [selected]="value()"
+        [only]="only()"
         [clearLabel]="clearable() ? placeholder() : null"
         (picked)="pick($event)"
       />
@@ -70,10 +76,20 @@ export class ModelSelect {
   readonly placeholder = input('');
   readonly clearable = input(false, { transform: booleanAttribute });
   readonly label = input<string | null>(null);
+  /** When set, the menu lists only the models with these ids. */
+  readonly only = input<readonly string[] | null>(null);
+  /**
+   * For a field docked at the bottom of an area that clips it, outside a
+   * scrolling form: the menu opens upwards whenever there is room and is
+   * never taller than the room it has.
+   */
+  readonly docked = input(false, { transform: booleanAttribute });
   readonly valueChange = output<string | null>();
 
   protected readonly open = signal(false);
   protected readonly upwards = signal(false);
+  /** Height in pixels a docked menu may take; `null` leaves it to the stylesheet. */
+  protected readonly room = signal<number | null>(null);
   protected readonly selectedModel = computed(() => this.modelsService.byId(this.value() ?? ''));
   protected readonly providerId = computed(() => providerIdOf(this.value() ?? ''));
   protected readonly providerName = computed(() => this.providers.name(this.providerId()));
@@ -81,10 +97,26 @@ export class ModelSelect {
 
   protected show(): void {
     const rect = this.triggerRef()?.nativeElement.getBoundingClientRect();
-    this.upwards.set(
-      !!rect && window.innerHeight - rect.bottom < MENU_ROOM && rect.top > MENU_ROOM,
-    );
+    const docked = this.docked();
+    const upwards =
+      !!rect && rect.top > MENU_ROOM && (docked || window.innerHeight - rect.bottom < MENU_ROOM);
+    this.upwards.set(upwards);
+    this.room.set(docked && rect ? this.roomFor(rect, upwards) : null);
     this.open.set(true);
+  }
+
+  /** Pixels between the field and the edge of the area that clips the menu. */
+  private roomFor(field: DOMRect, upwards: boolean): number {
+    let top = 0;
+    let bottom = window.innerHeight;
+    for (let node = this.host.nativeElement.parentElement; node; node = node.parentElement) {
+      if (getComputedStyle(node).overflowY !== 'visible') {
+        ({ top, bottom } = node.getBoundingClientRect());
+        break;
+      }
+    }
+    const room = upwards ? field.top - top : bottom - field.bottom;
+    return Math.max(room - MENU_GAP, MIN_MENU_HEIGHT);
   }
 
   protected close(): void {

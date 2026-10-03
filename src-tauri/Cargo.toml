@@ -43,6 +43,7 @@ shell-words = "1.1.1"
 toml = "1.1.6"
 keepawake = "0.6.1"
 portable-pty = "0.9"
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -62,3 +63,9 @@ webkit2gtk-sys = "2.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# tauri::generate_context!() brotli-compresses the whole frontend at compile
+# time. Cargo builds proc macros and their dependencies unoptimised by default,
+# which makes that step the slowest part of compiling the app crate.
+[profile.release.build-override]
+opt-level = 3

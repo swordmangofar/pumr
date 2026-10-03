@@ -1,6 +1,9 @@
 import type {
   FileChange,
+  FileDiff,
+  GitStatus,
   Message,
+  MessageAttachment,
   ModelInfo,
   PermissionRequestEvent,
   Project,
@@ -11,6 +14,7 @@ import type {
   Session,
   Settings,
   StreamEvent,
+  WorkspaceEntry,
 } from '../../src/app/core/models';
 
 /**
@@ -25,9 +29,23 @@ export type FakeStep =
       name: string;
       summary: string;
       arguments?: Record<string, unknown>;
+      /**
+       * What the tool prints while it runs, one `toolDelta` per entry, as a
+       * `bash` command does. With `hold` the call then stays running until the
+       * test calls `window.__pumrFakeResume`, or for Stop.
+       */
+      output?: string[];
+      hold?: boolean;
       result: string;
       status?: string;
       changes?: FileChange[];
+      /** Pictures the tool shows in the chat, as the `screenshot` tool does. */
+      attachments?: MessageAttachment[];
+      /**
+       * Files the tool writes into the project folder; `null` deletes one. The
+       * session's change list follows, as after a mutating tool in the agent loop.
+       */
+      writes?: Record<string, string | null>;
     }
   /** Asks to run `command` and waits for `resolve_permission`. */
   | {
@@ -40,8 +58,19 @@ export type FakeStep =
     }
   /** Asks one question and waits for `resolve_question`. */
   | { kind: 'question'; question: QuestionItem }
+  /**
+   * Asks which of `candidates` (model ids) the subagent model `query` means,
+   * waits for `resolve_model_choice` and reports the pick as a `task` call.
+   */
+  | { kind: 'modelChoice'; query: string; candidates: string[] }
+  /** Compacts the history as a turn does past its limit: `summary` becomes the checkpoint. */
+  | { kind: 'compact'; summary: string }
+  /** Waits until the test calls `window.__pumrFakeResume`, or for Stop. */
+  | { kind: 'pause' }
   /** Waits until the user presses Stop (`stop_generation`). */
   | { kind: 'hang' }
+  /** Cuts the turn off as when the machine slept while the reply was on its way. */
+  | { kind: 'interrupt' }
   | { kind: 'error'; message: string };
 
 export interface FakeReply {
@@ -56,6 +85,10 @@ export interface FakeSeed {
   sessions: Session[];
   messages: Message[];
   models: ModelInfo[];
+  /** Content of the files in the project folder, by path relative to it. */
+  files: Record<string, string>;
+  /** Whether the project folder is a git repository with `files` committed. */
+  repo: boolean;
   /** What the native folder picker returns; `null` means cancelled. */
   pickFolder: string | null;
   /** What native confirm/ask dialogs return. */
@@ -87,6 +120,15 @@ export interface FakeHandle {
   /** Debug logs written through the save dialog of `save_debug_log`. */
   savedLogs: { fileName: string; content: string }[];
 }
+
+/**
+ * What tests call in the page as `window.__pumrFakeEmit` to deliver a backend
+ * event to the app's `listen` handlers, like Rust's `Emitter::emit` does.
+ */
+export type FakeEmit = (event: string, payload?: unknown) => void;
+
+/** What tests call in the page as `window.__pumrFakeResume` to end every `pause` step. */
+export type FakeResume = () => void;
 
 /**
  * Stands in for the Rust backend: installs `window.__TAURI_INTERNALS__` so the
@@ -162,6 +204,15 @@ export function installFakeBackend(seed: FakeSeed): void {
     return id;
   };
   const runCallback = (id: number, payload: unknown) => callbacks.get(id)?.(payload);
+
+  /** Callback ids of the app's event listeners, by event name. */
+  const listeners = new Map<string, Set<number>>();
+  const emit: FakeEmit = (event, payload = null) => {
+    for (const id of listeners.get(event) ?? []) {
+      runCallback(id, { event, id, payload });
+    }
+  };
+  (window as unknown as { __pumrFakeEmit: FakeEmit }).__pumrFakeEmit = emit;
 
   /** Sends ordered messages to a frontend `Channel`, like Tauri's IPC does. */
   function channelSender(channel: ChannelLike) {
@@ -248,6 +299,63 @@ export function installFakeBackend(seed: FakeSeed): void {
     };
   }
 
+  // --- workspace ------------------------------------------------------------
+
+  /** The project folder; the fake keeps one for every project. */
+  const files = new Map(Object.entries(seed.files));
+  /** The folder as a session's first prompt found it, like its shadow snapshot. */
+  const baselines = new Map<string, Map<string, string>>();
+
+  const lineCount = (content: string | undefined) =>
+    content ? content.replace(/\n$/, '').split('\n').length : 0;
+  const languageOf = (path: string) => (path.endsWith('.ts') ? 'typescript' : 'plaintext');
+
+  /** What differs between `base` and the folder; a changed file counts whole. */
+  function changesSince(base: Map<string, string>): FileChange[] {
+    return [...new Set([...base.keys(), ...files.keys()])]
+      .sort()
+      .filter((path) => base.get(path) !== files.get(path))
+      .map((path) => ({
+        path,
+        additions: lineCount(files.get(path)),
+        deletions: lineCount(base.get(path)),
+        status: !base.has(path) ? 'A' : !files.has(path) ? 'D' : 'M',
+      }));
+  }
+
+  function sessionChanges(sessionId: unknown): FileChange[] {
+    const base = baselines.get(String(sessionId));
+    return base ? changesSince(base) : [];
+  }
+
+  function workspaceEntries(): WorkspaceEntry[] {
+    const entries = new Map<string, WorkspaceEntry>();
+    for (const path of files.keys()) {
+      const segments = path.split('/');
+      for (let depth = 1; depth < segments.length; depth += 1) {
+        const directory = segments.slice(0, depth).join('/');
+        entries.set(directory, { path: directory, kind: 'directory' });
+      }
+      entries.set(path, { path, kind: 'file' });
+    }
+    return [...entries.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
+  }
+
+  function gitStatus(): GitStatus {
+    return {
+      isRepo: seed.repo,
+      branch: seed.repo ? 'main' : null,
+      head: seed.repo ? 'a1b2c3d' : null,
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      staged: [],
+      unstaged: seed.repo ? changesSince(new Map(Object.entries(seed.files))) : [],
+      operation: null,
+      conflicted: [],
+    };
+  }
+
   // --- turns ----------------------------------------------------------------
 
   interface Waiter {
@@ -256,7 +364,15 @@ export function installFakeBackend(seed: FakeSeed): void {
   }
   const permissionWaiters = new Map<string, Waiter>();
   const questionWaiters = new Map<string, Waiter>();
+  const modelChoiceWaiters = new Map<string, Waiter>();
   const stopWaiters = new Map<string, () => void>();
+  const pauseWaiters = new Set<() => void>();
+  const resume: FakeResume = () => {
+    for (const waiter of [...pauseWaiters]) {
+      waiter();
+    }
+  };
+  (window as unknown as { __pumrFakeResume: FakeResume }).__pumrFakeResume = resume;
 
   async function runTurn(args: Args): Promise<Message> {
     const sessionId = String(args['sessionId']);
@@ -271,11 +387,16 @@ export function installFakeBackend(seed: FakeSeed): void {
       user.attachments = (args['attachments'] as Message['attachments']) ?? [];
       state.messages.push(user);
     }
+    // A new turn, a continued one included, settles one that was cut off.
+    session.interrupted = false;
     if (session.title === 'New session' && prompt) {
       session.title = prompt.slice(0, 40);
     }
     if (args['model']) {
       session.model = String(args['model']);
+    }
+    if (!baselines.has(sessionId)) {
+      baselines.set(sessionId, new Map(files));
     }
 
     const reply = handle.replies.shift() ?? {
@@ -286,12 +407,22 @@ export function installFakeBackend(seed: FakeSeed): void {
     emit({ kind: 'started', message: clone(assistant) });
 
     let stopped = false;
+    let interrupted = false;
     const stopped$ = new Promise<void>((done) =>
       stopWaiters.set(sessionId, () => {
         stopped = true;
         done();
       }),
     );
+
+    /** Waits for `window.__pumrFakeResume`, or for Stop. */
+    const paused = async () => {
+      let resumed = () => {};
+      const resumed$ = new Promise<void>((done) => (resumed = done));
+      pauseWaiters.add(resumed);
+      await Promise.race([resumed$, stopped$]);
+      pauseWaiters.delete(resumed);
+    };
 
     const stream = async (field: 'content' | 'reasoning', text: string) => {
       const kind = field === 'content' ? 'delta' : 'reasoning';
@@ -307,7 +438,7 @@ export function installFakeBackend(seed: FakeSeed): void {
 
     try {
       for (const step of reply.steps) {
-        if (stopped) {
+        if (stopped || interrupted) {
           break;
         }
         switch (step.kind) {
@@ -328,12 +459,28 @@ export function installFakeBackend(seed: FakeSeed): void {
               arguments: argumentsJson,
             });
             await sleep(seed.chunkDelayMs);
+            for (const text of step.output ?? []) {
+              emit({ kind: 'toolDelta', callId, text });
+              await sleep(seed.chunkDelayMs);
+            }
+            if (step.hold) {
+              await paused();
+            }
             assistant.toolCalls.push({ id: callId, name: step.name, arguments: argumentsJson });
             const tool = message(sessionId, 'tool', step.result);
             tool.toolCallId = callId;
             tool.toolName = step.name;
             tool.status = step.status ?? 'ok';
-            tool.changes = step.changes ?? [];
+            const before = new Map(files);
+            for (const [path, content] of Object.entries(step.writes ?? {})) {
+              if (content === null) {
+                files.delete(path);
+              } else {
+                files.set(path, content);
+              }
+            }
+            tool.changes = step.changes ?? changesSince(before);
+            tool.attachments = step.attachments ?? [];
             emit({
               kind: 'toolEnd',
               callId,
@@ -341,8 +488,12 @@ export function installFakeBackend(seed: FakeSeed): void {
               status: tool.status,
               result: step.result,
               changes: tool.changes,
+              attachments: tool.attachments,
             });
             state.messages.push(tool);
+            if (step.writes) {
+              emit({ kind: 'changes', changes: sessionChanges(sessionId) });
+            }
             break;
           }
           case 'permission': {
@@ -402,8 +553,55 @@ export function installFakeBackend(seed: FakeSeed): void {
             emit({ kind: 'questionResolved', requestId, answers });
             break;
           }
+          case 'modelChoice': {
+            const callId = newId('call');
+            emit({
+              kind: 'toolStart',
+              callId,
+              name: 'task',
+              summary: 'Subtask',
+              arguments: JSON.stringify({ description: 'Subtask', model: step.query }),
+            });
+            const requestId = newId('model-choice');
+            emit({
+              kind: 'modelChoiceRequest',
+              requestId,
+              query: step.query,
+              candidates: step.candidates,
+            });
+            const model = (await Promise.race([
+              new Promise((resolve) => modelChoiceWaiters.set(requestId, { sessionId, resolve })),
+              stopped$.then(() => null),
+            ])) as string | null;
+            modelChoiceWaiters.delete(requestId);
+            emit({ kind: 'modelChoiceResolved', requestId, model });
+            emit({
+              kind: 'toolEnd',
+              callId,
+              name: 'task',
+              status: model ? 'ok' : 'error',
+              result: model ? `Subagent ran on ${model}.` : 'The user did not pick a model.',
+              changes: [],
+            });
+            break;
+          }
+          case 'compact': {
+            emit({ kind: 'compacting' });
+            await sleep(seed.chunkDelayMs);
+            const marker = message(sessionId, 'compaction', step.summary);
+            state.messages.push(marker);
+            emit({ kind: 'compacted', message: clone(marker) });
+            break;
+          }
+          case 'pause': {
+            await paused();
+            break;
+          }
           case 'hang':
             await stopped$;
+            break;
+          case 'interrupt':
+            interrupted = true;
             break;
           case 'error':
             emit({ kind: 'error', message: step.message });
@@ -412,7 +610,11 @@ export function installFakeBackend(seed: FakeSeed): void {
       }
 
       assistant.durationMs = now() - started;
-      if (stopped) {
+      if (interrupted) {
+        state.messages.push(assistant);
+        session.interrupted = true;
+        emit({ kind: 'interrupted', message: clone(assistant) });
+      } else if (stopped) {
         assistant.status = 'stopped';
         state.messages.push(assistant);
         emit({ kind: 'stopped', message: clone(assistant) });
@@ -574,6 +776,8 @@ export function installFakeBackend(seed: FakeSeed): void {
     };
   };
 
+  let terminalCount = 0;
+
   const handlers: Record<string, (args: Args) => unknown> = {
     get_settings: () => clone(state.settings),
     save_settings: (args) => {
@@ -708,6 +912,7 @@ export function installFakeBackend(seed: FakeSeed): void {
         modeId: (args['modeId'] as string | null) ?? null,
         limitReached: false,
         autoContinue: false,
+        interrupted: false,
       };
       state.sessions.push(session);
       return clone(session);
@@ -762,7 +967,12 @@ export function installFakeBackend(seed: FakeSeed): void {
 
     send_message: (args) => runTurn(args),
     attach_session: () => false,
-    list_running_turns: () => ({ sessionIds: [], permissions: [], questions: [] }),
+    list_running_turns: () => ({
+      sessionIds: [],
+      permissions: [],
+      questions: [],
+      modelChoices: [],
+    }),
     stop_generation: (args) => {
       stopWaiters.get(String(args['sessionId']))?.();
       return null;
@@ -775,7 +985,20 @@ export function installFakeBackend(seed: FakeSeed): void {
       questionWaiters.get(String(args['requestId']))?.resolve(args['answers']);
       return null;
     },
+    resolve_model_choice: (args) => {
+      modelChoiceWaiters.get(String(args['requestId']))?.resolve(args['model']);
+      return null;
+    },
     summarize_session: () => 'Summary of the previous session.',
+    compact_session: (args) => {
+      const sessionId = String(args['sessionId']);
+      if (!state.messages.some((entry) => entry.sessionId === sessionId)) {
+        throw 'There is too little to compact yet.';
+      }
+      const marker = message(sessionId, 'compaction', 'Summary of the conversation so far.');
+      state.messages.push(marker);
+      return { message: clone(marker), usedTokens: 300 };
+    },
     get_system_info: () => ({
       osName: 'macOS',
       osVersion: '15.6 (24G84)',
@@ -803,11 +1026,34 @@ export function installFakeBackend(seed: FakeSeed): void {
     },
 
     list_processes: () => [],
-    get_session_changes: () => [],
+    get_session_changes: (args) => sessionChanges(args['sessionId']),
+    get_file_diff: (args): FileDiff => {
+      const path = String(args['path']);
+      const base = baselines.get(String(args['sessionId']));
+      const change = sessionChanges(args['sessionId']).find((entry) => entry.path === path);
+      return {
+        path,
+        oldContent: base?.get(path) ?? '',
+        newContent: files.get(path) ?? '',
+        language: languageOf(path),
+        additions: change?.additions ?? 0,
+        deletions: change?.deletions ?? 0,
+        status: change?.status ?? 'M',
+      };
+    },
     get_project_rules: () => [],
-    list_workspace_entries: () => [],
+    list_workspace_entries: () => workspaceEntries(),
+    read_workspace_file: (args) => {
+      const path = String(args['path']);
+      return { path, content: files.get(path) ?? '', language: languageOf(path) };
+    },
     list_permission_audit: () => [],
-    get_git_info: () => ({ isRepo: false, branch: null, head: null }),
+    get_git_info: () => {
+      const { isRepo, branch, head } = gitStatus();
+      return { isRepo, branch, head };
+    },
+    get_git_status: () => gitStatus(),
+    get_git_refs: () => ({ branches: [], tags: [], stashes: [], submodules: [], remotes: [] }),
     get_file_ignore_catalog: () => [],
     discover_mcp_sources: () => [],
     discover_skills: () => [],
@@ -815,6 +1061,11 @@ export function installFakeBackend(seed: FakeSeed): void {
     list_installed_mcp_servers: () => [],
     list_installed_marketplace_skills: () => [],
     search_mcp_marketplace: () => [],
+    // Shells that start and stay silent: enough for the dock and its tabs.
+    terminal_open: () => `terminal-${++terminalCount}`,
+    terminal_write: () => null,
+    terminal_resize: () => null,
+    terminal_close: () => null,
     terminal_close_all: () => null,
 
     'plugin:dialog|open': () => handle.pickFolder,
@@ -824,8 +1075,16 @@ export function installFakeBackend(seed: FakeSeed): void {
     'plugin:app|version': () => '0.0.0-e2e',
     'plugin:app|name': () => 'pumr',
     'plugin:updater|check': () => null,
-    'plugin:event|listen': (args) => args['handler'],
-    'plugin:event|unlisten': () => null,
+    'plugin:event|listen': (args) => {
+      const event = String(args['event']);
+      const id = args['handler'] as number;
+      listeners.set(event, (listeners.get(event) ?? new Set()).add(id));
+      return id;
+    },
+    'plugin:event|unlisten': (args) => {
+      listeners.get(String(args['event']))?.delete(args['eventId'] as number);
+      return null;
+    },
     'plugin:event|emit': () => null,
     'plugin:webview|set_webview_zoom': () => null,
     'plugin:path|resolve_directory': () => '/Users/e2e',

@@ -459,6 +459,14 @@ textarea {
   border-color: color-mix(in oklab, var(--color-white) 36%, transparent);
 }
 
+/* Popovers float over arbitrary content (chat text, diffs), so they are only
+   translucent where the blur behind them is guaranteed. WebKitGTK reports
+   backdrop-filter as supported but does not paint it without accelerated
+   compositing, which leaves the text underneath showing through sharply. */
+:root:not([data-platform='mac']) .glass-pop {
+  background-color: var(--color-navy);
+}
+
 .puma-sprite {
   height: 6rem;
   width: auto;

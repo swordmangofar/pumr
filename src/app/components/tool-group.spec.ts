@@ -24,6 +24,7 @@ function item(patch: Partial<ToolGroupItem> = {}): ToolGroupItem {
     key: 'call-1',
     label: 'pnpm test',
     output: '\x1b[32mok\x1b[0m 3 passed',
+    live: false,
     status: 'ok',
     additions: 0,
     deletions: 0,
@@ -87,6 +88,34 @@ describe('ToolGroup', () => {
     const copy = fixture.debugElement.query(By.directive(StubCopyButton));
     expect(copy.componentInstance.text()).toBe('ok 3 passed');
     expect(selectChange).not.toHaveBeenCalled();
+  });
+
+  it('opens the output of a command that is still printing, until the user closes it', () => {
+    const running = item({ status: 'running', live: true, output: 'RUN v3\n' });
+    create('bash', [running, item({ key: 'call-2', status: 'running', output: '' })]);
+    const pres = (): HTMLPreElement[] =>
+      Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('pre'));
+    expect(pres().map((pre) => pre.textContent)).toEqual(['RUN v3\n']);
+
+    // It follows what the command prints next.
+    fixture.componentRef.setInput('items', [
+      { ...running, output: 'RUN v3\n✓ 3 passed\n' },
+      item({ key: 'call-2', status: 'running', output: '' }),
+    ]);
+    fixture.detectChanges();
+    expect(pres().map((pre) => pre.textContent)).toEqual(['RUN v3\n✓ 3 passed\n']);
+
+    labels()[0].click();
+    fixture.detectChanges();
+    expect(pres()).toEqual([]);
+  });
+
+  it('closes a command that has ended unless the user opened it', () => {
+    const running = item({ status: 'running', live: true, output: 'RUN v3\n' });
+    create('bash', [running, item({ key: 'call-2' })]);
+    fixture.componentRef.setInput('items', [item(), item({ key: 'call-2' })]);
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('pre')).toBeNull();
   });
 
   it('opens the diff for entries that changed a file', () => {

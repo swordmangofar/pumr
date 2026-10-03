@@ -1,10 +1,10 @@
-use crate::broker::{PermissionBroker, QuestionBroker};
+use crate::broker::{ModelChoiceBroker, PermissionBroker, QuestionBroker};
 use crate::config::Settings;
 use crate::db::Db;
 use crate::marketplace::MarketplaceService;
 use crate::models::{EndpointInfo, EventSink, Message, ModelInfo, ProviderInfo, RoutedEvent};
 use crate::permissions::{AutoApproveConfig, LivePermissions};
-use crate::power::PowerManager;
+use crate::power::{PowerManager, SleepWatch};
 use crate::processes::ProcessRegistry;
 use crate::providers::anthropic::CapsCache;
 use crate::providers::compat::{MetaCache, Quirks};
@@ -44,11 +44,16 @@ pub struct AppState {
     settings: Mutex<Settings>,
     pub http: reqwest::Client,
     pub processes: Arc<ProcessRegistry>,
+    /// The files each session's agent has seen (see `FileLedger`).
+    pub files: Arc<crate::tools::FileLedger>,
     pub terminals: TerminalRegistry,
     pub broker: Arc<PermissionBroker>,
     pub questions: Arc<QuestionBroker>,
+    pub model_choices: Arc<ModelChoiceBroker>,
     pub permissions: Arc<LivePermissions>,
     pub power: PowerManager,
+    /// Tells running turns that the machine slept (see `SleepWatch`).
+    pub sleep: SleepWatch,
     pub marketplace: MarketplaceService,
     /// MCP connections and approvals kept between a session's turns.
     pub mcp: crate::mcp::McpSessions,
@@ -101,11 +106,14 @@ impl AppState {
             settings: Mutex::new(settings),
             http,
             processes: Arc::new(ProcessRegistry::new()),
+            files: Arc::default(),
             terminals: TerminalRegistry::new(),
             broker,
             questions: Arc::new(QuestionBroker::new()),
+            model_choices: Arc::new(ModelChoiceBroker::new()),
             permissions,
             power,
+            sleep: SleepWatch::new(),
             marketplace,
             mcp: crate::mcp::McpSessions::default(),
             cancels: Arc::new(CancelRegistry::default()),
@@ -152,6 +160,7 @@ impl AppState {
             anthropic_caps: self.anthropic_caps.clone(),
             direct_meta: self.direct_meta.clone(),
             quirks: self.quirks.clone(),
+            in_flight: Default::default(),
         }
     }
 
@@ -237,6 +246,7 @@ impl AppState {
         self.cancels.cancel(key);
         self.broker.deny_session(key);
         self.questions.skip_session(key);
+        self.model_choices.skip_session(key);
     }
 
     /// Stops everything that runs for `session_ids` (typically a chat and its
@@ -253,6 +263,7 @@ impl AppState {
             self.cancel(id);
         }
         self.mcp.forget(session_ids);
+        self.model_choices.forget(session_ids);
         finished
     }
 
@@ -306,7 +317,8 @@ impl AppState {
             .broker
             .pending_requests()
             .into_iter()
-            .chain(self.questions.pending_requests());
+            .chain(self.questions.pending_requests())
+            .chain(self.model_choices.pending_requests());
         for event in pending.filter(|event| sessions.contains(&event.session_id)) {
             turn.emit(event);
         }

@@ -36,6 +36,11 @@ export interface Session {
   modeId: string | null;
   limitReached: boolean;
   autoContinue: boolean;
+  /**
+   * The last turn was cut off before the agent finished (the app closed, or
+   * the machine slept mid-reply) and waits for the user to continue.
+   */
+  interrupted: boolean;
 }
 
 export interface ToolCallRecord {
@@ -99,7 +104,12 @@ export interface Message {
   id: string;
   sessionId: string;
   seq: number;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  /**
+   * `compaction` records a checkpoint: its content is the summary that stands
+   * in for the earlier messages in what the model is sent.
+   */
+  /** `note` is something pumr itself told the agent, e.g. to check a change before finishing. */
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'compaction' | 'note';
   content: string;
   reasoning: string;
   model: string | null;
@@ -301,7 +311,10 @@ export interface Settings {
   defaultReasoningEffort: string | null;
   favoriteModels: string[];
   providerByModel: Record<string, string>;
-  contextMessageLimit: number;
+  /** Percent of the context window's input room at which a chat is compacted; 0 is off. */
+  autoCompactThreshold: number;
+  /** A chat is compacted at this many input tokens at the latest; 0 sets no bound. */
+  autoCompactMaxTokens: number;
   maxToolIterations: number;
   autoContinueAllSessions: boolean;
   subagentModel: string | null;
@@ -309,6 +322,8 @@ export interface Settings {
   titleModel: string | null;
   commitMessageModel: string | null;
   promptCaching: boolean;
+  /** Ask the agent once to run a project check before it finishes with unchecked code changes. */
+  verifyBeforeFinish: boolean;
   commandRules: CommandRule[];
   deniedCommandRules: CommandRule[];
   allowedWebsites: string[];
@@ -351,6 +366,7 @@ export interface Settings {
   windowToggleAction: WindowToggleAction;
   windowToggleMaximize: boolean;
   zoom: number;
+  waitingChatsBanner: boolean;
   soundsEnabled: boolean;
   soundVolume: number;
   doneSound: string;
@@ -764,9 +780,17 @@ export interface LiveToolCall {
   name: string;
   summary: string;
   arguments: string;
+  /** While the call runs: the latest of what it has printed so far. */
   output: string;
+  /**
+   * The call has been printing for longer than a moment, so the chat opens
+   * its output and follows it. A command that is over at once never is.
+   */
+  live: boolean;
   status: 'running' | 'ok' | 'error' | 'denied' | 'canceled';
   changes: FileChange[];
+  /** Pictures the call shows in the chat (the `screenshot` tool). */
+  attachments: MessageAttachment[];
   anchor: string | null;
 }
 
@@ -855,6 +879,7 @@ export interface SensitiveFinding {
 }
 
 export type QuestionRequestEvent = Extract<StreamEvent, { kind: 'questionRequest' }>;
+export type ModelChoiceRequestEvent = Extract<StreamEvent, { kind: 'modelChoiceRequest' }>;
 
 export interface ContextUsageInfo {
   usedTokens: number;
@@ -887,6 +912,12 @@ export type StreamEvent =
       toolOutputTokens: number;
     }
   | { kind: 'assistant'; message: Message }
+  /** The history is being summarised before the next request. */
+  | { kind: 'compacting' }
+  /** The history was compacted; `message` records the checkpoint. */
+  | { kind: 'compacted'; message: Message }
+  /** pumr told the agent something; `message` records it. */
+  | { kind: 'note'; message: Message }
   | { kind: 'toolStart'; callId: string; name: string; summary: string; arguments: string }
   | { kind: 'toolDelta'; callId: string; text: string }
   | {
@@ -896,6 +927,8 @@ export type StreamEvent =
       status: string;
       result: string;
       changes: FileChange[];
+      /** Pictures the call shows in the chat (the `screenshot` tool). */
+      attachments?: MessageAttachment[];
     }
   | {
       kind: 'permissionRequest';
@@ -920,9 +953,16 @@ export type StreamEvent =
   | { kind: 'permissionResolved'; requestId: string; allowed: boolean }
   | { kind: 'questionRequest'; requestId: string; questions: QuestionItem[] }
   | { kind: 'questionResolved'; requestId: string; answers: QuestionAnswer[] | null }
+  /**
+   * The model the agent named for a subagent (`query`) fits several models;
+   * `candidates` holds their ids, the closest first.
+   */
+  | { kind: 'modelChoiceRequest'; requestId: string; query: string; candidates: string[] }
+  | { kind: 'modelChoiceResolved'; requestId: string; model: string | null }
   | { kind: 'changes'; changes: FileChange[] }
   | { kind: 'done'; message: Message; session: Session }
   | { kind: 'stopped'; message: Message }
+  | { kind: 'interrupted'; message: Message }
   | { kind: 'subAgentStarted'; session: Session }
   | { kind: 'subAgentStatus'; status: string }
   | { kind: 'limitReached'; iterations: number; autoContinued: boolean }
@@ -933,11 +973,23 @@ export interface RoutedEvent {
   event: StreamEvent;
 }
 
+/** What compacting a chat on request left behind. */
+export interface CompactResult {
+  /** The checkpoint's record in the chat. */
+  message: Message;
+  /** Estimated tokens of the messages the model is sent from now on. */
+  usedTokens: number;
+}
+
 export interface PendingPermission extends PermissionRequestEvent {
   sessionId: string;
 }
 
 export interface PendingQuestion extends QuestionRequestEvent {
+  sessionId: string;
+}
+
+export interface PendingModelChoice extends ModelChoiceRequestEvent {
   sessionId: string;
 }
 
@@ -949,6 +1001,7 @@ export interface RunningTurns {
   sessionIds: string[];
   permissions: { sessionId: string; event: PermissionRequestEvent }[];
   questions: { sessionId: string; event: QuestionRequestEvent }[];
+  modelChoices: { sessionId: string; event: ModelChoiceRequestEvent }[];
 }
 
 export interface CreateSessionArgs {

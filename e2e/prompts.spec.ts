@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import type { FakeReply } from './support/fake-backend';
-import { expect, project, seed, session, test, type PumrApp } from './support/fixtures';
+import { expect, model, project, seed, session, test, type PumrApp } from './support/fixtures';
 
 async function sendWithReply(page: Page, app: PumrApp, reply: FakeReply, prompt: string) {
   await page.addInitScript(() => {
@@ -11,6 +11,29 @@ async function sendWithReply(page: Page, app: PumrApp, reply: FakeReply, prompt:
   await page.getByRole('textbox', { name: /Describe your task/ }).click();
   await page.keyboard.type(prompt);
   await page.keyboard.press('Enter');
+}
+
+/** Starts with three open chats, the first of which waits for a permission. */
+async function startWithWaitingChat(page: Page, app: PumrApp, replies: FakeReply[] = []) {
+  await page.addInitScript(() => {
+    localStorage.setItem('pumr.tabs', JSON.stringify(['session-1', 'session-2', 'session-3']));
+    localStorage.setItem('pumr.activeTab', 'session-1');
+  });
+  await app.start(
+    seed({
+      projects: [project()],
+      sessions: [
+        session({ title: 'Fix login bug', messageCount: 1 }),
+        session({ id: 'session-2', title: 'Refactor parser', messageCount: 1 }),
+        session({ id: 'session-3', title: 'Update docs', messageCount: 1 }),
+      ],
+      replies: [{ steps: [{ kind: 'permission', command: 'npm run migrate' }] }, ...replies],
+    }),
+  );
+  await page.getByRole('textbox', { name: /Describe your task/ }).click();
+  await page.keyboard.type('Run the migration');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog').getByText('npm run migrate').first()).toBeVisible();
 }
 
 test.describe('agent prompts', () => {
@@ -131,6 +154,94 @@ test.describe('agent prompts', () => {
     ]);
   });
 
+  test('picks the model of a subagent from the suggested ones', async ({ app, page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        projects: [project()],
+        sessions: [session()],
+        models: [
+          model(),
+          model('google/gemini-2.5-flash', 'Gemini 2.5 Flash'),
+          model('google/gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite'),
+          model('openai/gpt-5', 'GPT-5'),
+        ],
+        replies: [
+          {
+            steps: [
+              {
+                kind: 'modelChoice',
+                query: 'gemini flash',
+                candidates: ['google/gemini-2.5-flash', 'google/gemini-2.5-flash-lite'],
+              },
+              { kind: 'text', text: 'The subagent is done.' },
+            ],
+          },
+        ],
+      }),
+    );
+    await page.getByRole('textbox', { name: /Describe your task/ }).click();
+    await page.keyboard.type('Research this with a subagent on gemini flash');
+    await page.keyboard.press('Enter');
+
+    const prompt = page.getByTestId('model-choice');
+    await expect(prompt).toContainText('"gemini flash" fits several models');
+    // The closest match is preselected; the dropdown offers only the suggestions.
+    const select = prompt.getByRole('button', { name: 'Which model should the subagent use?' });
+    await expect(select).toContainText('Gemini 2.5 Flash');
+    await select.click();
+    const menu = prompt.locator('app-model-menu');
+    await expect(menu.getByText('Gemini 2.5 Flash Lite')).toBeVisible();
+    await expect(menu.getByText('GPT-5')).toHaveCount(0);
+    await menu.getByText('Gemini 2.5 Flash Lite').click();
+    await prompt.getByRole('button', { name: 'Use this model' }).click();
+
+    await expect(page.getByRole('main')).toContainText('The subagent is done.');
+    await expect(prompt).toHaveCount(0);
+    expect((await app.backend.lastCall('resolve_model_choice'))?.args['model']).toBe(
+      'google/gemini-2.5-flash-lite',
+    );
+  });
+
+  test('names the model of a subagent that runs on another one', async ({ app, page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        projects: [project()],
+        sessions: [
+          session({ messageCount: 1 }),
+          session({
+            id: 'sub-1',
+            title: 'Research parsers',
+            parentSessionId: 'session-1',
+            model: 'google/gemini-2.5-flash',
+            agentStatus: 'done',
+          }),
+          session({
+            id: 'sub-2',
+            title: 'Update docs',
+            parentSessionId: 'session-1',
+            agentStatus: 'done',
+          }),
+        ],
+        models: [model(), model('google/gemini-2.5-flash', 'Gemini 2.5 Flash')],
+      }),
+    );
+
+    await expect(page.getByRole('button', { name: /Update docs/ })).toBeVisible();
+    // Only the subagent on another model than the chat's says which.
+    await expect(page.getByTestId('agent-model')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: /Research parsers/ })).toContainText(
+      'Gemini 2.5 Flash',
+    );
+  });
+
   test('stopping a turn dismisses its open permission prompt', async ({ app, page }) => {
     await sendWithReply(
       page,
@@ -146,5 +257,68 @@ test.describe('agent prompts', () => {
     await expect(prompt).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
     expect(await app.backend.calls('resolve_permission')).toEqual([]);
+  });
+
+  test('shows a banner for every other chat that waits on the user', async ({ app, page }) => {
+    await startWithWaitingChat(page, app, [
+      {
+        steps: [
+          {
+            kind: 'question',
+            question: {
+              header: 'Parser',
+              question: 'Which parser should I keep?',
+              multiSelect: false,
+              options: [{ label: 'The new one', description: null, recommended: false }],
+            },
+          },
+        ],
+      },
+    ]);
+    const prompt = page.getByRole('dialog');
+    const banners = page.getByRole('main').getByRole('status');
+    const tabs = page.getByRole('banner');
+    // The chat on screen shows its own prompt, so there is nothing to point to.
+    await expect(prompt.getByText('npm run migrate').first()).toBeVisible();
+    await expect(banners).toHaveCount(0);
+
+    await tabs.getByText('Refactor parser').click();
+    await expect(banners).toHaveCount(1);
+    await page.getByRole('textbox', { name: /Describe your task/ }).click();
+    await page.keyboard.type('Clean up the parser');
+    await page.keyboard.press('Enter');
+    await expect(page.getByText('Which parser should I keep?')).toBeVisible();
+
+    await tabs.getByText('Update docs').click();
+    await expect(banners).toHaveCount(2);
+    const permission = banners.filter({ hasText: 'Fix login bug' });
+    const question = banners.filter({ hasText: 'Refactor parser' });
+    await expect(permission).toContainText('Permission needed');
+    await expect(question).toContainText('Question waiting');
+
+    await question.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(banners).toHaveCount(1);
+    await permission.getByRole('button', { name: 'Switch' }).click();
+
+    await expect(prompt.getByText('npm run migrate').first()).toBeVisible();
+    await expect(banners).toHaveCount(0);
+  });
+
+  test('the banner for waiting chats can be turned off in the settings', async ({ app, page }) => {
+    await startWithWaitingChat(page, app);
+    const banners = page.getByRole('main').getByRole('status');
+    await page.getByRole('banner').getByText('Refactor parser').click();
+    await expect(banners).toHaveCount(1);
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Notifications' }).click();
+    await expect(dialog.getByText('Waiting chats banner')).toBeVisible();
+    await dialog.getByRole('switch').click();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect(banners).toHaveCount(0);
+    const saved = await app.backend.lastCall('save_settings');
+    expect(saved?.args['settings']).toMatchObject({ waitingChatsBanner: false });
   });
 });

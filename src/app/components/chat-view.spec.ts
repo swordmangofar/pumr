@@ -221,6 +221,71 @@ describe('ChatView timeline', () => {
     expect(kinds()).toEqual(['message', 'tool:read', 'message', 'tool:read']);
   });
 
+  it('carries the pictures of a screenshot into its tool entry', () => {
+    messages.set([
+      message({ id: 'u', role: 'user', content: 'show me' }),
+      message({
+        id: 'a',
+        toolCalls: [
+          {
+            id: 'shot',
+            name: 'screenshot',
+            arguments: '{"url":"http://localhost:4200/","caption":"Settings page"}',
+          },
+        ],
+      }),
+      message({
+        id: 't',
+        role: 'tool',
+        content: 'Shown to the user in the chat: Settings page (1280×800).',
+        toolCallId: 'shot',
+        toolName: 'screenshot',
+        status: 'ok',
+        attachments: [
+          {
+            id: 'img',
+            name: 'Settings page',
+            mimeType: 'image/png',
+            size: 3,
+            kind: 'image',
+            lines: null,
+            data: 'AAAA',
+          },
+        ],
+      }),
+    ]);
+    const timeline = (
+      fixture.componentInstance as unknown as {
+        timeline: () => { kind: string; summary?: string; images?: { id: string }[] }[];
+      }
+    ).timeline();
+    expect(kinds()).toEqual(['message', 'tool:screenshot']);
+    expect(timeline[1].summary).toBe('Settings page');
+    expect(timeline[1].images?.map((image) => image.id)).toEqual(['img']);
+  });
+
+  it('gives a cache rate only where the provider reports cache use', () => {
+    const cold = message({ id: 'a1', model: 'x/caching', content: 'Hi', promptTokens: 1000 });
+    const warm = message({
+      id: 'a2',
+      model: 'x/caching',
+      content: 'Again',
+      promptTokens: 2000,
+      cachedTokens: 1500,
+    });
+    const silent = message({ id: 'a3', model: 'x/silent', content: 'Other', promptTokens: 1000 });
+    const pending = message({ id: 'a4', model: 'x/caching', content: 'Streaming' });
+    messages.set([cold, warm, silent, pending]);
+    const view = fixture.componentInstance as unknown as {
+      cacheRate: (message: Message) => string | null;
+    };
+    expect(view.cacheRate(warm)).toBe('75.0');
+    // A request without cached tokens is a miss once the model is known to report them.
+    expect(view.cacheRate(cold)).toBe('0.0');
+    expect(view.cacheRate(silent)).toBeNull();
+    expect(view.cacheRate(pending)).toBeNull();
+  });
+
   it('retries a failed turn from the error banner', () => {
     error.set('rate limited');
     fixture.detectChanges();

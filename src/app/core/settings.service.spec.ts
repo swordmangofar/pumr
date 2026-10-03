@@ -145,7 +145,7 @@ describe('SettingsService', () => {
     });
 
     it('merges a patch into the current settings', async () => {
-      vi.spyOn(api, 'getSettings').mockResolvedValue(settings({ contextMessageLimit: 10 }));
+      vi.spyOn(api, 'getSettings').mockResolvedValue(settings({ autoCompactThreshold: 50 }));
       vi.spyOn(api, 'getDefaultSystemPrompts').mockRejectedValue('skip');
       await service.init();
       const saveSettings = vi.spyOn(api, 'saveSettings').mockImplementation(async (value) => value);
@@ -153,7 +153,7 @@ describe('SettingsService', () => {
       await service.patch({ soundsEnabled: false });
 
       expect(saveSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ contextMessageLimit: 10, soundsEnabled: false }),
+        expect.objectContaining({ autoCompactThreshold: 50, soundsEnabled: false }),
       );
     });
   });

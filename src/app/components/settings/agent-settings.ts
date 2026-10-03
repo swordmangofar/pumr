@@ -48,17 +48,36 @@ import { TypedInput } from '../typed-input';
     <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div>
         <label class="mb-2 block text-sm text-mist/50">{{
-          'settings.contextLimit' | transloco
+          'settings.autoCompactThreshold' | transloco
         }}</label>
         <input
           type="number"
           min="0"
+          max="100"
           step="5"
           class="field w-full rounded-xl px-4 py-2 text-sm"
-          [value]="draft.draft().contextMessageLimit"
-          (typedValue)="draft.patch('contextMessageLimit', +$event)"
+          [value]="draft.draft().autoCompactThreshold"
+          (typedValue)="draft.patch('autoCompactThreshold', clamp(+$event, 0, 100))"
         />
-        <p class="mt-2 text-xs text-mist/30">{{ 'settings.contextLimitHint' | transloco }}</p>
+        <p class="mt-2 text-xs text-mist/30">
+          {{ 'settings.autoCompactThresholdHint' | transloco }}
+        </p>
+      </div>
+      <div>
+        <label class="mb-2 block text-sm text-mist/50">{{
+          'settings.autoCompactMaxTokens' | transloco
+        }}</label>
+        <input
+          type="number"
+          min="0"
+          step="10000"
+          class="field w-full rounded-xl px-4 py-2 text-sm"
+          [value]="draft.draft().autoCompactMaxTokens"
+          (typedValue)="draft.patch('autoCompactMaxTokens', clamp(+$event, 0, 10_000_000))"
+        />
+        <p class="mt-2 text-xs text-mist/30">
+          {{ 'settings.autoCompactMaxTokensHint' | transloco }}
+        </p>
       </div>
     </section>
 
@@ -139,6 +158,21 @@ import { TypedInput } from '../typed-input';
       </div>
       <p class="mt-2 text-xs leading-relaxed text-mist/30">
         {{ 'settings.promptCachingHint' | transloco }}
+      </p>
+    </section>
+
+    <section class="mt-8">
+      <div class="flex items-center gap-3">
+        <app-toggle
+          [checked]="draft.draft().verifyBeforeFinish"
+          (toggled)="draft.patch('verifyBeforeFinish', !draft.draft().verifyBeforeFinish)"
+        />
+        <label class="text-sm font-semibold text-white">
+          {{ 'settings.verifyBeforeFinish' | transloco }}
+        </label>
+      </div>
+      <p class="mt-2 text-xs leading-relaxed text-mist/30">
+        {{ 'settings.verifyBeforeFinishHint' | transloco }}
       </p>
     </section>
 
@@ -306,6 +340,11 @@ export class AgentSettings {
       this.draft.draft().defaultSystemPrompt !==
       (this.settingsService.settings()?.defaultSystemPrompt ?? ''),
   );
+
+  /** Keeps a typed number within a setting's range; anything else counts as `min`. */
+  protected clamp(value: number, min: number, max: number): number {
+    return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min;
+  }
 
   protected resetSystemPrompt(): void {
     this.draft.patch(

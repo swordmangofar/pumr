@@ -135,6 +135,10 @@ export class WorkspaceEditorService {
       api.readWorkspaceFile(projectId, path).catch(() => null),
       diffSessionId ? api.getFileDiff(diffSessionId, path).catch(() => null) : Promise.resolve(null),
     ]);
+    // Edits typed while the file was being read win over what was on disk.
+    if (!force && this.editorDirtyState()[key]) {
+      return;
+    }
     if (file) {
       this.editorContentState.update((state) => ({ ...state, [key]: file }));
       this.editorDirtyState.update((state) => {

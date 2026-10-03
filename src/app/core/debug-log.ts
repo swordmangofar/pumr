@@ -69,8 +69,10 @@ export function debugLogSettings(settings: Settings | null): DebugLogSetting[] {
     ['Compaction model', settings.compactionModel],
     ['Default mode', settings.defaultModeId],
     ['Max tool iterations', settings.maxToolIterations],
-    ['Context message limit', settings.contextMessageLimit],
+    ['Auto-compact threshold (%)', settings.autoCompactThreshold],
+    ['Auto-compact max tokens', settings.autoCompactMaxTokens],
     ['Prompt caching', settings.promptCaching],
+    ['Check changes before finishing', settings.verifyBeforeFinish],
     ['Auto-approve read-only commands', settings.autoApproveReadOnly],
     ['Auto-approve package scripts', settings.autoApprovePackageScripts],
     ['Auto-approve project executables', settings.autoApproveProjectExecutables],
@@ -235,6 +237,7 @@ function agentSection(agent: DebugLogAgent, isMain: boolean): string[] {
   }
   out.push(
     item('Paused at tool-iteration limit', session.limitReached),
+    item('Interrupted before the agent finished', session.interrupted),
     item('Streaming at export', agent.streaming),
   );
 

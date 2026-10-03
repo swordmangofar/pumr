@@ -1,4 +1,6 @@
-use super::{chat_completions, ChatChunk, ChatMessage, ChatOutcome, Pricing, ReasoningSetting};
+use super::{
+    chat_completions, ChatChunk, ChatMessage, ChatOutcome, Pricing, PromptCache, ReasoningSetting,
+};
 use crate::error::{AppError, Result};
 use crate::models::{EndpointInfo, ModelInfo, ProviderInfo};
 use serde::Deserialize;
@@ -232,7 +234,7 @@ impl OpenRouterClient {
         routing: Option<ProviderRouting>,
         pricing: Option<Pricing>,
         tools: &[Value],
-        prompt_caching: bool,
+        cache: PromptCache<'_>,
         cancel: CancellationToken,
         on_chunk: &mut (dyn FnMut(ChatChunk) + Send),
     ) -> Result<ChatOutcome> {
@@ -264,7 +266,7 @@ impl OpenRouterClient {
             }
         }
 
-        apply_prompt_cache(&mut body, prompt_caching);
+        apply_prompt_cache(&mut body, cache);
 
         let send = |body: &Value| {
             self.request(reqwest::Method::POST, "/chat/completions", api_key)
@@ -274,7 +276,7 @@ impl OpenRouterClient {
             send: &send,
             label: "OpenRouter",
             pricing,
-            optional_fields: &[],
+            optional_fields: &["cache_control", "session_id"],
         };
         Ok(chat_completions::stream(request, body, cancel, on_chunk)
             .await?
@@ -282,12 +284,27 @@ impl OpenRouterClient {
     }
 }
 
-/// Marks the stable prefix (the system message) as cacheable. OpenRouter
-/// forwards `cache_control` to providers that support prompt caching and
-/// ignores it elsewhere, so the request stays valid for every provider.
-fn apply_prompt_cache(body: &mut Value, enabled: bool) {
-    if !enabled {
+/// Tells OpenRouter what to cache of the prompt, and where. The system
+/// message is marked as cacheable: OpenRouter forwards `cache_control` to
+/// providers that cache on request and ignores it elsewhere, so the request
+/// stays valid for every provider. Claude models also get the top-level
+/// marker, which caches the conversation up to its newest message, so that
+/// every step of a tool loop reads the previous one's prefix from the cache.
+/// `session_id` keeps a conversation on the provider endpoint that holds its
+/// cache, also for providers that cache on their own.
+fn apply_prompt_cache(body: &mut Value, cache: PromptCache<'_>) {
+    if !cache.enabled {
         return;
+    }
+    if let Some(conversation) = cache.conversation {
+        body["session_id"] = json!(conversation);
+    }
+    let claude = body
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(|model| model.starts_with("anthropic/"));
+    if claude {
+        body["cache_control"] = json!({ "type": "ephemeral" });
     }
     let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
         return;
@@ -485,6 +502,42 @@ struct RawKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn request(model: &str) -> Value {
+        json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": "You are pumr." },
+                { "role": "user", "content": "Hi" }
+            ]
+        })
+    }
+
+    #[test]
+    fn prompt_caching_marks_the_system_message_and_names_the_conversation() {
+        let cache = PromptCache {
+            enabled: true,
+            conversation: Some("chat-1"),
+        };
+        let mut body = request("deepseek/deepseek-chat");
+        apply_prompt_cache(&mut body, cache);
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        assert_eq!(body["session_id"], "chat-1");
+        // Only Claude models take the marker that caches the conversation.
+        assert!(body.get("cache_control").is_none());
+        assert_eq!(body["messages"][1]["content"], "Hi");
+
+        let mut body = request("anthropic/claude-sonnet-4.5");
+        apply_prompt_cache(&mut body, cache);
+        assert_eq!(body["cache_control"]["type"], "ephemeral");
+
+        let mut body = request("anthropic/claude-sonnet-4.5");
+        apply_prompt_cache(&mut body, PromptCache::off());
+        assert_eq!(body, request("anthropic/claude-sonnet-4.5"));
+    }
 
     #[test]
     fn endpoint_metrics_accept_objects() {

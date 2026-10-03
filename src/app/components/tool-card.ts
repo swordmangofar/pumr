@@ -14,19 +14,20 @@ import { FileChange } from '../core/models';
 import { MonacoService } from '../core/monaco.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { CopyButton } from './copy-button';
+import { StickToBottom } from './stick-to-bottom';
 import { ToolStatus } from './tool-status';
 
 @Component({
   selector: 'app-tool-card',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, ToolStatus, CopyButton],
+  imports: [TranslocoPipe, ToolStatus, CopyButton, StickToBottom],
   template: `
     <div class="my-3 overflow-hidden glass-inset rounded-xl">
       <button
         type="button"
         class="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
         [attr.aria-expanded]="expanded()"
-        (click)="expanded.set(!expanded())"
+        (click)="choice.set(!expanded())"
       >
         <span class="text-xs font-semibold uppercase tracking-wider" [class]="statusColor()">
           {{ name() }}
@@ -84,14 +85,20 @@ import { ToolStatus } from './tool-status';
             <div class="text-[10px] font-semibold uppercase tracking-wider text-mist/30">
               {{ 'tools.output' | transloco }}
             </div>
-            @if (output()) {
+            @if (output() && status() !== 'running') {
               <app-copy-button
                 [text]="plainOutput()"
                 buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
               />
             }
           </div>
-          @if (output()) {
+          @if (status() === 'running' && output()) {
+            <pre
+              class="max-h-72 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
+              [appStickToBottom]="output()"
+              [innerHTML]="outputHtml()"
+            ></pre>
+          } @else if (output()) {
             <pre
               class="max-h-72 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-mist/60"
               [innerHTML]="outputHtml()"
@@ -111,11 +118,15 @@ export class ToolCard {
   readonly summary = input<string>('');
   readonly command = input<string>('');
   readonly output = input<string>('');
+  /** Still running and printing: its output is shown as it arrives. */
+  readonly live = input<boolean>(false);
   readonly status = input<string>('ok');
   readonly changes = input<FileChange[]>([]);
   readonly sessionId = input<string | null>(null);
 
-  protected readonly expanded = signal(false);
+  /** Whether the user opened or closed the card. Without a choice a live call is open. */
+  protected readonly choice = signal<boolean | null>(null);
+  protected readonly expanded = computed(() => this.choice() ?? this.live());
   protected readonly highlighted = signal<SafeHtml>('');
   protected readonly outputHtml = computed<SafeHtml>(() =>
     this.sanitizer.bypassSecurityTrustHtml(ansiToHtml(this.output())),

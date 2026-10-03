@@ -294,6 +294,26 @@ export class GitService {
     ]);
   }
 
+  /**
+   * Catches up with files changed outside of the git views, such as by an
+   * agent turn: the branch, and for a project whose status was loaded before,
+   * the status and the change being viewed.
+   */
+  async followWorkingTree(projectId: string): Promise<void> {
+    const loads = [this.loadInfo(projectId)];
+    if (this.statusFor(projectId)) {
+      loads.push(
+        this.loadStatus(projectId, true).then(() => {
+          const selected = this.diffFor(projectId);
+          return selected
+            ? this.reselectChange(projectId, selected.path, selected.staged)
+            : undefined;
+        }),
+      );
+    }
+    await Promise.all(loads);
+  }
+
   async loadCommits(projectId: string, reset = true): Promise<void> {
     const key = `commits:${projectId}`;
     const token = this.tokens.next(key);
@@ -890,9 +910,13 @@ export class GitService {
     }
     await this.loadStatus(projectId, true);
     const selected = this.diffFor(projectId);
-    if (!selected || selected.path !== path) {
-      return;
+    if (selected && selected.path === path) {
+      await this.reselectChange(projectId, path, staged);
     }
+  }
+
+  /** Loads the viewed change again, on the side that still lists it. */
+  private async reselectChange(projectId: string, path: string, staged: boolean): Promise<void> {
     const status = this.statusFor(projectId);
     const listed = (side: boolean) =>
       (side ? status?.staged : status?.unstaged)?.some((change) => change.path === path) ?? false;

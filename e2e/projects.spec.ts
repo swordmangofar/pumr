@@ -26,6 +26,53 @@ test.describe('projects and sessions', () => {
     await expect(page.getByText('No projects yet. Add a folder to get started.')).toBeVisible();
   });
 
+  test('sorts projects alphabetically, by session count or by last activity', async ({
+    app,
+    page,
+  }) => {
+    await app.start(
+      seed({
+        projects: [
+          project({ id: 'p-zebra', name: 'zebra', lastOpenedAt: 1_700_000_003_000 }),
+          project({ id: 'p-mango', name: 'mango', lastOpenedAt: 1_700_000_002_000 }),
+          project({ id: 'p-apple', name: 'apple', lastOpenedAt: 1_700_000_001_000 }),
+        ],
+        sessions: [
+          session({ id: 's-1', projectId: 'p-mango', title: 'Mango one' }),
+          session({ id: 's-2', projectId: 'p-mango', title: 'Mango two' }),
+          session({
+            id: 's-3',
+            projectId: 'p-apple',
+            title: 'Apple one',
+            updatedAt: 1_700_000_009_000,
+          }),
+        ],
+      }),
+    );
+    // A project row reads "▾ A apple 1": toggle, icon letter, name, session count.
+    const names = page.getByRole('button', { name: /^[▾▸] \w (zebra|mango|apple) \d+$/ });
+    const order = async () =>
+      (await names.allInnerTexts()).map((text) => /zebra|mango|apple/.exec(text)?.[0]);
+
+    await expect.poll(order).toEqual(['apple', 'mango', 'zebra']);
+
+    await page.getByRole('button', { name: 'Sort projects' }).click();
+    await expect(page.getByRole('menuitemradio', { name: 'Alphabetical' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await page.getByRole('menuitemradio', { name: 'Session count' }).click();
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect.poll(order).toEqual(['mango', 'apple', 'zebra']);
+
+    await page.getByRole('button', { name: 'Sort projects' }).click();
+    await page.getByRole('menuitemradio', { name: 'Last activity' }).click();
+    await expect.poll(order).toEqual(['apple', 'zebra', 'mango']);
+
+    await page.reload();
+    await expect.poll(order).toEqual(['apple', 'zebra', 'mango']);
+  });
+
   test('creates a session with the default model and mode', async ({ app, page }) => {
     await app.start(seed({ projects: [project()] }));
 

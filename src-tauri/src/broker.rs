@@ -1,6 +1,7 @@
+use crate::model_match::{self, ModelMatch};
 use crate::models::{
-    EventSink, PermissionAuditEntry, PermissionDecision, QuestionAnswer, QuestionItem, RoutedEvent,
-    StreamEvent,
+    EventSink, ModelInfo, PermissionAuditEntry, PermissionDecision, QuestionAnswer, QuestionItem,
+    RoutedEvent, StreamEvent,
 };
 use crate::permissions::{CommandRisk, CommandScopeOption, CommandSegment, LivePermissions};
 use std::collections::HashMap;
@@ -673,6 +674,210 @@ impl QuestionBroker {
 }
 
 impl Default for QuestionBroker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Mirrors [`QuestionBroker`] for the model of a subagent. When the name the
+/// agent passed to `task` fits several models, the turn parks here until the
+/// user picks one (or skips), it is cancelled, or the prompt times out. A pick
+/// is remembered for the chat, so the same name asks once.
+pub struct ModelChoiceBroker {
+    /// Open prompts by request id.
+    pending: Mutex<HashMap<String, PendingModelChoice>>,
+    /// Picked model ids by chat and by the name that was asked about.
+    remembered: Mutex<HashMap<(String, String), String>>,
+    next_seq: AtomicU64,
+}
+
+struct PendingModelChoice {
+    /// Delivers the picked model id; `None` skips the prompt.
+    sender: oneshot::Sender<Option<String>>,
+    /// The session that asked.
+    session_id: String,
+    /// Kept so the prompt can be sent again to a webview that reloaded before
+    /// the user answered.
+    query: String,
+    candidates: Vec<String>,
+    seq: u64,
+}
+
+impl ModelChoiceBroker {
+    pub fn new() -> Self {
+        Self {
+            pending: Mutex::new(HashMap::new()),
+            remembered: Mutex::new(HashMap::new()),
+            next_seq: AtomicU64::new(0),
+        }
+    }
+
+    pub fn resolve(&self, request_id: &str, model: Option<String>) {
+        if let Some(entry) = self.pending.lock().unwrap().remove(request_id) {
+            let _ = entry.sender.send(model);
+        }
+    }
+
+    /// Skips the open prompts of a stopped session.
+    pub fn skip_session(&self, session_id: &str) {
+        let mut pending = self.pending.lock().unwrap();
+        let asked: Vec<String> = pending
+            .iter()
+            .filter(|(_, entry)| entry.session_id == session_id)
+            .map(|(request_id, _)| request_id.clone())
+            .collect();
+        for request_id in asked {
+            if let Some(entry) = pending.remove(&request_id) {
+                let _ = entry.sender.send(None);
+            }
+        }
+    }
+
+    /// Prompts still waiting on the user, oldest first, as the events that
+    /// announced them.
+    pub fn pending_requests(&self) -> Vec<RoutedEvent> {
+        let pending = self.pending.lock().unwrap();
+        let mut entries: Vec<(&String, &PendingModelChoice)> = pending.iter().collect();
+        entries.sort_by_key(|(_, entry)| entry.seq);
+        entries
+            .into_iter()
+            .map(|(request_id, entry)| RoutedEvent {
+                session_id: entry.session_id.clone(),
+                event: StreamEvent::ModelChoiceRequest {
+                    request_id: request_id.clone(),
+                    query: entry.query.clone(),
+                    candidates: entry.candidates.clone(),
+                },
+            })
+            .collect()
+    }
+
+    /// The model the user picked for `key` (see `model_match::key`) in this chat.
+    pub fn remembered(&self, conversation_id: &str, key: &str) -> Option<String> {
+        self.remembered
+            .lock()
+            .unwrap()
+            .get(&(conversation_id.to_string(), key.to_string()))
+            .cloned()
+    }
+
+    pub fn remember(&self, conversation_id: &str, key: &str, model: &str) {
+        self.remembered.lock().unwrap().insert(
+            (conversation_id.to_string(), key.to_string()),
+            model.to_string(),
+        );
+    }
+
+    /// Drops the picks of chats that are deleted or archived.
+    pub fn forget(&self, conversation_ids: &[String]) {
+        self.remembered
+            .lock()
+            .unwrap()
+            .retain(|(conversation_id, _), _| !conversation_ids.contains(conversation_id));
+    }
+
+    /// The model `name` stands for in the chat `conversation_id`, which runs
+    /// on `chat_provider` (see [`model_match`]). A name that fits several of
+    /// `models` asks the user, once per chat; `Err` tells the agent why no
+    /// model was settled.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn settle(
+        &self,
+        name: &str,
+        models: &[ModelInfo],
+        chat_provider: &str,
+        conversation_id: &str,
+        session_id: &str,
+        cancel: &CancellationToken,
+        emit: &EventSink,
+    ) -> Result<String, String> {
+        let known = |model: &str| models.iter().any(|entry| entry.id == model);
+        let key = model_match::key(name);
+        if let Some(model) = self
+            .remembered(conversation_id, &key)
+            .filter(|model| known(model))
+        {
+            return Ok(model);
+        }
+        if models.is_empty() {
+            return Err(format!(
+                "pumr has not loaded the model list yet, so \"{name}\" could not be matched and the subagent was not started. Tell the user."
+            ));
+        }
+        let candidates = match model_match::resolve(name, models, chat_provider) {
+            ModelMatch::One(model) => return Ok(model),
+            ModelMatch::Several(candidates) => candidates,
+            ModelMatch::None => {
+                return Err(format!(
+                    "No model of the connected providers matches \"{name}\", so the subagent was not started. Do not pick another model yourself; tell the user and ask which model to use."
+                ))
+            }
+        };
+        match self.ask(name, candidates, cancel, session_id, emit).await {
+            Some(model) if known(&model) => {
+                self.remember(conversation_id, &key, &model);
+                Ok(model)
+            }
+            Some(model) => Err(format!(
+                "The model \"{model}\" the user picked is not available, so the subagent was not started. Tell the user."
+            )),
+            None => Err(format!(
+                "The user did not pick a model for \"{name}\", so the subagent was not started. Do not retry with a model you guess; ask the user how to continue."
+            )),
+        }
+    }
+
+    /// Asks which of `candidates` (model ids, the closest first) the user
+    /// meant by `query`. The answer may be any model, not only a candidate.
+    pub async fn ask(
+        &self,
+        query: &str,
+        candidates: Vec<String>,
+        cancel: &CancellationToken,
+        session_id: &str,
+        emit: &EventSink,
+    ) -> Option<String> {
+        let request_id = Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        self.pending.lock().unwrap().insert(
+            request_id.clone(),
+            PendingModelChoice {
+                sender,
+                session_id: session_id.to_string(),
+                query: query.to_string(),
+                candidates: candidates.clone(),
+                seq: self.next_seq.fetch_add(1, Ordering::Relaxed),
+            },
+        );
+
+        (emit)(RoutedEvent {
+            session_id: session_id.to_string(),
+            event: StreamEvent::ModelChoiceRequest {
+                request_id: request_id.clone(),
+                query: query.to_string(),
+                candidates,
+            },
+        });
+
+        let model = tokio::select! {
+            result = receiver => result.unwrap_or(None),
+            _ = cancel.cancelled() => None,
+            _ = tokio::time::sleep(Duration::from_secs(600)) => None,
+        };
+
+        self.pending.lock().unwrap().remove(&request_id);
+        (emit)(RoutedEvent {
+            session_id: session_id.to_string(),
+            event: StreamEvent::ModelChoiceResolved {
+                request_id,
+                model: model.clone(),
+            },
+        });
+        model
+    }
+}
+
+impl Default for ModelChoiceBroker {
     fn default() -> Self {
         Self::new()
     }
@@ -1378,6 +1583,163 @@ mod tests {
 
         broker.resolve(request_id, None);
         assert!(broker.pending_requests().is_empty());
+        assert!(ask.await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_model_choice_waits_for_the_pick_and_is_remembered_per_chat() {
+        let broker = ModelChoiceBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let candidates = vec!["a/flash".to_string(), "a/flash-lite".to_string()];
+        let ask = broker.ask("flash", candidates.clone(), &cancel, "chat", &emit);
+        tokio::pin!(ask);
+        assert!(futures_util::poll!(ask.as_mut()).is_pending());
+
+        let pending = broker.pending_requests();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].session_id, "chat");
+        let StreamEvent::ModelChoiceRequest {
+            request_id,
+            query,
+            candidates: offered,
+        } = &pending[0].event
+        else {
+            panic!("expected a model choice request");
+        };
+        assert_eq!(query, "flash");
+        assert_eq!(offered, &candidates);
+
+        broker.resolve(request_id, Some("a/flash-lite".to_string()));
+        assert_eq!(ask.await.as_deref(), Some("a/flash-lite"));
+        assert!(broker.pending_requests().is_empty());
+
+        broker.remember("chat", "flash", "a/flash-lite");
+        assert_eq!(
+            broker.remembered("chat", "flash").as_deref(),
+            Some("a/flash-lite")
+        );
+        assert!(broker.remembered("other", "flash").is_none());
+        broker.forget(&["chat".to_string()]);
+        assert!(broker.remembered("chat", "flash").is_none());
+    }
+
+    fn listed(id: &str, name: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: String::new(),
+            context_length: 0,
+            prompt_price_per_m: 0.0,
+            completion_price_per_m: 0.0,
+            cache_read_price_per_m: 0.0,
+            supports_reasoning: false,
+            supports_vision: false,
+            supports_tools: true,
+            input_modalities: Vec::new(),
+            supported_parameters: Vec::new(),
+            created: 0,
+            source: "openrouter".to_string(),
+        }
+    }
+
+    /// Request ids of the model choices announced through the returned sink.
+    fn model_choice_sink() -> (EventSink, Arc<Mutex<Vec<String>>>) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let sink: EventSink = {
+            let asked = asked.clone();
+            Arc::new(move |routed| {
+                if let StreamEvent::ModelChoiceRequest { request_id, .. } = routed.event {
+                    asked.lock().unwrap().push(request_id);
+                }
+            })
+        };
+        (sink, asked)
+    }
+
+    #[tokio::test]
+    async fn a_named_model_asks_once_per_chat_when_it_fits_several() {
+        let broker = ModelChoiceBroker::new();
+        let cancel = CancellationToken::new();
+        let (emit, asked) = model_choice_sink();
+        let models = vec![
+            listed("google/gemini-flash", "Google: Gemini Flash"),
+            listed("google/gemini-flash-lite", "Google: Gemini Flash Lite"),
+            listed("openai/gpt-5", "OpenAI: GPT-5"),
+        ];
+        let settle = |name: &'static str, chat: &'static str| {
+            broker.settle(name, &models, "openrouter", chat, chat, &cancel, &emit)
+        };
+
+        // One model fits: nothing is asked.
+        assert_eq!(settle("gpt 5", "chat").await.as_deref(), Ok("openai/gpt-5"));
+        assert!(asked.lock().unwrap().is_empty());
+
+        // Two fit: the user picks, here a model outside the candidates.
+        let first = settle("flash", "chat");
+        tokio::pin!(first);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        let request_id = asked.lock().unwrap()[0].clone();
+        broker.resolve(&request_id, Some("openai/gpt-5".to_string()));
+        assert_eq!(first.await.as_deref(), Ok("openai/gpt-5"));
+
+        // The same name in the same chat reuses the pick; another chat asks.
+        assert_eq!(settle("Flash", "chat").await.as_deref(), Ok("openai/gpt-5"));
+        assert_eq!(asked.lock().unwrap().len(), 1);
+        let other = settle("flash", "other");
+        tokio::pin!(other);
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
+        assert_eq!(asked.lock().unwrap().len(), 2);
+
+        // Skipping settles nothing and remembers nothing.
+        let request_id = asked.lock().unwrap()[1].clone();
+        broker.resolve(&request_id, None);
+        assert!(other.await.is_err());
+        assert!(broker.remembered("other", "flash").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_named_model_that_is_unknown_or_unlisted_settles_nothing() {
+        let broker = ModelChoiceBroker::new();
+        let cancel = CancellationToken::new();
+        let (emit, asked) = model_choice_sink();
+        let models = vec![
+            listed("google/gemini-flash", "Google: Gemini Flash"),
+            listed("google/gemini-flash-lite", "Google: Gemini Flash Lite"),
+        ];
+
+        let unknown = broker
+            .settle("llama", &models, "openrouter", "chat", "chat", &cancel, &emit)
+            .await;
+        assert!(unknown.unwrap_err().contains("No model"));
+        let unloaded = broker
+            .settle("flash", &[], "openrouter", "chat", "chat", &cancel, &emit)
+            .await;
+        assert!(unloaded.unwrap_err().contains("not loaded"));
+        assert!(asked.lock().unwrap().is_empty());
+
+        // A pick that is not a listed model is refused, not run.
+        let picked = broker.settle("flash", &models, "openrouter", "chat", "chat", &cancel, &emit);
+        tokio::pin!(picked);
+        assert!(futures_util::poll!(picked.as_mut()).is_pending());
+        let request_id = asked.lock().unwrap()[0].clone();
+        broker.resolve(&request_id, Some("made/up".to_string()));
+        assert!(picked.await.unwrap_err().contains("not available"));
+        assert!(broker.remembered("chat", "flash").is_none());
+    }
+
+    #[tokio::test]
+    async fn stopping_a_session_skips_its_model_choice() {
+        let broker = ModelChoiceBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let ask = broker.ask("flash", vec!["a/flash".to_string()], &cancel, "chat", &emit);
+        tokio::pin!(ask);
+        assert!(futures_util::poll!(ask.as_mut()).is_pending());
+
+        broker.skip_session("other");
+        assert_eq!(broker.pending_requests().len(), 1);
+        broker.skip_session("chat");
         assert!(ask.await.is_none());
     }
 }

@@ -14,6 +14,7 @@ import {
   Mention,
   Message,
   MessageAttachment,
+  PendingModelChoice,
   PendingPermission,
   PendingQuestion,
   Project,
@@ -30,6 +31,7 @@ import {
 import { SettingsService } from './settings.service';
 import { SoundService } from './sound.service';
 import { ProcessService } from './process.service';
+import { DEFAULT_PROJECT_SORT, ProjectSort, isProjectSort, sortProjects } from './project-sort';
 import { MessageQueueService } from './message-queue.service';
 import { GitService } from './git.service';
 import { WorkspaceEditorService } from './workspace-editor.service';
@@ -39,11 +41,26 @@ const ACTIVE_KEY = 'pumr.activeTab';
 const LEFT_TAB_KEY = 'pumr.leftTab';
 const RIGHT_TAB_KEY = 'pumr.rightTab';
 const SESSION_VIEW_KEY = 'pumr.sessionView';
+const PROJECT_SORT_KEY = 'pumr.projectSort';
 const LAYOUT_KEY = 'pumr.layout';
 const GIT_PULL_STRATEGY_KEY = 'pumr.gitPullStrategy';
 const COMPOSER_DRAFTS_KEY = 'pumr.composerDrafts';
 /** Longest handover title derived from the source session title. */
 const HANDOVER_TITLE_MAX_CHARS = 60;
+/** How long a tool call has to keep printing before the chat opens its output. */
+const LIVE_OUTPUT_AFTER_MS = 600;
+/** How much of a running call's output is kept: a test run can print megabytes. */
+const LIVE_OUTPUT_MAX_CHARS = 64_000;
+
+/** The end of `output` that fits `LIVE_OUTPUT_MAX_CHARS`, from the start of a line. */
+function latestOutput(output: string): string {
+  if (output.length <= LIVE_OUTPUT_MAX_CHARS) {
+    return output;
+  }
+  const cut = output.length - LIVE_OUTPUT_MAX_CHARS;
+  const line = output.indexOf('\n', cut);
+  return output.slice(line === -1 ? cut : line + 1);
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,6 +80,12 @@ type LeftTab = 'projects' | 'workspace' | 'git';
 export interface ComposerInsert {
   mention: Mention | null;
   text: string;
+}
+
+/** A chat that waits on the user, and for what. */
+export interface WaitingChat {
+  session: Session;
+  kind: 'permission' | 'question';
 }
 type RightTab = 'changes' | 'session' | 'prompts' | 'modes';
 type SessionView = 'projects' | 'history';
@@ -99,12 +122,17 @@ export class WorkspaceService {
   private readonly spendState = signal<SpendSummary | null>(null);
   private readonly liveToolsState = signal<Record<string, LiveToolCall[]>>({});
   private readonly changesState = signal<Record<string, FileChange[]>>({});
+  /** Running `refreshFiles` passes by project, and whether files changed since one began. */
+  private readonly fileRefreshes = new Map<string, { stale: boolean; done: Promise<void> }>();
   private readonly contextUsageState = signal<Record<string, ContextUsageInfo>>({});
   private readonly selectedPathState = signal<Record<string, string | null>>({});
   private readonly diffState = signal<FileDiff | null>(null);
+  /** Whose change `diffState` shows or is loading; `null` once it was cleared. */
+  private diffSource: { sessionId: string; path: string } | null = null;
   private readonly leftTabState = signal<LeftTab>('projects');
   private readonly rightTabState = signal<RightTab>('changes');
   private readonly sessionViewState = signal<SessionView>('projects');
+  private readonly projectSortState = signal<ProjectSort>(DEFAULT_PROJECT_SORT);
   private readonly leftPanelOpenState = signal(true);
   private readonly rightPanelOpenState = signal(true);
   private readonly leftPanelWidthState = signal(340);
@@ -115,10 +143,15 @@ export class WorkspaceService {
   private readonly rulesState = signal<ProjectRule[]>([]);
   private readonly permissionState = signal<PendingPermission[]>([]);
   private readonly questionState = signal<PendingQuestion[]>([]);
+  private readonly modelChoiceState = signal<PendingModelChoice[]>([]);
   /** Ids of prompts already answered or withdrawn, never to be shown again. */
   private readonly settledRequests = new Set<string>();
+  /** Ids of prompts whose `waitingElsewhere` entry the user closed. */
+  private readonly dismissedPromptState = signal<ReadonlySet<string>>(new Set());
   private readonly draftState = signal<string | null>(null);
   private readonly handoverState = signal<Record<string, boolean>>({});
+  /** Sessions whose history is being summarised right now. */
+  private readonly compactingState = signal<Record<string, boolean>>({});
   private readonly debugSessionState = signal<string | null>(null);
   private readonly debugExportState = signal(false);
   private readonly scrollTargetState = signal<{ id: string; nonce: number } | null>(null);
@@ -141,7 +174,12 @@ export class WorkspaceService {
   >();
   private streamFlushScheduled = false;
 
-  readonly projects = this.projectsState.asReadonly();
+  /** Projects in the order the user picked for the sidebar. */
+  readonly projects = computed(() =>
+    sortProjects(this.projectsState(), this.projectSortState(), (project) =>
+      this.lastActivity(project),
+    ),
+  );
   readonly spend = this.spendState.asReadonly();
   readonly activeSessionId = this.activeState.asReadonly();
   private readonly activeContextIds = computed(() => {
@@ -167,6 +205,39 @@ export class WorkspaceService {
     const ids = this.activeContextIds();
     return this.questionState().find((entry) => ids.has(entry.sessionId)) ?? null;
   });
+  /** The open prompt to pick the model a subagent was asked to run on. */
+  readonly modelChoice = computed<PendingModelChoice | null>(() => {
+    const ids = this.activeContextIds();
+    return this.modelChoiceState().find((entry) => ids.has(entry.sessionId)) ?? null;
+  });
+  /**
+   * Chats that wait on the user with a prompt the chat on screen does not
+   * show, each listed once under its root session; permissions come first.
+   * Prompts the user dismissed no longer count.
+   */
+  readonly waitingElsewhere = computed<WaitingChat[]>(() => {
+    const shown = this.activeContextIds();
+    const onScreen = this.activeAgentId();
+    const dismissed = this.dismissedPromptState();
+    const waiting = new Map<string, WaitingChat>();
+    const collect = (
+      prompts: (PendingPermission | PendingQuestion | PendingModelChoice)[],
+      kind: WaitingChat['kind'],
+    ): void => {
+      for (const prompt of prompts) {
+        const hidden = shown.has(prompt.sessionId) || dismissed.has(prompt.requestId);
+        const root = hidden ? null : this.rootSession(prompt.sessionId);
+        // Nothing to switch to when the main view of that chat is on screen.
+        if (root && root.id !== onScreen && !waiting.has(root.id)) {
+          waiting.set(root.id, { session: root, kind });
+        }
+      }
+    };
+    collect(this.permissionState(), 'permission');
+    collect(this.questionState(), 'question');
+    collect(this.modelChoiceState(), 'question');
+    return [...waiting.values()];
+  });
   readonly processes = this.processesService.processes;
   readonly rules = this.rulesState.asReadonly();
   readonly activeDiff = this.diffState.asReadonly();
@@ -174,6 +245,7 @@ export class WorkspaceService {
   readonly leftTab = this.leftTabState.asReadonly();
   readonly rightTab = this.rightTabState.asReadonly();
   readonly sessionView = this.sessionViewState.asReadonly();
+  readonly projectSort = this.projectSortState.asReadonly();
   readonly leftPanelOpen = this.leftPanelOpenState.asReadonly();
   readonly rightPanelOpen = this.rightPanelOpenState.asReadonly();
   readonly leftPanelWidth = this.leftPanelWidthState.asReadonly();
@@ -252,6 +324,10 @@ export class WorkspaceService {
     if (sessionView === 'projects' || sessionView === 'history') {
       this.sessionViewState.set(sessionView);
     }
+    const projectSort = localStorage.getItem(PROJECT_SORT_KEY);
+    if (isProjectSort(projectSort)) {
+      this.projectSortState.set(projectSort);
+    }
     const pullStrategy = localStorage.getItem(GIT_PULL_STRATEGY_KEY);
     if (pullStrategy === 'ff-only' || pullStrategy === 'merge' || pullStrategy === 'rebase') {
       this.gitPullStrategyState.set(pullStrategy);
@@ -301,6 +377,14 @@ export class WorkspaceService {
       .filter((session): session is Session => !!session);
   }
 
+  /** When a project was last used: its newest listed session, or when it was opened. */
+  private lastActivity(project: Project): number {
+    return this.sessionsFor(project.id).reduce(
+      (latest, session) => Math.max(latest, session.updatedAt),
+      project.lastOpenedAt,
+    );
+  }
+
   allSessions(): Session[] {
     return this.projectsState()
       .flatMap((project) => this.sessionsFor(project.id))
@@ -309,6 +393,18 @@ export class WorkspaceService {
 
   session(id: string): Session | null {
     return this.sessionsState()[id] ?? null;
+  }
+
+  /** The top-level chat a session belongs to, itself unless it is a sub-agent. */
+  private rootSession(sessionId: string): Session | null {
+    const sessions = this.sessionsState();
+    const seen = new Set<string>();
+    let session = sessions[sessionId];
+    while (session?.parentSessionId && !seen.has(session.id)) {
+      seen.add(session.id);
+      session = sessions[session.parentSessionId];
+    }
+    return session ?? null;
   }
 
   subAgentsFor(sessionId: string): Session[] {
@@ -373,6 +469,23 @@ export class WorkspaceService {
     }
   }
 
+  /** Brings a chat from `waitingElsewhere` on screen, on its main view. */
+  showWaitingChat(sessionId: string): void {
+    if (this.activeState() === sessionId) {
+      this.viewAgent(sessionId, null);
+    } else {
+      this.openTab(sessionId);
+    }
+  }
+
+  /** Hides a chat from `waitingElsewhere` until it raises a new prompt. */
+  dismissWaitingChat(sessionId: string): void {
+    const ids = [...this.permissionState(), ...this.questionState(), ...this.modelChoiceState()]
+      .filter((prompt) => this.rootSession(prompt.sessionId)?.id === sessionId)
+      .map((prompt) => prompt.requestId);
+    this.dismissedPromptState.update((state) => new Set([...state, ...ids]));
+  }
+
   viewingAgentId(rootSessionId: string): string | null {
     return this.viewingState()[rootSessionId] ?? null;
   }
@@ -423,7 +536,8 @@ export class WorkspaceService {
    */
   sessionAttention(sessionId: string): 'permission' | 'question' | null {
     const permission = this.permissionState();
-    const question = this.questionState();
+    // Picking a subagent's model waits on the user like a question does.
+    const question = [...this.questionState(), ...this.modelChoiceState()];
     if (permission.some((entry) => entry.sessionId === sessionId)) {
       return 'permission';
     }
@@ -455,8 +569,17 @@ export class WorkspaceService {
   }
 
   /**
-   * Resumes a session that paused at the tool-iteration limit. With
-   * `autoContinue`, the session keeps going past future limits too.
+   * Whether the last turn of a session was cut off before the agent finished
+   * (the app closed, or the machine slept mid-reply) and can be continued.
+   */
+  interruptedFor(sessionId: string): boolean {
+    return this.sessionsState()[sessionId]?.interrupted ?? false;
+  }
+
+  /**
+   * Resumes a session whose last turn paused at the tool-iteration limit or
+   * was cut off. With `autoContinue`, the session keeps going past future
+   * limits too.
    */
   async continueSession(
     sessionId: string,
@@ -662,6 +785,69 @@ export class WorkspaceService {
     }
   }
 
+  isCompacting(sessionId: string): boolean {
+    return this.compactingState()[sessionId] ?? false;
+  }
+
+  /**
+   * Replaces the active session's history by a summary for the model, which
+   * frees its context without leaving the chat. The messages stay visible.
+   */
+  async compactActiveSession(): Promise<void> {
+    const session = this.activeSession();
+    if (
+      !session ||
+      this.isStreaming(session.id) ||
+      this.isCompacting(session.id) ||
+      this.isHandover(session.id)
+    ) {
+      return;
+    }
+    this.setCompacting(session.id, true);
+    this.setError(session.id, null);
+    try {
+      const result = await api.compactSession(session.id);
+      this.appendMessage(session.id, result.message);
+      // The last request's numbers describe the history before it was compacted.
+      this.contextUsageState.update((state) => {
+        const usage = state[session.id];
+        if (!usage) {
+          return state;
+        }
+        const fixed = usage.systemTokens + usage.toolSchemaTokens;
+        return {
+          ...state,
+          [session.id]: {
+            ...usage,
+            usedTokens: fixed + result.usedTokens,
+            historyTokens: result.usedTokens,
+            toolOutputTokens: 0,
+          },
+        };
+      });
+      void this.refreshSpend();
+    } catch (error) {
+      this.setError(session.id, String(error));
+    } finally {
+      this.setCompacting(session.id, false);
+    }
+  }
+
+  private setCompacting(sessionId: string, value: boolean): void {
+    if (this.isCompacting(sessionId) === value) {
+      return;
+    }
+    this.compactingState.update((state) => {
+      const next = { ...state };
+      if (value) {
+        next[sessionId] = true;
+      } else {
+        delete next[sessionId];
+      }
+      return next;
+    });
+  }
+
   openTab(sessionId: string): void {
     if (!this.tabsState().includes(sessionId)) {
       this.tabsState.update((tabs) => [...tabs, sessionId]);
@@ -787,7 +973,7 @@ export class WorkspaceService {
       });
     }
     this.setError(args.sessionId, null);
-    this.patchSession(args.sessionId, { limitReached: false });
+    this.patchSession(args.sessionId, { limitReached: false, interrupted: false });
     await this.followTurn(session, (channel) => api.sendMessage(args, channel));
     return true;
   }
@@ -809,6 +995,9 @@ export class WorkspaceService {
     }
     for (const { sessionId, event } of running.questions) {
       this.addPrompt(this.questionState, { ...event, sessionId });
+    }
+    for (const { sessionId, event } of running.modelChoices) {
+      this.addPrompt(this.modelChoiceState, { ...event, sessionId });
     }
     for (const sessionId of running.sessionIds) {
       const session = this.sessionsState()[sessionId];
@@ -858,11 +1047,7 @@ export class WorkspaceService {
         await this.loadChanges(sessionId);
         await this.loadRules(session.projectId, sessionId);
         await this.loadSubAgents(sessionId);
-        await this.editorService.loadWorkspaceEntries(session.projectId, true);
-        const active = this.editorService.activeFileFor(session.projectId);
-        if (active) {
-          await this.loadEditorFile(session.projectId, active);
-        }
+        await this.refreshFiles(session.projectId);
       } catch (error) {
         console.error('post-send refresh failed', error);
       } finally {
@@ -880,6 +1065,7 @@ export class WorkspaceService {
     const ids = new Set([sessionId, ...(this.subAgentsState()[sessionId] ?? [])]);
     for (const id of ids) {
       this.setStreaming(id, false);
+      this.setCompacting(id, false);
     }
     this.dropPrompts((entry) => ids.has(entry.sessionId));
   }
@@ -892,7 +1078,22 @@ export class WorkspaceService {
       switch (event.kind) {
         case 'started':
           this.flushStreamBuffers();
+          // A compaction that was under way is over, whether or not it worked.
+          this.setCompacting(sessionId, false);
           assistantIds[sessionId] = event.message.id;
+          this.appendMessage(sessionId, event.message);
+          break;
+        case 'compacting':
+          this.flushStreamBuffers();
+          this.setCompacting(sessionId, true);
+          break;
+        case 'compacted':
+          this.flushStreamBuffers();
+          this.setCompacting(sessionId, false);
+          this.appendMessage(sessionId, event.message);
+          break;
+        case 'note':
+          this.flushStreamBuffers();
           this.appendMessage(sessionId, event.message);
           break;
         case 'delta':
@@ -942,8 +1143,10 @@ export class WorkspaceService {
             summary: event.summary,
             arguments: event.arguments,
             output: '',
+            live: false,
             status: 'running',
             changes: [],
+            attachments: [],
             anchor: this.lastMessageId(sessionId),
           });
           break;
@@ -957,6 +1160,7 @@ export class WorkspaceService {
             status: this.mapToolStatus(event.status),
             output: event.result,
             changes: event.changes,
+            attachments: event.attachments ?? [],
           }));
           break;
         case 'permissionRequest':
@@ -975,10 +1179,19 @@ export class WorkspaceService {
         case 'questionResolved':
           this.settleRequest(event.requestId);
           break;
+        case 'modelChoiceRequest':
+          if (this.addPrompt(this.modelChoiceState, { ...event, sessionId })) {
+            this.sound.play('permission');
+          }
+          break;
+        case 'modelChoiceResolved':
+          this.settleRequest(event.requestId);
+          break;
         case 'changes':
           this.flushStreamBuffers();
           this.changesState.update((state) => ({ ...state, [sessionId]: event.changes }));
           void this.reloadSessions(session.projectId);
+          void this.refreshFiles(session.projectId);
           break;
         case 'done':
           this.flushStreamBuffers();
@@ -990,6 +1203,11 @@ export class WorkspaceService {
         case 'stopped':
           this.flushStreamBuffers();
           this.replaceMessage(sessionId, event.message);
+          break;
+        case 'interrupted':
+          this.flushStreamBuffers();
+          this.replaceMessage(sessionId, event.message);
+          this.patchSession(sessionId, { interrupted: true });
           break;
         case 'subAgentStarted': {
           this.upsertSession(event.session);
@@ -1057,12 +1275,16 @@ export class WorkspaceService {
     this.dropPrompts((entry) => entry.requestId === requestId);
   }
 
-  /** Removes matching permission prompts and questions. */
-  private dropPrompts(drop: (entry: PendingPermission | PendingQuestion) => boolean): void {
-    const keep = <T extends PendingPermission | PendingQuestion>(state: T[]): T[] =>
-      state.some(drop) ? state.filter((entry) => !drop(entry)) : state;
+  /** Removes matching permission prompts, questions and model choices. */
+  private dropPrompts(
+    drop: (entry: PendingPermission | PendingQuestion | PendingModelChoice) => boolean,
+  ): void {
+    const keep = <T extends PendingPermission | PendingQuestion | PendingModelChoice>(
+      state: T[],
+    ): T[] => (state.some(drop) ? state.filter((entry) => !drop(entry)) : state);
     this.permissionState.update(keep);
     this.questionState.update(keep);
+    this.modelChoiceState.update(keep);
   }
 
   /**
@@ -1110,6 +1332,12 @@ export class WorkspaceService {
 
   async resolveQuestion(requestId: string, answers: QuestionAnswer[] | null): Promise<void> {
     await api.resolveQuestion(requestId, answers);
+    this.settleRequest(requestId);
+  }
+
+  /** Answers a model choice with the picked model id; `null` skips it. */
+  async resolveModelChoice(requestId: string, model: string | null): Promise<void> {
+    await api.resolveModelChoice(requestId, model);
     this.settleRequest(requestId);
   }
 
@@ -1213,6 +1441,54 @@ export class WorkspaceService {
     }
   }
 
+  /**
+   * Re-reads what shows the files of `projectId` after a turn changed them:
+   * the tree, the file and the diff that are open, and the git views. Changes
+   * reported while this runs are picked up by one more pass.
+   */
+  private refreshFiles(projectId: string): Promise<void> {
+    const running = this.fileRefreshes.get(projectId);
+    if (running) {
+      running.stale = true;
+      return running.done;
+    }
+    const refresh = { stale: false, done: Promise.resolve() };
+    refresh.done = (async () => {
+      try {
+        do {
+          refresh.stale = false;
+          await this.loadFiles(projectId);
+        } while (refresh.stale);
+      } catch (error) {
+        console.error('file refresh failed', error);
+      } finally {
+        this.fileRefreshes.delete(projectId);
+      }
+    })();
+    this.fileRefreshes.set(projectId, refresh);
+    return refresh.done;
+  }
+
+  private async loadFiles(projectId: string): Promise<void> {
+    const loads: Promise<void>[] = [
+      this.editorService.loadWorkspaceEntries(projectId, true),
+      this.gitService.followWorkingTree(projectId),
+    ];
+    // The editor and the diff beside the chat show the project on screen.
+    const session = this.activeSession();
+    if (session?.projectId === projectId) {
+      const open = this.editorService.activeFileFor(projectId);
+      if (open) {
+        loads.push(this.loadEditorFile(projectId, open));
+      }
+      const shown = this.diffSource;
+      if (shown) {
+        loads.push(this.selectChange(shown.sessionId, shown.path));
+      }
+    }
+    await Promise.all(loads);
+  }
+
   async loadChanges(sessionId: string): Promise<void> {
     try {
       const changes = await api.getSessionChanges(sessionId);
@@ -1224,14 +1500,17 @@ export class WorkspaceService {
 
   async selectChange(sessionId: string, path: string): Promise<void> {
     this.selectedPathState.update((state) => ({ ...state, [sessionId]: path }));
-    try {
-      this.diffState.set(await api.getFileDiff(sessionId, path));
-    } catch {
-      this.diffState.set(null);
+    const source = { sessionId, path };
+    this.diffSource = source;
+    const diff = await api.getFileDiff(sessionId, path).catch(() => null);
+    // A newer selection, or clearing the diff, wins over a slow load.
+    if (this.diffSource === source) {
+      this.diffState.set(diff);
     }
   }
 
   clearDiff(): void {
+    this.diffSource = null;
     this.diffState.set(null);
   }
 
@@ -1259,6 +1538,11 @@ export class WorkspaceService {
   setSessionView(view: SessionView): void {
     this.sessionViewState.set(view);
     localStorage.setItem(SESSION_VIEW_KEY, view);
+  }
+
+  setProjectSort(sort: ProjectSort): void {
+    this.projectSortState.set(sort);
+    localStorage.setItem(PROJECT_SORT_KEY, sort);
   }
 
   toggleLeftPanel(): void {
@@ -1401,10 +1685,12 @@ export class WorkspaceService {
     }
     if (sessionId) {
       this.pruneMessagesFrom(sessionId, messageId);
+      // The turn that was cut off is among the messages taken back.
+      this.patchSession(sessionId, { interrupted: false });
       this.setLiveTools(sessionId, []);
       await this.loadMessages(sessionId, true);
       await this.loadChanges(sessionId);
-      this.diffState.set(null);
+      this.clearDiff();
       this.draftState.set(result.prompt);
     }
     return result;
@@ -1512,7 +1798,7 @@ export class WorkspaceService {
     const session = this.sessionsState()[sessionId];
     // Cheap safety net for a turn that started after the last resume.
     void this.resumeRunningTurns();
-    this.diffState.set(null);
+    this.clearDiff();
     if (session) {
       this.gitService.resetView(session.projectId);
     }
@@ -1676,10 +1962,23 @@ export class WorkspaceService {
       const pending = [...this.pendingToolOutput.values()];
       this.pendingToolOutput.clear();
       for (const entry of pending) {
-        this.patchLiveTool(entry.sessionId, entry.callId, (tool) => ({
+        const { sessionId, callId } = entry;
+        const first = this.liveToolsFor(sessionId).some(
+          (tool) => tool.callId === callId && !tool.output,
+        );
+        this.patchLiveTool(sessionId, callId, (tool) => ({
           ...tool,
-          output: tool.output + entry.text,
+          output: latestOutput(tool.output + entry.text),
         }));
+        if (first) {
+          // Most commands are over at once: only one that is still running a
+          // moment after it began to print has its output opened in the chat.
+          setTimeout(() => {
+            this.patchLiveTool(sessionId, callId, (tool) =>
+              tool.status === 'running' ? { ...tool, live: true } : tool,
+            );
+          }, LIVE_OUTPUT_AFTER_MS);
+        }
       }
     }
   }

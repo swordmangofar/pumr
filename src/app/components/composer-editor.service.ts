@@ -288,9 +288,22 @@ export class ComposerEditorService {
   insertLineBreak(editor: HTMLElement): void {
     const lineBreak = document.createElement('br');
     this.insertAtCaret(editor, lineBreak);
-    if (this.endsEditor(lineBreak, editor)) {
-      // The caret sits right after `lineBreak`, so it stays before this one.
-      lineBreak.after(document.createElement('br'));
+    if (!this.endsEditor(lineBreak, editor)) {
+      return;
+    }
+    const placeholder = document.createElement('br');
+    lineBreak.after(placeholder);
+    // WebKit settles where typing goes at the moment the caret is set. That was
+    // before the placeholder existed, so it had already moved the caret in
+    // front of `lineBreak`; the selection it reports still reads as if it were
+    // behind it. Setting the caret again now puts it on the new line.
+    const selection = window.getSelection();
+    if (selection && editor.contains(selection.anchorNode)) {
+      const caret = document.createRange();
+      caret.setStartBefore(placeholder);
+      caret.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caret);
     }
   }
 

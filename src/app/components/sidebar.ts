@@ -12,6 +12,7 @@ import { confirm, open } from '@tauri-apps/plugin-dialog';
 import { matchesHotkey } from '../core/hotkeys';
 import { WorkspaceService } from '../core/workspace.service';
 import { Session } from '../core/models';
+import { PROJECT_SORTS, ProjectSort } from '../core/project-sort';
 import { SettingsService } from '../core/settings.service';
 import { AgentStatus } from './agent-status';
 import { AttentionIndicator } from './attention-indicator';
@@ -25,6 +26,12 @@ interface HistoryGroup {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const SORT_LABELS: Record<ProjectSort, string> = {
+  activity: 'sidebar.sortActivity',
+  name: 'sidebar.sortName',
+  sessions: 'sidebar.sortSessions',
+};
 
 function startOfDay(timestamp: number): number {
   const date = new Date(timestamp);
@@ -323,6 +330,72 @@ function startOfDay(timestamp: number): number {
               </svg>
             </button>
             @if (workspace.sessionView() === 'projects') {
+              <div class="relative">
+                <button
+                  type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-lg transition-colors"
+                  [class]="
+                    sortOpen()
+                      ? 'bg-accent/15 text-accent'
+                      : 'bg-white/5 text-mist/60 hover:bg-white/10 hover:text-accent'
+                  "
+                  aria-haspopup="menu"
+                  [attr.aria-expanded]="sortOpen()"
+                  [title]="'sidebar.sortProjects' | transloco"
+                  [attr.aria-label]="'sidebar.sortProjects' | transloco"
+                  (click)="sortOpen.set(!sortOpen())"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    class="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M2.5 4h7M2.5 8h5M2.5 12h3" />
+                    <path d="M12 3.5v9M9.75 10.25 12 12.5l2.25-2.25" />
+                  </svg>
+                </button>
+                @if (sortOpen()) {
+                  <div class="fixed inset-0 z-30" (click)="sortOpen.set(false)"></div>
+                  <div
+                    role="menu"
+                    class="absolute top-full right-0 z-40 mt-2 w-48 max-w-[80vw] glass-pop rounded-xl p-1 shadow-2xl"
+                  >
+                    @for (option of sortOptions; track option.id) {
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors"
+                        [class]="
+                          option.id === workspace.projectSort()
+                            ? 'bg-accent/15 font-medium text-white'
+                            : 'text-mist/60 hover:bg-white/5 hover:text-mist'
+                        "
+                        [attr.aria-checked]="option.id === workspace.projectSort()"
+                        (click)="selectSort(option.id)"
+                      >
+                        <span class="min-w-0 flex-1 truncate">{{ option.label | transloco }}</span>
+                        @if (option.id === workspace.projectSort()) {
+                          <svg
+                            viewBox="0 0 16 16"
+                            class="h-3.5 w-3.5 shrink-0 text-accent"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <path d="m3.5 8.5 3 3 6-7" />
+                          </svg>
+                        }
+                      </button>
+                    }
+                  </div>
+                }
+              </div>
               <button
                 type="button"
                 class="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
@@ -553,6 +626,8 @@ export class Sidebar {
   private readonly expandedSubAgents = signal<Set<string>>(new Set());
   private readonly focusedSessionId = signal<string | null>(null);
   private readonly now = signal(Date.now());
+  protected readonly sortOpen = signal(false);
+  protected readonly sortOptions = PROJECT_SORTS.map((id) => ({ id, label: SORT_LABELS[id] }));
   protected readonly cloneOpen = signal(false);
   protected readonly cloneUrl = signal('');
   protected readonly clonePath = signal('');
@@ -643,6 +718,11 @@ export class Sidebar {
       }
       return next;
     });
+  }
+
+  protected selectSort(sort: ProjectSort): void {
+    this.workspace.setProjectSort(sort);
+    this.sortOpen.set(false);
   }
 
   protected async addProject(): Promise<void> {
@@ -809,6 +889,7 @@ export class Sidebar {
       this.workspace.permission() ||
       this.workspace.projectEditorId() ||
       this.cloneOpen() ||
+      this.sortOpen() ||
       this.isEditableTarget(event.target)
     ) {
       return;

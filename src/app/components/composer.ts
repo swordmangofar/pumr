@@ -447,6 +447,8 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           </div>
         }
 
+        <!-- The editor grows and shrinks with its content through CSS alone.
+             Sizing it from script forces a full layout on every keystroke. -->
         <div
           #editor
           class="composer-editor block max-h-[min(45vh,22rem)] min-h-[5.5rem] w-full overflow-y-auto bg-transparent px-4 pt-3.5 pr-3 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap text-white outline-none"
@@ -1061,6 +1063,53 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
             </div>
           }
 
+          @if (workspace.activeSession()) {
+            <div class="group relative">
+              <button
+                type="button"
+                class="flex h-6 w-6 items-center justify-center rounded-full text-mist/60 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-mist/60"
+                [disabled]="!canCompact()"
+                [attr.aria-label]="'chat.compact' | transloco"
+                (click)="compactSession()"
+              >
+                @if (compacting()) {
+                  <svg
+                    class="h-3.5 w-3.5 animate-spin"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="10"
+                      cy="10"
+                      r="7"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-dasharray="24 20"
+                    />
+                  </svg>
+                } @else {
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path
+                      d="M5 3.5 10 8l5-4.5M5 16.5 10 12l5 4.5"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                }
+              </button>
+              <div
+                class="pointer-events-none absolute right-0 bottom-full z-20 mb-2 w-60 rounded-xl border border-white/10 bg-navy px-3 py-2 text-left text-xs leading-relaxed text-mist opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100"
+                role="tooltip"
+              >
+                {{ 'chat.compactHint' | transloco }}
+              </div>
+            </div>
+          }
+
           @if (contextUsage(); as usage) {
             <span
               class="flex items-center gap-1.5"
@@ -1070,7 +1119,12 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                 usage.usedLabel +
                 ' / ' +
                 usage.limitLabel +
-                (usage.breakdown ? ' · ' + ('chat.contextUsage' | transloco: usage.breakdown) : '')
+                (usage.breakdown
+                  ? ' · ' + ('chat.contextUsage' | transloco: usage.breakdown)
+                  : '') +
+                (usage.cached !== null
+                  ? ' · ' + ('chat.contextCached' | transloco: { percent: usage.cached })
+                  : '')
               "
             >
               <svg class="h-3.5 w-3.5 -rotate-90" viewBox="0 0 16 16" aria-hidden="true">
@@ -1349,6 +1403,7 @@ export class Composer {
       color: this.usageColor(ratio),
       usedLabel: used.toLocaleString(),
       limitLabel: limit.toLocaleString(),
+      cached: this.lastCacheRate(session.id),
       breakdown: hasLive
         ? {
             system: formatTokenCount(live.systemTokens),
@@ -1359,6 +1414,11 @@ export class Composer {
         : null,
     };
   });
+  protected readonly compacting = computed(() => {
+    const session = this.workspace.activeSession();
+    return session ? this.workspace.isCompacting(session.id) : false;
+  });
+  protected readonly canCompact = computed(() => this.canHandover() && !this.compacting());
   /** Nudges towards a handover once the context meter turns amber. */
   protected readonly suggestHandover = computed(
     () => (this.contextUsage()?.ratio ?? 0) >= METER_WARN_RATIO && this.canHandover(),
@@ -1395,10 +1455,6 @@ export class Composer {
         this.setEditorText(draft);
         this.workspace.consumeDraft();
       }
-    });
-    effect(() => {
-      this.draft();
-      this.autoGrow();
     });
     effect(() => {
       const element = this.blockTextareaRef()?.nativeElement;
@@ -1492,7 +1548,6 @@ export class Composer {
       this.workspace.setComposerDraft(session.id, content);
     }
     this.composing.emit(content.trim().length > 0 || mentions.length > 0);
-    this.autoGrow();
     this.updateMention();
   }
 
@@ -1500,15 +1555,6 @@ export class Composer {
     if (this.mentionOpen()) {
       this.updateMention();
     }
-  }
-
-  private autoGrow(): void {
-    const element = this.editorRef()?.nativeElement;
-    if (!element) {
-      return;
-    }
-    element.style.height = 'auto';
-    element.style.height = `${element.scrollHeight}px`;
   }
 
   private focusInput(): void {
@@ -2325,6 +2371,10 @@ export class Composer {
     await this.workspace.handoverActiveSession();
   }
 
+  protected async compactSession(): Promise<void> {
+    await this.workspace.compactActiveSession();
+  }
+
   protected async selectModel(modelId: string): Promise<void> {
     const session = this.workspace.activeAgent();
     const provider = this.providerForModel(modelId) || 'auto';
@@ -2523,11 +2573,27 @@ export class Composer {
     const messages = this.workspace.messagesFor(sessionId);
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
+      // What a request used before a compaction says nothing about the context now.
+      if (message.role === 'compaction') {
+        return 0;
+      }
       if (message.role === 'assistant' && message.promptTokens > 0) {
         return message.promptTokens + message.completionTokens;
       }
     }
     return 0;
+  }
+
+  /** Share of the last request's input that came from the provider's cache, in percent. */
+  private lastCacheRate(sessionId: string): number | null {
+    const messages = this.workspace.messagesFor(sessionId);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === 'assistant' && message.promptTokens > 0) {
+        return Math.round((message.cachedTokens / message.promptTokens) * 100);
+      }
+    }
+    return null;
   }
 
   private usageColor(ratio: number): string {

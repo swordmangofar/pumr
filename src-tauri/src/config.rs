@@ -11,11 +11,12 @@ pub fn default_system_prompt() -> String {
 You help with software engineering tasks in the user's active project. You are precise, pragmatic and terse. Prefer the smallest correct change over broad rewrites.
 
 Tools:
-- Use read, glob and grep to inspect the codebase before changing anything. Never invent file contents or APIs.
+- Use read, glob and grep to inspect the codebase before changing anything. Never invent file contents or APIs. Search before you read: grep can show the lines around a match (context) or just the files that match (output "files"), and read takes offset and limit, so you rarely need a whole file.
 - Use edit for targeted changes (exact string replacement) and write only for new files or full rewrites.
 - Use bash to run tests, builds and git commands. Prefer project scripts (pnpm/npm scripts) over ad-hoc commands.
 - Use webfetch to read a specific URL and websearch to look things up on the web. The user must approve every new website; if a website is denied, do not retry it.
-- Use task to spawn subagents for independent work in parallel. Give each subagent a complete, self-contained prompt: it cannot see this conversation. Multiple task calls in one turn run concurrently. Prefer doing the work yourself for small tasks.
+- Use task to spawn subagents for independent work in parallel. Give each subagent a complete, self-contained prompt: it cannot see this conversation. Multiple task calls in one turn run concurrently. Prefer doing the work yourself for small tasks. For a question that takes searching or reading many files, use task with mode "explore": the subagent reads them and reports what matters, and your own context stays free for the work.
+- Use todo to keep a task list for work with three or more steps, and keep it current as you go.
 - Use question to ask the user when you are blocked on a decision, need a preference, or requirements are ambiguous. Prefer this over ending your turn with an open question: provide concise options when a small set of choices fits, and the user can always type a custom answer. When you have a preferred option, put it first and set recommended on it, with a short description explaining why. Set multiSelect when the options are not mutually exclusive so the user can pick several.
 - Long-running commands are moved to the background automatically; tell the user they can stop them from the running processes indicator.
 - Some tool calls require user approval. Give such calls a one-sentence reason argument explaining why you need them; the user sees it in the approval prompt. If a tool is denied, do not retry it; adapt or ask the user.
@@ -89,6 +90,7 @@ Review the requested changes and report findings. Do not modify code unless the 
 - Medium: maintainability, performance, missing tests, error handling and unhandled edge cases.
 - Low: naming, style, documentation and minor polish.
 - Be specific. Cite the code and, where useful, a minimal suggested change. Do not pad the review with praise or restate the diff.
+- Confirm every finding before you report it: read the lines it rests on once more, try to refute it, and drop what does not hold up. Say so when you could not confirm one.
 
 After presenting the findings, ask the user what to do about each issue using the question tool. For every finding offer the options "Fix it", "Skip" and "Explain in more detail" — the user can always type their own answer. Ask about one finding at a time and wait for the answer before moving on. Only start fixing once the user confirms."#
         .to_string()
@@ -444,7 +446,15 @@ pub struct ModelSettings {
     /// restore a model's provider choice (e.g. "auto:throughput") when it is
     /// selected again.
     pub provider_by_model: std::collections::BTreeMap<String, String>,
-    pub context_message_limit: usize,
+    /// Share of the room a model's context window leaves for input, in
+    /// percent, at which a conversation is compacted: older messages are
+    /// replaced by a summary. 0 compacts only what no longer fits.
+    pub auto_compact_threshold: usize,
+    /// A conversation is compacted at this many input tokens at the latest,
+    /// however large the model's window is, since models lose track of a
+    /// context long before it is full. It is also the limit for models whose
+    /// window is unknown. 0 sets no such bound.
+    pub auto_compact_max_tokens: usize,
     /// Maximum number of consecutive model turns that may request tool calls
     /// before the agent pauses. Acts as a safety valve against runaway loops.
     pub max_tool_iterations: usize,
@@ -466,6 +476,9 @@ pub struct ModelSettings {
     /// forwards the marker to providers that support prompt caching; direct
     /// Anthropic requests also cache the conversation so far.
     pub prompt_caching: bool,
+    /// When the agent wants to finish after changing code without having run
+    /// anything, it is asked once to run one of the project's checks first.
+    pub verify_before_finish: bool,
 }
 
 impl Default for ModelSettings {
@@ -480,7 +493,8 @@ impl Default for ModelSettings {
             default_reasoning_effort: Some("medium".to_string()),
             favorite_models: Vec::new(),
             provider_by_model: std::collections::BTreeMap::new(),
-            context_message_limit: 40,
+            auto_compact_threshold: 70,
+            auto_compact_max_tokens: 150_000,
             max_tool_iterations: 35,
             auto_continue_all_sessions: false,
             subagent_model: None,
@@ -488,6 +502,7 @@ impl Default for ModelSettings {
             title_model: None,
             commit_message_model: None,
             prompt_caching: true,
+            verify_before_finish: true,
         }
     }
 }
@@ -767,6 +782,8 @@ pub struct InterfaceSettings {
     /// Overrides for configurable in-app hotkeys, keyed by action id
     /// (e.g. `chatSend`). Missing entries use the frontend defaults.
     pub hotkeys: std::collections::BTreeMap<String, String>,
+    /// Shows a banner over the chat while another chat waits on the user.
+    pub waiting_chats_banner: bool,
     pub sounds_enabled: bool,
     pub sound_volume: f64,
     pub done_sound: String,
@@ -789,6 +806,7 @@ impl Default for InterfaceSettings {
             delete_session_hotkey: default_delete_session_hotkey(),
             terminal_hotkey: default_terminal_hotkey(),
             hotkeys: std::collections::BTreeMap::new(),
+            waiting_chats_banner: true,
             sounds_enabled: true,
             sound_volume: 0.6,
             done_sound: "chime".to_string(),

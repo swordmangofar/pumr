@@ -6,17 +6,21 @@ mod config;
 mod db;
 mod debug_log;
 mod discovery;
+mod environment;
 mod error;
 mod git;
 mod marketplace;
 mod mcp;
 mod mentions;
+mod model_match;
 mod models;
 mod permissions;
 mod power;
 mod processes;
 mod providers;
 mod rendering;
+mod screenshot;
+mod shell_env;
 mod shell_lex;
 mod state;
 mod terminal;
@@ -31,6 +35,7 @@ pub fn run() {
     window::init_x11_threads();
     let context = tauri::generate_context!();
     appimage::isolate_gstreamer_registry(&context.config().identifier);
+    shell_env::adopt_login_shell_path();
     let startup = rendering::prepare(&context.config().identifier);
 
     tauri::Builder::default()
@@ -126,6 +131,7 @@ pub fn run() {
             commands::list_permission_audit,
             commands::clear_permission_audit,
             commands::resolve_question,
+            commands::resolve_model_choice,
             commands::add_command_rule,
             commands::delete_command_rule,
             commands::get_file_ignore_catalog,
@@ -212,6 +218,7 @@ pub fn run() {
             commands::get_project_rules,
             commands::revert_to_message,
             commands::summarize_session,
+            commands::compact_session,
             commands::get_system_info,
             commands::find_sensitive_data,
             commands::save_debug_log,
