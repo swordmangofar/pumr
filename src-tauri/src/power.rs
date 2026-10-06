@@ -32,7 +32,8 @@ impl PowerManager {
         Self { tx }
     }
 
-    /// Applied when the setting changes; takes effect on the next acquire.
+    /// Applied when the setting changes; takes effect at once, also for turns
+    /// that are already running.
     pub fn set_enabled(&self, enabled: bool) {
         let _ = self.tx.send(PowerCommand::SetEnabled(enabled));
     }

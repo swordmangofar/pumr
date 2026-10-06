@@ -6,16 +6,18 @@
     "toggleSidebar": "Seitenleiste umschalten",
     "toggleRightPanel": "Rechtes Panel umschalten",
     "toggleTerminal": "Terminal umschalten",
+    "keepAwake": "Wach halten, während Agenten arbeiten",
+    "keepAwakeOn": "Der Computer bleibt wach, während Agenten arbeiten. Klicke zum Ausschalten.",
+    "keepAwakeOff": "Der Computer kann in den Standby gehen, während Agenten arbeiten. Klicke, um ihn wach zu halten.",
     "refresh": "Aktualisieren",
     "notTauri": "pumr muss in Tauri laufen. Starte es mit: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekte",
+    "sessions": "Sitzungen",
     "workspace": "Workspace",
     "git": "Git",
     "addProject": "Projekt hinzufügen",
     "newSession": "Neue Sitzung",
-    "new": "Neu",
     "noProjects": "Noch keine Projekte. Füge einen Ordner hinzu.",
     "noSessions": "Keine Sitzungen",
     "removeProject": "Projekt entfernen",
@@ -36,8 +38,6 @@
     "yesterday": "Gestern"
   },
   "workspace": {
-    "title": "Workspace",
-    "noSession": "Öffne eine Sitzung, um ihre Dateien zu durchsuchen.",
     "empty": "Keine Dateien gefunden.",
     "libraryRoot": "library root",
     "noOpenFiles": "Keine geöffneten Dateien. Wähle eine Datei im Baum.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Tag {{ tag }} löschen?",
     "stashes": "Stashes",
     "stashCreate": "Änderungen stashen",
+    "stash": "Stashen",
+    "stashMessage": "Nachricht (optional)",
+    "stashIncludeUntracked": "Unversionierte Dateien einschließen",
     "stashApply": "Anwenden",
     "stashPop": "Hervorholen",
     "stashDropConfirm": "{{ stash }} verwerfen?",
@@ -129,6 +132,7 @@
       "useTheirs": "Eingehende Version nehmen (theirs)",
       "markResolved": "Als gelöst markieren",
       "fileHint": "Diese Datei hat Konflikte. Behalte eine Seite oder bearbeite die Datei und markiere sie als gelöst.",
+      "markersLeftIn": "Dateien mit Konflikten, die noch Konfliktmarker enthalten (<<<<<<< oder >>>>>>>): {{ count }}. Trotzdem als gelöst markieren?",
       "markersLeft": "Die Datei enthält noch Konfliktmarker (<<<<<<< oder >>>>>>>). Trotzdem als gelöst markieren?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Zielordner",
     "cloneChoose": "Auswählen…",
     "createBranch": "Branch erstellen",
+    "branch": "Branch",
     "branchName": "Branch-Name",
     "createBranchAt": "Branch erstellen bei: {{branch}}",
     "checkoutAfterCreate": "Nach dem Erstellen auschecken",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Verbinde einen Modellanbieter in den Einstellungen, um zu chatten.",
+    "noDefaultModel": "Noch kein Standardmodell gewählt. Öffne die Einstellungen, wähle unter „Modellanbieter“ bei „Standardmodell“ ein Modell und klicke auf „Speichern“.",
     "openSettings": "Einstellungen öffnen",
     "error": "Fehler",
     "retry": "Erneut versuchen",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} zum Senden · {{ newLine }} für neue Zeile",
     "hintStreaming": "{{ send }} für die Warteschlange · {{ stop }} zum Stoppen",
     "hintRecall": "{{ recall }} für den letzten Prompt",
+    "hintCommands": "/ für Befehle",
     "handover": "Übergabe",
     "handovering": "Zusammenfassen…",
     "handoverHint": "Diese Sitzung zusammenfassen und in einer neuen fortsetzen",
@@ -328,6 +335,13 @@
     "compacting": "Kontext wird komprimiert",
     "compacted": "Kontext komprimiert",
     "compactedHint": "Ab hier arbeitet das Modell mit dieser Zusammenfassung statt mit den Nachrichten darüber.",
+    "mcpStarting": "MCP-Server {{ name }} wird gestartet",
+    "mcpIssues": "Einige MCP-Server konnten für diese Nachricht nicht verwendet werden:",
+    "sideQuestion": "Zwischenfrage",
+    "sideQuestionHint": "Stelle eine kurze Frage zu dieser Sitzung oder zu etwas anderem. Die Antwort wird nicht zur Sitzung hinzugefügt.",
+    "sideQuestionPrivate": "Wird nicht zur Sitzung hinzugefügt",
+    "sideQuestionAnswering": "Antwortet…",
+    "sideQuestionStopped": "Gestoppt",
     "interrupted": "Dieser Chat wurde unterbrochen, bevor der Agent fertig war: pumr wurde geschlossen oder der Computer ging in den Ruhezustand. Du kannst ihn dort fortsetzen, wo er stehen geblieben ist.",
     "limitReached": "Nach {{ count }} Tool-Aufrufen ohne abschließende Antwort pausiert. Das Limit verhindert, dass ein festgefahrener Agent endlos weiterläuft. Fortsetzen gibt ihm ein neues Kontingent, oder aktiviere das automatische Fortsetzen.",
     "continue": "Fortsetzen",
@@ -456,7 +470,8 @@
         "cascade": "Mit einer anderen Anfrage verboten",
         "stopped": "Gestoppt",
         "timeout": "Zeitüberschreitung",
-        "cancelled": "Abgebrochen"
+        "cancelled": "Abgebrochen",
+        "hook": "Dein Hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Keine Treffer. Tippe weiter oder drücke Escape.",
     "mentionFetch": "{{ url }} abrufen",
     "removeMention": "Verweis entfernen",
+    "commandPrompt": "Wendet deinen Prompt „{{ name }}“ auf das an, was du danach schreibst",
+    "commandEffort": "Lege fest, wie viel das Modell nachdenkt",
+    "commandMode": "Wechsle den Modus dieser Sitzung",
+    "commandModel": "Wechsle das Modell dieser Sitzung",
+    "commandProvider": "Wähle den Anbieter, der das Modell bereitstellt",
+    "commandRevert": "Geht zu deinem letzten Prompt zurück: Alles danach wird entfernt, die Dateien lassen sich wiederherstellen",
+    "commandRevertNone": "Es gibt noch keinen Prompt, zu dem du zurückgehen kannst",
+    "commandRevertRunning": "Stoppe zuerst den Agenten",
+    "commandNoEffort": "Bei diesem Modell lässt sich kein Reasoning einstellen.",
+    "commandNoProvider": "Nur OpenRouter-Modelle können an einen Anbieter geleitet werden.",
     "textBlockWords": "{{ count }} Wörter",
     "textBlockRemove": "Eingefügten Text entfernen",
     "textBlockTitle": "Eingefügter Text",
@@ -634,7 +659,7 @@
     "alwaysOn": "Immer aktiv",
     "editInSettings": "In den Einstellungen bearbeiten",
     "yourPrompts": "Deine Prompts",
-    "yourPromptsHint": "Aktivierte Prompts werden an die aktiven System-Prompts angehängt. Du kannst sie bearbeiten oder integrierte Prompts auf den Originaltext zurücksetzen.",
+    "yourPromptsHint": "Rufe einen Prompt im Chatfeld mit einem Schrägstrich und seinem Namen auf, etwa /code-review. Er gilt dann nur für diese Nachricht. Bearbeite sie oder setze die integrierten auf den Originaltext zurück.",
     "addPrompt": "Neu",
     "customPrompt": "Eigener Prompt",
     "promptName": "Name des Prompts",
@@ -718,6 +743,8 @@
       "providers": "Anbieter",
       "agent": "Agent-Konfiguration",
       "agentRules": "Agent White- und Blacklist",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "Allgemein",
       "chat": "Chat",
       "appearance": "Erscheinungsbild",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP-Server",
       "workspace": "Workspace"
+    },
+    "sandbox": {
+      "title": "Sandbox für Befehle",
+      "hint": "Das Betriebssystem schränkt jeden Befehl ein, den der Agent ausführt, und alles, was dieser Befehl startet. Das ist eine zweite Schicht hinter den Berechtigungsregeln, für einen Befehl, den diese falsch einschätzen. Ein Befehl, den die Sandbox stoppt, kann darum bitten, außerhalb zu laufen; du wirst jedes Mal gefragt.",
+      "unavailable": "Dieses System hat keine Sandbox, die pumr nutzen kann, daher laufen Befehle uneingeschränkt. Nötig ist macOS oder Linux 5.19 oder neuer mit Landlock.",
+      "networkUnavailable": "Das Netzwerk zu sperren ist nur unter macOS möglich.",
+      "modes": {
+        "off": "Aus",
+        "files": "Dateien",
+        "filesAndNetwork": "Dateien und Netzwerk"
+      },
+      "modeHints": {
+        "off": "Befehle laufen als dein Benutzer, zurückgehalten nur von den Berechtigungsregeln.",
+        "files": "Befehle schreiben nur in das Projekt, deine zusätzlichen Ordner, temporäre Ordner und die unten aufgeführten Ordner. Die Ordner, in denen Schlüssel liegen, können sie nicht lesen.",
+        "filesAndNetwork": "Dasselbe, und Befehle erreichen nur diesen Computer, ausgenommen Befehle, deren Hosts du erlaubt hast. Das Installieren von Paketen fragt dann, ob es außerhalb der Sandbox laufen darf."
+      },
+      "writable": "Ordner, in die Befehle zusätzlich schreiben dürfen",
+      "writableHint": "Die Caches von Build-Tools. Ohne sie scheitert ein Build beim ersten Download. Ein Pfad beginnt mit / oder ~.",
+      "unreadable": "Ordner, die Befehle nicht lesen können",
+      "unreadableHint": "Wo Schlüssel und Tokens liegen. git, ssh und die Cloud-Tools behalten die Ordner, mit denen sie arbeiten, und ein Ordner, den du für Befehle freigegeben hast, bleibt offen.",
+      "excluded": "Befehle, die außerhalb der Sandbox laufen",
+      "excludedHint": "Für Tools, die eine eigene Sandbox mitbringen und in dieser scheitern, etwa Browsertests. Ein Eintrag nennt, wie die Befehlszeile beginnt; mit * ist er ein Muster für die ganze Zeile.",
+      "addCommand": "Befehl hinzufügen",
+      "noCommands": "Noch keine Befehle hinzugefügt."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Ein Hook ist ein Befehl von dir, den pumr zu einem festen Zeitpunkt der Arbeit des Agenten ausführt. Nicht das Modell entscheidet, ob er läuft, also kann es ihn nicht vergessen. Hooks laufen so, wie du sie geschrieben hast, ohne Berechtigungsanfragen und außerhalb der Sandbox.",
+      "protocol": "Ein Hook bekommt die Details als JSON über die Standardeingabe (tool_name, tool_input, tool_response) und die Datei, die ein Aufruf nennt, als $PUMR_FILE. Exit-Code 0 lässt den Agenten weitermachen. Exit-Code 2 gibt die Ausgabe des Hooks an den Agenten weiter und lehnt, vor einem Tool-Aufruf, den Aufruf ab.",
+      "add": "Hook hinzufügen",
+      "empty": "Noch keine Hooks hinzugefügt.",
+      "remove": "Hook entfernen",
+      "event": "Wann der Hook läuft",
+      "events": {
+        "beforeTool": "Vor einem Tool-Aufruf",
+        "afterTool": "Nach einem Tool-Aufruf",
+        "turnEnd": "Wenn der Agent abschließen will"
+      },
+      "tools": "Tools",
+      "toolsPlaceholder": "Jedes Tool oder Namen wie edit|write",
+      "files": "Dateien",
+      "filesPlaceholder": "Jede Datei oder Muster wie *.ts",
+      "command": "Befehl",
+      "timeout": "Stoppen nach (Sekunden)",
+      "project": "Projekt",
+      "allProjects": "Alle Projekte"
     },
     "providers": {
       "title": "Modellanbieter",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Nur ändern, wenn du einen Proxy oder ein kompatibles Gateway nutzt.",
     "defaultModel": "Standardmodell",
     "defaultModelHint": "Wird für neue Sitzungen verwendet.",
+    "defaultModelSetupTitle": "Standardmodell wählen",
+    "defaultModelSetup": "Dein Anbieter ist verbunden. Neue Sitzungen starten mit dem Standardmodell: Wähle es weiter unten auf dieser Seite bei „Standardmodell“ und klicke auf „Speichern“. In jedem Chat kannst du das Modell weiterhin wechseln.",
+    "defaultModelSetupAction": "Zum Standardmodell",
     "handoverModel": "Übergabe-Modell",
     "handoverModelPlaceholder": "Modell der aktuellen Sitzung verwenden",
     "handoverModelHint": "Modell, das eine Sitzung bei der Übergabe zusammenfasst. Leer lassen, um das Modell der aktuellen Sitzung zu verwenden.",
@@ -998,6 +1074,14 @@
       "mist": "Gedämpfter Text",
       "white": "Text"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Wird in der Kopfzeile der App und als App-Symbol angezeigt, solange pumr läuft.",
+      "mascot": "Sitzender Puma",
+      "classic": "Klassisches Gesicht",
+      "shaded": "Schattierter Puma",
+      "tailup": "Puma mit erhobenem Schwanz"
+    },
     "background": {
       "title": "App-Hintergrund",
       "hint": "Wähle einen eingebauten Hintergrund oder nutze dein eigenes Bild. Er liegt hinter den Glasflächen und folgt deinem Theme.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Neue Zeile",
       "chatStop": "Antwort stoppen",
       "chatRecallPrompt": "Letzten Prompt zurückholen",
+      "chatToggleMode": "Zwischen Planen und Programmieren wechseln",
+      "chatToggleModeHint": "Kehrt in den Modus zurück, in dem die Sitzung vor dem Planen war.",
       "gitToggleStage": "Ausgewählte Dateien vormerken oder zurücknehmen",
       "gitDiscardFiles": "Ausgewählte Dateien verwerfen",
       "gitSelectAllFiles": "Alle Dateien auswählen",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimieren",
       "fillScreen": "Bildschirm ausfüllen",
       "fillScreenHint": "Das aufgerufene Fenster füllt den aktiven Monitor, statt seine vorherige Größe zu behalten.",
+      "shortcutError": "Das systemweite Tastenkürzel konnte nicht registriert werden und holt pumr deshalb nicht hervor. Wahrscheinlich nutzt eine andere App diese Tastenkombination: Wähle eine andere und speichere erneut.",
+      "waylandHint": "Unter Wayland können Apps keine systemweiten Tastenkürzel registrieren, daher funktioniert dieses Kürzel hier nicht zuverlässig. Lege stattdessen den Befehl unten in den Tastatureinstellungen deines Desktops auf eine Taste.",
+      "command": "Befehl für das Tastenkürzel",
+      "commandHint": "Tut dasselbe wie das Kürzel: holt pumr hervor oder blendet es aus bzw. minimiert es, wenn es im Vordergrund ist. Lege ihn in den Tastatureinstellungen deines Desktops auf eine Taste.",
+      "commandActions": "Für eine einzelne Aktion den Befehl stattdessen mit einer dieser Optionen beenden:",
       "zoom": "Anzeigeskalierung",
       "zoomHint": "Skaliert die gesamte Oberfläche. Tastenkürzel: Ctrl/⌘ + + zum Vergrößern, Ctrl/⌘ + - zum Verkleinern, Ctrl/⌘ + 0 zum Zurücksetzen.",
       "zoomReset": "Zurücksetzen"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Befehl erlauben",
     "denyCommand": "Befehl blockieren",
     "noDeniedCommandRules": "Keine blockierten Befehle.",
+    "mcpToolGrants": "Erlaubte MCP-Tools",
+    "mcpToolGrantsHint": "Tools von MCP-Servern, die ohne Nachfrage laufen. Ein Eintrag gilt für ein Tool eines Servers, egal mit welchen Argumenten, und gilt nicht mehr, sobald sich die Konfiguration dieses Servers ändert. Nutze \"Immer erlauben\" in einer Freigabe, um einen anzulegen.",
+    "noMcpToolGrants": "Noch keine immer erlaubten MCP-Tools.",
+    "secretFolders": "Ordner mit freigegebenen sensiblen Dateien",
+    "secretFoldersHint": "Befehle dürfen die sensiblen Dateien (Schlüssel, Tokens, Zugangsdaten) direkt in diesen Ordnern ohne Nachfrage verwenden. Unterordner gehören nicht dazu. Nutze \"Immer erlauben\" in einer Freigabe, um einen anzulegen.",
+    "noSecretFolders": "Noch keine Ordner mit freigegebenen sensiblen Dateien.",
     "scope": {
       "program": "Programm",
       "subcommand": "Programm + Unterbefehl",
@@ -1276,7 +1373,8 @@
       "file": "Datei",
       "web": "Website",
       "websearch": "Websuche",
-      "folder": "Ordner"
+      "folder": "Ordner",
+      "hook": "Hook"
     },
     "allowAlways": "Immer erlauben",
     "siteRuleLabel": "Website-Regel (Domain oder Glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Fügt die Website und ihre Subdomains zu den erlaubten Websites hinzu.",
       "option": "Website + Subdomains"
     },
+    "secretScope": {
+      "title": "Sensible Dateien",
+      "hint": "Befehle dürfen die Schlüssel, Tokens und Zugangsdateien direkt in diesem Ordner dann ohne Nachfrage verwenden. Unterordner gehören nicht dazu.",
+      "option": "Sensible Dateien in diesem Ordner",
+      "chip": "sensible Dateien in {{ folder }}"
+    },
     "allowChat": "In diesem Chat erlauben",
     "option": {
       "yes": "Ja",
@@ -1315,6 +1419,7 @@
     "customize": "Anpassen",
     "justification": "Warum",
     "keyboardHint": "1–{{ count }} drücken oder ↑ ↓ und Enter verwenden · Esc lehnt ab",
+    "mcpToolHint": "Nicht mehr fragen gilt für jeden Aufruf dieses Tools auf diesem Server, egal mit welchen Argumenten.",
     "url": {
       "queryWarning": "Diese Adresse enthält viele Daten in ihrem Query-String. Prüfe, dass nichts Privates darin steht, bevor du sie erlaubst."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Nur diese Anfrage erlauben.",
       "allowSession": "Gilt in allen Chats, bis die App neu gestartet wird.",
       "allowChat": "Befehlsregeln gelten für diesen Chat und seine Subagenten; Ordner und Websites bis zum Neustart der App.",
+      "allowChatMcp": "Gilt für diesen Chat und seine Subagenten: jeder Aufruf dieses Tools auf diesem Server, egal mit welchen Argumenten.",
       "allowAlways": "Wird in deinen Einstellungen gespeichert und gilt für alle Chats."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Neues Terminal",
     "close": "Terminal schließen",
     "hide": "Terminal ausblenden",
+    "run": "Im Terminal ausführen",
     "noProject": "Öffne eine Sitzung, um das Terminal zu nutzen.",
     "exited": "Prozess mit Code {{ code }} beendet",
     "failed": "Terminal konnte nicht gestartet werden: {{ error }}"

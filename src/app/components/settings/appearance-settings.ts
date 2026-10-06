@@ -3,6 +3,7 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { api, isTauri } from '../../core/api';
 import { BackgroundService } from '../../core/background.service';
 import { BACKGROUND_CUSTOM, BACKGROUND_NONE, BACKGROUND_PRESETS } from '../../core/backgrounds';
+import { LOGOS } from '../../core/logos';
 import { CUSTOM_THEME_ID, THEME_PRESETS, ThemeColors } from '../../core/themes';
 import { SettingsDraftService } from './settings-draft.service';
 
@@ -130,6 +131,34 @@ import { TypedInput } from '../typed-input';
           </div>
         </div>
       }
+    </section>
+
+    <section class="mt-8">
+      <label class="mb-2 block text-sm font-semibold text-white">
+        {{ 'settings.logo.title' | transloco }}
+      </label>
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        @for (logo of logos; track logo.id) {
+          <button
+            type="button"
+            class="flex items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors"
+            [class]="
+              draft.draft().logo === logo.id
+                ? 'border-accent/70 bg-accent/10'
+                : 'border-white/10 hover:border-white/25 hover:bg-white/5'
+            "
+            (click)="draft.selectLogo(logo.id)"
+          >
+            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-navy">
+              <img [src]="logo.src" alt="" class="h-6 w-6" />
+            </span>
+            <span class="block min-w-0 truncate text-sm font-medium text-white">
+              {{ logo.labelKey | transloco }}
+            </span>
+          </button>
+        }
+      </div>
+      <p class="mt-2 text-xs text-mist/30">{{ 'settings.logo.hint' | transloco }}</p>
     </section>
 
     <section class="mt-8">
@@ -340,6 +369,7 @@ export class AppearanceSettings {
   protected readonly background = inject(BackgroundService);
   protected readonly themes = THEME_PRESETS;
   protected readonly customThemeId = CUSTOM_THEME_ID;
+  protected readonly logos = LOGOS;
   protected readonly backgrounds = BACKGROUND_PRESETS;
   protected readonly noneId = BACKGROUND_NONE;
   protected readonly customId = BACKGROUND_CUSTOM;

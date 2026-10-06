@@ -365,7 +365,8 @@ impl Db {
         conn.query_row(
             r#"
             SELECT p.id, p.path, p.name, p.created_at, p.last_opened_at,
-                   (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0),
+                   (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0
+                      AND s.parent_session_id IS NULL),
                    COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0),
                    p.color, p.icon, p.icon_image
             FROM projects p WHERE p.id = ?1
@@ -381,7 +382,8 @@ impl Db {
             let mut stmt = conn.prepare(
                 r#"
                 SELECT p.id, p.path, p.name, p.created_at, p.last_opened_at,
-                       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0),
+                       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0
+                          AND s.parent_session_id IS NULL),
                        COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0),
                        p.color, p.icon, p.icon_image
                 FROM projects p
@@ -907,6 +909,21 @@ impl Db {
         model: &str,
         usage: (f64, i64, i64, i64),
     ) -> Result<Message> {
+        // The summary was written from the messages up to `upto_seq`. Once the
+        // chat was reverted to before it, the checkpoint would hide whatever
+        // is written at those positions next from the model.
+        let covered = self.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ?1 AND seq = ?2)",
+                params![session_id, upto_seq],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })?;
+        if !covered {
+            return Err(AppError::msg(
+                "The chat changed while it was being compacted.",
+            ));
+        }
         let (cost, prompt_tokens, completion_tokens, cached_tokens) = usage;
         let message = self.append_message(
             session_id,
@@ -1148,10 +1165,12 @@ impl Db {
             )?;
             // Messages added from here on take these positions again and must
             // not inherit the cleared mark of the ones they replace. A turn
-            // that was cut off is among the removed ones.
+            // that was cut off, or that stopped at the tool limit, is among
+            // the removed ones, so there is nothing left of it to continue.
             conn.execute(
-                "UPDATE sessions SET cleared_upto = MIN(cleared_upto, ?2 - 1), interrupted = 0
-                 WHERE id = ?1",
+                "UPDATE sessions
+                    SET cleared_upto = MIN(cleared_upto, ?2 - 1), interrupted = 0, limit_reached = 0
+                  WHERE id = ?1",
                 params![session_id, seq],
             )?;
             Ok(())
@@ -1789,6 +1808,93 @@ mod tests {
         db.delete_messages_from(&chat.id, 2).unwrap();
         assert!(db.latest_checkpoint(&chat.id).unwrap().is_none());
         assert_eq!(db.cleared_upto(&chat.id).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_checkpoint_for_messages_that_were_reverted_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-late-checkpoint").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        for text in ["one", "two", "three", "four"] {
+            db.append_message(&chat.id, NewMessage::user(text, "", None, &[], &[]))
+                .unwrap();
+        }
+
+        // A summary of the messages up to "three" is being written when the
+        // chat is reverted to "two". Stored now, it would cover the prompt
+        // that is sent next.
+        db.delete_messages_from(&chat.id, 1).unwrap();
+        let error = db
+            .append_checkpoint(&chat.id, "late summary", 2, "model", (0.0, 0, 0, 0))
+            .unwrap_err();
+        assert!(error.to_string().contains("changed while"), "{error}");
+        assert!(db.latest_checkpoint(&chat.id).unwrap().is_none());
+        assert_eq!(db.list_messages(&chat.id).unwrap().len(), 1);
+
+        // What is still there can be summarised.
+        db.append_checkpoint(&chat.id, "summary", 0, "model", (0.0, 0, 0, 0))
+            .unwrap();
+        assert_eq!(db.latest_checkpoint(&chat.id).unwrap().unwrap().upto_seq, 0);
+    }
+
+    #[test]
+    fn reverting_a_turn_that_hit_the_tool_limit_leaves_nothing_to_continue() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-limit-reached").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let other = db
+            .create_session(&project.id, "other", None, None, None, None, None)
+            .unwrap();
+        let prompt = db
+            .append_message(&chat.id, NewMessage::user("go", "", None, &[], &[]))
+            .unwrap();
+        assert!(db.set_session_limit_reached(&chat.id, true).unwrap().limit_reached);
+        db.set_session_limit_reached(&other.id, true).unwrap();
+
+        db.delete_messages_from(&chat.id, prompt.seq).unwrap();
+        assert!(!db.get_session(&chat.id).unwrap().limit_reached);
+        // Another chat's turn is still there to continue.
+        assert!(db.get_session(&other.id).unwrap().limit_reached);
+    }
+
+    #[test]
+    fn a_project_counts_its_chats_without_their_subagent_sessions() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-session-count").unwrap();
+        assert_eq!(project.session_count, 0);
+        let session = |title: &str| {
+            db.create_session(&project.id, title, None, None, None, None, None)
+                .unwrap()
+        };
+        let (chat, archived) = (session("chat"), session("archived"));
+        db.set_session_archived(&archived.id, true).unwrap();
+        let sub = db
+            .create_sub_session(&project.id, &chat.id, "sub", None, None, None, None)
+            .unwrap();
+        db.create_sub_session(&project.id, &sub.id, "nested", None, None, None, None)
+            .unwrap();
+        db.add_session_usage(&chat.id, 1.0, 0, 0, 0).unwrap();
+        db.add_session_usage(&sub.id, 0.5, 0, 0, 0).unwrap();
+
+        // Both ways a project is read: the list, and opening it again.
+        let listed = db.list_projects().unwrap();
+        let opened = db.upsert_project("/tmp/pumr-session-count").unwrap();
+        for project in [&listed[0], &opened] {
+            assert_eq!(project.session_count, 1);
+            // What the subagents spent is the project's spend all the same.
+            assert_eq!(project.total_cost, 1.5);
+        }
+        assert_eq!(db.list_sessions(&project.id, false).unwrap().len(), 1);
     }
 
     #[test]

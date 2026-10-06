@@ -289,6 +289,53 @@ describe('PermissionOverlay', () => {
       other.remove();
     });
 
+    describe('while something else covers the window', () => {
+      let layer: HTMLElement;
+
+      /** Stands in for a preview, dialog or menu, none of which takes focus. */
+      function cover(patch: (layer: HTMLElement) => void): void {
+        layer = document.createElement('div');
+        patch(layer);
+        document.body.appendChild(layer);
+        (document.activeElement as HTMLElement | null)?.blur();
+        expect(document.activeElement).toBe(document.body);
+      }
+
+      afterEach(() => layer.remove());
+
+      it('leaves Esc to a preview that closes on it', async () => {
+        await create(request());
+        cover((preview) => (preview.className = 'fixed inset-0 z-50 bg-black/70'));
+        press('Escape', document.body);
+        expect(resolvePermission).not.toHaveBeenCalled();
+      });
+
+      it('approves nothing with Enter or a digit', async () => {
+        await create(request());
+        cover((preview) => (preview.className = 'fixed inset-0 z-50 bg-black/70'));
+        press('Enter', document.body);
+        press('1', document.body);
+        expect(resolvePermission).not.toHaveBeenCalled();
+      });
+
+      it('leaves the keys to a dialog without a backdrop too', async () => {
+        await create(request());
+        cover((dialog) => dialog.setAttribute('role', 'dialog'));
+        press('Escape', document.body);
+        press('1', document.body);
+        expect(resolvePermission).not.toHaveBeenCalled();
+      });
+
+      it('answers again once it is closed', async () => {
+        await create(request());
+        cover((preview) => (preview.className = 'fixed inset-0 z-50 bg-black/70'));
+        press('Escape', document.body);
+        layer.remove();
+        press('Escape', document.body);
+        expect(resolvePermission).toHaveBeenCalledWith('deny');
+      });
+    });
+
     it('never treats typing in a field as a choice', async () => {
       await create(webRequest());
       openCustomize();
@@ -564,6 +611,142 @@ describe('PermissionOverlay', () => {
       );
       expect(optionIds()).toEqual(['allow', 'deny']);
       expect(element().textContent).toContain('/project/.env');
+    });
+  });
+
+  describe('sensitive files', () => {
+    const folder = '/home/me/secrets/credentials';
+
+    function secretRequest(): PermissionRequestEvent {
+      return request({
+        command: 'cat /home/me/secrets/credentials/jira-credentials',
+        detail: 'Command touches paths outside the project: …/jira-credentials',
+        scopeOptions: [],
+        suggestedRule: null,
+        risk: { level: 'danger', detail: 'It touches sensitive files outside the project.' },
+        folders: [folder],
+        secretFolders: [folder],
+      });
+    }
+
+    function secretChips(id: string): string[] {
+      return [...(option(id)?.querySelectorAll('[data-testid="secret-chip"]') ?? [])].map(
+        (chip) => chip.textContent?.trim() ?? '',
+      );
+    }
+
+    it('offers to release the sensitive files of the folder with it', async () => {
+      await create(secretRequest());
+      expect(optionIds()).toEqual(['allow', 'allow_session', 'allow_always', 'deny']);
+      // The folder itself, and apart from it what is released in it.
+      expect(chips('allow_always')).toEqual([folder, 'permission.secretScope.chip']);
+      expect(secretChips('allow_session')).toEqual(['permission.secretScope.chip']);
+      expect(option('allow_always')?.querySelector('[data-testid="secret-chip"]')).toHaveProperty(
+        'title',
+        folder,
+      );
+      expect(secretChips('allow')).toEqual([]);
+    });
+
+    it('never preselects a choice that releases secrets', async () => {
+      await create(secretRequest());
+      expect(document.activeElement).toBe(option('allow'));
+    });
+
+    it('sends the folders whose sensitive files it releases', async () => {
+      await create(secretRequest());
+      option('allow_always')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_always',
+        [],
+        [folder],
+        [],
+        undefined,
+        [folder],
+      );
+    });
+
+    it('lets the user allow the folder and keep its secrets asking', async () => {
+      await create(secretRequest());
+      openCustomize();
+      const toggle = element().querySelector(
+        '[data-testid="secret-folder-option"]',
+      ) as HTMLButtonElement;
+      expect(toggle.textContent).toContain('permission.secretScope.option');
+      toggle.click();
+      fixture.detectChanges();
+      expect(secretChips('allow_session')).toEqual([]);
+      expect(chips('allow_session')).toEqual([folder]);
+
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_session',
+        [],
+        [folder],
+        [],
+        undefined,
+        [],
+      );
+    });
+
+    it('offers the release alone once the folder is already allowed', async () => {
+      await create(request({ ...secretRequest(), folders: [] }));
+      expect(optionIds()).toEqual(['allow', 'allow_session', 'allow_always', 'deny']);
+      expect(chips('allow_session')).toEqual(['permission.secretScope.chip']);
+    });
+  });
+
+  describe('MCP tool prompts', () => {
+    function mcpRequest(): PermissionRequestEvent {
+      return request({
+        title: 'Run MCP tool mcp__codegraph__codegraph_explore?',
+        command: '{"tool":"mcp__codegraph__codegraph_explore","arguments":{"query":"total"}}',
+        scopeOptions: [],
+        suggestedRule: null,
+        mcpTool: {
+          server: 'codegraph',
+          tool: 'codegraph_explore',
+          source: '/home/me/.config/opencode/opencode.json',
+          fingerprint: 'aaaa',
+        },
+      });
+    }
+
+    function hint(): Element | null {
+      return element().querySelector('[data-testid="mcp-tool-hint"]');
+    }
+
+    it('offers to stop asking for the tool in this chat or always', async () => {
+      await create(mcpRequest());
+      expect(optionIds()).toEqual(['allow', 'allow_session', 'allow_always', 'deny']);
+      expect(option('allow_session')?.textContent).toContain('permission.option.chat');
+      expect(chips('allow_session')).toEqual(['codegraph_explore (codegraph)']);
+      expect(chips('allow_always')).toEqual(['codegraph_explore (codegraph)']);
+      expect(option('allow_session')?.getAttribute('title')).toBe(
+        'permission.tooltip.allowChatMcp',
+      );
+    });
+
+    it('says that the choice covers the tool with any arguments', async () => {
+      await create(mcpRequest());
+      expect(hint()?.textContent).toContain('permission.mcpToolHint');
+    });
+
+    it('keeps that note off a command prompt', async () => {
+      await create(request());
+      expect(hint()).toBeNull();
+    });
+
+    it('focuses a plain yes although commands default to remembering', async () => {
+      await create(mcpRequest());
+      expect(FALLBACK_SETTINGS.permissionDefaults.command).toBe('session');
+      expect(document.activeElement).toBe(option('allow'));
+    });
+
+    it('sends the remembering choice without a command rule', async () => {
+      await create(mcpRequest());
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith('allow_session', [], [], []);
     });
   });
 });

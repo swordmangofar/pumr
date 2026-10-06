@@ -1,7 +1,13 @@
 import type {
+  EndpointInfo,
   FileChange,
   FileDiff,
+  GitCommit,
+  GitDiffLine,
+  GitHunkDiff,
+  GitRefs,
   GitStatus,
+  McpToolGrant,
   Message,
   MessageAttachment,
   ModelInfo,
@@ -14,6 +20,8 @@ import type {
   Session,
   Settings,
   StreamEvent,
+  SandboxSupport,
+  WindowControl,
   WorkspaceEntry,
 } from '../../src/app/core/models';
 
@@ -47,7 +55,11 @@ export type FakeStep =
        */
       writes?: Record<string, string | null>;
     }
-  /** Asks to run `command` and waits for `resolve_permission`. */
+  /**
+   * Asks to run `command` and waits for `resolve_permission`. With an
+   * `mcpTool` in `request` it is the call of an MCP tool, which runs without
+   * asking once the user chose not to be asked again for that tool.
+   */
   | {
       kind: 'permission';
       command: string;
@@ -75,6 +87,34 @@ export type FakeStep =
 
 export interface FakeReply {
   steps: FakeStep[];
+  /**
+   * An MCP server the turn starts before it calls the model. Starting takes
+   * until the test calls `window.__pumrFakeResume`, or until Stop; `issues` is
+   * what the chat is then told the turn has to do without.
+   */
+  mcp?: { server: string; issues?: string[] };
+}
+
+/** The parts of a repository the fake does not derive from the project folder. */
+export interface FakeGit {
+  /** Branches, tags and stashes; what is left out is empty. */
+  refs?: Partial<GitRefs>;
+  /** What is committed, where that is not the project folder as seeded. */
+  committed?: Record<string, string>;
+  /** The history, newest first. */
+  commits?: GitCommit[];
+  /** Local branches that git only deletes when forced. */
+  unmerged?: string[];
+  /** What merging a branch, or rebasing onto it, brings in; nothing by default. */
+  incoming?: Record<string, FakeIncoming>;
+}
+
+/** The outcome of a merge or rebase, as file contents by path. */
+export interface FakeIncoming {
+  /** Applied cleanly. */
+  changes?: Record<string, string>;
+  /** Left as conflicts, which stop the operation until they are resolved. */
+  conflicts?: Record<string, string>;
 }
 
 export interface FakeSeed {
@@ -85,14 +125,30 @@ export interface FakeSeed {
   sessions: Session[];
   messages: Message[];
   models: ModelInfo[];
+  /** The providers OpenRouter serves every model through, for the routing pickers. */
+  endpoints: EndpointInfo[];
   /** Content of the files in the project folder, by path relative to it. */
   files: Record<string, string>;
   /** Whether the project folder is a git repository with `files` committed. */
   repo: boolean;
+  /** What the git views list besides the work tree. */
+  git?: FakeGit;
+  /** Commands that are rejected, with the error the Rust side returns. */
+  failures?: Record<string, string>;
   /** What the native folder picker returns; `null` means cancelled. */
   pickFolder: string | null;
   /** What native confirm/ask dialogs return. */
   confirm: boolean;
+  /**
+   * How the desktop summons the window (`get_window_control`). Its
+   * `shortcutError` is why registering the shortcut fails on this desktop; it
+   * is only reported while the saved settings have the shortcut switched on.
+   */
+  windowControl: WindowControl;
+  /** What the sandbox can do on this machine (`get_sandbox_support`). */
+  sandboxSupport: SandboxSupport;
+  /** Whether the webview paints without GPU compositing (`is_software_rendered`). */
+  softwareRendering: boolean;
   replies: FakeReply[];
   /** Milliseconds between streamed chunks. */
   chunkDelayMs: number;
@@ -117,8 +173,12 @@ export interface FakeHandle {
   replies: FakeReply[];
   pickFolder: string | null;
   confirm: boolean;
+  /** Answers to the next confirm dialogs, in order; `confirm` applies after them. */
+  answers: boolean[];
   /** Debug logs written through the save dialog of `save_debug_log`. */
   savedLogs: { fileName: string; content: string }[];
+  /** Ids of terminals in which a program runs (`terminal_busy`). */
+  busyTerminals: string[];
 }
 
 /**
@@ -177,7 +237,9 @@ export function installFakeBackend(seed: FakeSeed): void {
     replies: restored?.replies ?? clone(seed.replies),
     pickFolder: restored ? restored.pickFolder : seed.pickFolder,
     confirm: restored?.confirm ?? seed.confirm,
+    answers: restored?.answers ?? [],
     savedLogs: restored?.savedLogs ?? [],
+    busyTerminals: restored?.busyTerminals ?? [],
   };
   (window as unknown as { __pumrFake: FakeHandle }).__pumrFake = handle;
   const persist = () => {
@@ -310,18 +372,21 @@ export function installFakeBackend(seed: FakeSeed): void {
     content ? content.replace(/\n$/, '').split('\n').length : 0;
   const languageOf = (path: string) => (path.endsWith('.ts') ? 'typescript' : 'plaintext');
 
-  /** What differs between `base` and the folder; a changed file counts whole. */
-  function changesSince(base: Map<string, string>): FileChange[] {
-    return [...new Set([...base.keys(), ...files.keys()])]
+  /** What differs between two versions of the folder; a changed file counts whole. */
+  function changesBetween(base: Map<string, string>, next: Map<string, string>): FileChange[] {
+    return [...new Set([...base.keys(), ...next.keys()])]
       .sort()
-      .filter((path) => base.get(path) !== files.get(path))
+      .filter((path) => base.get(path) !== next.get(path))
       .map((path) => ({
         path,
-        additions: lineCount(files.get(path)),
+        additions: lineCount(next.get(path)),
         deletions: lineCount(base.get(path)),
-        status: !base.has(path) ? 'A' : !files.has(path) ? 'D' : 'M',
+        status: !base.has(path) ? 'A' : !next.has(path) ? 'D' : 'M',
       }));
   }
+
+  /** What differs between `base` and the folder. */
+  const changesSince = (base: Map<string, string>) => changesBetween(base, files);
 
   function sessionChanges(sessionId: unknown): FileChange[] {
     const base = baselines.get(String(sessionId));
@@ -341,19 +406,398 @@ export function installFakeBackend(seed: FakeSeed): void {
     return [...entries.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
   }
 
+  // --- git ------------------------------------------------------------------
+
+  // The repository of the project folder: `committed` is HEAD, `index` what
+  // is staged on top of it, and `files` the work tree.
+  let isRepo = seed.repo;
+  const committed = new Map(Object.entries(seed.git?.committed ?? seed.files));
+  const index = new Map(committed);
+  const commits: GitCommit[] = clone(seed.git?.commits ?? []);
+  const refs: GitRefs = {
+    branches: [],
+    tags: [],
+    stashes: [],
+    submodules: [],
+    remotes: [],
+    ...clone(seed.git?.refs ?? {}),
+  };
+  let currentBranch = refs.branches.find((branch) => branch.current)?.name ?? 'main';
+  /** What each stash made here put away, by its hash: the content of every path it took. */
+  const stashed = new Map<string, Map<string, string | undefined>>();
+  /** A merge or rebase that stopped at conflicts. */
+  let operation: {
+    name: 'merge' | 'rebase';
+    branch: string;
+    /** The incoming content of the paths that are still unresolved. */
+    conflicts: Map<string, string>;
+    /** The folder and the index as they were before, for an abort. */
+    before: { files: [string, string][]; index: [string, string][] };
+  } | null = null;
+
   function gitStatus(): GitStatus {
+    // Like git, a conflicted path is listed on both sides until it is resolved.
+    const conflicted = operation ? [...operation.conflicts.keys()].sort() : [];
+    const unmerged = (changes: FileChange[]) => [
+      ...changes.filter((change) => !conflicted.includes(change.path)),
+      ...conflicted.map((path) => ({ path, additions: 0, deletions: 0, status: 'U' })),
+    ];
     return {
-      isRepo: seed.repo,
-      branch: seed.repo ? 'main' : null,
-      head: seed.repo ? 'a1b2c3d' : null,
+      isRepo,
+      branch: isRepo ? currentBranch : null,
+      head: isRepo ? 'a1b2c3d' : null,
       upstream: null,
       ahead: 0,
       behind: 0,
-      staged: [],
-      unstaged: seed.repo ? changesSince(new Map(Object.entries(seed.files))) : [],
-      operation: null,
-      conflicted: [],
+      staged: isRepo ? unmerged(changesBetween(committed, index)) : [],
+      unstaged: isRepo ? unmerged(changesBetween(index, files)) : [],
+      operation: operation?.name ?? null,
+      conflicted,
     };
+  }
+
+  /** Makes `paths` (every path when `null`) in `to` what they are in `from`. */
+  function copyPaths(
+    from: Map<string, string>,
+    to: Map<string, string>,
+    paths: string[] | null,
+  ): void {
+    for (const path of paths ?? [...new Set([...from.keys(), ...to.keys()])]) {
+      const content = from.get(path);
+      if (content === undefined) {
+        to.delete(path);
+      } else {
+        to.set(path, content);
+      }
+    }
+  }
+
+  const pathsOf = (args: Args): string[] | null =>
+    (args['paths'] as string[] | undefined) ?? (args['path'] ? [String(args['path'])] : null);
+
+  /**
+   * The diff of one path as a single hunk: the lines both versions start and
+   * end with are context, what is between them is removed and added.
+   */
+  function hunkDiff(path: string, staged: boolean): GitHunkDiff {
+    const [from, to] = staged ? [committed, index] : [index, files];
+    if (operation?.conflicts.has(path)) {
+      return {
+        path,
+        staged,
+        status: 'M',
+        language: languageOf(path),
+        hunks: [],
+        additions: 0,
+        deletions: 0,
+        binary: false,
+        tooLarge: false,
+        blocked: 'conflict',
+        fingerprint: '',
+      };
+    }
+    const linesOf = (content: string | undefined) =>
+      content ? content.replace(/\n$/, '').split('\n') : [];
+    const [old, next] = [linesOf(from.get(path)), linesOf(to.get(path))];
+    let start = 0;
+    while (start < old.length && start < next.length && old[start] === next[start]) {
+      start += 1;
+    }
+    let end = 0;
+    while (
+      end < old.length - start &&
+      end < next.length - start &&
+      old[old.length - 1 - end] === next[next.length - 1 - end]
+    ) {
+      end += 1;
+    }
+    const lines: GitDiffLine[] = [];
+    const push = (kind: GitDiffLine['kind'], text: string, oldLine: number, newLine: number) =>
+      lines.push({
+        id: lines.length,
+        kind,
+        text,
+        oldLine: kind === 'add' ? null : oldLine,
+        newLine: kind === 'del' ? null : newLine,
+        noNewline: false,
+      });
+    old.slice(0, start).forEach((text, at) => push('context', text, at + 1, at + 1));
+    old.slice(start, old.length - end).forEach((text, at) => push('del', text, start + at + 1, 0));
+    next
+      .slice(start, next.length - end)
+      .forEach((text, at) => push('add', text, 0, start + at + 1));
+    old
+      .slice(old.length - end)
+      .forEach((text, at) =>
+        push('context', text, old.length - end + at + 1, next.length - end + at + 1),
+      );
+    return {
+      path,
+      staged,
+      status: !from.has(path) ? 'A' : !to.has(path) ? 'D' : 'M',
+      language: languageOf(path),
+      hunks: lines.some((line) => line.kind !== 'context')
+        ? [
+            {
+              oldStart: 1,
+              oldLines: old.length,
+              newStart: 1,
+              newLines: next.length,
+              section: '',
+              lines,
+            },
+          ]
+        : [],
+      additions: next.length - start - end,
+      deletions: old.length - start - end,
+      binary: false,
+      tooLarge: false,
+      blocked: null,
+      fingerprint: JSON.stringify([staged, from.get(path) ?? null, to.get(path) ?? null]),
+    };
+  }
+
+  /** Stages, unstages or discards the chosen lines of the diff `hunkDiff` gave out. */
+  function applyLines(args: Args): null {
+    const [path, staged, action] = [
+      String(args['path']),
+      Boolean(args['staged']),
+      String(args['action']),
+    ];
+    const diff = hunkDiff(path, staged);
+    if (diff.fingerprint !== args['fingerprint']) {
+      throw `stale diff: ${path} changed since its diff was loaded`;
+    }
+    const chosen = new Set(args['lines'] as number[]);
+    // Staging takes the chosen changes over; the other two take them back out.
+    const forward = action === 'stage';
+    const kept = diff.hunks
+      .flatMap((hunk) => hunk.lines)
+      .filter(
+        (line) =>
+          line.kind === 'context' ||
+          (line.kind === 'del' ? chosen.has(line.id) !== forward : chosen.has(line.id) === forward),
+      );
+    const target = action === 'discard' ? files : index;
+    if (kept.length === 0) {
+      target.delete(path);
+    } else {
+      target.set(path, kept.map((line) => `${line.text}\n`).join(''));
+    }
+    return null;
+  }
+
+  function commitStaged(args: Args): string {
+    if (operation && operation.conflicts.size > 0) {
+      throw 'error: Committing is not possible because you have unmerged files.';
+    }
+    if (changesBetween(committed, index).length === 0 && !args['amend'] && !operation) {
+      throw 'nothing to commit';
+    }
+    operation = null;
+    copyPaths(index, committed, null);
+    const [subject] = String(args['message']).split('\n');
+    const hash = `${commits.length + 1}`.padStart(40, 'c');
+    if (args['amend']) {
+      commits.shift();
+    }
+    commits.unshift({
+      hash,
+      shortHash: hash.slice(0, 7),
+      author: 'e2e',
+      timestamp: 0,
+      subject,
+      refs: ['main'],
+      parents: commits[0] ? [commits[0].hash] : [],
+    });
+    return `[main ${hash.slice(0, 7)}] ${subject}`;
+  }
+
+  /** Staging a conflicted file is how it is marked as resolved. */
+  function stagePaths(args: Args): void {
+    const paths = pathsOf(args);
+    copyPaths(files, index, paths);
+    for (const path of paths ?? [...(operation?.conflicts.keys() ?? [])]) {
+      operation?.conflicts.delete(path);
+    }
+  }
+
+  /**
+   * Unstaging leaves unmerged paths as they are: a conflict is resolved, not
+   * unstaged. Among other paths they are skipped without a word; asked for
+   * nothing but them, the command fails as it does in Rust.
+   */
+  function unstagePaths(args: Args): void {
+    const requested = pathsOf(args) ?? [...new Set([...committed.keys(), ...index.keys()])];
+    const paths = requested.filter((path) => !operation?.conflicts.has(path));
+    if (requested.length > 0 && paths.length === 0) {
+      throw `conflicts are resolved, not unstaged: ${[...requested].sort().slice(0, 5).join(', ')}`;
+    }
+    copyPaths(committed, index, paths);
+  }
+
+  function createBranch(args: Args): string {
+    const name = String(args['name']);
+    if (/\s|\.\./.test(name)) {
+      throw `fatal: '${name}' is not a valid branch name`;
+    }
+    if (refs.branches.some((branch) => !branch.remote && branch.name === name)) {
+      throw `fatal: a branch named '${name}' already exists`;
+    }
+    const tip = refs.branches.find((branch) => branch.name === currentBranch);
+    refs.branches = [
+      ...refs.branches,
+      {
+        name,
+        current: false,
+        remote: false,
+        upstream: null,
+        remoteName: null,
+        remoteBranch: null,
+        hash: tip?.hash ?? commits[0]?.hash ?? null,
+        subject: tip?.subject ?? null,
+        timestamp: tip?.timestamp ?? null,
+      },
+    ];
+    return args['checkout'] ? checkoutBranch({ branch: name }) : '';
+  }
+
+  /** Switches branches; local changes come along, as they do when nothing collides. */
+  function checkoutBranch(args: Args): string {
+    const name = String(args['localBranch'] ?? args['branch']);
+    if (!refs.branches.some((branch) => branch.name === name)) {
+      throw `error: pathspec '${name}' did not match any file(s) known to git`;
+    }
+    currentBranch = name;
+    refs.branches = refs.branches.map((branch) => ({
+      ...branch,
+      current: !branch.remote && branch.name === name,
+    }));
+    return `Switched to branch '${name}'`;
+  }
+
+  const renumbered = (stashes: GitRefs['stashes']) =>
+    stashes.map((stash, at) => ({ ...stash, name: `stash@{${at}}` }));
+
+  /** Puts the local changes away; new files only when untracked ones are asked for. */
+  function stashPush(args: Args): string {
+    const changed = [...changesBetween(committed, index), ...changesBetween(index, files)]
+      .map((change) => change.path)
+      .filter((path) => args['includeUntracked'] || committed.has(path) || index.has(path));
+    if (changed.length === 0) {
+      return 'No local changes to save';
+    }
+    const hash = `${stashed.size + 1}`.padStart(40, 'e');
+    stashed.set(hash, new Map(changed.map((path) => [path, files.get(path)])));
+    copyPaths(committed, index, changed);
+    copyPaths(committed, files, changed);
+    const message = args['message']
+      ? `On ${currentBranch}: ${String(args['message'])}`
+      : `WIP on ${currentBranch}: a1b2c3d`;
+    refs.stashes = renumbered([{ name: '', hash, message }, ...refs.stashes]);
+    return `Saved working directory and index state ${message}`;
+  }
+
+  /** Brings back what a stash put away; `drop` is the difference between pop and apply. */
+  function stashRestore(args: Args, drop: boolean): string {
+    const hash = String(args['hash']);
+    if (!refs.stashes.some((stash) => stash.hash === hash && stash.name === args['stash'])) {
+      throw `${String(args['stash'])} changed since the stash list was loaded; refresh and try again`;
+    }
+    for (const [path, content] of stashed.get(hash) ?? []) {
+      if (content === undefined) {
+        files.delete(path);
+      } else {
+        files.set(path, content);
+      }
+    }
+    if (drop) {
+      stashed.delete(hash);
+      refs.stashes = renumbered(refs.stashes.filter((stash) => stash.hash !== hash));
+    }
+    return '';
+  }
+
+  /** Merges `branch` or rebases onto it, with the outcome the seed gives that branch. */
+  function integrate(name: 'merge' | 'rebase', branch: string): string {
+    const incoming = seed.git?.incoming?.[branch];
+    const clean = Object.keys(incoming?.changes ?? {});
+    const conflicts = new Map(Object.entries(incoming?.conflicts ?? {}));
+    const before = { files: [...files], index: [...index] };
+    for (const path of clean) {
+      const content = incoming?.changes?.[path] ?? '';
+      index.set(path, content);
+      files.set(path, content);
+    }
+    if (conflicts.size === 0) {
+      copyPaths(index, committed, clean);
+      if (!incoming) {
+        return name === 'merge'
+          ? 'Already up to date.'
+          : `Current branch ${currentBranch} is up to date.`;
+      }
+      return name === 'merge'
+        ? "Merge made by the 'ort' strategy."
+        : `Successfully rebased and updated refs/heads/${currentBranch}.`;
+    }
+    for (const [path, theirs] of conflicts) {
+      const ours = committed.get(path) ?? '';
+      files.set(path, `<<<<<<< HEAD\n${ours}=======\n${theirs}>>>>>>> ${branch}\n`);
+    }
+    operation = { name, branch, conflicts, before };
+    throw [
+      ...[...conflicts.keys()].map((path) => `CONFLICT (content): Merge conflict in ${path}`),
+      'Automatic merge failed; fix conflicts and then commit the result.',
+    ].join('\n');
+  }
+
+  function resolveConflict(args: Args): null {
+    const path = String(args['path']);
+    const theirs = operation?.conflicts.get(path);
+    if (!operation || theirs === undefined) {
+      throw `${path} has no conflict`;
+    }
+    const content = args['side'] === 'ours' ? (committed.get(path) ?? '') : theirs;
+    files.set(path, content);
+    index.set(path, content);
+    operation.conflicts.delete(path);
+    return null;
+  }
+
+  /** Ends the operation in progress: `abort` goes back to how things were before it. */
+  function endOperation(args: Args, abort: boolean): string {
+    if (!operation || operation.name !== args['operation']) {
+      throw `error: no ${String(args['operation'])} in progress`;
+    }
+    if (abort) {
+      files.clear();
+      index.clear();
+      operation.before.files.forEach(([path, content]) => files.set(path, content));
+      operation.before.index.forEach(([path, content]) => index.set(path, content));
+    } else {
+      if (operation.conflicts.size > 0) {
+        throw 'error: Committing is not possible because you have unmerged files.';
+      }
+      copyPaths(index, committed, null);
+    }
+    operation = null;
+    return '';
+  }
+
+  /** The commits a rebase onto `onto` replays, oldest first. */
+  function rebaseCommits(args: Args): GitCommit[] {
+    const base = refs.branches.find((branch) => branch.name === args['onto'])?.hash;
+    const ahead = commits.findIndex((commit) => commit.hash === base);
+    return clone(ahead < 0 ? commits : commits.slice(0, ahead)).reverse();
+  }
+
+  function deleteBranch(args: Args): string {
+    const branch = String(args['branch']);
+    if (seed.git?.unmerged?.includes(branch) && !args['force']) {
+      throw `error: the branch '${branch}' is not fully merged`;
+    }
+    refs.branches = refs.branches.filter((entry) => entry.name !== branch);
+    return `Deleted branch ${branch}`;
   }
 
   // --- turns ----------------------------------------------------------------
@@ -363,6 +807,19 @@ export function installFakeBackend(seed: FakeSeed): void {
     resolve: (value: unknown) => void;
   }
   const permissionWaiters = new Map<string, Waiter>();
+  // The MCP tool each open prompt asks about, and the tools allowed per chat;
+  // tools allowed for good are in the settings, as in the app.
+  const promptMcpTools = new Map<string, McpToolGrant>();
+  const chatMcpTools = new Map<string, McpToolGrant[]>();
+  // The same for folders whose sensitive files a command prompt offers to
+  // release: per open prompt, and released per chat.
+  const promptSecretFolders = new Map<string, string[]>();
+  const chatSecretFolders = new Map<string, string[]>();
+  const sameMcpTool = (a: McpToolGrant, b: McpToolGrant) =>
+    a.server === b.server &&
+    a.tool === b.tool &&
+    a.source === b.source &&
+    a.fingerprint === b.fingerprint;
   const questionWaiters = new Map<string, Waiter>();
   const modelChoiceWaiters = new Map<string, Waiter>();
   const stopWaiters = new Map<string, () => void>();
@@ -404,7 +861,6 @@ export function installFakeBackend(seed: FakeSeed): void {
     };
     const assistant = message(sessionId, 'assistant', '');
     const started = now();
-    emit({ kind: 'started', message: clone(assistant) });
 
     let stopped = false;
     let interrupted = false;
@@ -423,6 +879,14 @@ export function installFakeBackend(seed: FakeSeed): void {
       await Promise.race([resumed$, stopped$]);
       pauseWaiters.delete(resumed);
     };
+
+    // MCP servers are connected before the reply begins.
+    if (reply.mcp) {
+      emit({ kind: 'mcpStarting', server: reply.mcp.server });
+      await paused();
+      emit({ kind: 'mcpReady', issues: stopped ? [] : (reply.mcp.issues ?? []) });
+    }
+    emit({ kind: 'started', message: clone(assistant) });
 
     const stream = async (field: 'content' | 'reasoning', text: string) => {
       const kind = field === 'content' ? 'delta' : 'reasoning';
@@ -497,33 +961,56 @@ export function installFakeBackend(seed: FakeSeed): void {
             break;
           }
           case 'permission': {
-            const requestId = newId('perm');
-            emit({
-              kind: 'permissionRequest',
-              requestId,
-              promptKind: 'command',
-              title: step.title ?? 'Run command?',
-              detail: 'The agent wants to run a command.',
-              command: step.command,
-              path: null,
-              folder: null,
-              url: null,
-              suggestedRule: `${step.command.split(' ')[0]} *`,
-              segments: [],
-              risk: null,
-              scopeOptions: [],
-              folders: [],
-              hosts: [],
-              justification: step.justification ?? null,
-              ...step.request,
-            });
-            const decision = await Promise.race([
-              new Promise((resolve) => permissionWaiters.set(requestId, { sessionId, resolve })),
-              stopped$.then(() => 'deny'),
-            ]);
-            permissionWaiters.delete(requestId);
-            const allowed = String(decision).startsWith('allow');
-            emit({ kind: 'permissionResolved', requestId, allowed });
+            const mcpTool = step.request?.mcpTool ?? null;
+            const secretFolders = step.request?.secretFolders ?? [];
+            const released = [
+              ...(chatSecretFolders.get(sessionId) ?? []),
+              ...(state.settings.secretFolders ?? []),
+            ];
+            const remembered =
+              (mcpTool !== null &&
+                [
+                  ...(chatMcpTools.get(sessionId) ?? []),
+                  ...(state.settings.mcpToolGrants ?? []),
+                ].some((grant) => sameMcpTool(grant, mcpTool))) ||
+              (secretFolders.length > 0 &&
+                secretFolders.every((folder) => released.includes(folder)));
+            let allowed = true;
+            if (!remembered) {
+              const requestId = newId('perm');
+              emit({
+                kind: 'permissionRequest',
+                requestId,
+                promptKind: 'command',
+                title: step.title ?? 'Run command?',
+                detail: 'The agent wants to run a command.',
+                command: step.command,
+                path: null,
+                folder: null,
+                url: null,
+                suggestedRule: mcpTool ? null : `${step.command.split(' ')[0]} *`,
+                segments: [],
+                risk: null,
+                scopeOptions: [],
+                folders: [],
+                hosts: [],
+                justification: step.justification ?? null,
+                ...step.request,
+              });
+              if (mcpTool) {
+                promptMcpTools.set(requestId, mcpTool);
+              }
+              promptSecretFolders.set(requestId, secretFolders);
+              const decision = await Promise.race([
+                new Promise((resolve) => permissionWaiters.set(requestId, { sessionId, resolve })),
+                stopped$.then(() => 'deny'),
+              ]);
+              permissionWaiters.delete(requestId);
+              promptMcpTools.delete(requestId);
+              promptSecretFolders.delete(requestId);
+              allowed = String(decision).startsWith('allow');
+              emit({ kind: 'permissionResolved', requestId, allowed });
+            }
             const callId = newId('call');
             emit({
               kind: 'toolStart',
@@ -793,6 +1280,13 @@ export function installFakeBackend(seed: FakeSeed): void {
     }),
     get_default_modes: () => clone(state.settings.modes),
     suspend_window_shortcut: () => null,
+    // As in Rust, nothing was tried and so nothing failed while the shortcut is off.
+    get_window_control: () => ({
+      ...clone(seed.windowControl),
+      shortcutError: state.settings.windowToggleEnabled ? seed.windowControl.shortcutError : null,
+    }),
+    get_sandbox_support: () => clone(seed.sandboxSupport),
+    is_software_rendered: () => seed.softwareRendering,
     set_interface_zoom: () => null,
     has_api_key: (args) => state.apiKeys.includes(String(args['provider'])),
     set_api_key: (args) => {
@@ -827,7 +1321,7 @@ export function installFakeBackend(seed: FakeSeed): void {
     // Like the backend, only connected providers' models are listed.
     list_models: () =>
       clone(seed.models.filter((entry) => providerStatus(providerDef(entry.source)).connected)),
-    list_endpoints: () => [],
+    list_endpoints: () => clone(seed.endpoints),
     list_providers: () => [],
 
     list_projects: () => state.projects.map(projectView),
@@ -978,8 +1472,49 @@ export function installFakeBackend(seed: FakeSeed): void {
       return null;
     },
     resolve_permission: (args) => {
-      permissionWaiters.get(String(args['requestId']))?.resolve(args['decision']);
+      const requestId = String(args['requestId']);
+      const waiter = permissionWaiters.get(requestId);
+      const mcpTool = promptMcpTools.get(requestId);
+      if (waiter && mcpTool) {
+        if (args['decision'] === 'allow_session') {
+          chatMcpTools.set(waiter.sessionId, [
+            ...(chatMcpTools.get(waiter.sessionId) ?? []),
+            mcpTool,
+          ]);
+        } else if (args['decision'] === 'allow_always') {
+          state.settings.mcpToolGrants = [...(state.settings.mcpToolGrants ?? []), mcpTool];
+        }
+      }
+      // Only folders the prompt offered are released, as in the app.
+      const offered = promptSecretFolders.get(requestId) ?? [];
+      const folders = ((args['secretFolders'] as string[] | undefined) ?? []).filter((folder) =>
+        offered.includes(folder),
+      );
+      if (waiter && folders.length > 0) {
+        if (args['decision'] === 'allow_session') {
+          chatSecretFolders.set(waiter.sessionId, [
+            ...(chatSecretFolders.get(waiter.sessionId) ?? []),
+            ...folders,
+          ]);
+        } else if (args['decision'] === 'allow_always') {
+          state.settings.secretFolders = [...(state.settings.secretFolders ?? []), ...folders];
+        }
+      }
+      waiter?.resolve(args['decision']);
       return null;
+    },
+    delete_secret_folder: (args) => {
+      state.settings.secretFolders = (state.settings.secretFolders ?? []).filter(
+        (folder) => folder !== args['folder'],
+      );
+      return clone(state.settings);
+    },
+    delete_mcp_tool_grant: (args) => {
+      const grant = args['grant'] as McpToolGrant;
+      state.settings.mcpToolGrants = (state.settings.mcpToolGrants ?? []).filter(
+        (entry) => !sameMcpTool(entry, grant),
+      );
+      return clone(state.settings);
     },
     resolve_question: (args) => {
       questionWaiters.get(String(args['requestId']))?.resolve(args['answers']);
@@ -989,7 +1524,64 @@ export function installFakeBackend(seed: FakeSeed): void {
       modelChoiceWaiters.get(String(args['requestId']))?.resolve(args['model']);
       return null;
     },
+    // Takes a session back to one of its prompts like the Rust command: the
+    // prompt and what followed it go, and its text returns for the chat box.
+    revert_to_message: (args) => {
+      const target = state.messages.find((entry) => entry.id === args['messageId']);
+      if (!target || target.role !== 'user') {
+        throw 'Only user prompts can be reverted to.';
+      }
+      const sessionId = target.sessionId;
+      if (stopWaiters.has(sessionId)) {
+        throw 'Stop the running turn before reverting.';
+      }
+      const restored: string[] = [];
+      const base = baselines.get(sessionId);
+      if (args['restoreFiles'] && base) {
+        for (const path of new Set([...files.keys(), ...base.keys()])) {
+          const before = base.get(path);
+          if (before === files.get(path)) {
+            continue;
+          }
+          if (before === undefined) {
+            files.delete(path);
+          } else {
+            files.set(path, before);
+          }
+          restored.push(path);
+        }
+      }
+      baselines.delete(sessionId);
+      state.messages = state.messages.filter(
+        (entry) => entry.sessionId !== sessionId || entry.seq < target.seq,
+      );
+      requireSession(sessionId).interrupted = false;
+      return { prompt: target.content, restoredFiles: restored };
+    },
     summarize_session: () => 'Summary of the previous session.',
+    // Stands in for the model: the answer repeats the question and is not
+    // added to the session's messages.
+    ask_side_question: async (args) => {
+      const sessionId = String(args['sessionId']);
+      requireSession(sessionId);
+      const channel = channelSender(args['channel'] as ChannelLike);
+      const key = `side-question:${sessionId}`;
+      let stopped = false;
+      stopWaiters.set(key, () => {
+        stopped = true;
+      });
+      let answer = '';
+      for (const chunk of `Side answer: ${String(args['question'])}`.match(/.{1,12}/gs) ?? []) {
+        if (stopped) {
+          break;
+        }
+        answer += chunk;
+        channel.send({ kind: 'delta', text: chunk });
+        await sleep(seed.chunkDelayMs);
+      }
+      stopWaiters.delete(key);
+      return { answer, cancelled: stopped };
+    },
     compact_session: (args) => {
       const sessionId = String(args['sessionId']);
       if (!state.messages.some((entry) => entry.sessionId === sessionId)) {
@@ -1045,7 +1637,8 @@ export function installFakeBackend(seed: FakeSeed): void {
     list_workspace_entries: () => workspaceEntries(),
     read_workspace_file: (args) => {
       const path = String(args['path']);
-      return { path, content: files.get(path) ?? '', language: languageOf(path) };
+      // Every file of the fake folder is text.
+      return { path, content: files.get(path) ?? '', language: languageOf(path), binary: false };
     },
     list_permission_audit: () => [],
     get_git_info: () => {
@@ -1053,7 +1646,77 @@ export function installFakeBackend(seed: FakeSeed): void {
       return { isRepo, branch, head };
     },
     get_git_status: () => gitStatus(),
-    get_git_refs: () => ({ branches: [], tags: [], stashes: [], submodules: [], remotes: [] }),
+    // Fresh copies, as over real IPC: the app tells a change by identity.
+    get_git_refs: () => clone(refs),
+    get_git_commits: (args) => (Number(args['skip']) > 0 ? [] : clone(commits)),
+    get_git_commit: (args) => {
+      const commit =
+        args['hash'] === 'HEAD' ? commits[0] : commits.find((entry) => entry.hash === args['hash']);
+      if (!commit) {
+        throw `unknown revision ${String(args['hash'])}`;
+      }
+      return { ...commit, authorEmail: 'e2e@example.com', body: '', changes: [] };
+    },
+    get_git_rebase_commits: rebaseCommits,
+    get_git_blame: () => [],
+    get_git_file_hunks: (args) => hunkDiff(String(args['path']), Boolean(args['staged'])),
+    // A conflicted file is shown whole: "ours" against what is in the folder.
+    get_git_file_diff: (args): FileDiff => {
+      const path = String(args['path']);
+      const [from, to] = args['staged'] ? [committed, index] : [index, files];
+      return {
+        path,
+        oldContent: from.get(path) ?? '',
+        newContent: to.get(path) ?? '',
+        language: languageOf(path),
+        additions: lineCount(to.get(path)),
+        deletions: lineCount(from.get(path)),
+        status: 'M',
+        binary: false,
+        tooLarge: false,
+      };
+    },
+    git_apply_lines: applyLines,
+    git_stage: stagePaths,
+    git_stage_paths: stagePaths,
+    git_unstage: unstagePaths,
+    git_unstage_paths: unstagePaths,
+    git_discard_paths: (args) => copyPaths(index, files, pathsOf(args)),
+    git_commit: commitStaged,
+    git_init: () => {
+      isRepo = true;
+      return 'Initialized empty Git repository';
+    },
+    git_fetch: () => '',
+    git_pull: () => 'Already up to date.',
+    git_push: () => 'Everything up-to-date',
+    git_push_branch: (args) =>
+      `branch '${String(args['branch'])}' set up to track '${String(args['remote'])}/${String(args['branch'])}'.`,
+    git_merge: (args) => integrate('merge', String(args['branch'])),
+    git_rebase: (args) => integrate('rebase', String(args['onto'])),
+    git_rebase_interactive: () => `Successfully rebased and updated refs/heads/${currentBranch}.`,
+    git_resolve_conflict: resolveConflict,
+    git_operation_continue: (args) => endOperation(args, false),
+    git_operation_abort: (args) => endOperation(args, true),
+    git_branch_create: createBranch,
+    git_checkout: checkoutBranch,
+    git_stash_push: stashPush,
+    git_reset: () => '',
+    git_revert: () => '',
+    git_cherry_pick: () => '',
+    git_checkout_commit: () => '',
+    git_branch_delete: deleteBranch,
+    git_tag_delete: (args) => {
+      refs.tags = refs.tags.filter((tag) => tag.name !== args['name']);
+      return `Deleted tag ${String(args['name'])}`;
+    },
+    git_stash_apply: (args) => stashRestore(args, false),
+    git_stash_pop: (args) => stashRestore(args, true),
+    git_stash_drop: (args) => {
+      stashed.delete(String(args['hash']));
+      refs.stashes = renumbered(refs.stashes.filter((stash) => stash.hash !== args['hash']));
+      return `Dropped ${String(args['stash'])}`;
+    },
     get_file_ignore_catalog: () => [],
     discover_mcp_sources: () => [],
     discover_skills: () => [],
@@ -1061,17 +1724,23 @@ export function installFakeBackend(seed: FakeSeed): void {
     list_installed_mcp_servers: () => [],
     list_installed_marketplace_skills: () => [],
     search_mcp_marketplace: () => [],
-    // Shells that start and stay silent: enough for the dock and its tabs.
-    terminal_open: () => `terminal-${++terminalCount}`,
+    // Shells that show a prompt and then stay silent: enough for the dock,
+    // its tabs and a command sent from the chat.
+    terminal_open: (args) => {
+      const channel = channelSender(args['channel'] as ChannelLike);
+      setTimeout(() => channel.send({ kind: 'output', data: '$ ' }), 0);
+      return `terminal-${++terminalCount}`;
+    },
     terminal_write: () => null,
     terminal_resize: () => null,
+    terminal_busy: (args) => handle.busyTerminals.includes(String(args['terminalId'])),
     terminal_close: () => null,
     terminal_close_all: () => null,
 
     'plugin:dialog|open': () => handle.pickFolder,
     'plugin:dialog|confirm': () => handle.confirm,
     'plugin:dialog|ask': () => handle.confirm,
-    'plugin:dialog|message': () => null,
+    'plugin:dialog|message': (args) => dialogAnswer(args['buttons']),
     'plugin:app|version': () => '0.0.0-e2e',
     'plugin:app|name': () => 'pumr',
     'plugin:updater|check': () => null,
@@ -1090,9 +1759,30 @@ export function installFakeBackend(seed: FakeSeed): void {
     'plugin:path|resolve_directory': () => '/Users/e2e',
   };
 
+  /**
+   * The label of the button a native message dialog is closed with. `confirm`
+   * and `ask` are message dialogs with two buttons and compare the answer with
+   * the label of the first.
+   */
+  function dialogAnswer(buttons: unknown): string {
+    const custom = (buttons ?? {}) as { OkCancelCustom?: string[]; YesNoCancelCustom?: string[] };
+    const [accept, decline] =
+      custom.OkCancelCustom ??
+      custom.YesNoCancelCustom ??
+      (buttons === 'YesNo' || buttons === 'YesNoCancel'
+        ? ['Yes', 'No']
+        : ['Ok', buttons === 'OkCancel' ? 'Cancel' : 'Ok']);
+    return (handle.answers.shift() ?? handle.confirm) ? accept : decline;
+  }
+
   const invoke = async (cmd: string, args: Args = {}): Promise<unknown> => {
     // Channels serialise to `__CHANNEL__:<id>` like they do over real IPC.
     handle.calls.push({ cmd, args: clone(args) });
+    const failure = seed.failures?.[cmd];
+    if (failure !== undefined) {
+      persist();
+      throw failure;
+    }
     const handler = handlers[cmd];
     if (!handler) {
       handle.unhandled.push(cmd);

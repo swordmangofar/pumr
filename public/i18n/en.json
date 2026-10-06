@@ -6,16 +6,18 @@
     "toggleSidebar": "Toggle sidebar",
     "toggleRightPanel": "Toggle right panel",
     "toggleTerminal": "Toggle terminal",
+    "keepAwake": "Keep awake while agents work",
+    "keepAwakeOn": "The computer stays awake while agents work. Click to turn off.",
+    "keepAwakeOff": "The computer may go to sleep while agents work. Click to keep it awake.",
     "refresh": "Refresh",
     "notTauri": "pumr must run inside Tauri. Start it with: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projects",
+    "sessions": "Sessions",
     "workspace": "Workspace",
     "git": "Git",
     "addProject": "Add project",
     "newSession": "New session",
-    "new": "New",
     "noProjects": "No projects yet. Add a folder to get started.",
     "noSessions": "No sessions",
     "removeProject": "Remove project",
@@ -36,8 +38,6 @@
     "yesterday": "Yesterday"
   },
   "workspace": {
-    "title": "Workspace",
-    "noSession": "Open a session to browse its files.",
     "empty": "No files found.",
     "libraryRoot": "library root",
     "noOpenFiles": "No open files. Select a file in the tree.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Delete tag {{ tag }}?",
     "stashes": "Stashes",
     "stashCreate": "Stash changes",
+    "stash": "Stash",
+    "stashMessage": "Message (optional)",
+    "stashIncludeUntracked": "Include untracked files",
     "stashApply": "Apply",
     "stashPop": "Pop",
     "stashDropConfirm": "Drop {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Use incoming (theirs)",
       "markResolved": "Mark as resolved",
       "fileHint": "This file has conflicts. Keep one side, or edit the file and mark it as resolved.",
+      "markersLeftIn": "Conflicted files that still contain conflict markers (<<<<<<< or >>>>>>>): {{ count }}. Mark them as resolved anyway?",
       "markersLeft": "The file still contains conflict markers (<<<<<<< or >>>>>>>). Mark it as resolved anyway?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Destination folder",
     "cloneChoose": "Choose…",
     "createBranch": "Create Branch",
+    "branch": "Branch",
     "branchName": "Branch name",
     "createBranchAt": "Create branch at: {{branch}}",
     "checkoutAfterCreate": "Check out after create",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Connect a model provider in Settings to start chatting.",
+    "noDefaultModel": "No default model yet. Open Settings, pick a model under “Default model” in “Model providers” and press “Save”.",
     "openSettings": "Open settings",
     "error": "Error",
     "retry": "Retry",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} to send · {{ newLine }} for a new line",
     "hintStreaming": "{{ send }} to queue · {{ stop }} to stop",
     "hintRecall": "{{ recall }} for the last prompt",
+    "hintCommands": "/ for commands",
     "handover": "Handover",
     "handovering": "Summarizing…",
     "handoverHint": "Summarize this session and continue in a new one",
@@ -328,6 +335,13 @@
     "compacting": "Compacting context",
     "compacted": "Context compacted",
     "compactedHint": "From here on the model works from this summary instead of the messages above.",
+    "mcpStarting": "Starting MCP server {{ name }}",
+    "mcpIssues": "Some MCP servers could not be used for this message:",
+    "sideQuestion": "Side question",
+    "sideQuestionHint": "Ask a quick question about this session or anything else. The answer is not added to the session.",
+    "sideQuestionPrivate": "Not added to the session",
+    "sideQuestionAnswering": "Answering…",
+    "sideQuestionStopped": "Stopped",
     "interrupted": "This chat was interrupted before the agent finished: pumr was closed or the computer went to sleep. You can continue it from where it stopped.",
     "limitReached": "Paused after {{ count }} tool calls without a final answer. The limit prevents a stuck agent from looping forever. Continue to give it a fresh budget, or turn on auto-continue.",
     "continue": "Continue",
@@ -456,7 +470,8 @@
         "cascade": "Denied with another request",
         "stopped": "Stopped",
         "timeout": "Timed out",
-        "cancelled": "Cancelled"
+        "cancelled": "Cancelled",
+        "hook": "Your hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "No matches. Keep typing or press Escape.",
     "mentionFetch": "Fetch {{ url }}",
     "removeMention": "Remove reference",
+    "commandPrompt": "Applies your prompt “{{ name }}” to what you type after it",
+    "commandEffort": "Set how much the model reasons",
+    "commandMode": "Switch the mode of this session",
+    "commandModel": "Switch the model of this session",
+    "commandProvider": "Choose the provider that serves the model",
+    "commandRevert": "Go back to your last prompt: what came after it is removed, and the files can be restored",
+    "commandRevertNone": "There is no prompt to go back to yet",
+    "commandRevertRunning": "Stop the agent first",
+    "commandNoEffort": "This model has no reasoning effort to set.",
+    "commandNoProvider": "Only OpenRouter models can be routed to a provider.",
     "textBlockWords": "{{ count }} words",
     "textBlockRemove": "Remove pasted text",
     "textBlockTitle": "Pasted text",
@@ -634,7 +659,7 @@
     "alwaysOn": "Always on",
     "editInSettings": "Edit in settings",
     "yourPrompts": "Your prompts",
-    "yourPromptsHint": "Enabled prompts are appended to the active system prompts. Edit them or reset built-ins to their original text.",
+    "yourPromptsHint": "Call a prompt from the chat box with a slash and its name, such as /code-review. It then applies to that message only. Edit prompts or reset built-in ones to their original text.",
     "addPrompt": "New",
     "customPrompt": "Custom prompt",
     "promptName": "Prompt name",
@@ -718,6 +743,8 @@
       "providers": "Providers",
       "agent": "Agent Configuration",
       "agentRules": "Agent white- and blacklist",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "General",
       "chat": "Chat",
       "appearance": "Appearance",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP Server",
       "workspace": "Workspace"
+    },
+    "sandbox": {
+      "title": "Sandbox for commands",
+      "hint": "The operating system confines every command the agent runs, and whatever that command starts. It is a second layer behind the permission rules, for a command they misjudge. A command the sandbox stops can ask to run outside it; you are asked each time.",
+      "unavailable": "This system has no sandbox pumr can use, so commands run unconfined. It needs macOS, or Linux 5.19 or newer with Landlock.",
+      "networkUnavailable": "Closing the network is only possible on macOS.",
+      "modes": {
+        "off": "Off",
+        "files": "Files",
+        "filesAndNetwork": "Files and network"
+      },
+      "modeHints": {
+        "off": "Commands run as your user, held back only by the permission rules.",
+        "files": "Commands write only to the project, your extra folders, temp folders and the folders listed below. They cannot read the folders that hold keys.",
+        "filesAndNetwork": "The same, and commands reach only this computer, except commands whose hosts you allowed. Installing packages then asks to run outside the sandbox."
+      },
+      "writable": "Folders commands may also write to",
+      "writableHint": "The caches of build tools. Without them a build fails on its first download. A path starts with / or ~.",
+      "unreadable": "Folders commands cannot read",
+      "unreadableHint": "Where keys and tokens live. git, ssh and the cloud tools keep the folders they work with, and a folder you released for commands stays open.",
+      "excluded": "Commands that run outside the sandbox",
+      "excludedHint": "For tools that bring a sandbox of their own and fail inside this one, such as browser tests. An entry names how the command line begins; with * it is a pattern for the whole line.",
+      "addCommand": "Add command",
+      "noCommands": "No commands added yet."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "A hook is a command of yours that pumr runs at a fixed moment of the agent's work. The model does not decide whether it runs, so it cannot forget it. Hooks run as you wrote them, without permission prompts and outside the sandbox.",
+      "protocol": "A hook gets the details as JSON on standard input (tool_name, tool_input, tool_response) and the file a call names as $PUMR_FILE. Exit code 0 lets the agent go on. Exit code 2 hands what the hook printed to the agent and, before a tool call, refuses the call.",
+      "add": "Add hook",
+      "empty": "No hooks added yet.",
+      "remove": "Remove hook",
+      "event": "When the hook runs",
+      "events": {
+        "beforeTool": "Before a tool call",
+        "afterTool": "After a tool call",
+        "turnEnd": "When the agent wants to finish"
+      },
+      "tools": "Tools",
+      "toolsPlaceholder": "Every tool, or names such as edit|write",
+      "files": "Files",
+      "filesPlaceholder": "Every file, or patterns such as *.ts",
+      "command": "Command",
+      "timeout": "Stop after (seconds)",
+      "project": "Project",
+      "allProjects": "All projects"
     },
     "providers": {
       "title": "Model providers",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Only change this if you use a proxy or a compatible gateway.",
     "defaultModel": "Default model",
     "defaultModelHint": "Used for new sessions.",
+    "defaultModelSetupTitle": "Choose a default model",
+    "defaultModelSetup": "Your provider is connected. New sessions start with the default model: pick one under “Default model” further down this page, then press “Save”. You can still switch models in every chat.",
+    "defaultModelSetupAction": "Go to default model",
     "handoverModel": "Handover model",
     "handoverModelPlaceholder": "Use the current session model",
     "handoverModelHint": "Model used to summarize a session when handing it over. Leave empty to use the current session's model.",
@@ -998,6 +1074,14 @@
       "mist": "Muted text",
       "white": "Text"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Shown in the app header and as the app icon while pumr is running.",
+      "mascot": "Sitting puma",
+      "classic": "Classic face",
+      "shaded": "Shaded puma",
+      "tailup": "Puma, tail up"
+    },
     "background": {
       "title": "App background",
       "hint": "Pick a built-in backdrop or use your own image. It sits behind the glass panels and follows your theme.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "New line",
       "chatStop": "Stop the response",
       "chatRecallPrompt": "Recall last prompt",
+      "chatToggleMode": "Switch between planning and coding",
+      "chatToggleModeHint": "Goes back to the mode the session was in before planning.",
       "gitToggleStage": "Stage or unstage selected files",
       "gitDiscardFiles": "Discard selected files",
       "gitSelectAllFiles": "Select all files",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimize",
       "fillScreen": "Fill the screen",
       "fillScreenHint": "Make the summoned window fill the active monitor instead of keeping its previous size.",
+      "shortcutError": "The system-wide shortcut could not be registered, so it does not summon pumr. Another app is probably using this key combination: choose a different one and save again.",
+      "waylandHint": "On Wayland, apps cannot register system-wide shortcuts, so this shortcut does not work reliably here. Bind the command below to a key in your desktop's keyboard settings instead.",
+      "command": "Shortcut command",
+      "commandHint": "Does what the shortcut does: summons pumr, or hides or minimizes it when it is in front. Bind it to a key in your desktop's keyboard settings.",
+      "commandActions": "For a single action, end the command with one of these instead:",
       "zoom": "Display scaling",
       "zoomHint": "Scales the whole interface. Shortcut: Ctrl/⌘ + + to zoom in, Ctrl/⌘ + - to zoom out, Ctrl/⌘ + 0 to reset.",
       "zoomReset": "Reset"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Allow command",
     "denyCommand": "Deny command",
     "noDeniedCommandRules": "No blocked commands.",
+    "mcpToolGrants": "Allowed MCP tools",
+    "mcpToolGrantsHint": "Tools of MCP servers that run without asking. An entry covers one tool of one server, whatever its arguments, and stops applying when that server's configuration changes. Use \"allow always\" in a permission prompt to create one.",
+    "noMcpToolGrants": "No always-allowed MCP tools yet.",
+    "secretFolders": "Folders with released sensitive files",
+    "secretFoldersHint": "Commands may use the sensitive files (keys, tokens, credentials) directly in these folders without asking. Folders below them are not included. Use \"allow always\" in a permission prompt to create one.",
+    "noSecretFolders": "No folders with released sensitive files yet.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + subcommand",
@@ -1276,7 +1373,8 @@
       "file": "File",
       "web": "Website",
       "websearch": "Web search",
-      "folder": "Folder"
+      "folder": "Folder",
+      "hook": "Hook"
     },
     "allowAlways": "Allow always",
     "siteRuleLabel": "Website rule (domain or glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Adds the website and its subdomains to the allowed websites.",
       "option": "Website + subdomains"
     },
+    "secretScope": {
+      "title": "Sensitive files",
+      "hint": "Commands may then use the keys, tokens and credential files directly in this folder without asking. Folders below it are not included.",
+      "option": "Sensitive files in this folder",
+      "chip": "sensitive files in {{ folder }}"
+    },
     "allowChat": "Allow in this chat",
     "option": {
       "yes": "Yes",
@@ -1315,6 +1419,7 @@
     "customize": "Customize",
     "justification": "Why",
     "keyboardHint": "Press 1–{{ count }} or use ↑ ↓ and Enter · Esc denies",
+    "mcpToolHint": "Not asking again covers every call of this tool on this server, whatever its arguments.",
     "url": {
       "queryWarning": "This address carries a lot of data in its query string. Make sure it contains nothing private before you allow it."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Allow only this request.",
       "allowSession": "Remembered in every chat until the app restarts.",
       "allowChat": "Command rules are remembered for this chat and its subagents; folders and websites until the app restarts.",
+      "allowChatMcp": "Remembered for this chat and its subagents: every call of this tool on this server, whatever its arguments.",
       "allowAlways": "Saved to your settings and applies to every chat."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "New terminal",
     "close": "Close terminal",
     "hide": "Hide terminal",
+    "run": "Run in terminal",
     "noProject": "Open a session to use the terminal.",
     "exited": "Process exited with code {{ code }}",
     "failed": "Could not start the terminal: {{ error }}"

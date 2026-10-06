@@ -40,7 +40,7 @@ type AuditFilter = 'auto' | 'asked' | 'denied';
 const AUDIT_FILTERS: readonly AuditFilter[] = ['auto', 'asked', 'denied'];
 
 /** Prompt kinds with a translated label. */
-const AUDIT_KINDS = ['command', 'file', 'web', 'websearch', 'folder'];
+const AUDIT_KINDS = ['command', 'file', 'web', 'websearch', 'folder', 'hook'];
 
 /** Who decided, with a translated label. */
 const AUDIT_DECIDERS = [
@@ -52,6 +52,7 @@ const AUDIT_DECIDERS = [
   'stopped',
   'timeout',
   'cancelled',
+  'hook',
 ];
 
 interface DebugField {

@@ -67,6 +67,9 @@ function diff(patch: Partial<GitHunkDiff> = {}): GitHunkDiff {
   };
 }
 
+/** What every action says about `diff()`, the diff its lines belong to. */
+const shown = { path: 'src/a.txt', staged: false, fingerprint: 'fp' };
+
 describe('HunkDiffView', () => {
   let fixture: ComponentFixture<HunkDiffView>;
   let actions: LineActionRequest[];
@@ -175,8 +178,8 @@ describe('HunkDiffView', () => {
     key('s');
     key('Backspace');
     expect(actions).toEqual([
-      { action: 'stage', lines: [2] },
-      { action: 'discard', lines: [2] },
+      { action: 'stage', lines: [2], ...shown },
+      { action: 'discard', lines: [2], ...shown },
     ]);
   });
 
@@ -185,7 +188,7 @@ describe('HunkDiffView', () => {
     press(row('gone'));
     key('s');
     key('u');
-    expect(actions).toEqual([{ action: 'unstage', lines: [6] }]);
+    expect(actions).toEqual([{ action: 'unstage', lines: [6], ...shown, staged: true }]);
   });
 
   it('jumps between hunks and picks their changes', async () => {
@@ -210,7 +213,30 @@ describe('HunkDiffView', () => {
     await render(diff());
     const buttons = [...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[];
     buttons.find((button) => button.textContent?.trim() === 'git.diff.stageHunk')?.click();
-    expect(actions).toEqual([{ action: 'stage', lines: [1, 2, 3] }]);
+    expect(actions).toEqual([{ action: 'stage', lines: [1, 2, 3], ...shown }]);
+  });
+
+  it('names the diff its lines were read from, whichever is shown afterwards', async () => {
+    await render(diff());
+    press(row('TWO'));
+    key('Backspace');
+
+    // The view is handed the diff of another file while a confirmation is open.
+    fixture.componentRef.setInput('diff', diff({ path: 'src/b.txt', fingerprint: 'fp-b' }));
+    fixture.detectChanges();
+    const buttons = [...fixture.nativeElement.querySelectorAll('button')] as HTMLButtonElement[];
+    buttons.find((button) => button.textContent?.trim() === 'git.diff.discardHunk')?.click();
+
+    expect(actions).toEqual([
+      { action: 'discard', lines: [2], path: 'src/a.txt', staged: false, fingerprint: 'fp' },
+      {
+        action: 'discard',
+        lines: [1, 2, 3],
+        path: 'src/b.txt',
+        staged: false,
+        fingerprint: 'fp-b',
+      },
+    ]);
   });
 
   it('hides line actions while they are blocked', async () => {

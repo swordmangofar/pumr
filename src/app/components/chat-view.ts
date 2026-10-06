@@ -27,6 +27,7 @@ import { PumaLoader } from './puma-loader';
 import { ProjectIcon } from './project-icon';
 import { ModelChoiceOverlay } from './model-choice-overlay';
 import { QuestionOverlay } from './question-overlay';
+import { SideAnswer } from './side-answer';
 import { StickToBottom } from './stick-to-bottom';
 import { ToolCard } from './tool-card';
 import { ToolGroup, ToolGroupItem } from './tool-group';
@@ -112,6 +113,7 @@ import { TypedInput } from './typed-input';
     StickToBottom,
     ProjectIcon,
     CopyButton,
+    SideAnswer,
   ],
   template: `
     <div class="flex h-full min-h-0 flex-col">
@@ -124,6 +126,20 @@ import { TypedInput } from './typed-input';
             type="button"
             class="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-3.5 py-1 text-sm font-medium text-accent hover:bg-accent/20"
             (click)="settings.open('providers', 'apiKey')"
+          >
+            {{ 'chat.openSettings' | transloco }}
+          </button>
+        </div>
+      } @else if (settings.needsDefaultModel()) {
+        <div
+          class="flex items-center justify-between gap-3 border-b border-accent/25 bg-accent/10 px-5 py-2.5 text-sm text-accent"
+          data-testid="no-default-model"
+        >
+          <span>{{ 'chat.noDefaultModel' | transloco }}</span>
+          <button
+            type="button"
+            class="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-3.5 py-1 text-sm font-medium text-accent hover:bg-accent/20"
+            (click)="settings.open('providers', 'defaultModel')"
           >
             {{ 'chat.openSettings' | transloco }}
           </button>
@@ -552,7 +568,29 @@ import { TypedInput } from './typed-input';
                 }
               }
 
-              @if (compacting()) {
+              @if (mcpIssues().length > 0) {
+                <div
+                  class="mb-6 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200"
+                  data-testid="chat-mcp-issues"
+                >
+                  <p class="leading-relaxed">{{ 'chat.mcpIssues' | transloco }}</p>
+                  <ul class="mt-1 list-disc space-y-1 pl-5 leading-relaxed text-amber-200/80">
+                    @for (issue of mcpIssues(); track $index) {
+                      <li class="break-words">{{ issue }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+
+              @if (mcpStarting(); as server) {
+                <div
+                  class="mb-6 flex items-center gap-2 text-sm text-mist/50"
+                  data-testid="chat-mcp-starting"
+                >
+                  <app-puma-loader [compact]="true" />
+                  {{ 'chat.mcpStarting' | transloco: { name: server } }}…
+                </div>
+              } @else if (compacting()) {
                 <div class="mb-6 flex items-center gap-2 text-sm text-mist/50">
                   <app-puma-loader [compact]="true" />
                   {{ 'chat.compacting' | transloco }}…
@@ -720,8 +758,12 @@ import { TypedInput } from './typed-input';
         }
 
         <div class="relative">
-          <app-composer (composing)="composing.set($event)" />
+          <app-composer
+            (composing)="composing.set($event)"
+            (revertRequested)="revertTarget.set($event)"
+          />
         </div>
+        <app-side-answer />
       } @else {
         <div
           class="flex flex-1 items-center justify-center px-6 text-center text-base text-mist/40"
@@ -734,10 +776,18 @@ import { TypedInput } from './typed-input';
     @if (revertTarget(); as target) {
       <div
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+        (keydown.escape)="cancelRevert()"
       >
-        <div class="w-[32rem] rounded-2xl border border-white/10 bg-navy shadow-2xl">
+        <div
+          class="w-[32rem] rounded-2xl border border-white/10 bg-navy shadow-2xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="revert-dialog-title"
+        >
           <header class="border-b border-white/10 px-6 py-4">
-            <h2 class="text-base font-semibold text-white">{{ 'chat.revertTitle' | transloco }}</h2>
+            <h2 id="revert-dialog-title" class="text-base font-semibold text-white">
+              {{ 'chat.revertTitle' | transloco }}
+            </h2>
           </header>
           <div class="space-y-3 px-6 py-5">
             <p class="text-sm leading-relaxed text-mist/60">
@@ -760,11 +810,12 @@ import { TypedInput } from './typed-input';
             <button
               type="button"
               class="rounded-full border border-white/15 px-4 py-2 text-sm text-mist hover:bg-white/5"
-              (click)="revertTarget.set(null)"
+              (click)="cancelRevert()"
             >
               {{ 'common.cancel' | transloco }}
             </button>
             <button
+              #revertConfirm
               type="button"
               class="rounded-full bg-accent px-5 py-2 text-sm font-semibold text-ink hover:bg-accent/90"
               (click)="confirmRevert(target)"
@@ -797,6 +848,7 @@ export class ChatView {
   protected readonly projectOpen = signal(false);
 
   private readonly scrollRef = viewChild<ElementRef<HTMLDivElement>>('scroll');
+  private readonly revertConfirmRef = viewChild<ElementRef<HTMLButtonElement>>('revertConfirm');
 
   // Tool-call arguments are immutable once persisted, so parsing them (for the
   // command/summary shown on tool cards) only needs to happen once per call.
@@ -908,6 +960,16 @@ export class ChatView {
     const session = this.session();
     return session ? this.workspace.isCompacting(session.id) : false;
   });
+  /** The MCP server the running turn waits for before it calls the model. */
+  protected readonly mcpStarting = computed(() => {
+    const session = this.session();
+    return session ? this.workspace.mcpStartingFor(session.id) : null;
+  });
+  /** The MCP servers the latest turn has to do without, and why. */
+  protected readonly mcpIssues = computed(() => {
+    const session = this.session();
+    return session ? this.workspace.mcpIssuesFor(session.id) : [];
+  });
   protected readonly waiting = computed(() => {
     if (!this.streaming()) {
       return false;
@@ -958,6 +1020,9 @@ export class ChatView {
   }
 
   constructor() {
+    // The dialog opens with its confirm button focused, so Enter reverts and
+    // Escape cancels without reaching for the mouse.
+    effect(() => this.revertConfirmRef()?.nativeElement.focus());
     effect(() => {
       this.messages();
       this.liveTools();
@@ -1248,8 +1313,20 @@ export class ChatView {
   }
 
   protected async confirmRevert(target: Message): Promise<void> {
-    await this.workspace.revertToMessage(target.id, this.revertFiles());
+    // The dialog closes before the revert runs and a second click finds it
+    // closed: that one would go back to a prompt that is gone by then.
+    if (this.revertTarget() !== target) {
+      return;
+    }
     this.revertTarget.set(null);
+    await this.workspace.revertToMessage(target.id, this.revertFiles());
+    // The prompt is back in the chat box, to be changed and sent again.
+    this.workspace.requestComposerFocus();
+  }
+
+  protected cancelRevert(): void {
+    this.revertTarget.set(null);
+    this.workspace.requestComposerFocus();
   }
 
   protected backToMain(): void {

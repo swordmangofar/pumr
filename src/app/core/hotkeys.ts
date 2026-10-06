@@ -150,16 +150,15 @@ export function defaultTerminalHotkey(): string {
 }
 
 /**
- * `Cmd+T` on macOS, where the terminal leaves `Cmd` shortcuts to the app.
- * Elsewhere `Ctrl+T` and `Ctrl+W` belong to the shell, so `Shift` is added as
- * in other terminals.
+ * The same keys as for session tabs; a focused terminal takes them for its
+ * own tabs. Off macOS that keeps `Ctrl+T` and `Ctrl+W` from the shell.
  */
 export function defaultTerminalNewTabHotkey(): string {
-  return isMacPlatform() ? 'Cmd+T' : 'Ctrl+Shift+T';
+  return isMacPlatform() ? 'Cmd+T' : 'Ctrl+T';
 }
 
 export function defaultTerminalCloseTabHotkey(): string {
-  return isMacPlatform() ? 'Cmd+W' : 'Ctrl+Shift+W';
+  return isMacPlatform() ? 'Cmd+W' : 'Ctrl+W';
 }
 
 export function defaultWindowToggleHotkey(): string {
@@ -190,6 +189,7 @@ export type HotkeyAction =
   | 'chatNewLine'
   | 'chatStop'
   | 'chatRecallPrompt'
+  | 'chatToggleMode'
   | 'gitToggleStage'
   | 'gitDiscardFiles'
   | 'gitSelectAllFiles'
@@ -463,6 +463,16 @@ export const HOTKEY_DEFINITIONS: readonly HotkeyDefinition[] = [
     label: 'settings.hotkeys.chatRecallPrompt',
     defaults: () => ['Up'],
     bare: 'special',
+  },
+  {
+    kind: 'action',
+    id: 'chatToggleMode',
+    category: 'chat',
+    label: 'settings.hotkeys.chatToggleMode',
+    hint: 'settings.hotkeys.chatToggleModeHint',
+    // Not `M`: macOS gives Cmd+Shift+M to the Minimize item of the window
+    // menu (Cmd+M) before the webview sees the key.
+    defaults: () => [mod('Shift+P')],
   },
   // Git
   {

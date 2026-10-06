@@ -237,6 +237,28 @@ impl ProcessRegistry {
             let _ = self.stop(&id);
         }
     }
+
+    /// Stops every command that is still running, with what it started. For
+    /// when pumr ends: the list they could be seen and stopped in goes with
+    /// it, and a dev server left behind would keep its port.
+    pub fn stop_all(&self) {
+        let processes: Vec<Arc<RunningProcess>> = self
+            .processes
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, process)| process)
+            .collect();
+        for process in processes {
+            // One that has ended is left alone: the number of its process
+            // group may belong to another program by now.
+            if process.running.swap(false, Ordering::SeqCst) {
+                if let Some(child) = process.child.lock().unwrap().as_mut() {
+                    kill_tree(child, process.pid);
+                }
+            }
+        }
+    }
 }
 
 impl RunningProcess {
@@ -355,5 +377,56 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert!(gone, "the background sleep must be killed with its shell");
+    }
+
+    /// A command in the registry as `run_bash` leaves it there.
+    #[cfg(unix)]
+    fn registered(id: &str, child: tokio::process::Child, running: bool) -> Arc<RunningProcess> {
+        Arc::new(RunningProcess {
+            id: id.to_string(),
+            session_id: "session".to_string(),
+            command: "sleep 30".to_string(),
+            cwd: "/".to_string(),
+            started_at: 0,
+            output: Arc::default(),
+            pid: child.id(),
+            child: Arc::new(Mutex::new(Some(child))),
+            running: Arc::new(AtomicBool::new(running)),
+            exit_code: Arc::default(),
+            read_upto: Mutex::new(0),
+        })
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ending_pumr_stops_the_commands_that_still_run() {
+        let sleep = || {
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.arg("-c").arg("sleep 30").process_group(0);
+            command.spawn().unwrap()
+        };
+        let registry = ProcessRegistry::new();
+        let running = registered("running", sleep(), true);
+        // Marked as ended although it is not, to see that it is left alone.
+        let ended = registered("ended", sleep(), false);
+        registry.insert(running.clone());
+        registry.insert(ended.clone());
+
+        registry.stop_all();
+        assert!(registry.find("running", "session").is_none());
+        assert!(!running.running.load(Ordering::SeqCst));
+
+        let exited = |process: Arc<RunningProcess>| async move {
+            let mut child = process.child.lock().unwrap().take().unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+                .await
+                .is_ok()
+        };
+        assert!(exited(running).await, "the running command must be stopped");
+        let mut left = ended.child.lock().unwrap().take().unwrap();
+        assert!(left.try_wait().unwrap().is_none());
+        let pid = left.id();
+        kill_tree(&mut left, pid);
+        let _ = left.wait().await;
     }
 }

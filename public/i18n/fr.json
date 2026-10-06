@@ -6,16 +6,18 @@
     "toggleSidebar": "Afficher/masquer la barre latérale",
     "toggleRightPanel": "Afficher/masquer le panneau droit",
     "toggleTerminal": "Afficher/masquer le terminal",
+    "keepAwake": "Garder éveillé pendant que les agents travaillent",
+    "keepAwakeOn": "L'ordinateur reste éveillé pendant que les agents travaillent. Cliquez pour désactiver.",
+    "keepAwakeOff": "L'ordinateur peut se mettre en veille pendant que les agents travaillent. Cliquez pour le garder éveillé.",
     "refresh": "Actualiser",
     "notTauri": "pumr doit s'exécuter dans Tauri. Lance-le avec : pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projets",
+    "sessions": "Sessions",
     "workspace": "Espace de travail",
     "git": "Git",
     "addProject": "Ajouter un projet",
     "newSession": "Nouvelle session",
-    "new": "Nouvelle",
     "noProjects": "Aucun projet pour l'instant. Ajoute un dossier pour commencer.",
     "noSessions": "Aucune session",
     "removeProject": "Supprimer le projet",
@@ -36,8 +38,6 @@
     "yesterday": "Hier"
   },
   "workspace": {
-    "title": "Espace de travail",
-    "noSession": "Ouvrez une session pour parcourir ses fichiers.",
     "empty": "Aucun fichier trouvé.",
     "libraryRoot": "racine de la bibliothèque",
     "noOpenFiles": "Aucun fichier ouvert. Sélectionnez un fichier dans l'arborescence.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Supprimer l'étiquette {{ tag }} ?",
     "stashes": "Stashes",
     "stashCreate": "Remiser les modifications",
+    "stash": "Remiser",
+    "stashMessage": "Message (facultatif)",
+    "stashIncludeUntracked": "Inclure les fichiers non suivis",
     "stashApply": "Appliquer",
     "stashPop": "Restaurer",
     "stashDropConfirm": "Supprimer {{ stash }} ?",
@@ -129,6 +132,7 @@
       "useTheirs": "Garder l’entrante (theirs)",
       "markResolved": "Marquer comme résolu",
       "fileHint": "Ce fichier contient des conflits. Gardez un côté, ou modifiez le fichier et marquez-le comme résolu.",
+      "markersLeftIn": "Fichiers en conflit qui contiennent encore des marqueurs de conflit (<<<<<<< ou >>>>>>>) : {{ count }}. Les marquer comme résolus quand même ?",
       "markersLeft": "Le fichier contient encore des marqueurs de conflit (<<<<<<< ou >>>>>>>). Le marquer comme résolu quand même ?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Dossier de destination",
     "cloneChoose": "Choisir…",
     "createBranch": "Créer une branche",
+    "branch": "Branche",
     "branchName": "Nom de la branche",
     "createBranchAt": "Créer une branche à partir de : {{branch}}",
     "checkoutAfterCreate": "Basculer après la création",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Connecte un fournisseur de modèles dans les paramètres pour commencer à discuter.",
+    "noDefaultModel": "Pas encore de modèle par défaut. Ouvre les paramètres, choisis un modèle sous « Modèle par défaut » dans « Fournisseurs de modèles », puis clique sur « Enregistrer ».",
     "openSettings": "Ouvrir les paramètres",
     "error": "Erreur",
     "retry": "Réessayer",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} pour envoyer · {{ newLine }} pour un saut de ligne",
     "hintStreaming": "{{ send }} pour mettre en file d'attente · {{ stop }} pour arrêter",
     "hintRecall": "{{ recall }} pour le dernier prompt",
+    "hintCommands": "/ pour les commandes",
     "handover": "Transfert",
     "handovering": "Résumé en cours…",
     "handoverHint": "Résume cette session et continue dans une nouvelle",
@@ -328,6 +335,13 @@
     "compacting": "Compactage du contexte",
     "compacted": "Contexte compacté",
     "compactedHint": "À partir d'ici, le modèle travaille avec ce résumé au lieu des messages ci-dessus.",
+    "mcpStarting": "Démarrage du serveur MCP {{ name }}",
+    "mcpIssues": "Certains serveurs MCP n’ont pas pu être utilisés pour ce message :",
+    "sideQuestion": "Question annexe",
+    "sideQuestionHint": "Pose une question rapide sur cette session ou sur tout autre sujet. La réponse n'est pas ajoutée à la session.",
+    "sideQuestionPrivate": "Non ajoutée à la session",
+    "sideQuestionAnswering": "Réponse en cours…",
+    "sideQuestionStopped": "Arrêté",
     "interrupted": "Ce chat a été interrompu avant que l'agent ait terminé : pumr a été fermé ou l'ordinateur s'est mis en veille. Vous pouvez le reprendre là où il s'est arrêté.",
     "limitReached": "En pause après les appels de l'outil {{ count }} sans réponse finale. La limite empêche un agent bloqué de boucler indéfiniment. Continuez à lui attribuer un nouveau budget ou activez la poursuite automatique.",
     "continue": "Continuer",
@@ -456,7 +470,8 @@
         "cascade": "Refusé avec une autre demande",
         "stopped": "Arrêté",
         "timeout": "Délai dépassé",
-        "cancelled": "Annulé"
+        "cancelled": "Annulé",
+        "hook": "Votre hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Aucun résultat. Continue à taper ou appuie sur Échap.",
     "mentionFetch": "Récupérer {{ url }}",
     "removeMention": "Supprimer la référence",
+    "commandPrompt": "Applique ton prompt « {{ name }} » à ce que tu écris ensuite",
+    "commandEffort": "Règle à quel point le modèle raisonne",
+    "commandMode": "Change le mode de cette session",
+    "commandModel": "Change le modèle de cette session",
+    "commandProvider": "Choisis le fournisseur qui sert le modèle",
+    "commandRevert": "Revient à ton dernier prompt : tout ce qui a suivi est supprimé et les fichiers peuvent être restaurés",
+    "commandRevertNone": "Il n'y a pas encore de prompt auquel revenir",
+    "commandRevertRunning": "Arrête d'abord l'agent",
+    "commandNoEffort": "Ce modèle n'a pas de niveau de raisonnement à régler.",
+    "commandNoProvider": "Seuls les modèles OpenRouter peuvent être dirigés vers un fournisseur.",
     "textBlockWords": "{{ count }} mots",
     "textBlockRemove": "Supprimer le texte collé",
     "textBlockTitle": "Texte collé",
@@ -634,7 +659,7 @@
     "alwaysOn": "Toujours actif",
     "editInSettings": "Modifier dans les paramètres",
     "yourPrompts": "Tes prompts",
-    "yourPromptsHint": "Les prompts activés sont ajoutés aux system prompts actifs. Modifie-les ou réinitialise ceux intégrés à leur texte d'origine.",
+    "yourPromptsHint": "Appelle un prompt depuis la zone de chat avec une barre oblique et son nom, par exemple /code-review. Il ne s'applique alors qu'à ce message. Modifie-les ou rétablis le texte d'origine des prompts intégrés.",
     "addPrompt": "Nouveau",
     "customPrompt": "Prompt personnalisé",
     "promptName": "Nom du prompt",
@@ -718,6 +743,8 @@
       "providers": "Fournisseurs",
       "agent": "Configuration de l'agent",
       "agentRules": "Liste blanche et noire de l'agent",
+      "sandbox": "Bac à sable",
+      "hooks": "Hooks",
       "general": "Général",
       "chat": "Chat",
       "appearance": "Apparence",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP Server",
       "workspace": "Espace de travail"
+    },
+    "sandbox": {
+      "title": "Bac à sable pour les commandes",
+      "hint": "Le système d'exploitation confine chaque commande que l'agent exécute, ainsi que tout ce que cette commande lance. C'est une seconde couche derrière les règles d'autorisation, pour une commande qu'elles évaluent mal. Une commande arrêtée par le bac à sable peut demander à s'exécuter en dehors ; la question vous est posée à chaque fois.",
+      "unavailable": "Ce système ne dispose d'aucun bac à sable que pumr puisse utiliser, les commandes s'exécutent donc sans confinement. Il faut macOS, ou Linux 5.19 ou plus récent avec Landlock.",
+      "networkUnavailable": "Couper le réseau n'est possible que sous macOS.",
+      "modes": {
+        "off": "Désactivé",
+        "files": "Fichiers",
+        "filesAndNetwork": "Fichiers et réseau"
+      },
+      "modeHints": {
+        "off": "Les commandes s'exécutent sous votre compte utilisateur, limitées uniquement par les règles d'autorisation.",
+        "files": "Les commandes n'écrivent que dans le projet, vos dossiers supplémentaires, les dossiers temporaires et les dossiers listés ci-dessous. Elles ne peuvent pas lire les dossiers qui contiennent des clés.",
+        "filesAndNetwork": "Même chose, et les commandes n'atteignent que cet ordinateur, sauf celles dont vous avez autorisé les hôtes. L'installation de paquets demande alors à s'exécuter hors du bac à sable."
+      },
+      "writable": "Dossiers où les commandes peuvent aussi écrire",
+      "writableHint": "Les caches des outils de build. Sans eux, un build échoue dès son premier téléchargement. Un chemin commence par / ou ~.",
+      "unreadable": "Dossiers que les commandes ne peuvent pas lire",
+      "unreadableHint": "Là où se trouvent les clés et les jetons. git, ssh et les outils cloud conservent les dossiers avec lesquels ils travaillent, et un dossier que vous avez autorisé pour les commandes reste ouvert.",
+      "excluded": "Commandes qui s'exécutent hors du bac à sable",
+      "excludedHint": "Pour les outils qui apportent leur propre bac à sable et échouent dans celui-ci, comme les tests de navigateur. Une entrée indique comment commence la ligne de commande ; avec *, c'est un motif pour toute la ligne.",
+      "addCommand": "Ajouter une commande",
+      "noCommands": "Aucune commande ajoutée pour l'instant."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Un hook est l'une de vos commandes, que pumr exécute à un moment fixe du travail de l'agent. Ce n'est pas le modèle qui décide s'il s'exécute, il ne peut donc pas l'oublier. Les hooks s'exécutent tels que vous les avez écrits, sans demande d'autorisation et hors du bac à sable.",
+      "protocol": "Un hook reçoit les détails en JSON sur l'entrée standard (tool_name, tool_input, tool_response) et le fichier désigné par un appel dans $PUMR_FILE. Le code de sortie 0 laisse l'agent continuer. Le code de sortie 2 transmet à l'agent ce que le hook a affiché et, avant un appel d'outil, refuse l'appel.",
+      "add": "Ajouter un hook",
+      "empty": "Aucun hook ajouté pour l'instant.",
+      "remove": "Supprimer le hook",
+      "event": "Quand le hook s'exécute",
+      "events": {
+        "beforeTool": "Avant un appel d'outil",
+        "afterTool": "Après un appel d'outil",
+        "turnEnd": "Quand l'agent veut terminer"
+      },
+      "tools": "Outils",
+      "toolsPlaceholder": "Tous les outils, ou des noms comme edit|write",
+      "files": "Fichiers",
+      "filesPlaceholder": "Tous les fichiers, ou des motifs comme *.ts",
+      "command": "Commande",
+      "timeout": "Arrêter après (secondes)",
+      "project": "Projet",
+      "allProjects": "Tous les projets"
     },
     "providers": {
       "title": "Fournisseurs de modèles",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Ne modifie ceci que si tu utilises un proxy ou une passerelle compatible.",
     "defaultModel": "Modèle par défaut",
     "defaultModelHint": "Utilisé pour les nouvelles sessions.",
+    "defaultModelSetupTitle": "Choisis un modèle par défaut",
+    "defaultModelSetup": "Ton fournisseur est connecté. Les nouvelles sessions démarrent avec le modèle par défaut : choisis-le sous « Modèle par défaut » plus bas sur cette page, puis clique sur « Enregistrer ». Tu peux toujours changer de modèle dans chaque conversation.",
+    "defaultModelSetupAction": "Aller au modèle par défaut",
     "handoverModel": "Modèle de transfert",
     "handoverModelPlaceholder": "Utiliser le modèle de la session en cours",
     "handoverModelHint": "Modèle utilisé pour résumer une session lors de son transfert. Laisse vide pour utiliser le modèle de la session en cours.",
@@ -998,6 +1074,14 @@
       "mist": "Texte atténué",
       "white": "Texte"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Affiché dans l'en-tête de l'application et comme icône de l'application tant que pumr est ouvert.",
+      "mascot": "Puma assis",
+      "classic": "Visage classique",
+      "shaded": "Puma ombré",
+      "tailup": "Puma, queue relevée"
+    },
     "background": {
       "title": "Arrière-plan de l'application",
       "hint": "Choisissez une toile de fond intégrée ou utilisez votre propre image. Il se trouve derrière les panneaux de verre et suit votre thème.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Nouvelle ligne",
       "chatStop": "Arrêter la réponse",
       "chatRecallPrompt": "Rappeler le dernier prompt",
+      "chatToggleMode": "Basculer entre planification et programmation",
+      "chatToggleModeHint": "Revient au mode dans lequel la session était avant la planification.",
       "gitToggleStage": "Indexer ou désindexer les fichiers sélectionnés",
       "gitDiscardFiles": "Annuler les modifications des fichiers sélectionnés",
       "gitSelectAllFiles": "Sélectionner tous les fichiers",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Réduire",
       "fillScreen": "Remplir l'écran",
       "fillScreenHint": "La fenêtre appelée remplit l'écran actif au lieu de conserver sa taille précédente.",
+      "shortcutError": "Le raccourci à l'échelle du système n'a pas pu être enregistré ; il n'affiche donc pas pumr. Une autre application utilise probablement cette combinaison de touches : choisissez-en une autre et enregistrez à nouveau.",
+      "waylandHint": "Sous Wayland, les applications ne peuvent pas enregistrer de raccourcis à l'échelle du système ; ce raccourci n'y fonctionne donc pas de manière fiable. Associez plutôt la commande ci-dessous à une touche dans les réglages clavier de votre bureau.",
+      "command": "Commande pour le raccourci",
+      "commandHint": "Fait la même chose que le raccourci : fait apparaître pumr, ou le masque ou le réduit lorsqu'il est au premier plan. Associez-la à une touche dans les réglages clavier de votre bureau.",
+      "commandActions": "Pour une seule action, terminez plutôt la commande par l'une de ces options :",
       "zoom": "Mise à l'échelle de l'affichage",
       "zoomHint": "Met à l'échelle toute l'interface. Raccourci : Ctrl/⌘ + + pour zoomer, Ctrl/⌘ + - pour dézoomer, Ctrl/⌘ + 0 pour réinitialiser.",
       "zoomReset": "Réinitialiser"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Autoriser la commande",
     "denyCommand": "Bloquer la commande",
     "noDeniedCommandRules": "Aucune commande bloquée.",
+    "mcpToolGrants": "Outils MCP autorisés",
+    "mcpToolGrantsHint": "Outils de serveurs MCP qui s'exécutent sans demander. Une entrée vaut pour un outil d'un serveur, quels que soient ses arguments, et cesse de s'appliquer dès que la configuration de ce serveur change. Utilise « toujours autoriser » dans une demande d'autorisation pour en créer une.",
+    "noMcpToolGrants": "Aucun outil MCP toujours autorisé pour l'instant.",
+    "secretFolders": "Dossiers dont les fichiers sensibles sont autorisés",
+    "secretFoldersHint": "Les commandes peuvent utiliser sans demander les fichiers sensibles (clés, jetons, identifiants) situés directement dans ces dossiers. Leurs sous-dossiers ne sont pas inclus. Utilise « toujours autoriser » dans une demande d'autorisation pour en créer un.",
+    "noSecretFolders": "Aucun dossier dont les fichiers sensibles sont autorisés pour l'instant.",
     "scope": {
       "program": "Programme",
       "subcommand": "Programme + sous-commande",
@@ -1276,7 +1373,8 @@
       "file": "Fichier",
       "web": "Site web",
       "websearch": "Recherche web",
-      "folder": "Dossier"
+      "folder": "Dossier",
+      "hook": "Hook"
     },
     "allowAlways": "Toujours autoriser",
     "siteRuleLabel": "Règle de site web (domaine ou glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Ajoute le site web et ses sous-domaines aux sites web autorisés.",
       "option": "Site web + sous-domaines"
     },
+    "secretScope": {
+      "title": "Fichiers sensibles",
+      "hint": "Les commandes pourront alors utiliser sans demander les clés, jetons et fichiers d'identifiants situés directement dans ce dossier. Ses sous-dossiers ne sont pas inclus.",
+      "option": "Fichiers sensibles de ce dossier",
+      "chip": "fichiers sensibles de {{ folder }}"
+    },
     "allowChat": "Autoriser dans ce chat",
     "option": {
       "yes": "Oui",
@@ -1315,6 +1419,7 @@
     "customize": "Personnaliser",
     "justification": "Pourquoi",
     "keyboardHint": "Appuyez sur 1–{{ count }} ou utilisez ↑ ↓ et Entrée · Échap refuse",
+    "mcpToolHint": "Ne plus demander vaut pour chaque appel de cet outil sur ce serveur, quels que soient ses arguments.",
     "url": {
       "queryWarning": "Cette adresse transporte beaucoup de données dans sa chaîne de requête. Vérifiez qu'elle ne contient rien de privé avant de l'autoriser."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Autoriser uniquement cette demande.",
       "allowSession": "Mémorisé dans tous les chats jusqu'au redémarrage de l'application.",
       "allowChat": "Les règles de commande sont mémorisées pour ce chat et ses sous-agents ; les dossiers et sites web jusqu'au redémarrage de l'application.",
+      "allowChatMcp": "Mémorisé pour ce chat et ses sous-agents : chaque appel de cet outil sur ce serveur, quels que soient ses arguments.",
       "allowAlways": "Enregistré dans vos réglages et appliqué à tous les chats."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Nouveau terminal",
     "close": "Fermer le terminal",
     "hide": "Masquer le terminal",
+    "run": "Exécuter dans le terminal",
     "noProject": "Ouvrez une session pour utiliser le terminal.",
     "exited": "Le processus s'est terminé avec le code {{ code }}",
     "failed": "Impossible de démarrer le terminal : {{ error }}"

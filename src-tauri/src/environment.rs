@@ -131,6 +131,16 @@ fn platform() -> String {
     )
 }
 
+/// The fence name for a command the user runs in the terminal dock, which
+/// starts their default shell.
+fn user_command_fence() -> &'static str {
+    if cfg!(windows) {
+        "cmd"
+    } else {
+        "bash"
+    }
+}
+
 /// Tells the model where it runs, so it does not probe the filesystem with
 /// guessed paths (`cd /Users/*/project || cd ../project; pwd`) that only
 /// trigger permission prompts, and which commands the project itself offers.
@@ -151,6 +161,12 @@ pub fn section(project_root: &Path, scratch_dir: Option<&Path>, facts: &ProjectF
         "\n- Platform: {}. Today is {}.",
         platform(),
         chrono::Local::now().format("%Y-%m-%d")
+    ));
+    // The chat puts a run button on such a block (see `MarkdownCode`), and a
+    // command buried in a sentence has to be picked out by hand.
+    section.push_str(&format!(
+        "\n- When the user has to run a command themselves (it needs sudo or a password, is interactive, or was denied to you), give it in a fenced `{}` block of its own: one complete command per block, without a prompt sign, comments or output. The user runs it from there with one click.",
+        user_command_fence()
     ));
     if let Some(branch) = git_branch(project_root) {
         section.push_str(&format!("\n- Git branch: {branch}"));
@@ -258,6 +274,15 @@ mod tests {
         assert!(!section.contains("Checks this project has"));
         assert!(!section.contains("Package manager"));
         assert!(section.contains("Platform: "));
+    }
+
+    #[test]
+    fn a_command_for_the_user_gets_a_block_the_chat_can_run() {
+        let project = tempfile::tempdir().unwrap();
+        let section = section(project.path(), None, &ProjectFacts::default());
+        let fence = if cfg!(windows) { "cmd" } else { "bash" };
+        assert!(section.contains(&format!("in a fenced `{fence}` block of its own")));
+        assert!(section.contains("one complete command per block"));
     }
 
     #[test]

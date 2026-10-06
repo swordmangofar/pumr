@@ -6,16 +6,18 @@
     "toggleSidebar": "Przełącz panel boczny",
     "toggleRightPanel": "Przełącz prawy panel",
     "toggleTerminal": "Pokaż/ukryj terminal",
+    "keepAwake": "Nie usypiaj, gdy pracują agenci",
+    "keepAwakeOn": "Komputer nie zostanie uśpiony, gdy pracują agenci. Kliknij, aby wyłączyć.",
+    "keepAwakeOff": "Komputer może zostać uśpiony, gdy pracują agenci. Kliknij, aby temu zapobiec.",
     "refresh": "Odśwież",
     "notTauri": "pumr musi działać w Tauri. Uruchom go za pomocą: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekty",
+    "sessions": "Sesje",
     "workspace": "Obszar roboczy",
     "git": "Git",
     "addProject": "Dodaj projekt",
     "newSession": "Nowa sesja",
-    "new": "Nowa",
     "noProjects": "Nie ma jeszcze projektów. Dodaj folder, aby rozpocząć.",
     "noSessions": "Brak sesji",
     "removeProject": "Usuń projekt",
@@ -36,8 +38,6 @@
     "yesterday": "Wczoraj"
   },
   "workspace": {
-    "title": "Obszar roboczy",
-    "noSession": "Otwórz sesję, aby przeglądać jej pliki.",
     "empty": "Nie znaleziono plików.",
     "libraryRoot": "katalog główny biblioteki",
     "noOpenFiles": "Brak otwartych plików. Wybierz plik w drzewie.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Usunąć tag {{ tag }}?",
     "stashes": "Schowki",
     "stashCreate": "Odłóż zmiany",
+    "stash": "Odłóż",
+    "stashMessage": "Wiadomość (opcjonalna)",
+    "stashIncludeUntracked": "Uwzględnij nieśledzone pliki",
     "stashApply": "Zastosuj",
     "stashPop": "Wyjmij",
     "stashDropConfirm": "Odrzucić {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Użyj przychodzącej (theirs)",
       "markResolved": "Oznacz jako rozwiązany",
       "fileHint": "Ten plik ma konflikty. Zachowaj jedną stronę albo edytuj plik i oznacz go jako rozwiązany.",
+      "markersLeftIn": "Pliki z konfliktami, które nadal zawierają znaczniki konfliktu (<<<<<<< lub >>>>>>>): {{ count }}. Mimo to oznaczyć je jako rozwiązane?",
       "markersLeft": "Plik nadal zawiera znaczniki konfliktu (<<<<<<< lub >>>>>>>). Mimo to oznaczyć go jako rozwiązany?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Folder docelowy",
     "cloneChoose": "Wybierz…",
     "createBranch": "Utwórz gałąź",
+    "branch": "Gałąź",
     "branchName": "Nazwa gałęzi",
     "createBranchAt": "Utwórz gałąź na: {{branch}}",
     "checkoutAfterCreate": "Przełącz po utworzeniu",
@@ -298,6 +303,7 @@
     "tokens": "Tokeny",
     "cache": "Pamięć podręczna",
     "noKey": "Połącz dostawcę modeli w Ustawieniach, aby rozpocząć rozmowę.",
+    "noDefaultModel": "Nie wybrano jeszcze modelu domyślnego. Otwórz Ustawienia, w sekcji „Dostawcy modeli” wybierz model w polu „Model domyślny” i kliknij „Zapisz”.",
     "openSettings": "Otwórz ustawienia",
     "error": "Błąd",
     "retry": "Spróbuj ponownie",
@@ -318,6 +324,7 @@
     "hint": "{{ send }}, aby wysłać · {{ newLine }} aby dodać nową linię",
     "hintStreaming": "{{ send }}, aby dodać do kolejki · {{ stop }}, aby zatrzymać",
     "hintRecall": "{{ recall }}, aby przywołać ostatni prompt",
+    "hintCommands": "/ dla poleceń",
     "handover": "Przekazanie",
     "handovering": "Podsumowywanie…",
     "handoverHint": "Podsumuj tę sesję i kontynuuj w nowej",
@@ -328,6 +335,13 @@
     "compacting": "Kompresowanie kontekstu",
     "compacted": "Kontekst skompresowany",
     "compactedHint": "Od tego miejsca model pracuje na tym streszczeniu zamiast na wiadomościach powyżej.",
+    "mcpStarting": "Uruchamianie serwera MCP {{ name }}",
+    "mcpIssues": "Niektórych serwerów MCP nie udało się użyć w tej wiadomości:",
+    "sideQuestion": "Pytanie na marginesie",
+    "sideQuestionHint": "Zadaj szybkie pytanie o tę sesję lub o cokolwiek innego. Odpowiedź nie jest dodawana do sesji.",
+    "sideQuestionPrivate": "Nie jest dodawane do sesji",
+    "sideQuestionAnswering": "Odpowiada…",
+    "sideQuestionStopped": "Zatrzymano",
     "interrupted": "Ten czat został przerwany, zanim agent skończył: pumr został zamknięty lub komputer przeszedł w stan uśpienia. Możesz go kontynuować od miejsca, w którym się zatrzymał.",
     "limitReached": "Wstrzymane po wywołaniu narzędzia {{ count }} bez ostatecznej odpowiedzi. Limit zapobiega niekończącemu się zapętlaniu zablokowanego agenta. Kontynuuj, nadając mu nowy budżet lub włącz automatyczną kontynuację.",
     "continue": "Kontynuować",
@@ -456,7 +470,8 @@
         "cascade": "Odrzucone razem z inną prośbą",
         "stopped": "Zatrzymane",
         "timeout": "Przekroczono limit czasu",
-        "cancelled": "Anulowane"
+        "cancelled": "Anulowane",
+        "hook": "Twój hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Brak dopasowań. Pisz dalej lub naciśnij Escape.",
     "mentionFetch": "Pobierz {{ url }}",
     "removeMention": "Usuń odwołanie",
+    "commandPrompt": "Stosuje Twój prompt „{{ name }}” do tego, co wpiszesz po nim",
+    "commandEffort": "Ustaw, jak dużo model rozumuje",
+    "commandMode": "Zmień tryb tej sesji",
+    "commandModel": "Zmień model tej sesji",
+    "commandProvider": "Wybierz dostawcę, który dostarcza model",
+    "commandRevert": "Wraca do Twojego ostatniego promptu: wszystko po nim zostaje usunięte, a pliki można przywrócić",
+    "commandRevertNone": "Nie ma jeszcze promptu, do którego można wrócić",
+    "commandRevertRunning": "Najpierw zatrzymaj agenta",
+    "commandNoEffort": "Ten model nie ma poziomu rozumowania do ustawienia.",
+    "commandNoProvider": "Tylko modele OpenRouter można kierować do dostawcy.",
     "textBlockWords": "{{ count }} słów",
     "textBlockRemove": "Usuń wklejony tekst",
     "textBlockTitle": "Wklejony tekst",
@@ -634,7 +659,7 @@
     "alwaysOn": "Zawsze włączone",
     "editInSettings": "Edytuj w ustawieniach",
     "yourPrompts": "Twoje prompty",
-    "yourPromptsHint": "Włączone prompty są dołączane do aktywnych promptów systemowych. Edytuj je lub przywróć wbudowane do oryginalnego tekstu.",
+    "yourPromptsHint": "Wywołaj prompt w polu czatu ukośnikiem i jego nazwą, na przykład /code-review. Dotyczy wtedy tylko tej wiadomości. Edytuj je lub przywróć oryginalny tekst wbudowanych.",
     "addPrompt": "Nowy",
     "customPrompt": "Niestandardowy prompt",
     "promptName": "Nazwa promptu",
@@ -718,6 +743,8 @@
       "providers": "Dostawcy",
       "agent": "Konfiguracja agenta",
       "agentRules": "Biała i czarna lista agenta",
+      "sandbox": "Piaskownica",
+      "hooks": "Hooki",
       "general": "Ogólne",
       "chat": "Czat",
       "appearance": "Wygląd",
@@ -727,6 +754,52 @@
       "skills": "Umiejętności",
       "mcp": "Serwer MCP",
       "workspace": "Obszar roboczy"
+    },
+    "sandbox": {
+      "title": "Piaskownica dla poleceń",
+      "hint": "System operacyjny ogranicza każde polecenie uruchamiane przez agenta i wszystko, co to polecenie uruchomi. To druga warstwa za regułami uprawnień, na wypadek polecenia, które te reguły źle ocenią. Polecenie zatrzymane przez piaskownicę może poprosić o uruchomienie poza nią; za każdym razem dostajesz pytanie.",
+      "unavailable": "Ten system nie ma piaskownicy, której pumr mógłby użyć, więc polecenia działają bez ograniczeń. Wymagany jest macOS albo Linux 5.19 lub nowszy z Landlock.",
+      "networkUnavailable": "Zamknięcie sieci jest możliwe tylko w macOS.",
+      "modes": {
+        "off": "Wyłączona",
+        "files": "Pliki",
+        "filesAndNetwork": "Pliki i sieć"
+      },
+      "modeHints": {
+        "off": "Polecenia są uruchamiane jako Twój użytkownik, a powstrzymują je tylko reguły uprawnień.",
+        "files": "Polecenia zapisują tylko w projekcie, w Twoich dodatkowych folderach, w folderach tymczasowych i w folderach wymienionych poniżej. Nie mogą odczytywać folderów, w których są klucze.",
+        "filesAndNetwork": "To samo, a polecenia łączą się tylko z tym komputerem, z wyjątkiem poleceń, na których hosty zezwalasz. Instalowanie pakietów prosi wtedy o uruchomienie poza piaskownicą."
+      },
+      "writable": "Foldery, w których polecenia też mogą zapisywać",
+      "writableHint": "Pamięci podręczne narzędzi budowania. Bez nich budowanie kończy się niepowodzeniem przy pierwszym pobieraniu. Ścieżka zaczyna się od / lub ~.",
+      "unreadable": "Foldery, których polecenia nie mogą odczytywać",
+      "unreadableHint": "Miejsca, w których znajdują się klucze i tokeny. git, ssh i narzędzia chmurowe zachowują foldery, z którymi pracują, a folder dozwolony przez Ciebie dla poleceń pozostaje otwarty.",
+      "excluded": "Polecenia uruchamiane poza piaskownicą",
+      "excludedHint": "Dla narzędzi, które mają własną piaskownicę i nie działają wewnątrz tej, takich jak testy w przeglądarce. Wpis określa, jak zaczyna się wiersz polecenia; z * jest wzorcem dla całego wiersza.",
+      "addCommand": "Dodaj polecenie",
+      "noCommands": "Nie dodano jeszcze poleceń."
+    },
+    "hooks": {
+      "title": "Hooki",
+      "hint": "Hook to Twoje polecenie, które pumr uruchamia w ustalonym momencie pracy agenta. Model nie decyduje, czy zostanie ono uruchomione, więc nie może o nim zapomnieć. Hooki są uruchamiane tak, jak je napiszesz, bez próśb o uprawnienia i poza piaskownicą.",
+      "protocol": "Hook dostaje szczegóły jako JSON na standardowym wejściu (tool_name, tool_input, tool_response), a plik wskazany przez wywołanie – jako $PUMR_FILE. Kod wyjścia 0 pozwala agentowi kontynuować. Kod wyjścia 2 przekazuje agentowi to, co hook wypisał, a przed wywołaniem narzędzia odrzuca to wywołanie.",
+      "add": "Dodaj hook",
+      "empty": "Nie dodano jeszcze hooków.",
+      "remove": "Usuń hook",
+      "event": "Kiedy hook jest uruchamiany",
+      "events": {
+        "beforeTool": "Przed wywołaniem narzędzia",
+        "afterTool": "Po wywołaniu narzędzia",
+        "turnEnd": "Gdy agent chce zakończyć"
+      },
+      "tools": "Narzędzia",
+      "toolsPlaceholder": "Każde narzędzie lub nazwy takie jak edit|write",
+      "files": "Pliki",
+      "filesPlaceholder": "Każdy plik lub wzorce takie jak *.ts",
+      "command": "Polecenie",
+      "timeout": "Zatrzymaj po (sekundach)",
+      "project": "Projekt",
+      "allProjects": "Wszystkie projekty"
     },
     "providers": {
       "title": "Dostawcy modeli",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Zmień to tylko, jeśli używasz proxy lub kompatybilnej bramy.",
     "defaultModel": "Model domyślny",
     "defaultModelHint": "Używany dla nowych sesji.",
+    "defaultModelSetupTitle": "Wybierz model domyślny",
+    "defaultModelSetup": "Dostawca jest połączony. Nowe sesje zaczynają się od modelu domyślnego: wybierz go w polu „Model domyślny” niżej na tej stronie i kliknij „Zapisz”. W każdym czacie nadal możesz zmienić model.",
+    "defaultModelSetupAction": "Przejdź do modelu domyślnego",
     "handoverModel": "Model przekazania",
     "handoverModelPlaceholder": "Użyj modelu bieżącej sesji",
     "handoverModelHint": "Model używany do podsumowania sesji podczas przekazywania. Pozostaw puste, aby użyć modelu bieżącej sesji.",
@@ -998,6 +1074,14 @@
       "mist": "Przygaszony tekst",
       "white": "Tekst"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Widoczne w nagłówku aplikacji i jako ikona aplikacji, gdy pumr jest uruchomiony.",
+      "mascot": "Siedząca puma",
+      "classic": "Klasyczna twarz",
+      "shaded": "Cieniowana puma",
+      "tailup": "Puma z uniesionym ogonem"
+    },
     "background": {
       "title": "Tło aplikacji",
       "hint": "Wybierz wbudowane tło lub użyj własnego obrazu. Znajduje się za szklanymi panelami i podąża za Twoim motywem.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Nowa linia",
       "chatStop": "Zatrzymaj odpowiedź",
       "chatRecallPrompt": "Przywołaj ostatni prompt",
+      "chatToggleMode": "Przełącz między planowaniem a programowaniem",
+      "chatToggleModeHint": "Wraca do trybu, w którym sesja była przed planowaniem.",
       "gitToggleStage": "Dodaj zaznaczone pliki do indeksu lub usuń je z niego",
       "gitDiscardFiles": "Odrzuć zaznaczone pliki",
       "gitSelectAllFiles": "Zaznacz wszystkie pliki",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimalizuj",
       "fillScreen": "Wypełnij ekran",
       "fillScreenHint": "Wywołane okno wypełnia aktywny monitor zamiast zachowywać poprzedni rozmiar.",
+      "shortcutError": "Nie udało się zarejestrować skrótu systemowego, więc nie przywołuje on pumr. Prawdopodobnie tej kombinacji klawiszy używa już inna aplikacja: wybierz inną i zapisz ponownie.",
+      "waylandHint": "W Waylandzie aplikacje nie mogą rejestrować skrótów systemowych, więc ten skrót nie działa tu niezawodnie. Zamiast tego przypisz poniższe polecenie do klawisza w ustawieniach klawiatury swojego pulpitu.",
+      "command": "Polecenie dla skrótu",
+      "commandHint": "Robi to samo co skrót: przywołuje pumr albo ukrywa lub minimalizuje go, gdy jest na wierzchu. Przypisz je do klawisza w ustawieniach klawiatury swojego pulpitu.",
+      "commandActions": "Aby wykonać pojedynczą akcję, zakończ polecenie jedną z tych opcji:",
       "zoom": "Skalowanie ekranu",
       "zoomHint": "Skaluje cały interfejs. Skrót: Ctrl/⌘ + + aby powiększyć, Ctrl/⌘ + - aby pomniejszyć, Ctrl/⌘ + 0 aby zresetować.",
       "zoomReset": "Resetuj"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Zezwól na polecenie",
     "denyCommand": "Zablokuj polecenie",
     "noDeniedCommandRules": "Brak zablokowanych poleceń.",
+    "mcpToolGrants": "Dozwolone narzędzia MCP",
+    "mcpToolGrantsHint": "Narzędzia serwerów MCP, które działają bez pytania. Wpis obejmuje jedno narzędzie jednego serwera, niezależnie od argumentów, i przestaje obowiązywać, gdy zmieni się konfiguracja tego serwera. Użyj „zezwalaj zawsze” w prośbie o uprawnienia, aby go utworzyć.",
+    "noMcpToolGrants": "Brak zawsze dozwolonych narzędzi MCP.",
+    "secretFolders": "Foldery z dozwolonymi poufnymi plikami",
+    "secretFoldersHint": "Polecenia mogą bez pytania używać poufnych plików (kluczy, tokenów, danych logowania) znajdujących się bezpośrednio w tych folderach. Podfoldery nie są objęte. Użyj „zezwalaj zawsze” w prośbie o uprawnienia, aby go utworzyć.",
+    "noSecretFolders": "Brak folderów z dozwolonymi poufnymi plikami.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + podpolecenie",
@@ -1276,7 +1373,8 @@
       "file": "Plik",
       "web": "Strona internetowa",
       "websearch": "Wyszukiwanie w sieci",
-      "folder": "Folder"
+      "folder": "Folder",
+      "hook": "Hook"
     },
     "allowAlways": "Zezwalaj zawsze",
     "siteRuleLabel": "Reguła strony internetowej (domena lub glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Dodaje stronę i jej subdomeny do dozwolonych stron.",
       "option": "Strona + subdomeny"
     },
+    "secretScope": {
+      "title": "Poufne pliki",
+      "hint": "Polecenia będą mogły bez pytania używać kluczy, tokenów i plików z danymi logowania znajdujących się bezpośrednio w tym folderze. Podfoldery nie są objęte.",
+      "option": "Poufne pliki w tym folderze",
+      "chip": "poufne pliki w {{ folder }}"
+    },
     "allowChat": "Zezwól na tym czacie",
     "option": {
       "yes": "Tak",
@@ -1315,6 +1419,7 @@
     "customize": "Dostosuj",
     "justification": "Dlaczego",
     "keyboardHint": "Naciśnij 1–{{ count }} lub użyj ↑ ↓ i Enter · Esc odmawia",
+    "mcpToolHint": "Niepytanie ponownie obejmuje każde wywołanie tego narzędzia na tym serwerze, niezależnie od argumentów.",
     "url": {
       "queryWarning": "Ten adres przenosi dużo danych w ciągu zapytania. Przed zezwoleniem upewnij się, że nie zawiera niczego prywatnego."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Zezwól tylko na tę prośbę.",
       "allowSession": "Zapamiętane na wszystkich czatach do ponownego uruchomienia aplikacji.",
       "allowChat": "Reguły poleceń są zapamiętywane dla tego czatu i jego podagentów; foldery i strony do ponownego uruchomienia aplikacji.",
+      "allowChatMcp": "Zapamiętywane dla tego czatu i jego podagentów: każde wywołanie tego narzędzia na tym serwerze, niezależnie od argumentów.",
       "allowAlways": "Zapisane w ustawieniach i obowiązuje na wszystkich czatach."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Nowy terminal",
     "close": "Zamknij terminal",
     "hide": "Ukryj terminal",
+    "run": "Uruchom w terminalu",
     "noProject": "Otwórz sesję, aby korzystać z terminala.",
     "exited": "Proces zakończył się z kodem {{ code }}",
     "failed": "Nie udało się uruchomić terminala: {{ error }}"

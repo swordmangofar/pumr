@@ -6,16 +6,18 @@
     "toggleSidebar": "Uključi/isključi bočnu traku",
     "toggleRightPanel": "Uključi/isključi desnu ploču",
     "toggleTerminal": "Prikaži/sakrij terminal",
+    "keepAwake": "Drži budnim dok agenti rade",
+    "keepAwakeOn": "Računalo ostaje budno dok agenti rade. Kliknite za isključivanje.",
+    "keepAwakeOff": "Računalo može otići u spavanje dok agenti rade. Kliknite da ostane budno.",
     "refresh": "Osvježi",
     "notTauri": "pumr se mora pokretati unutar Tauri. Pokrenite ga s: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekti",
+    "sessions": "Sesije",
     "workspace": "Radni prostor",
     "git": "Git",
     "addProject": "Dodaj projekt",
     "newSession": "Nova sesija",
-    "new": "Nova",
     "noProjects": "Još nema projekata. Dodajte mapu za početak.",
     "noSessions": "Nema sesija",
     "removeProject": "Ukloni projekt",
@@ -36,8 +38,6 @@
     "yesterday": "Jučer"
   },
   "workspace": {
-    "title": "Radni prostor",
-    "noSession": "Otvorite sesiju da pregledate njezine datoteke.",
     "empty": "Nije pronađena nijedna datoteka.",
     "libraryRoot": "korijen knjižnice",
     "noOpenFiles": "Nema otvorenih datoteka. Odaberite datoteku u stablu.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Izbrisati oznaku {{ tag }}?",
     "stashes": "Spremljene promjene",
     "stashCreate": "Pohrani promjene",
+    "stash": "Pohrani",
+    "stashMessage": "Poruka (neobavezno)",
+    "stashIncludeUntracked": "Uključi nepraćene datoteke",
     "stashApply": "Primijeni",
     "stashPop": "Izvuci",
     "stashDropConfirm": "Odbaciti {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Koristi dolaznu (theirs)",
       "markResolved": "Označi kao riješeno",
       "fileHint": "Ova datoteka ima sukobe. Zadrži jednu stranu ili uredi datoteku i označi je kao riješenu.",
+      "markersLeftIn": "Datoteke sa sukobima koje još sadrže oznake sukoba (<<<<<<< ili >>>>>>>): {{ count }}. Svejedno ih označiti kao riješene?",
       "markersLeft": "Datoteka još sadrži oznake sukoba (<<<<<<< ili >>>>>>>). Svejedno je označiti kao riješenu?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Odredišna mapa",
     "cloneChoose": "Odaberi…",
     "createBranch": "Stvori granu",
+    "branch": "Grana",
     "branchName": "Naziv grane",
     "createBranchAt": "Stvori granu na: {{branch}}",
     "checkoutAfterCreate": "Prebaci nakon stvaranja",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Povežite pružatelja modela u Postavkama da biste započeli razgovor.",
+    "noDefaultModel": "Zadani model još nije odabran. Otvorite Postavke, u odjeljku „Pružatelji modela” odaberite model pod „Zadani model” i kliknite „Spremi”.",
     "openSettings": "Otvori postavke",
     "error": "Greška",
     "retry": "Pokušaj ponovno",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} za slanje · {{ newLine }} za novi redak",
     "hintStreaming": "{{ send }} za dodavanje u red · {{ stop }} za zaustavljanje",
     "hintRecall": "{{ recall }} za posljednji prompt",
+    "hintCommands": "/ za naredbe",
     "handover": "Primopredaja",
     "handovering": "Sažimanje…",
     "handoverHint": "Sažmi ovu sesiju i nastavi u novoj",
@@ -328,6 +335,13 @@
     "compacting": "Kontekst se sažima",
     "compacted": "Kontekst sažet",
     "compactedHint": "Odavde model radi s ovim sažetkom umjesto s porukama iznad.",
+    "mcpStarting": "Pokretanje MCP poslužitelja {{ name }}",
+    "mcpIssues": "Neki MCP poslužitelji nisu se mogli koristiti za ovu poruku:",
+    "sideQuestion": "Usputno pitanje",
+    "sideQuestionHint": "Postavi kratko pitanje o ovoj sesiji ili o bilo čemu drugom. Odgovor se ne dodaje u sesiju.",
+    "sideQuestionPrivate": "Ne dodaje se u sesiju",
+    "sideQuestionAnswering": "Odgovara…",
+    "sideQuestionStopped": "Zaustavljeno",
     "interrupted": "Ovaj je razgovor prekinut prije nego što je agent završio: pumr je zatvoren ili je računalo prešlo u stanje mirovanja. Možete ga nastaviti ondje gdje je stao.",
     "limitReached": "Pauzirano nakon {{ count }} poziva alata bez konačnog odgovora. Ograničenje sprječava da zaglavljeni agent zauvijek radi u petlji. Nastavite davati novi proračun ili uključite automatski nastavak.",
     "continue": "Nastaviti",
@@ -456,7 +470,8 @@
         "cascade": "Odbijeno s drugim zahtjevom",
         "stopped": "Zaustavljeno",
         "timeout": "Isteklo vrijeme",
-        "cancelled": "Otkazano"
+        "cancelled": "Otkazano",
+        "hook": "Vaš hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Nema podudaranja. Nastavite tipkati ili pritisnite Escape.",
     "mentionFetch": "Dohvati {{ url }}",
     "removeMention": "Ukloni referencu",
+    "commandPrompt": "Primjenjuje tvoj prompt „{{ name }}” na ono što napišeš nakon njega",
+    "commandEffort": "Odredi koliko model zaključuje",
+    "commandMode": "Promijeni način rada ove sesije",
+    "commandModel": "Promijeni model ove sesije",
+    "commandProvider": "Odaberi pružatelja koji pruža model",
+    "commandRevert": "Vraća na tvoj posljednji prompt: sve nakon njega se uklanja, a datoteke se mogu vratiti",
+    "commandRevertNone": "Još nema prompta na koji se može vratiti",
+    "commandRevertRunning": "Prvo zaustavi agenta",
+    "commandNoEffort": "Ovaj model nema razinu zaključivanja koju bi se moglo postaviti.",
+    "commandNoProvider": "Samo se OpenRouter modeli mogu usmjeriti na pružatelja.",
     "textBlockWords": "{{ count }} riječi",
     "textBlockRemove": "Ukloni zalijepljeni tekst",
     "textBlockTitle": "Zalijepljeni tekst",
@@ -634,7 +659,7 @@
     "alwaysOn": "Uvijek uključeno",
     "editInSettings": "Uredi u postavkama",
     "yourPrompts": "Vaši promptovi",
-    "yourPromptsHint": "Omogućeni promptovi dodaju se aktivnim system promptovima. Uredite ih ili vratite ugrađene na izvorni tekst.",
+    "yourPromptsHint": "Pozovi prompt iz okvira za chat kosom crtom i njegovim nazivom, na primjer /code-review. Tada vrijedi samo za tu poruku. Uredi ih ili vrati ugrađene na izvorni tekst.",
     "addPrompt": "Novi",
     "customPrompt": "Prilagođeni prompt",
     "promptName": "Naziv prompta",
@@ -718,6 +743,8 @@
       "providers": "Pružatelji",
       "agent": "Konfiguracija agenta",
       "agentRules": "Bijela i crna lista agenta",
+      "sandbox": "Sandbox",
+      "hooks": "Hookovi",
       "general": "Općenito",
       "chat": "Razgovor",
       "appearance": "Izgled",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP Server",
       "workspace": "Radni prostor"
+    },
+    "sandbox": {
+      "title": "Sandbox za naredbe",
+      "hint": "Operacijski sustav ograničava svaku naredbu koju agent pokrene i sve što ta naredba pokrene. To je drugi sloj iza pravila dopuštenja, za naredbu koju ona pogrešno procijene. Naredba koju sandbox zaustavi može zatražiti izvođenje izvan njega; svaki put dobivate upit.",
+      "unavailable": "Ovaj sustav nema sandbox koji pumr može koristiti, pa se naredbe izvode bez ograničenja. Potreban je macOS ili Linux 5.19 ili noviji s Landlockom.",
+      "networkUnavailable": "Zatvaranje mreže moguće je samo na macOS-u.",
+      "modes": {
+        "off": "Isključeno",
+        "files": "Datoteke",
+        "filesAndNetwork": "Datoteke i mreža"
+      },
+      "modeHints": {
+        "off": "Naredbe se izvode kao vaš korisnik, a ograničavaju ih samo pravila dopuštenja.",
+        "files": "Naredbe pišu samo u projekt, vaše dodatne mape, privremene mape i mape navedene u nastavku. Ne mogu čitati mape u kojima se nalaze ključevi.",
+        "filesAndNetwork": "Isto, a naredbe dopiru samo do ovog računala, osim naredbi čije ste hostove dopustili. Instaliranje paketa tada traži izvođenje izvan sandboxa."
+      },
+      "writable": "Mape u koje naredbe također smiju pisati",
+      "writableHint": "Predmemorije alata za izgradnju. Bez njih izgradnja ne uspijeva pri prvom preuzimanju. Putanja počinje s / ili ~.",
+      "unreadable": "Mape koje naredbe ne mogu čitati",
+      "unreadableHint": "Mjesta na kojima se nalaze ključevi i tokeni. git, ssh i cloud alati zadržavaju mape s kojima rade, a mapa koju ste dopustili naredbama ostaje otvorena.",
+      "excluded": "Naredbe koje se izvode izvan sandboxa",
+      "excludedHint": "Za alate koji donose vlastiti sandbox i ne uspijevaju unutar ovoga, poput testova u pregledniku. Unos navodi kako naredbeni redak počinje; uz * to je uzorak za cijeli redak.",
+      "addCommand": "Dodaj naredbu",
+      "noCommands": "Još nije dodana nijedna naredba."
+    },
+    "hooks": {
+      "title": "Hookovi",
+      "hint": "Hook je vaša naredba koju pumr pokreće u točno određenom trenutku rada agenta. Model ne odlučuje hoće li se pokrenuti, pa ga ne može zaboraviti. Hookovi se izvode onako kako ste ih napisali, bez zahtjeva za dopuštenje i izvan sandboxa.",
+      "protocol": "Hook dobiva pojedinosti kao JSON na standardnom ulazu (tool_name, tool_input, tool_response), a datoteku koju poziv navodi dobiva kao $PUMR_FILE. Izlazni kod 0 pušta agenta da nastavi. Izlazni kod 2 predaje agentu ono što je hook ispisao i, prije poziva alata, odbija poziv.",
+      "add": "Dodaj hook",
+      "empty": "Još nije dodan nijedan hook.",
+      "remove": "Ukloni hook",
+      "event": "Kada se hook pokreće",
+      "events": {
+        "beforeTool": "Prije poziva alata",
+        "afterTool": "Nakon poziva alata",
+        "turnEnd": "Kada agent želi završiti"
+      },
+      "tools": "Alati",
+      "toolsPlaceholder": "Svi alati ili nazivi poput edit|write",
+      "files": "Datoteke",
+      "filesPlaceholder": "Sve datoteke ili uzorci poput *.ts",
+      "command": "Naredba",
+      "timeout": "Zaustavi nakon (sekundi)",
+      "project": "Projekt",
+      "allProjects": "Svi projekti"
     },
     "providers": {
       "title": "Pružatelji modela",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Promijenite ovo samo ako koristite proxy ili kompatibilan gateway.",
     "defaultModel": "Zadani model",
     "defaultModelHint": "Koristi se za nove sesije.",
+    "defaultModelSetupTitle": "Odaberite zadani model",
+    "defaultModelSetup": "Vaš je pružatelj povezan. Nove sesije počinju sa zadanim modelom: odaberite ga pod „Zadani model” niže na ovoj stranici i kliknite „Spremi”. U svakom razgovoru i dalje možete promijeniti model.",
+    "defaultModelSetupAction": "Idi na zadani model",
     "handoverModel": "Model za primopredaju",
     "handoverModelPlaceholder": "Koristi model trenutne sesije",
     "handoverModelHint": "Model koji se koristi za sažimanje sesije pri primopredaji. Ostavite prazno za korištenje modela trenutne sesije.",
@@ -998,6 +1074,14 @@
       "mist": "Prigušeni tekst",
       "white": "Tekst"
     },
+    "logo": {
+      "title": "Logotip",
+      "hint": "Prikazuje se u zaglavlju aplikacije i kao ikona aplikacije dok je pumr pokrenut.",
+      "mascot": "Puma koja sjedi",
+      "classic": "Klasično lice",
+      "shaded": "Osjenčana puma",
+      "tailup": "Puma s podignutim repom"
+    },
     "background": {
       "title": "Pozadina aplikacije",
       "hint": "Odaberite ugrađenu pozadinu ili upotrijebite vlastitu sliku. Nalazi se iza staklenih ploča i prati vašu temu.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Novi redak",
       "chatStop": "Zaustavi odgovor",
       "chatRecallPrompt": "Vrati posljednji prompt",
+      "chatToggleMode": "Prebaci između planiranja i programiranja",
+      "chatToggleModeHint": "Vraća način rada u kojem je sesija bila prije planiranja.",
       "gitToggleStage": "Pripremi ili ukini pripremu odabranih datoteka",
       "gitDiscardFiles": "Odbaci odabrane datoteke",
       "gitSelectAllFiles": "Odaberi sve datoteke",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimiziraj",
       "fillScreen": "Ispuni zaslon",
       "fillScreenHint": "Pozvani prozor ispunjava aktivni monitor umjesto da zadrži prethodnu veličinu.",
+      "shortcutError": "Prečac na razini sustava nije se mogao registrirati, pa ne poziva pumr. Tu kombinaciju tipki vjerojatno već koristi druga aplikacija: odaberite drugu i ponovno spremite.",
+      "waylandHint": "Na Waylandu aplikacije ne mogu registrirati prečace na razini sustava, pa ovaj prečac ovdje ne radi pouzdano. Umjesto toga dodijelite naredbu u nastavku tipki u postavkama tipkovnice svoje radne površine.",
+      "command": "Naredba za prečac",
+      "commandHint": "Radi isto što i prečac: dovodi pumr u prvi plan ili ga skriva ili minimizira kada je u prvom planu. Dodijelite je tipki u postavkama tipkovnice svoje radne površine.",
+      "commandActions": "Za samo jednu radnju naredbu umjesto toga završite jednom od ovih opcija:",
       "zoom": "Skaliranje prikaza",
       "zoomHint": "Skalira cijelo sučelje. Prečac: Ctrl/⌘ + + za povećanje, Ctrl/⌘ + - za smanjenje, Ctrl/⌘ + 0 za poništavanje.",
       "zoomReset": "Poništi"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Dopusti naredbu",
     "denyCommand": "Blokiraj naredbu",
     "noDeniedCommandRules": "Nema blokiranih naredbi.",
+    "mcpToolGrants": "Dopušteni MCP alati",
+    "mcpToolGrantsHint": "Alati MCP poslužitelja koji se pokreću bez pitanja. Unos vrijedi za jedan alat jednog poslužitelja, bez obzira na argumente, i prestaje vrijediti kada se promijeni konfiguracija tog poslužitelja. Upotrijebite \"dopusti uvijek\" u zahtjevu za dopuštenje da biste ga stvorili.",
+    "noMcpToolGrants": "Još nema uvijek dopuštenih MCP alata.",
+    "secretFolders": "Mape s dopuštenim osjetljivim datotekama",
+    "secretFoldersHint": "Naredbe smiju bez pitanja koristiti osjetljive datoteke (ključeve, tokene, vjerodajnice) izravno u ovim mapama. Podmape nisu uključene. Upotrijebite \"dopusti uvijek\" u zahtjevu za dopuštenje da biste je stvorili.",
+    "noSecretFolders": "Još nema mapa s dopuštenim osjetljivim datotekama.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + podnaredba",
@@ -1276,7 +1373,8 @@
       "file": "Datoteka",
       "web": "Web-stranica",
       "websearch": "Web pretraga",
-      "folder": "Mapa"
+      "folder": "Mapa",
+      "hook": "Hook"
     },
     "allowAlways": "Dopusti uvijek",
     "siteRuleLabel": "Pravilo web-lokacije (domena ili glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Dodaje web-stranicu i njezine poddomene u dopuštene web-stranice.",
       "option": "Web-stranica + poddomene"
     },
+    "secretScope": {
+      "title": "Osjetljive datoteke",
+      "hint": "Naredbe tada smiju bez pitanja koristiti ključeve, tokene i datoteke s vjerodajnicama izravno u ovoj mapi. Podmape nisu uključene.",
+      "option": "Osjetljive datoteke u ovoj mapi",
+      "chip": "osjetljive datoteke u mapi {{ folder }}"
+    },
     "allowChat": "Dopusti u ovom razgovoru",
     "option": {
       "yes": "Da",
@@ -1315,6 +1419,7 @@
     "customize": "Prilagodi",
     "justification": "Zašto",
     "keyboardHint": "Pritisnite 1–{{ count }} ili upotrijebite ↑ ↓ i Enter · Esc odbija",
+    "mcpToolHint": "Bez ponovnog pitanja vrijedi za svaki poziv ovog alata na ovom poslužitelju, bez obzira na argumente.",
     "url": {
       "queryWarning": "Ova adresa nosi mnogo podataka u svom upitu. Prije dopuštanja provjerite da ne sadrži ništa privatno."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Dopusti samo ovaj zahtjev.",
       "allowSession": "Pamti se u svim razgovorima dok se aplikacija ne pokrene ponovno.",
       "allowChat": "Pravila naredbi pamte se za ovaj razgovor i njegove podagente; mape i web-stranice do ponovnog pokretanja aplikacije.",
+      "allowChatMcp": "Pamti se za ovaj razgovor i njegove podagente: svaki poziv ovog alata na ovom poslužitelju, bez obzira na argumente.",
       "allowAlways": "Sprema se u postavke i vrijedi za sve razgovore."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Novi terminal",
     "close": "Zatvori terminal",
     "hide": "Sakrij terminal",
+    "run": "Pokreni u terminalu",
     "noProject": "Otvorite sesiju za korištenje terminala.",
     "exited": "Proces je završio s kodom {{ code }}",
     "failed": "Terminal se nije mogao pokrenuti: {{ error }}"

@@ -42,6 +42,8 @@ interface PermissionAction {
   danger: boolean;
   /** What the choice remembers, shown as chips after the label. */
   grants: string[];
+  /** Folders whose sensitive files the choice releases, shown as chips too. */
+  secrets: string[];
 }
 
 interface SegmentScope {
@@ -168,6 +170,16 @@ export function isEditable(element: Element | null): boolean {
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable;
 }
 
+/**
+ * Whether something outside `self` has taken over the window: a dialog, or a
+ * preview or menu behind the window-wide backdrop they all lie on. The keys
+ * pressed meanwhile are meant for it, wherever focus happens to be.
+ */
+export function anotherLayerOpen(self: Element): boolean {
+  const layers = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .fixed.inset-0');
+  return [...layers].some((layer) => !self.contains(layer));
+}
+
 @Component({
   selector: 'app-permission-overlay',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -290,7 +302,7 @@ export function isEditable(element: Element | null): boolean {
                   index + 1
                 }}</span>
                 <span class="shrink-0">{{ action.labelKey | transloco }}</span>
-                @if (action.grants.length > 0) {
+                @if (action.grants.length > 0 || action.secrets.length > 0) {
                   <span class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                     @for (grant of action.grants; track $index) {
                       <code
@@ -299,11 +311,28 @@ export function isEditable(element: Element | null): boolean {
                         >{{ grant }}</code
                       >
                     }
+                    @for (folder of action.secrets; track folder) {
+                      <code
+                        class="max-w-[18rem] truncate rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-xs"
+                        [attr.title]="folder"
+                        data-testid="secret-chip"
+                        >{{
+                          'permission.secretScope.chip'
+                            | transloco: { folder: displayFolder(folder) }
+                        }}</code
+                      >
+                    }
                   </span>
                 }
               </button>
             }
           </div>
+
+          @if (mcpToolLabel()) {
+            <p class="text-xs text-mist/40" data-testid="mcp-tool-hint">
+              {{ 'permission.mcpToolHint' | transloco }}
+            </p>
+          }
 
           @if (canCustomize()) {
             <button
@@ -462,6 +491,35 @@ export function isEditable(element: Element | null): boolean {
                     </p>
                   </div>
                 }
+
+                @if (secretFolderOptions().length > 0) {
+                  <div>
+                    <label class="mb-1.5 block text-xs text-mist/50">
+                      {{ 'permission.secretScope.title' | transloco }}
+                    </label>
+                    <div class="space-y-1">
+                      @for (folder of secretFolderOptions(); track folder) {
+                        <button
+                          type="button"
+                          [class]="choiceClass(selectedSecretFolders().includes(folder))"
+                          [attr.title]="folder"
+                          data-testid="secret-folder-option"
+                          (click)="toggleSecretFolder(folder)"
+                        >
+                          <span class="shrink-0 text-xs text-mist/50">
+                            {{ 'permission.secretScope.option' | transloco }}
+                          </span>
+                          <code class="ml-auto truncate font-mono text-xs text-mist">{{
+                            displayFolder(folder)
+                          }}</code>
+                        </button>
+                      }
+                    </div>
+                    <p class="mt-1.5 text-xs text-mist/30">
+                      {{ 'permission.secretScope.hint' | transloco }}
+                    </p>
+                  </div>
+                }
               </div>
             }
           }
@@ -489,6 +547,7 @@ export class PermissionOverlay {
   protected readonly selectedSegmentRules = signal<Record<number, CommandRule>>({});
   protected readonly selectedFolders = signal<string[]>([]);
   protected readonly selectedHosts = signal<string[]>([]);
+  protected readonly selectedSecretFolders = signal<string[]>([]);
   protected readonly customizing = signal(false);
   protected readonly activeIndex = signal(0);
 
@@ -512,6 +571,10 @@ export class PermissionOverlay {
 
   /// Websites a command contacts that are not allowed yet.
   protected readonly hostOptions = computed(() => this.request().hosts ?? []);
+
+  /// Folders whose sensitive files a command prompt offers to release: its
+  /// commands may then use the keys and credential files in them unasked.
+  protected readonly secretFolderOptions = computed(() => this.request().secretFolders ?? []);
 
   /// One entry per part of a compound command that still needs approval.
   protected readonly segmentScopes = computed<SegmentScope[]>(() => {
@@ -637,10 +700,17 @@ export class PermissionOverlay {
     }
   });
 
+  /// The MCP tool a remembering choice covers, as "tool (server)"; `null` for
+  /// every prompt that is not about an MCP tool.
+  protected readonly mcpToolLabel = computed(() => {
+    const tool = this.request().mcpTool;
+    return tool ? `${tool.tool} (${tool.server})` : null;
+  });
+
   /// What an allow choice would remember, mirroring what the backend saves:
   /// the chosen command rules, folders and hosts; the website rule; the
-  /// folder of a folder prompt. Empty when nothing can be remembered, which
-  /// hides the "don't ask again" choices.
+  /// folder of a folder prompt; the tool of an MCP prompt. Empty when nothing
+  /// can be remembered, which hides the "don't ask again" choices.
   private readonly allowGrants = computed<string[]>(() => {
     const request = this.request();
     if (this.isWeb()) {
@@ -655,10 +725,12 @@ export class PermissionOverlay {
     if (request.promptKind !== 'command') {
       return [];
     }
+    const mcpTool = this.mcpToolLabel();
     return [
       ...this.chosenRules().map((rule) => rule.value),
       ...this.selectedFolders().map((folder) => this.displayFolder(folder)),
       ...this.selectedHosts(),
+      ...(mcpTool ? [mcpTool] : []),
     ];
   });
 
@@ -689,6 +761,7 @@ export class PermissionOverlay {
     const command = this.request().promptKind === 'command';
     const allowGrants = this.allowGrants();
     const denyGrants = this.denyGrants();
+    const secrets = command ? this.selectedSecretFolders() : [];
     const actions: PermissionAction[] = [
       {
         id: 'allow',
@@ -697,17 +770,23 @@ export class PermissionOverlay {
         decision: 'allow_once',
         danger: false,
         grants: [],
+        secrets: [],
       },
     ];
-    if (allowGrants.length > 0) {
+    if (allowGrants.length > 0 || secrets.length > 0) {
       actions.push(
         {
           id: 'allow_session',
           labelKey: command ? 'permission.option.chat' : 'permission.option.session',
-          tooltipKey: command ? 'permission.tooltip.allowChat' : 'permission.tooltip.allowSession',
+          tooltipKey: this.mcpToolLabel()
+            ? 'permission.tooltip.allowChatMcp'
+            : command
+              ? 'permission.tooltip.allowChat'
+              : 'permission.tooltip.allowSession',
           decision: 'allow_session',
           danger: false,
           grants: allowGrants,
+          secrets,
         },
         {
           id: 'allow_always',
@@ -716,6 +795,7 @@ export class PermissionOverlay {
           decision: 'allow_always',
           danger: false,
           grants: allowGrants,
+          secrets,
         },
       );
     }
@@ -726,6 +806,7 @@ export class PermissionOverlay {
       decision: 'deny',
       danger: true,
       grants: [],
+      secrets: [],
     });
     if (denyGrants.length > 0) {
       actions.push({
@@ -735,6 +816,7 @@ export class PermissionOverlay {
         decision: 'deny_always',
         danger: true,
         grants: denyGrants,
+        secrets: [],
       });
     }
     return actions;
@@ -752,13 +834,16 @@ export class PermissionOverlay {
       this.segmentChoices().length > 0 ||
       (this.segmentScopes().length === 0 && this.scopeOptions().length > 1) ||
       this.folderOptions().length > 0 ||
-      this.hostOptions().length > 0,
+      this.hostOptions().length > 0 ||
+      this.secretFolderOptions().length > 0,
   );
 
   private readonly defaultAction = computed<PermissionDefaultAction>(() => {
     const defaults = this.settings.settings()?.permissionDefaults;
     const kind = this.request().promptKind;
-    if (kind === 'file') {
+    // An MCP tool runs outside pumr's command checks, so remembering it is
+    // always a deliberate pick, never what a single Enter does.
+    if (kind === 'file' || this.mcpToolLabel()) {
       return 'once';
     }
     if (this.isWeb()) {
@@ -794,6 +879,7 @@ export class PermissionOverlay {
       this.rule.set(this.request().suggestedRule ?? '');
       this.selectedFolders.set(mostSpecificFolders(this.folderOptions()));
       this.selectedHosts.set([...this.hostOptions()]);
+      this.selectedSecretFolders.set([...this.secretFolderOptions()]);
       this.customizing.set(false);
       const selection: Record<number, CommandRule> = {};
       for (const group of this.segmentScopes()) {
@@ -903,6 +989,12 @@ export class PermissionOverlay {
     );
   }
 
+  protected toggleSecretFolder(folder: string): void {
+    this.selectedSecretFolders.update((folders) =>
+      folders.includes(folder) ? folders.filter((entry) => entry !== folder) : [...folders, folder],
+    );
+  }
+
   /// Shortens a folder below the home directory to `~/…` for display. The full
   /// path is still what gets granted and is shown as the tooltip.
   protected displayFolder(folder: string): string {
@@ -958,6 +1050,11 @@ export class PermissionOverlay {
       return;
     }
     if (this.settings.dialogOpen() || this.workspace.debugOpen()) {
+      return;
+    }
+    // Esc that closes a preview or a menu must not deny the prompt with it,
+    // and neither Enter nor a digit typed there may approve it.
+    if (anotherLayerOpen(this.element.nativeElement)) {
       return;
     }
     const target = event.target as HTMLElement | null;
@@ -1056,6 +1153,18 @@ export class PermissionOverlay {
     switch (decision) {
       case 'allow_always':
       case 'allow_session':
+        if (this.secretFolderOptions().length > 0) {
+          // Only a prompt about sensitive files has folders to release.
+          void this.workspace.resolvePermission(
+            decision,
+            this.chosenRules(),
+            this.selectedFolders(),
+            this.selectedHosts(),
+            undefined,
+            this.selectedSecretFolders(),
+          );
+          return;
+        }
         void this.workspace.resolvePermission(
           decision,
           this.chosenRules(),

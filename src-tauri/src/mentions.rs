@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 const MAX_FILE_BYTES: u64 = 256 * 1024;
 const MAX_DIR_ENTRIES: usize = 600;
 const MAX_DIR_DEPTH: usize = 3;
-const MAX_SKILL_FILES: usize = 20;
 
 pub struct ResolvedMentions {
     pub context: String,
@@ -179,44 +178,10 @@ pub fn resolve_skill(settings: &Settings, value: &str, installed_skills: &[PathB
     ) else {
         return format!("## Skill: {value}\n\nNo skill named '{value}' was found.");
     };
-    let mut files: Vec<PathBuf> = Vec::new();
-    let skill_file = directory.join("SKILL.md");
-    if skill_file.is_file() {
-        files.push(skill_file.clone());
+    match discovery::skill_instructions(value, &directory) {
+        Some(instructions) => format!("## Skill: {value}\n\n{instructions}"),
+        None => format!("## Skill: {value}\n\n(no readable instructions found)"),
     }
-    if let Ok(entries) = std::fs::read_dir(&directory) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && path.extension().map(|ext| ext == "md").unwrap_or(false)
-                && path != skill_file
-            {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files.truncate(MAX_SKILL_FILES);
-    let mut body = String::new();
-    for file in &files {
-        if let Ok(content) = std::fs::read_to_string(file) {
-            if let Some(name) = file.file_name() {
-                body.push_str(&format!(
-                    "\n### {}\n{}\n",
-                    name.to_string_lossy(),
-                    content.trim()
-                ));
-            }
-        }
-    }
-    if body.trim().is_empty() {
-        body = "\n(no readable instructions found)".to_string();
-    }
-    format!(
-        "## Skill: {value}\n\n<skill name=\"{value}\" path=\"{}\">\n{}\n</skill>\n\nFollow the skill instructions above when they apply to the user's request.",
-        directory.display(),
-        body.trim()
-    )
 }
 
 fn display_path(runtime: &ToolRuntime, path: &Path) -> String {
@@ -457,23 +422,28 @@ mod tests {
     }
 
     #[test]
-    fn inlines_skill_instructions_with_skill_md_first() {
+    fn inlines_a_skills_instructions_and_names_its_other_files() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("skills");
-        let skill = root.join("release");
+        // Grouped one folder down, as collections keep their skills.
+        let skill = root.join("team/release");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "  Bump the version.  ").unwrap();
         std::fs::write(skill.join("changelog.md"), "Write the changelog.").unwrap();
-        std::fs::write(skill.join("notes.txt"), "not markdown").unwrap();
         let settings = isolated_settings(vec![root.to_string_lossy().to_string()]);
 
         let context = resolve_skill(&settings, "release", &[]);
 
-        let expected_body =
-            "### SKILL.md\nBump the version.\n\n### changelog.md\nWrite the changelog.";
-        assert!(context.starts_with("## Skill: release\n\n<skill name=\"release\""));
-        assert!(context.contains(expected_body), "{context}");
-        assert!(!context.contains("not markdown"));
+        assert!(
+            context.starts_with(&format!(
+                "## Skill: release\n\n<skill name=\"release\" path=\"{}\">\nBump the version.\n</skill>\n",
+                skill.display()
+            )),
+            "{context}"
+        );
+        // The other file is named, to be read when the instructions call for it.
+        assert!(context.contains("\n- changelog.md\n"), "{context}");
+        assert!(!context.contains("Write the changelog."));
         assert!(context.ends_with(
             "Follow the skill instructions above when they apply to the user's request."
         ));
@@ -508,10 +478,7 @@ mod tests {
         std::fs::write(installed.join("review/SKILL.md"), "Review carefully.").unwrap();
 
         let context = resolve_skill(&isolated_settings(Vec::new()), "review", &[installed]);
-        assert!(
-            context.contains("### SKILL.md\nReview carefully."),
-            "{context}"
-        );
+        assert!(context.contains("\nReview carefully.\n</skill>"), "{context}");
     }
 
     #[test]

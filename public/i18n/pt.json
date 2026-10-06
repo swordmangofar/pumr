@@ -6,16 +6,18 @@
     "toggleSidebar": "Mostrar/ocultar a barra lateral",
     "toggleRightPanel": "Mostrar/ocultar o painel direito",
     "toggleTerminal": "Mostrar/ocultar terminal",
+    "keepAwake": "Manter acordado enquanto os agentes trabalham",
+    "keepAwakeOn": "O computador permanece acordado enquanto os agentes trabalham. Clique para desativar.",
+    "keepAwakeOff": "O computador pode entrar em suspensão enquanto os agentes trabalham. Clique para o manter acordado.",
     "refresh": "Atualizar",
     "notTauri": "O pumr deve ser executado dentro do Tauri. Inicie-o com: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projetos",
+    "sessions": "Sessões",
     "workspace": "Espaço de trabalho",
     "git": "Git",
     "addProject": "Adicionar projeto",
     "newSession": "Nova sessão",
-    "new": "Nova",
     "noProjects": "Ainda não há projetos. Adicione uma pasta para começar.",
     "noSessions": "Nenhuma sessão",
     "removeProject": "Remover projeto",
@@ -36,8 +38,6 @@
     "yesterday": "Ontem"
   },
   "workspace": {
-    "title": "Espaço de trabalho",
-    "noSession": "Abra uma sessão para navegar em seus arquivos.",
     "empty": "Nenhum arquivo encontrado.",
     "libraryRoot": "raiz da biblioteca",
     "noOpenFiles": "Nenhum arquivo aberto. Selecione um arquivo na árvore.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Excluir a tag {{ tag }}?",
     "stashes": "Stashes",
     "stashCreate": "Guardar alterações",
+    "stash": "Stash",
+    "stashMessage": "Mensagem (opcional)",
+    "stashIncludeUntracked": "Incluir arquivos não rastreados",
     "stashApply": "Aplicar",
     "stashPop": "Recuperar",
     "stashDropConfirm": "Descartar {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Usar a recebida (theirs)",
       "markResolved": "Marcar como resolvido",
       "fileHint": "Este ficheiro tem conflitos. Mantenha um dos lados, ou edite o ficheiro e marque-o como resolvido.",
+      "markersLeftIn": "Ficheiros em conflito que ainda contêm marcadores de conflito (<<<<<<< ou >>>>>>>): {{ count }}. Marcar como resolvidos mesmo assim?",
       "markersLeft": "O ficheiro ainda contém marcadores de conflito (<<<<<<< ou >>>>>>>). Marcar como resolvido mesmo assim?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Pasta de destino",
     "cloneChoose": "Escolher…",
     "createBranch": "Criar ramo",
+    "branch": "Ramo",
     "branchName": "Nome do ramo",
     "createBranchAt": "Criar ramo em: {{branch}}",
     "checkoutAfterCreate": "Mudar após criar",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Conecte um provedor de modelos nas configurações para começar a conversar.",
+    "noDefaultModel": "Ainda não há um modelo padrão. Abra as configurações, escolha um modelo em “Modelo padrão”, na seção “Provedores de modelos”, e clique em “Salvar”.",
     "openSettings": "Abrir configurações",
     "error": "Erro",
     "retry": "Tentar novamente",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} para enviar · {{ newLine }} para nova linha",
     "hintStreaming": "{{ send }} para enfileirar · {{ stop }} para parar",
     "hintRecall": "{{ recall }} para o último prompt",
+    "hintCommands": "/ para comandos",
     "handover": "Transferência",
     "handovering": "Resumindo…",
     "handoverHint": "Resuma esta sessão e continue em uma nova",
@@ -328,6 +335,13 @@
     "compacting": "Compactando o contexto",
     "compacted": "Contexto compactado",
     "compactedHint": "Daqui em diante, o modelo trabalha com este resumo em vez das mensagens acima.",
+    "mcpStarting": "Iniciando o servidor MCP {{ name }}",
+    "mcpIssues": "Não foi possível usar alguns servidores MCP nesta mensagem:",
+    "sideQuestion": "Pergunta paralela",
+    "sideQuestionHint": "Faça uma pergunta rápida sobre esta sessão ou sobre qualquer outra coisa. A resposta não é adicionada à sessão.",
+    "sideQuestionPrivate": "Não é adicionada à sessão",
+    "sideQuestionAnswering": "Respondendo…",
+    "sideQuestionStopped": "Interrompido",
     "interrupted": "Este chat foi interrompido antes de o agente terminar: o pumr foi fechado ou o computador entrou em suspensão. Pode continuá-lo a partir de onde parou.",
     "limitReached": "Pausado após chamadas da ferramenta {{ count }} sem resposta final. O limite evita que um agente preso fique em loop para sempre. Continue a fornecer um novo orçamento ou ative a continuação automática.",
     "continue": "Continuar",
@@ -456,7 +470,8 @@
         "cascade": "Negado com outro pedido",
         "stopped": "Parado",
         "timeout": "Tempo esgotado",
-        "cancelled": "Cancelado"
+        "cancelled": "Cancelado",
+        "hook": "Seu hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Nenhuma correspondência. Continue digitando ou pressione Esc.",
     "mentionFetch": "Buscar {{ url }}",
     "removeMention": "Remover referência",
+    "commandPrompt": "Aplica seu prompt “{{ name }}” ao que você digitar depois",
+    "commandEffort": "Defina quanto o modelo raciocina",
+    "commandMode": "Troque o modo desta sessão",
+    "commandModel": "Troque o modelo desta sessão",
+    "commandProvider": "Escolha o provedor que fornece o modelo",
+    "commandRevert": "Volta ao seu último prompt: o que veio depois é removido e os arquivos podem ser restaurados",
+    "commandRevertNone": "Ainda não há nenhum prompt para o qual voltar",
+    "commandRevertRunning": "Pare primeiro o agente",
+    "commandNoEffort": "Este modelo não tem nível de raciocínio para definir.",
+    "commandNoProvider": "Apenas modelos do OpenRouter podem ser direcionados a um provedor.",
     "textBlockWords": "{{ count }} palavras",
     "textBlockRemove": "Remover texto colado",
     "textBlockTitle": "Texto colado",
@@ -634,7 +659,7 @@
     "alwaysOn": "Sempre ativo",
     "editInSettings": "Editar nas configurações",
     "yourPrompts": "Seus prompts",
-    "yourPromptsHint": "Os prompts ativados são anexados aos system prompts ativos. Edite-os ou redefina os integrados para o texto original.",
+    "yourPromptsHint": "Chame um prompt na caixa de chat com uma barra e o nome dele, por exemplo /code-review. Ele vale então só para essa mensagem. Edite-os ou restaure o texto original dos integrados.",
     "addPrompt": "Novo",
     "customPrompt": "Prompt personalizado",
     "promptName": "Nome do prompt",
@@ -718,6 +743,8 @@
       "providers": "Provedores",
       "agent": "Configuração do agente",
       "agentRules": "Whitelist e blacklist do agente",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "Geral",
       "chat": "Chat",
       "appearance": "Aparência",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP Server",
       "workspace": "Área de trabalho"
+    },
+    "sandbox": {
+      "title": "Sandbox para comandos",
+      "hint": "O sistema operacional confina cada comando que o agente executa e tudo o que esse comando inicia. É uma segunda camada por trás das regras de permissão, para um comando que elas avaliem mal. Um comando que o sandbox bloqueia pode pedir para ser executado fora dele; você é consultado todas as vezes.",
+      "unavailable": "Este sistema não tem um sandbox que o pumr possa usar, por isso os comandos são executados sem confinamento. É necessário macOS, ou Linux 5.19 ou mais recente com Landlock.",
+      "networkUnavailable": "Fechar a rede só é possível no macOS.",
+      "modes": {
+        "off": "Desativado",
+        "files": "Arquivos",
+        "filesAndNetwork": "Arquivos e rede"
+      },
+      "modeHints": {
+        "off": "Os comandos são executados como o seu usuário, limitados apenas pelas regras de permissão.",
+        "files": "Os comandos gravam apenas no projeto, nas suas pastas adicionais, nas pastas temporárias e nas pastas listadas abaixo. Não podem ler as pastas que guardam chaves.",
+        "filesAndNetwork": "O mesmo, e os comandos alcançam apenas este computador, exceto os comandos cujos hosts você permitiu. A instalação de pacotes pede então para ser executada fora do sandbox."
+      },
+      "writable": "Pastas em que os comandos também podem gravar",
+      "writableHint": "Os caches das ferramentas de build. Sem eles, um build falha no primeiro download. Um caminho começa com / ou ~.",
+      "unreadable": "Pastas que os comandos não podem ler",
+      "unreadableHint": "Onde ficam chaves e tokens. O git, o ssh e as ferramentas de nuvem mantêm as pastas com que trabalham, e uma pasta que você permitiu para comandos continua aberta.",
+      "excluded": "Comandos executados fora do sandbox",
+      "excludedHint": "Para ferramentas que trazem um sandbox próprio e falham dentro deste, como testes de navegador. Uma entrada indica como a linha de comando começa; com *, é um padrão para a linha inteira.",
+      "addCommand": "Adicionar comando",
+      "noCommands": "Nenhum comando adicionado ainda."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Um hook é um comando seu que o pumr executa em um momento fixo do trabalho do agente. O modelo não decide se ele é executado, por isso não pode esquecê-lo. Os hooks são executados como você os escreveu, sem pedidos de permissão e fora do sandbox.",
+      "protocol": "Um hook recebe os detalhes como JSON na entrada padrão (tool_name, tool_input, tool_response) e o arquivo indicado por uma chamada como $PUMR_FILE. O código de saída 0 deixa o agente continuar. O código de saída 2 entrega ao agente o que o hook imprimiu e, antes de uma chamada de ferramenta, recusa a chamada.",
+      "add": "Adicionar hook",
+      "empty": "Nenhum hook adicionado ainda.",
+      "remove": "Remover hook",
+      "event": "Quando o hook é executado",
+      "events": {
+        "beforeTool": "Antes de uma chamada de ferramenta",
+        "afterTool": "Depois de uma chamada de ferramenta",
+        "turnEnd": "Quando o agente quer terminar"
+      },
+      "tools": "Ferramentas",
+      "toolsPlaceholder": "Todas as ferramentas, ou nomes como edit|write",
+      "files": "Arquivos",
+      "filesPlaceholder": "Todos os arquivos, ou padrões como *.ts",
+      "command": "Comando",
+      "timeout": "Parar após (segundos)",
+      "project": "Projeto",
+      "allProjects": "Todos os projetos"
     },
     "providers": {
       "title": "Provedores de modelos",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Altere isto apenas se usar um proxy ou um gateway compatível.",
     "defaultModel": "Modelo padrão",
     "defaultModelHint": "Usado para novas sessões.",
+    "defaultModelSetupTitle": "Escolha um modelo padrão",
+    "defaultModelSetup": "Seu provedor está conectado. As novas sessões começam com o modelo padrão: escolha-o em “Modelo padrão”, mais abaixo nesta página, e clique em “Salvar”. Você ainda pode trocar de modelo em cada chat.",
+    "defaultModelSetupAction": "Ir para o modelo padrão",
     "handoverModel": "Modelo de transferência",
     "handoverModelPlaceholder": "Usar o modelo da sessão atual",
     "handoverModelHint": "Modelo usado para resumir uma sessão ao transferi-la. Deixe vazio para usar o modelo da sessão atual.",
@@ -998,6 +1074,14 @@
       "mist": "Texto atenuado",
       "white": "Texto"
     },
+    "logo": {
+      "title": "Logótipo",
+      "hint": "Mostrado no cabeçalho da aplicação e como ícone da aplicação enquanto o pumr está em execução.",
+      "mascot": "Puma sentado",
+      "classic": "Rosto clássico",
+      "shaded": "Puma sombreado",
+      "tailup": "Puma de cauda levantada"
+    },
     "background": {
       "title": "Plano de fundo do aplicativo",
       "hint": "Escolha um cenário integrado ou use sua própria imagem. Ele fica atrás dos painéis de vidro e segue o seu tema.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Nova linha",
       "chatStop": "Parar a resposta",
       "chatRecallPrompt": "Recuperar o último prompt",
+      "chatToggleMode": "Alternar entre planejamento e programação",
+      "chatToggleModeHint": "Volta ao modo em que a sessão estava antes do planejamento.",
       "gitToggleStage": "Preparar ou despreparar os arquivos selecionados",
       "gitDiscardFiles": "Descartar os arquivos selecionados",
       "gitSelectAllFiles": "Selecionar todos os arquivos",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimizar",
       "fillScreen": "Preencher o ecrã",
       "fillScreenHint": "A janela invocada preenche o monitor ativo em vez de manter o tamanho anterior.",
+      "shortcutError": "Não foi possível registar o atalho de todo o sistema, pelo que não chama o pumr. Provavelmente outra aplicação já usa esta combinação de teclas: escolha outra e guarde novamente.",
+      "waylandHint": "No Wayland, as aplicações não podem registar atalhos de todo o sistema, pelo que este atalho não funciona aqui de forma fiável. Em vez disso, associe o comando abaixo a uma tecla nas definições de teclado do seu ambiente de trabalho.",
+      "command": "Comando para o atalho",
+      "commandHint": "Faz o mesmo que o atalho: chama o pumr, ou oculta-o ou minimiza-o quando está à frente. Associe-o a uma tecla nas definições de teclado do seu ambiente de trabalho.",
+      "commandActions": "Para uma única ação, termine o comando com uma destas opções:",
       "zoom": "Escala de visualização",
       "zoomHint": "Dimensiona toda a interface. Atalho: Ctrl/⌘ + + para ampliar, Ctrl/⌘ + - para reduzir, Ctrl/⌘ + 0 para redefinir.",
       "zoomReset": "Redefinir"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Permitir comando",
     "denyCommand": "Bloquear comando",
     "noDeniedCommandRules": "Nenhum comando bloqueado.",
+    "mcpToolGrants": "Ferramentas MCP permitidas",
+    "mcpToolGrantsHint": "Ferramentas de servidores MCP que são executadas sem perguntar. Cada entrada vale para uma ferramenta de um servidor, quaisquer que sejam os argumentos, e deixa de se aplicar quando a configuração desse servidor muda. Use «permitir sempre» em uma solicitação de permissão para criar uma.",
+    "noMcpToolGrants": "Ainda não há ferramentas MCP sempre permitidas.",
+    "secretFolders": "Pastas com arquivos sensíveis permitidos",
+    "secretFoldersHint": "Os comandos podem usar sem perguntar os arquivos sensíveis (chaves, tokens, credenciais) que estão diretamente nestas pastas. As subpastas não estão incluídas. Use «permitir sempre» em uma solicitação de permissão para criar uma.",
+    "noSecretFolders": "Ainda não há pastas com arquivos sensíveis permitidos.",
     "scope": {
       "program": "Programa",
       "subcommand": "Programa + subcomando",
@@ -1276,7 +1373,8 @@
       "file": "Arquivo",
       "web": "Site",
       "websearch": "Pesquisa na web",
-      "folder": "Pasta"
+      "folder": "Pasta",
+      "hook": "Hook"
     },
     "allowAlways": "Permitir sempre",
     "siteRuleLabel": "Regra de site (domínio ou glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Adiciona o site e os seus subdomínios aos sites permitidos.",
       "option": "Site + subdomínios"
     },
+    "secretScope": {
+      "title": "Arquivos sensíveis",
+      "hint": "Os comandos poderão usar sem perguntar as chaves, os tokens e os arquivos de credenciais que estão diretamente nesta pasta. As subpastas não estão incluídas.",
+      "option": "Arquivos sensíveis nesta pasta",
+      "chip": "arquivos sensíveis em {{ folder }}"
+    },
     "allowChat": "Permitir neste chat",
     "option": {
       "yes": "Sim",
@@ -1315,6 +1419,7 @@
     "customize": "Personalizar",
     "justification": "Motivo",
     "keyboardHint": "Prima 1–{{ count }} ou use ↑ ↓ e Enter · Esc nega",
+    "mcpToolHint": "Não voltar a perguntar vale para todas as chamadas desta ferramenta neste servidor, quaisquer que sejam os argumentos.",
     "url": {
       "queryWarning": "Este endereço transporta muitos dados na sua cadeia de consulta. Confirme que não contém nada privado antes de o permitir."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Permitir apenas este pedido.",
       "allowSession": "Lembrado em todos os chats até a aplicação reiniciar.",
       "allowChat": "As regras de comandos são lembradas neste chat e nos seus subagentes; pastas e sites até a aplicação reiniciar.",
+      "allowChatMcp": "Lembrado neste chat e nos seus subagentes: todas as chamadas desta ferramenta neste servidor, quaisquer que sejam os argumentos.",
       "allowAlways": "Guardado nas definições e aplica-se a todos os chats."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Novo terminal",
     "close": "Fechar terminal",
     "hide": "Ocultar terminal",
+    "run": "Executar no terminal",
     "noProject": "Abra uma sessão para usar o terminal.",
     "exited": "O processo terminou com o código {{ code }}",
     "failed": "Não foi possível iniciar o terminal: {{ error }}"

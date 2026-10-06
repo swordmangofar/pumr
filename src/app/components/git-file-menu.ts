@@ -60,9 +60,12 @@ type FileAction =
           <div class="menu-sep"></div>
         }
         @if (staged()) {
-          <button type="button" class="menu-item" (click)="run('unstage')">
-            {{ unstageLabel() | transloco: { count: count() } }}
-          </button>
+          @if (unstageable().length > 0) {
+            <button type="button" class="menu-item" (click)="run('unstage')">
+              {{ unstageLabel() | transloco: { count: unstageable().length } }}
+            </button>
+            <div class="menu-sep"></div>
+          }
         } @else {
           <button type="button" class="menu-item" (click)="run('stage')">
             {{ stageLabel() | transloco: { count: count() } }}
@@ -70,9 +73,9 @@ type FileAction =
           <button type="button" class="menu-item text-rose-400" (click)="run('discard')">
             {{ discardLabel() | transloco: { count: count() } }}
           </button>
+          <div class="menu-sep"></div>
         }
 
-        <div class="menu-sep"></div>
         <button type="button" class="menu-item" (click)="run('blame')">
           {{ 'git.blame' | transloco }}
         </button>
@@ -180,6 +183,8 @@ export class GitFileMenu {
   readonly staged = input.required<boolean>();
   /** The path has a merge conflict, so it can be resolved from here. */
   readonly conflicted = input(false);
+  /** Every path with a merge conflict. They are resolved, never unstaged. */
+  readonly conflictedPaths = input<ReadonlySet<string>>(new Set());
   readonly x = input.required<number>();
   readonly y = input.required<number>();
   readonly closed = output<void>();
@@ -197,8 +202,13 @@ export class GitFileMenu {
   protected readonly stageLabel = computed(() =>
     this.paths().length > 1 ? 'git.stageSelected' : 'git.stage',
   );
+  /** What Unstage acts on: the file or the selection, without its conflicted files. */
+  protected readonly unstageable = computed(() => {
+    const paths = this.paths().length > 1 ? this.paths() : [this.path()];
+    return paths.filter((path) => !this.conflictedPaths().has(path));
+  });
   protected readonly unstageLabel = computed(() =>
-    this.paths().length > 1 ? 'git.unstageSelected' : 'git.unstage',
+    this.unstageable().length > 1 ? 'git.unstageSelected' : 'git.unstage',
   );
   protected readonly discardLabel = computed(() =>
     this.paths().length > 1 ? 'git.discardSelected' : 'git.discard',
@@ -209,7 +219,7 @@ export class GitFileMenu {
   );
 
   private projectId(): string | null {
-    return this.workspace.activeProject()?.id ?? null;
+    return this.workspace.browseProject()?.id ?? null;
   }
 
   protected onBackdrop(event: MouseEvent): void {
@@ -242,21 +252,19 @@ export class GitFileMenu {
     }
     switch (action) {
       case 'stage':
-        if (this.paths().length > 1) {
-          void this.git.stagePaths(projectId, this.paths());
-        } else {
-          void this.git.stagePath(projectId, this.path());
+        void this.stage(projectId, this.paths().length > 1 ? this.paths() : [this.path()]);
+        this.close();
+        break;
+      case 'unstage': {
+        const paths = this.unstageable();
+        if (paths.length > 1) {
+          void this.git.unstagePaths(projectId, paths);
+        } else if (paths.length === 1) {
+          void this.git.unstagePath(projectId, paths[0]);
         }
         this.close();
         break;
-      case 'unstage':
-        if (this.paths().length > 1) {
-          void this.git.unstagePaths(projectId, this.paths());
-        } else {
-          void this.git.unstagePath(projectId, this.path());
-        }
-        this.close();
-        break;
+      }
       case 'discard':
         void this.discard(projectId);
         break;
@@ -285,9 +293,24 @@ export class GitFileMenu {
         this.close();
         break;
       case 'markResolved':
-        void this.git.stagePath(projectId, this.path());
+        void this.stage(projectId, [this.path()]);
         this.close();
         break;
+    }
+  }
+
+  /**
+   * Stages the files. That marks a conflicted one resolved, so it is asked
+   * about first while conflict markers are still in it.
+   */
+  private async stage(projectId: string, paths: string[]): Promise<void> {
+    if (!(await this.git.confirmResolving(projectId, paths))) {
+      return;
+    }
+    if (paths.length > 1) {
+      await this.git.stagePaths(projectId, paths);
+    } else {
+      await this.git.stagePath(projectId, paths[0]);
     }
   }
 

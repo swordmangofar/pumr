@@ -1,6 +1,7 @@
 import { Injectable, Signal, WritableSignal, computed, signal } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
+import { confirmWarning } from './confirm-warning';
 import {
   FileDiff,
   GIT_WHOLE_FILE_CONTEXT,
@@ -33,9 +34,24 @@ const GIT_REVEAL_MAX_PAGES = 20;
 export type GitChangeDiff = {
   path: string;
   staged: boolean;
+  /** The context lines `hunks` was loaded with, which its line ids depend on. */
+  context: number;
   hunks: GitHunkDiff;
   conflict: FileDiff | null;
 };
+/**
+ * Lines to stage, unstage or discard, with the diff their ids were read from:
+ * its file, side, context lines and fingerprint, as they were when the user
+ * chose the lines.
+ */
+export interface GitLineChange {
+  action: GitLineAction;
+  lines: number[];
+  path: string;
+  staged: boolean;
+  context: number;
+  fingerprint: string;
+}
 export type GitViewMode = 'changes' | 'commits';
 
 const GIT_DIFF_OPTIONS_KEY = 'pumr.gitDiffOptions';
@@ -47,6 +63,11 @@ const DEFAULT_DIFF_OPTIONS: GitDiffOptions = {
 };
 /** Starts the backend error of a line action on a diff that changed meanwhile. */
 const STALE_DIFF = 'stale diff';
+
+/** Whether `content` still has one of git's conflict markers at the start of a line. */
+export function hasConflictMarkers(content: string): boolean {
+  return /^(<{7}|>{7})(\s|$)/m.test(content);
+}
 
 function loadDiffOptions(): GitDiffOptions {
   try {
@@ -486,7 +507,7 @@ export class GitService {
       const conflict =
         hunks.blocked === 'conflict' ? await api.getGitFileDiff(projectId, path, false) : null;
       if (this.tokens.isLatest(key, token)) {
-        this.set(this.diffState, projectId, { path, staged, hunks, conflict });
+        this.set(this.diffState, projectId, { path, staged, context, hunks, conflict });
       }
     } catch (error) {
       if (this.tokens.isLatest(key, token)) {
@@ -516,27 +537,55 @@ export class GitService {
   }
 
   /**
-   * Stages, unstages or discards single lines (ids from the viewed diff). A
-   * diff that changed since it was shown is refused by the backend; it is then
-   * loaded again so the user can review it.
+   * Stages, unstages or discards single lines. Exactly the diff `change` names
+   * is sent, never the one viewed by now: the line ids belong to it alone, and
+   * a confirmation may have been open while another diff was loaded. A diff
+   * that changed since it was shown is refused by the backend; the viewed one
+   * is then loaded again so the user can review it.
    */
-  async applyLines(projectId: string, action: GitLineAction, lines: number[]): Promise<void> {
-    const current = this.diffFor(projectId);
-    if (!current || lines.length === 0) {
+  async applyLines(projectId: string, change: GitLineChange): Promise<void> {
+    const { action, lines, path, staged, context, fingerprint } = change;
+    if (lines.length === 0) {
       return;
     }
-    const { path, staged, hunks } = current;
-    const context = this.diffOptionsState().context;
-    await this.changeFile(projectId, path, staged, () =>
-      api.gitApplyLines(projectId, path, staged, action, context, hunks.fingerprint, lines),
+    await this.changeFile(projectId, path, () =>
+      api.gitApplyLines(projectId, path, staged, action, context, fingerprint, lines),
     );
   }
 
   /** Resolves a conflicted file with one side's version. */
   async resolveConflict(projectId: string, path: string, side: GitConflictSide): Promise<void> {
-    const selected = this.diffFor(projectId);
-    await this.changeFile(projectId, path, selected?.staged ?? false, () =>
-      api.gitResolveConflict(projectId, path, side),
+    await this.changeFile(projectId, path, () => api.gitResolveConflict(projectId, path, side));
+  }
+
+  /**
+   * Staging a conflicted file marks its conflict resolved, whatever the file
+   * holds. Asks first when one of `paths` (every changed file for `null`) is
+   * conflicted and still has git's conflict markers in it; false when the user
+   * declines. A file that cannot be read is taken to have none.
+   */
+  async confirmResolving(projectId: string, paths: string[] | null): Promise<boolean> {
+    const conflicted = this.statusFor(projectId)?.conflicted ?? [];
+    const resolving = paths ? conflicted.filter((path) => paths.includes(path)) : conflicted;
+    if (resolving.length === 0) {
+      return true;
+    }
+    const marked = await Promise.all(
+      resolving.map((path) =>
+        api.getGitFileDiff(projectId, path, false).then(
+          (diff) => hasConflictMarkers(diff.newContent),
+          () => false,
+        ),
+      ),
+    );
+    const count = marked.filter(Boolean).length;
+    if (count === 0) {
+      return true;
+    }
+    return confirmWarning(
+      paths?.length === 1
+        ? this.transloco.translate('git.conflict.markersLeft')
+        : this.transloco.translate('git.conflict.markersLeftIn', { count }),
     );
   }
 
@@ -857,6 +906,12 @@ export class GitService {
       this.loadInfo(projectId),
       this.loadRefs(projectId),
     ]);
+    // What the operation did to the change being viewed shows in its diff; a
+    // file it left unchanged, as a stash does, is no longer shown.
+    const selected = this.diffFor(projectId);
+    if (selected) {
+      await this.reselectChange(projectId, selected.path, selected.staged);
+    }
     if (this.viewFor(projectId) === 'commits') {
       await this.loadCommits(projectId, true);
     }
@@ -887,31 +942,34 @@ export class GitService {
 
   /**
    * Runs an edit of one file's changes, then shows fresh status. The file
-   * stays selected on the side that still lists it.
+   * stays selected on the side that still lists it. The project stays busy
+   * until its diff is loaded again: the line ids of the diff still shown
+   * meanwhile no longer fit the file.
    */
   private async changeFile(
     projectId: string,
     path: string,
-    staged: boolean,
     operation: () => Promise<void>,
   ): Promise<void> {
     this.clearError(projectId);
     this.set(this.busyState, projectId, true);
     try {
-      await operation();
-    } catch (error) {
-      if (String(error).includes(STALE_DIFF)) {
-        this.set(this.errorState, projectId, this.transloco.translate('git.diff.stale'));
-      } else {
-        this.setError(projectId, error);
+      try {
+        await operation();
+      } catch (error) {
+        if (String(error).includes(STALE_DIFF)) {
+          this.set(this.errorState, projectId, this.transloco.translate('git.diff.stale'));
+        } else {
+          this.setError(projectId, error);
+        }
+      }
+      await this.loadStatus(projectId, true);
+      const selected = this.diffFor(projectId);
+      if (selected && selected.path === path) {
+        await this.reselectChange(projectId, path, selected.staged);
       }
     } finally {
       this.set(this.busyState, projectId, false);
-    }
-    await this.loadStatus(projectId, true);
-    const selected = this.diffFor(projectId);
-    if (selected && selected.path === path) {
-      await this.reselectChange(projectId, path, staged);
     }
   }
 

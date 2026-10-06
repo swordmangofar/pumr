@@ -1,11 +1,15 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
+  afterRenderEffect,
   computed,
   effect,
   inject,
   input,
   signal,
+  untracked,
+  viewChildren,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { PendingQuestion, QuestionAnswer } from '../core/models';
@@ -17,16 +21,23 @@ interface QuestionDraft {
   customActive: boolean;
 }
 
+import { isEditable } from './permission-overlay';
 import { TypedInput } from './typed-input';
 
 @Component({
   selector: 'app-question-overlay',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [TypedInput, TranslocoPipe],
+  host: {
+    '(keydown)': 'onKeydown($event)',
+    '(click)': 'onClick($event)',
+    '(focusin)': 'onFocusIn($event)',
+  },
   template: `
     <div class="pointer-events-none absolute inset-0 z-40 flex flex-col justify-end px-5 pb-3">
       <div
-        class="pointer-events-auto mx-auto flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-white/10 bg-navy/95 shadow-2xl shadow-black/50 backdrop-blur"
+        tabindex="-1"
+        class="pointer-events-auto mx-auto flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-white/10 bg-navy/95 shadow-2xl shadow-black/50 outline-none backdrop-blur"
       >
         <button
           type="button"
@@ -65,8 +76,9 @@ import { TypedInput } from './typed-input';
             <div class="flex flex-col gap-1.5">
               @for (option of current().options; track option.label) {
                 <button
+                  #stop
                   type="button"
-                  class="flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors"
+                  class="flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-2 focus:outline-offset-2 focus:outline-accent/70"
                   [class]="cardClass(isSelected(option.label))"
                   [attr.aria-pressed]="isSelected(option.label)"
                   (click)="toggleOption(option.label)"
@@ -101,8 +113,9 @@ import { TypedInput } from './typed-input';
               }
 
               <button
+                #stop
                 type="button"
-                class="flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors"
+                class="flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-2 focus:outline-offset-2 focus:outline-accent/70"
                 [class]="cardClass(customActive())"
                 [attr.aria-pressed]="customActive()"
                 (click)="toggleCustom()"
@@ -127,11 +140,12 @@ import { TypedInput } from './typed-input';
 
               @if (customActive()) {
                 <input
+                  #stop
                   class="field w-full rounded-lg px-3 py-2 text-sm"
                   [placeholder]="'question.customPlaceholder' | transloco"
                   [value]="draft(index()).custom"
                   (typedValue)="setCustom($event)"
-                  (keydown.enter)="advanceOrSubmit()"
+                  (keydown.enter)="onCustomEnter($event)"
                 />
               }
             </div>
@@ -139,8 +153,9 @@ import { TypedInput } from './typed-input';
 
           <footer class="flex shrink-0 items-center gap-2 border-t border-white/10 px-4 py-2">
             <button
+              #stop
               type="button"
-              class="rounded-full border border-white/15 px-3 py-1.5 text-xs text-mist transition-colors hover:bg-white/5"
+              class="rounded-full border border-white/15 px-3 py-1.5 text-xs text-mist transition-colors hover:bg-white/5 focus:outline-2 focus:outline-offset-2 focus:outline-accent/70"
               (click)="skip()"
             >
               {{ 'question.skip' | transloco }}
@@ -148,8 +163,9 @@ import { TypedInput } from './typed-input';
             <span class="flex-1"></span>
             @if (index() > 0) {
               <button
+                #stop
                 type="button"
-                class="rounded-full border border-white/15 px-3.5 py-1.5 text-xs text-mist transition-colors hover:bg-white/5"
+                class="rounded-full border border-white/15 px-3.5 py-1.5 text-xs text-mist transition-colors hover:bg-white/5 focus:outline-2 focus:outline-offset-2 focus:outline-accent/70"
                 (click)="back()"
               >
                 {{ 'question.back' | transloco }}
@@ -157,16 +173,18 @@ import { TypedInput } from './typed-input';
             }
             @if (index() < total() - 1) {
               <button
+                #stop
                 type="button"
-                class="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-accent/90"
+                class="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-accent/90 focus:outline-2 focus:outline-offset-2 focus:outline-accent/70"
                 (click)="next()"
               >
                 {{ 'question.next' | transloco }}
               </button>
             } @else {
               <button
+                #stop
                 type="button"
-                class="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-accent/90"
+                class="rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-accent/90 focus:outline-2 focus:outline-offset-2 focus:outline-accent/70"
                 (click)="submit()"
               >
                 {{ 'question.submit' | transloco }}
@@ -181,10 +199,22 @@ import { TypedInput } from './typed-input';
 export class QuestionOverlay {
   readonly request = input.required<PendingQuestion>();
   protected readonly workspace = inject(WorkspaceService);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly drafts = signal<QuestionDraft[]>([]);
   protected readonly index = signal(0);
   protected readonly collapsed = signal(false);
   private lastRequestId = '';
+
+  /**
+   * The answers, the custom answer's field and the buttons below, top to
+   * bottom. The buttons mark focus on `:focus`: the global ring needs
+   * `:focus-visible`, which a script-focused button lacks after a click.
+   */
+  private readonly stops = viewChildren<ElementRef<HTMLElement>>('stop');
+  private focusedStep = '';
+  private focusedNonce = this.workspace.composerFocusNonce();
+  /** Where the keyboard last was, to return there within the same question. */
+  private lastStop: HTMLElement | null = null;
 
   protected readonly total = computed(() => this.request().questions.length);
   protected readonly current = computed(
@@ -204,6 +234,56 @@ export class QuestionOverlay {
         request.questions.map(() => ({ selected: [], custom: '', customActive: false })),
       );
     });
+
+    // Each question starts with the keyboard on its first answer. Going on to
+    // the next question would otherwise drop focus with the replaced button.
+    // The chat being asked to take the keyboard (the window is summoned, the
+    // terminal closes) hands it back to the open question, where it was.
+    afterRenderEffect(() => {
+      const step = `${this.request().requestId}:${this.index()}`;
+      const nonce = this.workspace.composerFocusNonce();
+      const stops = this.stops().map((stop) => stop.nativeElement);
+      if ((step === this.focusedStep && nonce === this.focusedNonce) || stops.length === 0) {
+        return;
+      }
+      const resume = step === this.focusedStep && this.lastStop;
+      const target = resume && stops.includes(resume) ? resume : stops[0];
+      this.focusedStep = step;
+      this.focusedNonce = nonce;
+      if (this.focusBelongsElsewhere()) {
+        return;
+      }
+      // Another panel that holds the keyboard would take the arrows and Enter.
+      untracked(() => {
+        if (this.workspace.focusedPanel()) {
+          this.workspace.setFocusedPanel('center');
+        }
+      });
+      target.focus();
+    });
+  }
+
+  /**
+   * Whether focus should stay where it is: in a dialog, or in a field the user
+   * is typing in. The message box gives focus up while it is empty, which it
+   * is right after the prompt that led to the question was sent.
+   */
+  private focusBelongsElsewhere(): boolean {
+    const focused = document.activeElement;
+    if (!focused || this.element.nativeElement.contains(focused)) {
+      return false;
+    }
+    if (focused.closest('[role="dialog"]')) {
+      return true;
+    }
+    if (!isEditable(focused)) {
+      return false;
+    }
+    const text =
+      focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+        ? focused.value
+        : (focused.textContent ?? '');
+    return !focused.closest('app-composer') || text.trim().length > 0;
   }
 
   protected draft(index: number): QuestionDraft {
@@ -229,8 +309,57 @@ export class QuestionOverlay {
     return `${shape} ${selected ? 'border-accent bg-accent/15' : 'border-white/30'}`;
   }
 
+  /**
+   * Arrow keys walk the answers and the buttons below them; Enter and Space
+   * press the focused one. Tab cannot be relied on, it may be the shortcut
+   * that switches panels. Left and right stay with the caret while a field
+   * has focus.
+   */
+  protected onKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) {
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    const vertical = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+    const horizontal = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    const delta = vertical || (isEditable(target) ? 0 : horizontal);
+    const stops = this.stops().map((stop) => stop.nativeElement);
+    if (delta === 0 || stops.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const position = target ? stops.indexOf(target) : -1;
+    // From the panel itself the keys enter the list at its near end.
+    const next = position < 0 ? (delta > 0 ? 0 : -1) : position + delta;
+    stops[(next + stops.length) % stops.length].focus();
+  }
+
+  /**
+   * Keeps the keyboard on what was clicked. WebKit on macOS does not focus a
+   * button on a click, which would leave the arrow keys without a start.
+   */
+  protected onClick(event: MouseEvent): void {
+    const target = event.target as Node | null;
+    this.stops()
+      .find((stop) => target !== null && stop.nativeElement.contains(target))
+      ?.nativeElement.focus();
+  }
+
+  protected onFocusIn(event: FocusEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (target && this.stops().some((stop) => stop.nativeElement === target)) {
+      this.lastStop = target;
+    }
+  }
+
   protected toggleCollapsed(): void {
     this.collapsed.update((value) => !value);
+    // Opening the panel again starts over on the first answer.
+    this.focusedStep = '';
   }
 
   protected goTo(index: number): void {
@@ -246,6 +375,20 @@ export class QuestionOverlay {
 
   protected back(): void {
     this.goTo(this.index() - 1);
+  }
+
+  /**
+   * Enter in the custom answer goes on to the next question. The Enter that
+   * confirms an input method's composition only commits the text: WebKit
+   * reports it as an Enter keydown too, marked as composing or by the key
+   * code 229.
+   */
+  protected onCustomEnter(event: Event): void {
+    const key = event as KeyboardEvent;
+    if (key.isComposing || key.keyCode === 229) {
+      return;
+    }
+    this.advanceOrSubmit();
   }
 
   protected advanceOrSubmit(): void {
@@ -316,10 +459,16 @@ export class QuestionOverlay {
         custom: custom.length > 0 ? custom : null,
       };
     });
-    void this.workspace.resolveQuestion(request.requestId, answers);
+    void this.resolve(request.requestId, answers);
   }
 
   protected skip(): void {
-    void this.workspace.resolveQuestion(this.request().requestId, null);
+    void this.resolve(this.request().requestId, null);
+  }
+
+  /** Answers the question and puts the caret back in the message box. */
+  private async resolve(requestId: string, answers: QuestionAnswer[] | null): Promise<void> {
+    await this.workspace.resolveQuestion(requestId, answers);
+    this.workspace.requestComposerFocus();
   }
 }

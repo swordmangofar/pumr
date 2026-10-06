@@ -23,6 +23,23 @@ impl CommandRule {
     }
 }
 
+/// A remembered approval for one tool of one MCP server: its calls run without
+/// a prompt, whatever their arguments.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolGrant {
+    /// The server's name in its config file.
+    pub server: String,
+    /// The tool's own name on that server.
+    pub tool: String,
+    /// The config file that defines the server.
+    pub source: String,
+    /// Digest of the server's whole configuration (command, arguments,
+    /// variables, URL), so a changed server asks again. A digest, because the
+    /// variables may hold secrets that must not be copied into the settings.
+    pub fingerprint: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -198,6 +215,9 @@ pub struct WorkspaceFile {
     pub path: String,
     pub content: String,
     pub language: String,
+    /// The file exists but is not UTF-8 text, so it cannot be shown or edited
+    /// as text; `content` is empty then.
+    pub binary: bool,
 }
 
 /// An MCP tool exposed to the agent loop.
@@ -209,6 +229,10 @@ pub struct McpToolInfo {
     pub exposed_name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    /// The server says the tool changes nothing (`readOnlyHint`). A hint from
+    /// the server, good for sparing a prompt, not for skipping one for good.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -756,6 +780,15 @@ pub enum StreamEvent {
     Compacted {
         message: Message,
     },
+    /// An MCP server the turn uses is being started or connected to.
+    McpStarting {
+        server: String,
+    },
+    /// The turn's MCP servers are settled. `issues` names those it has to do
+    /// without, and why.
+    McpReady {
+        issues: Vec<String>,
+    },
     ToolStart {
         call_id: String,
         name: String,
@@ -793,6 +826,13 @@ pub enum StreamEvent {
         folders: Vec<String>,
         /// Websites a command contacts that the user can allow.
         hosts: Vec<String>,
+        /// The MCP tool a "don't ask again" choice would remember; `None` for
+        /// every other prompt.
+        mcp_tool: Option<McpToolGrant>,
+        /// Folders holding the sensitive files a command uses. The user can
+        /// release each, so commands may use the sensitive files directly in
+        /// it without asking again.
+        secret_folders: Vec<String>,
         /// The assistant's one-sentence explanation of why it asks.
         justification: Option<String>,
     },
@@ -859,6 +899,23 @@ pub struct CompactResult {
     pub message: Message,
     /// Estimated tokens of the messages the model is sent from now on.
     pub used_tokens: i64,
+}
+
+/// Streamed while a side question (`/btw`) is being answered.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SideAnswerEvent {
+    Delta { text: String },
+}
+
+/// The answer to a side question, which is shown next to the chat and never
+/// becomes part of the session.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SideAnswer {
+    pub answer: String,
+    /// Stopped before the model finished; `answer` is what had arrived.
+    pub cancelled: bool,
 }
 
 /// A stream event tagged with the session it belongs to. Subagents stream their

@@ -111,6 +111,33 @@ pub(crate) fn lex_words(input: &str) -> Result<Vec<Word>, LexError> {
     .words()
 }
 
+/// The bodies of the command substitutions in a heredoc body whose delimiter
+/// is unquoted. The shell expands such a body like the inside of double
+/// quotes, except that quotes are text there: a `$(…)` or a backtick runs
+/// wherever it stands, unless a backslash is in front of it.
+pub(crate) fn heredoc_substitutions(body: &str) -> Result<Vec<String>, LexError> {
+    let mut lexer = Lexer {
+        chars: body.chars().collect(),
+        position: 0,
+    };
+    let mut word = Builder::default();
+    while let Some(character) = lexer.peek() {
+        match character {
+            '\\' => lexer.position += 2,
+            // Also `$((…))`, which can hold substitutions. Inside `${…}` the
+            // quotes are text too, so its body is read like the rest.
+            '$' if lexer.peek_at(1) == Some('(') => lexer.dollar(&mut word, true)?,
+            '`' => {
+                lexer.position += 1;
+                let body = lexer.backtick()?;
+                word.substitution(body);
+            }
+            _ => lexer.position += 1,
+        }
+    }
+    Ok(word.substitutions)
+}
+
 struct Lexer {
     chars: Vec<char>,
     position: usize,
@@ -297,7 +324,11 @@ impl Lexer {
     fn dollar(&mut self, word: &mut Builder, quoted: bool) -> Result<(), LexError> {
         match self.peek_at(1) {
             // `$((…))` arithmetic: a number, but it can hold substitutions.
-            Some('(') if self.peek_at(2) == Some('(') => {
+            // `$((cmd) …)` is instead a command substitution whose body opens
+            // with a subshell; the shell tells them apart by whether the two
+            // closing parens are adjacent, so only a genuine `$((…))` takes
+            // this path and the rest fall through to the branch below.
+            Some('(') if self.peek_at(2) == Some('(') && self.arithmetic_expansion() => {
                 self.position += 3;
                 let body = self.until_close(2)?;
                 word.substitutions.extend(nested_substitutions(&body)?);
@@ -319,7 +350,16 @@ impl Lexer {
                     // A length or a status: digits only.
                     word.push_str("0");
                 } else {
-                    word.substitutions.extend(nested_substitutions(&body)?);
+                    // Inside double quotes the single quotes in a `${…}` word
+                    // are literal, so a `$(…)` or backtick within them still
+                    // runs and must be checked; `heredoc_substitutions` finds
+                    // substitutions without treating quotes as boundaries.
+                    let subs = if quoted {
+                        heredoc_substitutions(&body)?
+                    } else {
+                        nested_substitutions(&body)?
+                    };
+                    word.substitutions.extend(subs);
                     word.part(Part::Dynamic);
                 }
             }
@@ -361,6 +401,62 @@ impl Lexer {
             }
         }
         Ok(())
+    }
+
+    /// Whether the `$((` at the current `$` begins an arithmetic expansion
+    /// rather than a command substitution whose body opens with a subshell.
+    /// The shell reads `$((EXPR))` as arithmetic only when the two parens that
+    /// close it are adjacent; `$((cmd) …)` closes the inner paren first and is
+    /// a command substitution running `(cmd)`. This scans without consuming,
+    /// mirroring `until_close`'s quote handling, and stops at the first paren
+    /// that drops the depth to one. An unterminated expansion stays arithmetic
+    /// so `until_close` reports the same lex error either way.
+    fn arithmetic_expansion(&self) -> bool {
+        let mut position = self.position + 3;
+        let mut depth = 2usize;
+        while let Some(&character) = self.chars.get(position) {
+            match character {
+                '\\' => position += 1,
+                '\'' => {
+                    position += 1;
+                    while self.chars.get(position).is_some_and(|inner| *inner != '\'') {
+                        position += 1;
+                    }
+                }
+                '"' => {
+                    position += 1;
+                    while let Some(&inner) = self.chars.get(position) {
+                        if inner == '\\' {
+                            position += 1;
+                        } else if inner == '"' {
+                            break;
+                        }
+                        position += 1;
+                    }
+                }
+                '`' => {
+                    position += 1;
+                    while let Some(&inner) = self.chars.get(position) {
+                        if inner == '\\' {
+                            position += 1;
+                        } else if inner == '`' {
+                            break;
+                        }
+                        position += 1;
+                    }
+                }
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 1 {
+                        return self.chars.get(position + 1) == Some(&')');
+                    }
+                }
+                _ => {}
+            }
+            position += 1;
+        }
+        true
     }
 
     /// Reads up to the parenthesis that closes `opened` open ones and returns
@@ -758,6 +854,86 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["id".to_string(), "wc -l < f".to_string()],
         );
+    }
+
+    #[test]
+    fn heredoc_bodies_run_substitutions_inside_quotes() {
+        assert_eq!(
+            heredoc_substitutions(
+                "it's '$(id)' and \"`pwd`\"\n${X:-'$(ls \")\")'} $(( $(wc -l < f) + 1 ))\n"
+            ),
+            Ok(vec![
+                "id".to_string(),
+                "pwd".to_string(),
+                "ls \")\"".to_string(),
+                "wc -l < f".to_string(),
+            ]),
+        );
+        // A backslash keeps `$` and a backtick as text, unless it is escaped
+        // itself. Parameters and arithmetic run nothing.
+        assert_eq!(
+            heredoc_substitutions("\\$(id) \\`pwd\\` $((1 + 2)) $HOME ${USER} 5$ (net)"),
+            Ok(Vec::new()),
+        );
+        assert_eq!(
+            heredoc_substitutions("\\\\$(id)"),
+            Ok(vec!["id".to_string()])
+        );
+        for body in ["$(id", "`id", "$((1 + 2)"] {
+            assert_eq!(heredoc_substitutions(body), Err(LexError), "{body}");
+        }
+    }
+
+    #[test]
+    fn dollar_paren_paren_with_a_subshell_body_is_a_command_substitution() {
+        let subs = |line: &str| {
+            lex_words(line)
+                .unwrap()
+                .iter()
+                .flat_map(|word| word.substitutions.clone())
+                .collect::<Vec<_>>()
+        };
+        // `$((cmd) …)` runs the subshell; the inner and outer parens are not
+        // adjacent, so it is a command substitution, not arithmetic.
+        assert_eq!(subs("echo $((echo hi) )"), vec!["(echo hi) ".to_string()]);
+        assert_eq!(
+            subs("echo $((date; rm -rf x) | sh)"),
+            vec!["(date; rm -rf x) | sh".to_string()]
+        );
+        // Genuine arithmetic closes with an adjacent `))` and runs nothing,
+        // even when its expression holds parentheses or an inner expansion.
+        assert!(subs("echo $((1 + 2))").is_empty());
+        assert!(subs("a=1; b=2; c=3; echo $(( (a+b) * c ))").is_empty());
+        assert!(subs("echo $((date))").is_empty());
+        assert_eq!(subs("echo $(( $(id) + 1 ))"), vec!["id".to_string()]);
+        // The arithmetic value is still a number in the word.
+        assert_eq!(
+            lex_words("echo $((1 + 2))").unwrap()[1].literal(),
+            Some("0".to_string())
+        );
+    }
+
+    #[test]
+    fn parameter_defaults_run_quoted_substitutions_in_double_quotes() {
+        let subs = |line: &str| {
+            lex_words(line)
+                .unwrap()
+                .iter()
+                .flat_map(|word| word.substitutions.clone())
+                .collect::<Vec<_>>()
+        };
+        // Inside double quotes the single quotes of a `${…}` default value are
+        // literal, so the substitution inside them still runs.
+        assert_eq!(subs("echo \"${X:-'$(id)'}\""), vec!["id".to_string()]);
+        assert_eq!(subs("echo \"${X:-`id`}\""), vec!["id".to_string()]);
+        assert_eq!(subs("echo \"${Y:+'$(id)'}\""), vec!["id".to_string()]);
+        // Outside double quotes the single quotes quote as usual.
+        assert!(subs("echo ${X:-'$(id)'}").is_empty());
+        // A bare or double-quoted substitution runs in either context.
+        assert_eq!(subs("echo \"${X:-$(id)}\""), vec!["id".to_string()]);
+        assert_eq!(subs("echo ${X:-$(id)}"), vec!["id".to_string()]);
+        // A length or strip is still not a command.
+        assert!(subs("echo \"${#HOME}\" \"${v%.*}\"").is_empty());
     }
 
     #[test]

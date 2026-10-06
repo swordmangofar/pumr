@@ -28,6 +28,7 @@ import {
   SpendSummary,
   UpdateSessionArgs,
 } from './models';
+import { planToggleTarget, resolveMode } from './modes';
 import { SettingsService } from './settings.service';
 import { SoundService } from './sound.service';
 import { ProcessService } from './process.service';
@@ -39,6 +40,7 @@ import { WorkspaceEditorService } from './workspace-editor.service';
 const TABS_KEY = 'pumr.tabs';
 const ACTIVE_KEY = 'pumr.activeTab';
 const LEFT_TAB_KEY = 'pumr.leftTab';
+const BROWSE_PROJECT_KEY = 'pumr.browseProject';
 const RIGHT_TAB_KEY = 'pumr.rightTab';
 const SESSION_VIEW_KEY = 'pumr.sessionView';
 const PROJECT_SORT_KEY = 'pumr.projectSort';
@@ -51,6 +53,8 @@ const HANDOVER_TITLE_MAX_CHARS = 60;
 const LIVE_OUTPUT_AFTER_MS = 600;
 /** How much of a running call's output is kept: a test run can print megabytes. */
 const LIVE_OUTPUT_MAX_CHARS = 64_000;
+/** One list for every session without MCP issues, so readers see no change. */
+const NO_MCP_ISSUES: string[] = [];
 
 /** The end of `output` that fits `LIVE_OUTPUT_MAX_CHARS`, from the start of a line. */
 function latestOutput(output: string): string {
@@ -74,7 +78,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return isPlainObject(value) && Object.values(value).every((entry) => typeof entry === 'string');
 }
 
-type LeftTab = 'projects' | 'workspace' | 'git';
+type LeftTab = 'sessions' | 'workspace' | 'git';
 
 /** A file mention and a text block to add to the composer. */
 export interface ComposerInsert {
@@ -115,6 +119,8 @@ export class WorkspaceService {
   private readonly activeState = signal<string | null>(null);
   private readonly messagesState = signal<Record<string, Message[]>>({});
   private readonly messageLoadTokens = new Map<string, number>();
+  /** The mode each session left when the plan hotkey took it to planning. */
+  private readonly modeBeforePlan = new Map<string, string>();
   private readonly streamingState = signal<Record<string, boolean>>({});
   private readonly errorsState = signal<Record<string, string | null>>({});
   private readonly composerDraftsState = signal<Record<string, string>>({});
@@ -129,7 +135,8 @@ export class WorkspaceService {
   private readonly diffState = signal<FileDiff | null>(null);
   /** Whose change `diffState` shows or is loading; `null` once it was cleared. */
   private diffSource: { sessionId: string; path: string } | null = null;
-  private readonly leftTabState = signal<LeftTab>('projects');
+  private readonly leftTabState = signal<LeftTab>('sessions');
+  private readonly browseProjectState = signal<string | null>(null);
   private readonly rightTabState = signal<RightTab>('changes');
   private readonly sessionViewState = signal<SessionView>('projects');
   private readonly projectSortState = signal<ProjectSort>(DEFAULT_PROJECT_SORT);
@@ -152,6 +159,10 @@ export class WorkspaceService {
   private readonly handoverState = signal<Record<string, boolean>>({});
   /** Sessions whose history is being summarised right now. */
   private readonly compactingState = signal<Record<string, boolean>>({});
+  /** The MCP server a session's turn is starting right now. */
+  private readonly mcpStartingState = signal<Record<string, string>>({});
+  /** The MCP servers a session's latest turn has to do without, and why. */
+  private readonly mcpIssuesState = signal<Record<string, string[]>>({});
   private readonly debugSessionState = signal<string | null>(null);
   private readonly debugExportState = signal(false);
   private readonly scrollTargetState = signal<{ id: string; nonce: number } | null>(null);
@@ -298,6 +309,14 @@ export class WorkspaceService {
     const project = this.activeProject();
     return project ? (this.gitService.infoByProject()[project.id] ?? null) : null;
   });
+  /**
+   * The project the Workspace and Git tabs show. The user picks it there, so
+   * it stays put when another session becomes active.
+   */
+  readonly browseProject = computed(() => {
+    const id = this.browseProjectState();
+    return this.projectsState().find((project) => project.id === id) ?? null;
+  });
   private readonly gitPullStrategyState = signal<GitPullStrategy>('ff-only');
   readonly gitPullStrategy = this.gitPullStrategyState.asReadonly();
 
@@ -308,9 +327,10 @@ export class WorkspaceService {
 
   constructor() {
     const leftTab = localStorage.getItem(LEFT_TAB_KEY);
-    if (leftTab === 'projects' || leftTab === 'workspace' || leftTab === 'git') {
+    if (leftTab === 'sessions' || leftTab === 'workspace' || leftTab === 'git') {
       this.leftTabState.set(leftTab);
     }
+    this.browseProjectState.set(localStorage.getItem(BROWSE_PROJECT_KEY));
     const rightTab = localStorage.getItem(RIGHT_TAB_KEY);
     if (
       rightTab === 'changes' ||
@@ -362,6 +382,7 @@ export class WorkspaceService {
     const active = localStorage.getItem(ACTIVE_KEY);
     const nextActive = active && known.has(active) ? active : (tabs[tabs.length - 1] ?? null);
     this.activeState.set(nextActive);
+    this.ensureBrowseProject();
     // A webview reload leaves turns running in the backend with nobody
     // listening; pick them up before the active session renders.
     await this.resumeRunningTurns();
@@ -679,11 +700,13 @@ export class WorkspaceService {
     }
     await api.addProject(selected);
     await this.reloadProjects();
+    this.ensureBrowseProject();
   }
 
   async cloneProject(url: string, path: string): Promise<Project> {
     const project = await api.gitClone(url, path);
     await this.reloadProjects();
+    this.ensureBrowseProject();
     return project;
   }
 
@@ -699,10 +722,40 @@ export class WorkspaceService {
       return next;
     });
     await this.reloadProjects();
+    this.ensureBrowseProject();
   }
 
   projectFor(projectId: string): Project | null {
     return this.projectsState().find((project) => project.id === projectId) ?? null;
+  }
+
+  /** Shows `projectId` in the Workspace and Git tabs, with a fresh git view. */
+  setBrowseProject(projectId: string): void {
+    if (projectId === this.browseProjectState()) {
+      return;
+    }
+    this.gitService.resetView(projectId);
+    this.storeBrowseProject(projectId);
+  }
+
+  /**
+   * Picks a project for the Workspace and Git tabs while none is chosen, or
+   * the chosen one is gone: the one of the session on screen, else the first.
+   */
+  private ensureBrowseProject(): void {
+    if (this.browseProject()) {
+      return;
+    }
+    this.storeBrowseProject((this.activeProject() ?? this.projects()[0])?.id ?? null);
+  }
+
+  private storeBrowseProject(projectId: string | null): void {
+    this.browseProjectState.set(projectId);
+    if (projectId) {
+      localStorage.setItem(BROWSE_PROJECT_KEY, projectId);
+    } else {
+      localStorage.removeItem(BROWSE_PROJECT_KEY);
+    }
   }
 
   openProjectEditor(projectId: string): void {
@@ -848,6 +901,46 @@ export class WorkspaceService {
     });
   }
 
+  /** The MCP server the session's turn is waiting for, while it starts one. */
+  mcpStartingFor(sessionId: string): string | null {
+    return this.mcpStartingState()[sessionId] ?? null;
+  }
+
+  /** What the session's latest turn could not use of its MCP servers. */
+  mcpIssuesFor(sessionId: string): string[] {
+    return this.mcpIssuesState()[sessionId] ?? NO_MCP_ISSUES;
+  }
+
+  private setMcpStarting(sessionId: string, server: string | null): void {
+    if (this.mcpStartingFor(sessionId) === server) {
+      return;
+    }
+    this.mcpStartingState.update((state) => {
+      const next = { ...state };
+      if (server) {
+        next[sessionId] = server;
+      } else {
+        delete next[sessionId];
+      }
+      return next;
+    });
+  }
+
+  private setMcpIssues(sessionId: string, issues: string[]): void {
+    if (issues.length === 0 && this.mcpIssuesFor(sessionId).length === 0) {
+      return;
+    }
+    this.mcpIssuesState.update((state) => {
+      const next = { ...state };
+      if (issues.length > 0) {
+        next[sessionId] = issues;
+      } else {
+        delete next[sessionId];
+      }
+      return next;
+    });
+  }
+
   openTab(sessionId: string): void {
     if (!this.tabsState().includes(sessionId)) {
       this.tabsState.update((tabs) => [...tabs, sessionId]);
@@ -935,6 +1028,13 @@ export class WorkspaceService {
     void this.send(next);
   }
 
+  /**
+   * Sends a prompt and follows its turn to the end. Resolves to whether the
+   * backend took the prompt. It did not when nothing was sent, or when it
+   * turned the prompt down before storing it: for a model without an API key,
+   * say, or a project folder that is gone. Such a prompt is not in the chat,
+   * so the caller still has to keep it; one from the queue is queued again.
+   */
   async send(args: SendMessageArgs): Promise<boolean> {
     const session = this.sessionsState()[args.sessionId];
     if (!session || this.isStreaming(args.sessionId)) {
@@ -943,11 +1043,13 @@ export class WorkspaceService {
     // Consume the head of the queue as soon as the send actually starts, so a
     // dispatched prompt leaves the queue immediately instead of lingering until
     // the whole turn (and its refreshes) finishes.
+    const queued = this.queueService.first(args.sessionId) === args;
     this.queueService.removeFirst(args.sessionId, args);
     const now = Date.now();
+    const localId = `local-${now}`;
     if (!args.resume) {
       this.appendMessage(args.sessionId, {
-        id: `local-${now}`,
+        id: localId,
         sessionId: args.sessionId,
         seq: now,
         role: 'user',
@@ -974,8 +1076,30 @@ export class WorkspaceService {
     }
     this.setError(args.sessionId, null);
     this.patchSession(args.sessionId, { limitReached: false, interrupted: false });
-    await this.followTurn(session, (channel) => api.sendMessage(args, channel));
-    return true;
+    let taken = true;
+    await this.followTurn(
+      session,
+      (channel) => api.sendMessage(args, channel),
+      () => {
+        taken = false;
+        // Reloading the chat took the optimistic message away, unless that failed too.
+        this.messagesState.update((state) => {
+          const messages = state[args.sessionId] ?? [];
+          return messages.some((message) => message.id === localId)
+            ? { ...state, [args.sessionId]: messages.filter((message) => message.id !== localId) }
+            : state;
+        });
+        if (queued) {
+          // Back to the head of the queue, in front of what waits behind it.
+          const waiting = this.queueService.forSession(args.sessionId);
+          this.queueService.clear(args.sessionId);
+          for (const item of [args, ...waiting]) {
+            this.queueService.enqueue(item);
+          }
+        }
+      },
+    );
+    return taken;
   }
 
   /**
@@ -1016,18 +1140,26 @@ export class WorkspaceService {
   /**
    * Streams a turn's events into the UI until `run` settles, then refreshes
    * what the turn changed. `run` hands the channel to the backend, either to
-   * start a turn or to attach to one that is already running.
+   * start a turn or to attach to one that is already running. `refused` is
+   * called when `run` failed before a turn began, instead of going on with
+   * the queue: the next prompt would be turned down for the same reason.
    */
   private async followTurn(
     session: Session,
     run: (channel: Channel<RoutedEvent>) => Promise<unknown>,
+    refused?: () => void,
   ): Promise<void> {
     const sessionId = session.id;
     this.setStreaming(sessionId, true);
     this.setLiveTools(sessionId, []);
+    // What the turn before could not use says nothing about this one.
+    this.setMcpIssues(sessionId, []);
+    const turn = { begun: false };
+    let failed = false;
     try {
-      await run(this.turnChannel(session));
+      await run(this.turnChannel(session, turn));
     } catch (error) {
+      failed = true;
       if (!this.errorFor(sessionId)) {
         this.setError(sessionId, String(error));
         this.sound.play('error');
@@ -1053,7 +1185,11 @@ export class WorkspaceService {
       } finally {
         this.endTurn(sessionId);
       }
-      this.drainQueue(sessionId);
+      if (failed && !turn.begun && refused) {
+        refused();
+      } else {
+        this.drainQueue(sessionId);
+      }
     }
   }
 
@@ -1066,15 +1202,24 @@ export class WorkspaceService {
     for (const id of ids) {
       this.setStreaming(id, false);
       this.setCompacting(id, false);
+      this.setMcpStarting(id, null);
     }
     this.dropPrompts((entry) => ids.has(entry.sessionId));
   }
 
-  /** A channel that applies a turn's streamed events, routed by session id. */
-  private turnChannel(session: Session): Channel<RoutedEvent> {
+  /**
+   * A channel that applies a turn's streamed events, routed by session id.
+   * `turn.begun` is set once the session's turn runs: the backend stores the
+   * prompt before a reply starts and before it reports an error as an event,
+   * so a failure without either means the prompt was never taken.
+   */
+  private turnChannel(session: Session, turn: { begun: boolean }): Channel<RoutedEvent> {
     const assistantIds: Record<string, string | null> = {};
     const channel = new Channel<RoutedEvent>();
     channel.onmessage = ({ sessionId, event }) => {
+      if (sessionId === session.id && (event.kind === 'started' || event.kind === 'error')) {
+        turn.begun = true;
+      }
       switch (event.kind) {
         case 'started':
           this.flushStreamBuffers();
@@ -1095,6 +1240,13 @@ export class WorkspaceService {
         case 'note':
           this.flushStreamBuffers();
           this.appendMessage(sessionId, event.message);
+          break;
+        case 'mcpStarting':
+          this.setMcpStarting(sessionId, event.server);
+          break;
+        case 'mcpReady':
+          this.setMcpStarting(sessionId, null);
+          this.setMcpIssues(sessionId, event.issues);
           break;
         case 'delta':
           this.bufferMessageText(sessionId, assistantIds[sessionId] ?? null, 'content', event.text);
@@ -1302,6 +1454,7 @@ export class WorkspaceService {
     foldersOverride?: string[],
     hostsOverride?: string[],
     websiteRule?: string,
+    secretFolders?: string[],
   ): Promise<void> {
     const request = this.permission();
     if (!request) {
@@ -1312,16 +1465,34 @@ export class WorkspaceService {
     // it only while it still covers the requested host.
     const siteRule = websiteRule?.trim() || request.suggestedRule;
     const rules = !isCommand && siteRule ? [siteRule] : null;
-    await api.resolvePermission(
-      request.requestId,
-      decision,
-      rules,
-      request.folder,
-      request.promptKind,
-      isCommand ? rulesOverride ?? null : null,
-      foldersOverride ?? null,
-      isCommand ? hostsOverride ?? null : null,
-    );
+    const commandRules = isCommand ? rulesOverride ?? null : null;
+    const hosts = isCommand ? hostsOverride ?? null : null;
+    if (isCommand && secretFolders?.length) {
+      // Folders whose sensitive files the user released; the backend keeps
+      // only the ones the prompt proposed.
+      await api.resolvePermission(
+        request.requestId,
+        decision,
+        rules,
+        request.folder,
+        request.promptKind,
+        commandRules,
+        foldersOverride ?? null,
+        hosts,
+        secretFolders,
+      );
+    } else {
+      await api.resolvePermission(
+        request.requestId,
+        decision,
+        rules,
+        request.folder,
+        request.promptKind,
+        commandRules,
+        foldersOverride ?? null,
+        hosts,
+      );
+    }
     // Allow-always/deny-always persist a rule in settings; refresh so the
     // settings lists reflect it immediately.
     if (decision === 'allow_always' || decision === 'deny_always') {
@@ -1344,6 +1515,27 @@ export class WorkspaceService {
   async updateSession(args: UpdateSessionArgs): Promise<void> {
     const session = await api.updateSession(args);
     this.upsertSession(session);
+  }
+
+  /**
+   * Switches the session shown between planning and the mode it was in before
+   * (coding unless it left another one for planning).
+   */
+  async togglePlanMode(): Promise<void> {
+    const session = this.activeAgent();
+    if (!session) {
+      return;
+    }
+    const modes = this.settings.modes();
+    const current = resolveMode(modes, session.modeId ?? this.settings.settings()?.defaultModeId);
+    const target = planToggleTarget(modes, current, this.modeBeforePlan.get(session.id));
+    if (!target || target.id === current?.id) {
+      return;
+    }
+    if (current && !current.planOnly) {
+      this.modeBeforePlan.set(session.id, current.id);
+    }
+    await this.updateSession({ sessionId: session.id, modeId: target.id });
   }
 
   async changeSessionProject(sessionId: string, projectId: string): Promise<void> {
@@ -1474,17 +1666,14 @@ export class WorkspaceService {
       this.editorService.loadWorkspaceEntries(projectId, true),
       this.gitService.followWorkingTree(projectId),
     ];
-    // The editor and the diff beside the chat show the project on screen.
-    const session = this.activeSession();
-    if (session?.projectId === projectId) {
-      const open = this.editorService.activeFileFor(projectId);
-      if (open) {
-        loads.push(this.loadEditorFile(projectId, open));
-      }
-      const shown = this.diffSource;
-      if (shown) {
-        loads.push(this.selectChange(shown.sessionId, shown.path));
-      }
+    // The editor shows the browsed project, the diff beside the chat the active session's.
+    const open = this.editorService.activeFileFor(projectId);
+    if (open && this.browseProjectState() === projectId) {
+      loads.push(this.loadEditorFile(projectId, open));
+    }
+    const shown = this.diffSource;
+    if (shown && this.activeSession()?.projectId === projectId) {
+      loads.push(this.selectChange(shown.sessionId, shown.path));
     }
     await Promise.all(loads);
   }
@@ -1514,8 +1703,14 @@ export class WorkspaceService {
     this.diffState.set(null);
   }
 
-  async loadEditorFile(projectId: string, path: string, force = false): Promise<void> {
+  /** The active session when it works in `projectId`: its changes apply to that project's files. */
+  sessionIn(projectId: string): Session | null {
     const session = this.activeSession();
+    return session?.projectId === projectId ? session : null;
+  }
+
+  async loadEditorFile(projectId: string, path: string, force = false): Promise<void> {
+    const session = this.sessionIn(projectId);
     const changed = session ? this.changesFor(session.id).some((c) => c.path === path) : false;
     return this.editorService.loadFile(
       projectId,
@@ -1616,7 +1811,7 @@ export class WorkspaceService {
   cycleFocusedPanelTab(direction: 1 | -1): void {
     const panel = this.focusedPanelState();
     if (panel === 'left') {
-      const tabs: LeftTab[] = ['projects', 'workspace', 'git'];
+      const tabs: LeftTab[] = ['sessions', 'workspace', 'git'];
       const index = tabs.indexOf(this.leftTabState());
       this.setLeftTab(tabs[(index + direction + tabs.length) % tabs.length]);
     } else if (panel === 'right') {
@@ -1627,16 +1822,22 @@ export class WorkspaceService {
   }
 
   /**
-   * Opens the chat of the active session with `insert` added to its composer,
-   * e.g. diff lines from the git view the user wants to ask about.
+   * Opens a chat of `projectId` with `insert` added to its composer, e.g. diff
+   * lines from the git view the user wants to ask about: the active session
+   * when it works in that project, else the newest open one, else a new one.
    */
-  askInChat(insert: ComposerInsert): void {
-    const sessionId = this.activeSessionId();
-    if (!sessionId) {
-      return;
+  async askInChat(projectId: string, insert: ComposerInsert): Promise<void> {
+    const session =
+      this.sessionIn(projectId) ??
+      this.tabs()
+        .filter((tab) => tab.projectId === projectId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    this.setLeftTab('sessions');
+    if (session) {
+      this.openTab(session.id);
+    } else {
+      await this.newSession(projectId);
     }
-    this.setLeftTab('projects');
-    this.openTab(sessionId);
     this.composerInsertState.set(insert);
   }
 
@@ -1660,10 +1861,15 @@ export class WorkspaceService {
   }
 
   async loadRules(projectId: string, sessionId: string | null): Promise<void> {
-    try {
-      this.rulesState.set(await api.getProjectRules(projectId, sessionId));
-    } catch {
-      this.rulesState.set([]);
+    const rules = await api.getProjectRules(projectId, sessionId).catch(() => []);
+    // There is one list, for the chat on screen. A turn that ends in another
+    // chat, or the slow answer for one that was left, must not replace it.
+    if (
+      sessionId === null ||
+      sessionId === this.activeState() ||
+      sessionId === this.activeAgentId()
+    ) {
+      this.rulesState.set(rules);
     }
   }
 
@@ -1685,8 +1891,9 @@ export class WorkspaceService {
     }
     if (sessionId) {
       this.pruneMessagesFrom(sessionId, messageId);
-      // The turn that was cut off is among the messages taken back.
-      this.patchSession(sessionId, { interrupted: false });
+      // The turn that was cut off, or that stopped at the tool limit, is among
+      // the messages taken back, and the backend resets both marks with them.
+      this.patchSession(sessionId, { interrupted: false, limitReached: false });
       this.setLiveTools(sessionId, []);
       await this.loadMessages(sessionId, true);
       await this.loadChanges(sessionId);
@@ -1799,9 +2006,6 @@ export class WorkspaceService {
     // Cheap safety net for a turn that started after the last resume.
     void this.resumeRunningTurns();
     this.clearDiff();
-    if (session) {
-      this.gitService.resetView(session.projectId);
-    }
     this.scrollTargetState.set(null);
     await this.loadMessages(sessionId);
     if (session) {

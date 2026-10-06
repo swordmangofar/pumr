@@ -797,6 +797,13 @@ fn build_patch(
             let later = |kind| (index + 1..hunk.lines.len()).any(|next| changed(next, kind));
             match (line.kind, direction, chosen(index)) {
                 (GitDiffLineKind::Context, _, _) => lines.push((b' ', content, line.no_newline)),
+                (GitDiffLineKind::Del, Direction::Reverse, true) => {
+                    // The old last line comes back, but an addition that stays
+                    // goes after it, so the line has to gain its newline.
+                    let followed = (index + 1..hunk.lines.len())
+                        .any(|next| hunk.lines[next].kind == GitDiffLineKind::Add && !chosen(next));
+                    lines.push((b'-', content, line.no_newline && !followed));
+                }
                 (GitDiffLineKind::Del, _, true) => lines.push((b'-', content, line.no_newline)),
                 (GitDiffLineKind::Add, _, true) => lines.push((b'+', content, line.no_newline)),
                 (GitDiffLineKind::Del, Direction::Forward, false) => {
@@ -1344,5 +1351,154 @@ mod tests {
             staged_text(&project, "f.txt"),
             original.replace("line 35\n", "")
         );
+    }
+
+    /// Pairs of a file and its edited version. Together they cover changes at
+    /// the start, in the middle and at the end, several hunks, and every way a
+    /// file can gain, lose or lack its last newline.
+    const SELECTION_CASES: [(&str, &str); 17] = [
+        (
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n",
+            "first\n1\n2 changed\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n19\n20\nlast\n",
+        ),
+        // Two hunks, the second one at an end without a newline.
+        (
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12",
+            "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13",
+        ),
+        ("a\nb", "a\nb\nc"),
+        ("a\nb", "a\nb\nc\n"),
+        ("a\nb\n", "a\nb\nc"),
+        ("a\nb\n", "a\nB"),
+        ("a\nb", "a\nB\n"),
+        ("a\nb", "a\nB"),
+        ("a\nb\nc", "a\nc"),
+        ("a\nb\nc\n", "a\nb"),
+        ("b\nc", "A\nb\nc\nd"),
+        ("a", "a\nb"),
+        ("a\n", "a"),
+        ("a", "a\n"),
+        ("", "a"),
+        ("a\nb\n", ""),
+        ("x\n", "y\nx\nz"),
+    ];
+
+    /// The changed lines of a diff as `(id, place)`. The place, a removed
+    /// line's old number or an added line's new one, is the same however much
+    /// context the diff shows.
+    fn changed_lines(hunks: &[Hunk]) -> Vec<(u32, (GitDiffLineKind, u32))> {
+        let mut changes = Vec::new();
+        let mut id = 0;
+        for hunk in hunks {
+            let (mut old, mut new) = (hunk.old_start, hunk.new_start);
+            for line in &hunk.lines {
+                if line.kind != GitDiffLineKind::Context {
+                    let number = if line.kind == GitDiffLineKind::Del {
+                        old
+                    } else {
+                        new
+                    };
+                    changes.push((id, (line.kind, number)));
+                }
+                old += u32::from(line.kind != GitDiffLineKind::Add);
+                new += u32::from(line.kind != GitDiffLineKind::Del);
+                id += 1;
+            }
+        }
+        changes
+    }
+
+    /// What a file holds once the chosen changes of a whole-file diff are
+    /// taken from its old side to the new one or, in reverse, back out of the
+    /// new side. A line's missing newline only shows when it ends up last.
+    fn content_with(whole: &[Hunk], chosen: &HashSet<u32>, direction: Direction) -> Vec<u8> {
+        let forward = direction == Direction::Forward;
+        let kept: Vec<&Line> = whole
+            .iter()
+            .flat_map(|hunk| &hunk.lines)
+            .zip(0u32..)
+            .filter(|(line, id)| match line.kind {
+                GitDiffLineKind::Context => true,
+                GitDiffLineKind::Del => chosen.contains(id) != forward,
+                GitDiffLineKind::Add => chosen.contains(id) == forward,
+            })
+            .map(|(line, _)| line)
+            .collect();
+        let mut content = Vec::new();
+        for (index, line) in kept.iter().enumerate() {
+            content.extend_from_slice(&line.content);
+            if !(line.no_newline && index + 1 == kept.len()) {
+                content.push(b'\n');
+            }
+        }
+        content
+    }
+
+    #[test]
+    fn any_selection_of_lines_patches_exactly_those_lines() {
+        let (_temp, project) = repo(&[]);
+        let file = project.join("f.txt");
+        for (old, new) in SELECTION_CASES {
+            std::fs::write(&file, old).unwrap();
+            sh(&project, &["add", "--", "f.txt"]);
+            std::fs::write(&file, new).unwrap();
+            let diff = |context: u32| {
+                let args = diff_args(false, context, false, "f.txt");
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                parse_diff(&git_bytes(&project, &args).unwrap()).unwrap()
+            };
+            // The whole file says what a selection means; the patch is built
+            // from the usual three lines of context.
+            let (whole, narrow) = (diff(MAX_CONTEXT), diff(3));
+            let (in_whole, in_narrow) = (changed_lines(&whole.hunks), changed_lines(&narrow.hunks));
+            assert_eq!(in_whole.len(), in_narrow.len());
+            assert!(in_whole.len() <= 5, "too many selections to try them all");
+
+            for selection in 1usize..1 << in_whole.len() {
+                let picked = |index: &usize| selection & (1 << index) != 0;
+                let ids = |changes: &[(u32, (GitDiffLineKind, u32))]| -> HashSet<u32> {
+                    (0..changes.len())
+                        .filter(picked)
+                        .map(|index| changes[index].0)
+                        .collect()
+                };
+                let places: Vec<_> = (0..in_whole.len())
+                    .filter(picked)
+                    .map(|index| in_whole[index].1)
+                    .collect();
+                assert!(places.iter().all(|place| in_narrow
+                    .iter()
+                    .any(|(id, other)| other == place && ids(&in_narrow).contains(id))));
+
+                for (direction, from, reverse) in [
+                    (Direction::Forward, old, None),
+                    (Direction::Reverse, new, Some("-R")),
+                ] {
+                    let case = format!("{direction:?} {places:?} of {old:?} -> {new:?}");
+                    let patch = build_patch(
+                        "f.txt",
+                        narrow.kind,
+                        narrow.mode.as_deref(),
+                        &narrow.hunks,
+                        &ids(&in_narrow),
+                        direction,
+                    );
+                    // Without `--cached`, a patch is applied to the file alone.
+                    std::fs::write(&file, from).unwrap();
+                    let mut args = vec!["apply", "--whitespace=nowarn"];
+                    args.extend(reverse);
+                    args.push("-");
+                    git_with_input(&project, &args, &patch)
+                        .unwrap_or_else(|error| panic!("{case}: {error}"));
+
+                    let expected = content_with(&whole.hunks, &ids(&in_whole), direction);
+                    assert_eq!(
+                        String::from_utf8(std::fs::read(&file).unwrap()).unwrap(),
+                        String::from_utf8(expected).unwrap(),
+                        "{case}"
+                    );
+                }
+            }
+        }
     }
 }

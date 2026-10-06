@@ -7,6 +7,7 @@ import {
   defaultTerminalHotkey,
   defaultWindowToggleHotkey,
 } from './hotkeys';
+import { DEFAULT_LOGO_ID } from './logos';
 import { Settings } from './models';
 import { DEFAULT_CUSTOM_THEME, DEFAULT_THEME_ID } from './themes';
 
@@ -31,7 +32,7 @@ export const FALLBACK_SETTINGS: Settings = {
   customTheme: { ...DEFAULT_CUSTOM_THEME },
   highContrast: false,
   extraFolders: [],
-  settingsVersion: 1,
+  settingsVersion: 3,
   openrouterBaseUrl: 'https://openrouter.ai/api/v1',
   providers: {},
   defaultModel: null,
@@ -53,6 +54,8 @@ export const FALLBACK_SETTINGS: Settings = {
   deniedCommandRules: [],
   allowedWebsites: [],
   deniedWebsites: [],
+  mcpToolGrants: [],
+  secretFolders: [],
   permissionDefaults: { website: 'once', command: 'session', folder: 'session' },
   autoApproveReadOnly: true,
   autoApprovePackageScripts: true,
@@ -104,4 +107,10 @@ export const FALLBACK_SETTINGS: Settings = {
   backgroundOpacity: 1,
   backgroundBlur: 0,
   glassOpacity: 1,
+  logo: DEFAULT_LOGO_ID,
+  sandbox: 'files',
+  sandboxWritableFolders: [],
+  sandboxUnreadableFolders: [],
+  sandboxExcludedCommands: [],
+  hooks: [],
 };

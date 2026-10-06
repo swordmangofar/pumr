@@ -153,6 +153,26 @@ impl TerminalRegistry {
         master.resize(size(cols, rows)).map_err(pty_error)
     }
 
+    /// Whether a program the shell started holds the terminal's foreground,
+    /// so input would reach that program and not the shell's prompt. Windows
+    /// cannot tell and answers no.
+    pub fn busy(&self, id: &str) -> Result<bool> {
+        let terminal = self.get(id)?;
+        #[cfg(unix)]
+        {
+            let foreground = terminal.master.lock().unwrap().process_group_leader();
+            let shell = terminal.pid.and_then(|pid| libc::pid_t::try_from(pid).ok());
+            Ok(foreground
+                .zip(shell)
+                .is_some_and(|(foreground, shell)| foreground != shell))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = terminal;
+            Ok(false)
+        }
+    }
+
     pub fn close(&self, id: &str) {
         let terminal = self.terminals.lock().unwrap().remove(id);
         if let Some(terminal) = terminal {
@@ -316,6 +336,35 @@ mod tests {
         assert!(output(&events).contains("pumr-42"));
         assert_eq!(events.last(), Some(&TerminalEvent::Exit { code: Some(3) }));
         assert!(registry.write(&id, "echo late\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_terminal_is_busy_while_a_program_runs_in_its_foreground() {
+        let registry = TerminalRegistry::new();
+        let (sink, events) = collect();
+        let id = registry
+            .spawn(CommandBuilder::new("/bin/sh"), 80, 24, sink)
+            .unwrap();
+        assert!(!registry.busy(&id).unwrap());
+
+        registry.write(&id, "sleep 30\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !registry.busy(&id).unwrap() {
+            assert!(Instant::now() < deadline, "the terminal never got busy");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Ctrl+C ends the program and hands the terminal back to the shell.
+        registry.write(&id, "\x03").unwrap();
+        while registry.busy(&id).unwrap() {
+            assert!(Instant::now() < deadline, "the terminal stayed busy");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        registry.close(&id);
+        wait_for_exit(&events);
+        assert!(registry.busy(&id).is_err());
     }
 
     #[cfg(unix)]

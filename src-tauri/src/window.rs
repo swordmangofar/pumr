@@ -1,4 +1,5 @@
 use crate::config::{clamp_zoom, WindowSettings, WINDOW_TOGGLE_MINIMIZE};
+use crate::control::Action;
 use crate::state::AppState;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
@@ -6,15 +7,23 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 /// Reconciles the webview zoom and the system-wide window-toggle shortcut with
 /// the current settings.
+pub fn apply(app: &AppHandle, settings: &WindowSettings) {
+    apply_zoom(app, settings.zoom);
+    apply_shortcut(app, settings);
+}
+
+/// Registers the system-wide window-toggle shortcut the settings ask for.
 ///
 /// Any previously registered shortcut is dropped first so changing the key or
 /// disabling the feature never leaves a stale registration behind.
-pub fn apply(app: &AppHandle, settings: &WindowSettings) {
-    apply_zoom(app, settings.zoom);
+pub fn apply_shortcut(app: &AppHandle, settings: &WindowSettings) {
     let shortcuts = app.global_shortcut();
     if let Err(error) = shortcuts.unregister_all() {
         log::warn!("could not clear global shortcuts: {error}");
     }
+    // A shortcut that is switched off has nothing to report, and neither has
+    // one that registers below.
+    remember_shortcut_error(None);
     if !settings.window_toggle_enabled {
         log::info!("window toggle shortcut disabled");
         return;
@@ -25,8 +34,30 @@ pub fn apply(app: &AppHandle, settings: &WindowSettings) {
     }
     match shortcuts.register(hotkey) {
         Ok(()) => log::info!("registered window toggle shortcut \"{hotkey}\""),
-        Err(error) => log::warn!("could not register window toggle shortcut \"{hotkey}\": {error}"),
+        Err(error) => {
+            log::warn!("could not register window toggle shortcut \"{hotkey}\": {error}");
+            remember_shortcut_error(Some(error.to_string()));
+        }
     }
+}
+
+/// Why the window-toggle shortcut is not registered although the settings ask
+/// for it, as of the last time they were applied. Another application holding
+/// the combination is the usual reason, and the settings have to say so: the
+/// toggle would show as on while the key does nothing.
+static SHORTCUT_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+fn remember_shortcut_error(error: Option<String>) {
+    *SHORTCUT_ERROR.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = error;
+}
+
+/// The reason the last registration of the window-toggle shortcut failed, or
+/// `None` when it is registered or switched off.
+pub fn shortcut_error() -> Option<String> {
+    SHORTCUT_ERROR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 /// Interface zoom last requested through the settings, kept so it can be
@@ -151,43 +182,69 @@ pub const SUMMONED_EVENT: &str = "window-summoned";
 /// Summons pumr to the screen under the cursor, or hides/minimizes it when it
 /// is already the focused window.
 pub fn toggle(app: &AppHandle) {
+    perform(app, Action::Toggle, None);
+}
+
+/// Carries out a window action: the toggle shortcut's, or one sent from the
+/// command line (see [`crate::control`]). `activation_token` is the Wayland
+/// token of whoever asked for the window; without one the compositor keeps
+/// the window from taking the focus.
+pub fn perform(app: &AppHandle, action: Action, activation_token: Option<String>) {
     let Some(window) = app.get_webview_window("main") else {
-        log::warn!("window toggle fired but no \"main\" window exists");
+        log::warn!("window {action:?} requested but no \"main\" window exists");
         return;
     };
+    let settings = app.state::<AppState>().settings().window;
+    match action {
+        Action::Open => summon(&window, &settings, activation_token),
+        Action::Minimize => {
+            let _ = window.minimize();
+        }
+        Action::Hide => {
+            let _ = window.hide();
+        }
+        Action::Toggle if !is_in_use(&window) => summon(&window, &settings, activation_token),
+        Action::Toggle => {
+            if settings.window_toggle_action == WINDOW_TOGGLE_MINIMIZE {
+                let _ = window.minimize();
+            } else {
+                let _ = window.hide();
+            }
+        }
+    }
+}
 
+/// Whether pumr is on screen and the window the user is working in.
+fn is_in_use(window: &tauri::WebviewWindow) -> bool {
     let visible = window.is_visible().unwrap_or(true);
     let minimized = window.is_minimized().unwrap_or(false);
     // A window that is not on screen cannot be the one in use. On X11 a hidden
     // window still counts as active when no other window took the focus, and
     // the shortcut would hide it again instead of bringing it back.
-    let focused = visible && !minimized && is_frontmost(&window);
+    let focused = visible && !minimized && is_frontmost(window);
     log::info!(
         "window toggle fired (focused={focused}, visible={visible}, minimized={minimized})"
     );
+    focused
+}
 
-    let settings = app.state::<AppState>().settings();
-    if focused {
-        let action = settings.window.window_toggle_action.clone();
-        if action == WINDOW_TOGGLE_MINIMIZE {
-            let _ = window.minimize();
-        } else {
-            let _ = window.hide();
-        }
-        return;
-    }
-
-    let maximize = settings.window.window_toggle_maximize;
+/// Brings the window to the screen under the cursor and gives it the focus.
+fn summon(
+    window: &tauri::WebviewWindow,
+    settings: &WindowSettings,
+    activation_token: Option<String>,
+) {
+    let maximize = settings.window_toggle_maximize;
 
     // Restore first so the window can be moved to the active monitor before it
     // is maximized there.
     if maximize {
         let _ = window.unmaximize();
     }
-    center_on_active_monitor(&window);
+    center_on_active_monitor(window);
     let _ = window.unminimize();
     let _ = window.show();
-    bring_to_front(&window);
+    bring_to_front(window, activation_token);
     if maximize {
         let _ = window.maximize();
     }
@@ -251,8 +308,12 @@ fn is_active_in_window_manager(window: &tauri::WebviewWindow) -> bool {
 /// focus-stealing prevention (GNOME/Mutter, KWin, ...) keeps the window behind
 /// and at most flags it as needing attention. Presenting it with the current X
 /// server time instead marks the request as new, as a keypress would.
+///
+/// Wayland has no such time. A window comes to the front there only with an
+/// activation token the compositor handed out for the user's action, here the
+/// one a `pumr --toggle` got from the desktop shortcut that ran it.
 #[cfg(target_os = "linux")]
-fn bring_to_front(window: &tauri::WebviewWindow) {
+fn bring_to_front(window: &tauri::WebviewWindow, activation_token: Option<String>) {
     use gtk::prelude::{Cast, GtkWindowExt, WidgetExt};
 
     let target = window.clone();
@@ -268,8 +329,12 @@ fn bring_to_front(window: &tauri::WebviewWindow) {
             Some(x11_window) => {
                 gtk_window.present_with_time(gdkx11::functions::x11_get_server_time(&x11_window))
             }
-            // Wayland has no global timestamp to refresh.
-            None => gtk_window.present(),
+            None => {
+                if let Some(token) = &activation_token {
+                    adopt_activation_token(&gtk_window, token);
+                }
+                gtk_window.present();
+            }
         }
         focus_webview(&target);
     });
@@ -278,8 +343,35 @@ fn bring_to_front(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Hands GDK the activation token for its next focus request, the `present`
+/// that follows: it activates the window with this token instead of asking
+/// the compositor for one of its own, which pumr would only get while it has
+/// the keyboard already. Main thread only.
+#[cfg(target_os = "linux")]
+fn adopt_activation_token(gtk_window: &gtk::ApplicationWindow, token: &str) {
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::{ObjectExt, WidgetExt};
+
+    let display = gtk_window.display();
+    let Ok(token) = std::ffi::CString::new(token) else {
+        return;
+    };
+    if display.type_().name() != "GdkWaylandDisplay" {
+        return;
+    }
+    let display: *mut gtk::gdk::ffi::GdkDisplay = display.to_glib_none().0;
+    // SAFETY: the display is GDK's Wayland one, as just checked, and GDK
+    // copies the token.
+    unsafe {
+        gdk_wayland_sys::gdk_wayland_display_set_startup_notification_id(
+            display.cast(),
+            token.as_ptr(),
+        );
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
-fn bring_to_front(window: &tauri::WebviewWindow) {
+fn bring_to_front(window: &tauri::WebviewWindow, _activation_token: Option<String>) {
     let _ = window.set_focus();
     focus_webview(window);
 }

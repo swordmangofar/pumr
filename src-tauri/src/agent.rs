@@ -2,6 +2,7 @@ use crate::broker::{ModelChoiceBroker, PermissionBroker, QuestionBroker};
 use crate::db::{Db, NewMessage};
 use crate::error::Result;
 use crate::git::ShadowRepo;
+use crate::hooks::{HookScene, Hooks};
 use crate::mcp::McpManager;
 use crate::model_match;
 use crate::models::{
@@ -80,6 +81,9 @@ pub struct TurnRequest {
     /// wants to finish after changing code without having run anything, it is
     /// asked once to run the one that fits. Empty asks for nothing.
     pub completion_checks: Vec<String>,
+    /// The user's hooks for this project: commands run before and after tool
+    /// calls and when the agent wants to finish.
+    pub hooks: Hooks,
     pub cancel: CancellationToken,
 }
 
@@ -309,7 +313,23 @@ pub async fn run_turn(
                     } else {
                         &[]
                     };
-                if let Some(note) = watch.unchecked_note(checks) {
+                let mut note = watch.unchecked_note(checks);
+                // The user's hooks for the end of a turn run once nothing
+                // else keeps the agent working. What they report sends it
+                // back once; after that they are run and the turn ends.
+                if note.is_none() && request.depth == 0 && !request.hooks.is_empty() {
+                    let report = request
+                        .hooks
+                        .turn_end(&hook_scene(deps, &request), &content, watch.hook_heard)
+                        .await;
+                    if !watch.hook_heard {
+                        watch.hook_heard = report.is_some();
+                        note = report.map(|report| {
+                            format!("{HARNESS_NOTE} A hook the user set up for the end of a turn reports:\n{report}\n\nDeal with it before you finish.")
+                        });
+                    }
+                }
+                if let Some(note) = note {
                     emit(StreamEvent::Assistant { message });
                     // Stored, so that the history keeps answering it in every
                     // later request: an answer followed by more work with
@@ -398,46 +418,46 @@ pub async fn run_turn(
 /// tools at the maximum subagent depth.
 fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
     let mut tool_schemas = tools::tool_schemas();
+    if deps.permissions.sandboxes() {
+        tools::offer_unsandboxed(&mut tool_schemas);
+    }
     let mcp_schemas = deps.mcp.schemas();
     if should_defer_mcp(request, &mcp_schemas) {
         // Inline the two discovery tools instead of every MCP schema.
         tool_schemas.push(tools::tool_search_schema());
         tool_schemas.push(tools::mcp_invoke_schema());
     } else {
-        // MCP tools always ask before running, so the model must say why.
+        // MCP tools ask before running unless the user chose not to be asked
+        // again for one, so the model must say why.
         tool_schemas.extend(mcp_schemas.into_iter().map(|mut schema| {
             tools::add_reason_argument(&mut schema, true);
             schema
         }));
     }
-    if request.plan_only {
-        tool_schemas.retain(|schema| {
-            !matches!(
-                schema.pointer("/function/name").and_then(Value::as_str),
-                Some("write") | Some("edit") | Some("bash") | Some("bash_output")
-            )
-        });
-    }
-    if request.read_only {
-        tool_schemas.retain(|schema| {
-            !matches!(
-                schema.pointer("/function/name").and_then(Value::as_str),
-                Some("write") | Some("edit")
-            )
-        });
-    }
-    if request.depth >= MAX_SUBAGENT_DEPTH {
-        tool_schemas.retain(|schema| {
-            !matches!(
-                schema.pointer("/function/name").and_then(Value::as_str),
-                Some("task") | Some("question")
-            )
-        });
-    }
+    tool_schemas.retain(|schema| {
+        schema
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| tool_allowed(request, name))
+    });
     if !request.skills.is_empty() {
         tool_schemas.push(tools::skill_schema());
     }
     tool_schemas
+}
+
+/// Whether the tool `name` may run in this request: planning modes change
+/// nothing and run nothing, read-only modes change no files, and a subagent
+/// neither delegates nor asks the user. It decides both what the model is
+/// offered and what is run, because a model calls a tool it is not offered
+/// all the same when the chat's earlier turns, in another mode, used it.
+fn tool_allowed(request: &TurnRequest, name: &str) -> bool {
+    !match name {
+        "write" | "edit" => request.plan_only || request.read_only,
+        "bash" | "bash_output" => request.plan_only,
+        "task" | "question" => request.depth >= MAX_SUBAGENT_DEPTH,
+        _ => false,
+    }
 }
 
 /// Decides whether MCP schemas should be deferred behind `tool_search`. Only
@@ -706,6 +726,8 @@ struct TurnWatch {
     repeats: HashMap<String, (u64, usize)>,
     /// The tool that failed last and how many times in a row.
     failing: Option<(String, usize)>,
+    /// A hook for the end of the turn has sent the agent back to work.
+    hook_heard: bool,
 }
 
 impl TurnWatch {
@@ -730,10 +752,28 @@ impl TurnWatch {
         let mut hasher = DefaultHasher::new();
         (&outcome.status, &outcome.result).hash(&mut hasher);
         let result = hasher.finish();
-        let repeats = self
+        let key = format!("{}\n{}", call.name, call.arguments);
+        // A check run again after the workspace changed tests other code, so
+        // a change starts the count of every other call again. An edit that
+        // went through is a change. What a command, a subagent or an MCP tool
+        // did is not known, so it counts as one too, unless it is itself a
+        // repeat: two commands taking turns with the same results are a
+        // circle like any other.
+        let seen = self
             .repeats
-            .entry(format!("{}\n{}", call.name, call.arguments))
-            .or_insert((result, 0));
+            .get(&key)
+            .is_some_and(|(last, _)| *last == result);
+        let changed = outcome.status == "ok"
+            && (matches!(call.name.as_str(), "write" | "edit")
+                || (may_mutate_workspace(&call.name) && !seen));
+        if changed {
+            for (other, (_, count)) in self.repeats.iter_mut() {
+                if *other != key {
+                    *count = 0;
+                }
+            }
+        }
+        let repeats = self.repeats.entry(key).or_insert((result, 0));
         if repeats.0 != result {
             *repeats = (result, 0);
         }
@@ -886,7 +926,12 @@ fn run_subagent<'a>(
     sink: EventSink,
 ) -> Pin<Box<dyn Future<Output = ToolOutcome> + Send + 'a>> {
     Box::pin(async move {
-        if request.depth >= MAX_SUBAGENT_DEPTH {
+        // The user can stop the turn while an earlier `task` call of the
+        // batch waits for them to pick its model.
+        if request.cancel.is_cancelled() {
+            return stopped_before_it_ran();
+        }
+        if !tool_allowed(request, "task") {
             return ToolOutcome::error("Subagents cannot spawn further subagents.");
         }
         let description = arguments
@@ -1012,6 +1057,7 @@ fn run_subagent<'a>(
             subagent_model: request.subagent_model.clone(),
             compaction_model: request.compaction_model.clone(),
             completion_checks: Vec::new(),
+            hooks: request.hooks.clone(),
             cancel: request.cancel.clone(),
         };
 
@@ -1165,6 +1211,7 @@ async fn build_history(
 ) -> Result<Vec<ChatMessage>> {
     let overhead = schema_tokens(tool_schemas);
     let replay = catalog::provider_of(&request.model).kind == ProviderKind::Anthropic;
+    let pictures = pictures(deps, request);
     let load = |clear_old: bool| {
         stored_history(
             &deps.db,
@@ -1172,6 +1219,7 @@ async fn build_history(
             &request.system_prompt,
             replay,
             clear_old,
+            pictures,
         )
     };
     let mut history = load(true)?;
@@ -1269,14 +1317,20 @@ fn compaction_limit(context_length: i64, threshold: usize, max_tokens: usize) ->
 /// The model history as it is stored: the system prompt, the summary of the
 /// latest checkpoint (if any) and the messages after it. With `clear_old`,
 /// as for every request, old tool output up to the session's cleared mark is
-/// replaced by a stub.
+/// replaced by a stub. `pictures` says what the model does with them: those
+/// a tool read are sent only to a model known to take them, and those the
+/// user attached to every model but one known not to. A picture that is not
+/// sent is named instead.
 fn stored_history(
     db: &Db,
     session_id: &str,
     system_prompt: &str,
     replay_provider_content: bool,
     clear_old: bool,
+    pictures: Pictures,
 ) -> Result<Vec<ChatMessage>> {
+    let vision = pictures == Pictures::Takes;
+    let show_attached = pictures != Pictures::Refuses;
     let checkpoint = db.latest_checkpoint(session_id)?;
     let after = checkpoint.as_ref().map_or(-1, |entry| entry.upto_seq);
     let messages = db.list_messages_after(session_id, after)?;
@@ -1301,12 +1355,30 @@ fn stored_history(
         summary.seq = Some(checkpoint.upto_seq);
         history.push(summary);
     }
-    for message in messages {
+    // Pictures the tool results of the step being walked hold for the model.
+    let mut pictures: Vec<Attachment> = Vec::new();
+    let mut pictures_seq = -1;
+    for mut message in messages {
         let seq = message.seq;
         let cleared = seq <= cleared_upto && clearable(&message);
+        if message.role != "tool" {
+            history.extend(pictures_note(&mut pictures, pictures_seq, vision));
+        } else if !cleared && shows_pictures(&message) {
+            pictures.extend(
+                std::mem::take(&mut message.attachments)
+                    .into_iter()
+                    .filter(Attachment::is_image),
+            );
+            pictures_seq = seq;
+        }
         let converted = match message.role.as_str() {
-            "user" => user_content(&message.content, &message.attachments, &message.context)
-                .map(|content| ChatMessage::parts("user", content)),
+            "user" => user_content(
+                &message.content,
+                &message.attachments,
+                &message.context,
+                show_attached,
+            )
+            .map(|content| ChatMessage::parts("user", content)),
             "assistant" => {
                 if !message.tool_calls.is_empty() {
                     let calls: Vec<Value> = message
@@ -1318,7 +1390,7 @@ fn stored_history(
                                 "type": "function",
                                 "function": {
                                     "name": call.name,
-                                    "arguments": call.arguments
+                                    "arguments": replayed_arguments(&call.arguments)
                                 }
                             })
                         })
@@ -1354,7 +1426,84 @@ fn stored_history(
             history.push(converted);
         }
     }
+    history.extend(pictures_note(&mut pictures, pictures_seq, vision));
     Ok(history)
+}
+
+/// The arguments of a stored call as the model is sent them again. A call
+/// the output limit cut off was answered with an error, but its arguments
+/// stay half a JSON object, and a model server that parses what it is sent
+/// refuses the request with them in it, and so every later one of the chat.
+/// Whatever is no JSON object goes back as the empty one; that is also what
+/// a call sent with no arguments at all was run with.
+fn replayed_arguments(arguments: &str) -> String {
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(Value::Object(_)) => arguments.to_string(),
+        // Encoded once more as a string, they were run as the object in it
+        // (see `tools::parse_arguments`).
+        Ok(Value::String(inner))
+            if matches!(serde_json::from_str::<Value>(&inner), Ok(Value::Object(_))) =>
+        {
+            inner
+        }
+        _ => "{}".to_string(),
+    }
+}
+
+/// What a picture in the history counts for, in tokens. A provider counts it
+/// by its size in pixels, not in bytes, so this is a flat estimate.
+const PICTURE_TOKENS: usize = 1_000;
+
+/// Whether a stored tool result holds pictures for the model: those `read`
+/// returned. The pictures of `screenshot` are for the user alone.
+fn shows_pictures(message: &Message) -> bool {
+    message.tool_name.as_deref() == Some("read")
+        && message.attachments.iter().any(Attachment::is_image)
+}
+
+/// The pictures the `read` calls of one step returned, as the message that
+/// shows them to the model. A tool result holds text only, whatever the model
+/// server, so the pictures follow the results of the step in a note of their
+/// own. It is built from the stored results on every request, and so goes
+/// when they are cleared or summarised. Without `vision` the model is only
+/// told which pictures there were: the chat was switched to it after they
+/// were read, and a picture it cannot take would fail every request.
+fn pictures_note(pictures: &mut Vec<Attachment>, seq: i64, vision: bool) -> Option<ChatMessage> {
+    if pictures.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<Value> = Vec::new();
+    for picture in pictures.drain(..) {
+        let lead = if parts.is_empty() { HARNESS_NOTE } else { "" };
+        let left_out = if vision {
+            ""
+        } else {
+            " left out, because the model in use does not take pictures."
+        };
+        parts.push(json!({
+            "type": "text",
+            "text": format!("{lead} Picture read from {}:{left_out}", picture.name).trim_start()
+        }));
+        if vision {
+            parts.push(json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:{};base64,{}", picture.mime_type, picture.data) }
+            }));
+        }
+    }
+    let mut note = ChatMessage::parts("user", Value::Array(parts));
+    note.seq = Some(seq);
+    Some(note)
+}
+
+/// Estimated tokens a stored tool result takes in the history.
+fn tool_result_tokens(message: &Message) -> usize {
+    let pictures = if shows_pictures(message) {
+        message.attachments.iter().filter(|entry| entry.is_image()).count()
+    } else {
+        0
+    };
+    estimate_tokens(&message.content) + pictures * PICTURE_TOKENS
 }
 
 /// Whether a stored tool output may be replaced by a stub once it is old.
@@ -1362,7 +1511,7 @@ fn stored_history(
 /// instructions, subagent reports, the user's answers and the task list.
 fn clearable(message: &Message) -> bool {
     message.role == "tool"
-        && message.content.len() > CLEARABLE_MIN_BYTES
+        && (message.content.len() > CLEARABLE_MIN_BYTES || shows_pictures(message))
         && !matches!(
             message.tool_name.as_deref(),
             Some("skill" | "task" | "question" | "todo")
@@ -1397,7 +1546,7 @@ fn clear_old_tool_output(db: &Db, session_id: &str, limit: usize) -> Result<bool
         if !clearable(message) {
             continue;
         }
-        let tokens = estimate_tokens(&message.content);
+        let tokens = tool_result_tokens(message);
         if mark.is_none() && (index >= newest_step || kept < keep) {
             kept += tokens;
             continue;
@@ -1435,11 +1584,21 @@ fn is_summary(message: &ChatMessage) -> bool {
 
 /// Whether the harness, not the user, wrote this user message.
 fn is_note(message: &ChatMessage) -> bool {
-    message.role == "user"
-        && message
-            .content
-            .as_str()
-            .is_some_and(|text| text.starts_with(HARNESS_NOTE))
+    let text = match &message.content {
+        Value::String(text) => Some(text.as_str()),
+        // The pictures of a step (see `pictures_note`).
+        Value::Array(parts) => parts
+            .first()
+            .and_then(|part| part.get("text"))
+            .and_then(Value::as_str),
+        _ => None,
+    };
+    message.role == "user" && text.is_some_and(|text| text.starts_with(HARNESS_NOTE))
+}
+
+/// Whether this is the note that shows a step's pictures to the model.
+fn is_pictures_note(message: &ChatMessage) -> bool {
+    message.content.is_array() && is_note(message)
 }
 
 /// Last resort for a history that still exceeds the model's window, because
@@ -1522,7 +1681,7 @@ fn part_token_estimate(part: &Value) -> usize {
             .unwrap_or(0),
         // Images and files are tokenized by the provider from their decoded
         // content, not their base64 size, so use a conservative flat estimate.
-        Some("image_url") => 1_000,
+        Some("image_url") => PICTURE_TOKENS,
         Some("file") => 4_000,
         _ => 0,
     }
@@ -1723,15 +1882,30 @@ pub enum Compaction {
 
 /// Estimated tokens of the messages a session's next request starts from.
 pub fn stored_tokens(db: &Db, session_id: &str) -> Result<usize> {
+    // Counted with its pictures: which model comes next is not known here.
     Ok(history_tokens(&stored_history(
-        db, session_id, "", false, true,
+        db,
+        session_id,
+        "",
+        false,
+        true,
+        Pictures::Takes,
     )?))
 }
 
 /// Compacts a session's history now, whatever its size: the user asked for it
 /// between two turns.
 pub async fn compact_now(compactor: &Compactor<'_>) -> Result<Compaction> {
-    let history = stored_history(compactor.db, compactor.session_id, "", false, false)?;
+    // The summary is written from the text of the history, so no picture is
+    // sent whatever is passed for `vision`.
+    let history = stored_history(
+        compactor.db,
+        compactor.session_id,
+        "",
+        false,
+        false,
+        Pictures::Takes,
+    )?;
     compact(compactor, &history, KEPT_HISTORY.0, 0, || {}).await
 }
 
@@ -1854,7 +2028,8 @@ fn summary_cut(history: &[ChatMessage], keep_tokens: usize) -> usize {
     let mut kept = 0usize;
     for index in (1..history.len()).rev() {
         kept += message_token_estimate(&history[index]);
-        if history[index].role == "tool" {
+        // A step's pictures stay with its tool output.
+        if history[index].role == "tool" || is_pictures_note(&history[index]) {
             continue;
         }
         if cut < history.len() && kept > keep_tokens {
@@ -2011,7 +2186,16 @@ fn context_usage(
     )
 }
 
-fn user_content(text: &str, attachments: &[Attachment], context: &str) -> Option<Value> {
+/// What a prompt of the user's is sent as. Without `show_pictures`, for a
+/// model listed as taking none, a picture attached to it is named instead of
+/// sent: the chat may have been switched to that model since, and the picture
+/// would fail this request and every later one.
+fn user_content(
+    text: &str,
+    attachments: &[Attachment],
+    context: &str,
+    show_pictures: bool,
+) -> Option<Value> {
     if attachments.is_empty() && context.trim().is_empty() {
         return (!text.is_empty()).then(|| Value::String(text.to_string()));
     }
@@ -2026,7 +2210,15 @@ fn user_content(text: &str, attachments: &[Attachment], context: &str) -> Option
         parts.push(json!({ "type": "text", "text": text }));
     }
     for attachment in attachments {
-        if attachment.is_image() {
+        if attachment.is_image() && !show_pictures {
+            parts.push(json!({
+                "type": "text",
+                "text": format!(
+                    "{HARNESS_NOTE} Picture {}: left out, because the model in use does not take pictures.",
+                    attachment.name
+                )
+            }));
+        } else if attachment.is_image() {
             let url = format!("data:{};base64,{}", attachment.mime_type, attachment.data);
             parts.push(json!({
                 "type": "image_url",
@@ -2151,12 +2343,71 @@ fn sanitize(history: Vec<ChatMessage>) -> Vec<ChatMessage> {
     sanitized
 }
 
+/// What a hook is told about the turn it runs in.
+fn hook_scene<'a>(deps: &'a TurnDeps, request: &'a TurnRequest) -> HookScene<'a> {
+    HookScene {
+        project_root: &request.project_root,
+        session_id: &request.session_id,
+        conversation_id: &request.conversation_id,
+        cancel: &request.cancel,
+        broker: &deps.broker,
+    }
+}
+
+/// Runs a tool call between the user's hooks: one before it can refuse it,
+/// and what one after it reports is added to the result.
 async fn execute_call(
     deps: &TurnDeps,
     request: &TurnRequest,
     call: &ToolCallRecord,
     sink: &EventSink,
 ) -> ToolOutcome {
+    if request.hooks.is_empty() {
+        return run_call(deps, request, call, sink).await;
+    }
+    // A call whose arguments are not valid is answered by the tool itself.
+    let Ok(arguments) = tools::parse_arguments(&call.name, &call.arguments) else {
+        return run_call(deps, request, call, sink).await;
+    };
+    let scene = hook_scene(deps, request);
+    if let Some(reason) = request
+        .hooks
+        .before_tool(&scene, &call.name, &arguments)
+        .await
+    {
+        return ToolOutcome::refused_by_hook(&reason);
+    }
+    let mut outcome = run_call(deps, request, call, sink).await;
+    if let Some(report) = request
+        .hooks
+        .after_tool(&scene, &call.name, &arguments, &outcome)
+        .await
+    {
+        outcome.result.push_str(&format!(
+            "\n\n{HARNESS_NOTE} A hook the user set up reports on this call:\n{report}"
+        ));
+    }
+    outcome
+}
+
+async fn run_call(
+    deps: &TurnDeps,
+    request: &TurnRequest,
+    call: &ToolCallRecord,
+    sink: &EventSink,
+) -> ToolOutcome {
+    // Once the user stops the turn, the calls of the batch that have not
+    // started do not run: an edit asked for after a command changes nothing
+    // when the command is what the user stopped.
+    if request.cancel.is_cancelled() {
+        return stopped_before_it_ran();
+    }
+    if !tool_allowed(request, &call.name) {
+        return ToolOutcome::error(format!(
+            "The {} tool is not available in this mode, so this call was not run.",
+            call.name
+        ));
+    }
     let arguments = match tools::parse_arguments(&call.name, &call.arguments) {
         Ok(arguments) => arguments,
         Err(reason) => return ToolOutcome::error(reason),
@@ -2180,10 +2431,46 @@ async fn execute_call(
         mcp: Some(deps.mcp.clone()),
         skills: request.skills.clone(),
         justification: None,
+        vision: takes_pictures(deps, request),
+        read_only: request.plan_only || request.read_only,
         cancel: request.cancel.clone(),
         emit: sink.clone(),
     };
     tools::execute(&mut runtime, &call.name, &arguments).await
+}
+
+/// What a call gets that had not started when the user stopped the turn.
+/// It is answered all the same: a call without an output makes the stored
+/// transcript invalid for strict providers.
+fn stopped_before_it_ran() -> ToolOutcome {
+    let mut outcome = ToolOutcome::cancelled();
+    outcome.result = "Tool call cancelled before it ran.".to_string();
+    outcome
+}
+
+/// Whether the model of this request takes pictures. A model that is not
+/// listed is taken not to: a picture it cannot take would fail this request
+/// and every later one of the chat.
+fn takes_pictures(deps: &TurnDeps, request: &TurnRequest) -> bool {
+    pictures(deps, request) == Pictures::Takes
+}
+
+/// What the model of a request does with pictures, as far as its listing
+/// says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Pictures {
+    Takes,
+    /// The model is not listed, as with a server of the user's own.
+    Unknown,
+    Refuses,
+}
+
+fn pictures(deps: &TurnDeps, request: &TurnRequest) -> Pictures {
+    match deps.models.iter().find(|model| model.id == request.model) {
+        Some(model) if model.supports_vision => Pictures::Takes,
+        Some(_) => Pictures::Refuses,
+        None => Pictures::Unknown,
+    }
 }
 
 /// True when a tool call may have touched the workspace, so the live change
@@ -2599,6 +2886,47 @@ mod tests {
     }
 
     #[test]
+    fn a_check_run_again_after_a_change_is_no_repeat() {
+        /// Whether `call`, coming back with `result`, is told it is a repeat.
+        fn noted(watch: &mut TurnWatch, call: &ToolCallRecord, result: &str) -> bool {
+            let mut outcome = ToolOutcome::ok(result.to_string());
+            watch.observe(call, &mut outcome);
+            outcome
+                .result
+                .contains("[pumr] You have made this exact call")
+        }
+        let check = call("bash", r#"{"command":"npx tsc --noEmit"}"#);
+        let clean = "Command exited with code 0.";
+
+        // Edit, check, edit, check, edit, check: every run tested other code.
+        let mut watch = TurnWatch::default();
+        for round in 0..3 {
+            watch.observe(&call("edit", "{}"), &mut edited("src/a.ts"));
+            assert!(!noted(&mut watch, &check, clean), "round {round}");
+        }
+        // Run twice more with nothing changed in between, it is one.
+        assert!(!noted(&mut watch, &check, clean));
+        assert!(noted(&mut watch, &check, clean));
+        // An edit that failed changed nothing.
+        watch.observe(&call("edit", "{}"), &mut ToolOutcome::error("not found"));
+        assert!(noted(&mut watch, &check, clean));
+
+        // A command may have changed something as well ...
+        let mut watch = TurnWatch::default();
+        let grep = call("grep", r#"{"pattern":"needle"}"#);
+        let fix = call("bash", r#"{"command":"sed -i s/needle/pin/ src/a.ts"}"#);
+        assert!(!noted(&mut watch, &grep, "No matches."));
+        assert!(!noted(&mut watch, &grep, "No matches."));
+        assert!(!noted(&mut watch, &fix, clean));
+        assert!(!noted(&mut watch, &grep, "No matches."));
+        assert!(!noted(&mut watch, &grep, "No matches."));
+        // ... but not when it is itself a repeat: calls taking turns with
+        // the same results are a circle too.
+        assert!(!noted(&mut watch, &fix, clean));
+        assert!(noted(&mut watch, &grep, "No matches."));
+    }
+
+    #[test]
     fn a_run_of_failures_of_one_tool_is_pointed_out() {
         let mut watch = TurnWatch::default();
         let mut notes = Vec::new();
@@ -2989,7 +3317,7 @@ mod tests {
     }
 
     fn history(db: &Db, session: &str) -> Vec<ChatMessage> {
-        stored_history(db, session, "sys", false, true).unwrap()
+        stored_history(db, session, "sys", false, true, Pictures::Takes).unwrap()
     }
 
     fn roles(history: &[ChatMessage]) -> Vec<&str> {
@@ -3074,7 +3402,7 @@ mod tests {
         assert_eq!(outputs[..4], [CLEARED_OUTPUT; 4]);
         assert_eq!(outputs[4..], ["x".repeat(8_000), "x".repeat(8_000)]);
         // A later summary is still written from the output as it was.
-        let full = stored_history(&db, &session, "sys", false, false).unwrap();
+        let full = stored_history(&db, &session, "sys", false, false, Pictures::Takes).unwrap();
         assert!(!tool_outputs(&full).contains(&CLEARED_OUTPUT.to_string()));
 
         // Nothing new is old enough, so the cached history stays as it is.
@@ -3199,6 +3527,188 @@ mod tests {
         // Deleting the chat deletes the picture with its messages.
         db.delete_session(&session).unwrap();
         assert!(db.list_messages(&session).unwrap().is_empty());
+    }
+
+    /// One step that reads a text file and a picture in two calls.
+    fn picture_step(db: &Db, session: &str) {
+        let assistant = db
+            .append_message(session, NewMessage::assistant(Some("model"), None))
+            .unwrap();
+        let calls = ["text", "picture"].map(|id| ToolCallRecord {
+            id: id.to_string(),
+            name: "read".to_string(),
+            arguments: "{}".to_string(),
+        });
+        db.update_assistant_message(&assistant.id, "", "", 0.0, 0, 0, 0, &calls, &[], 0)
+            .unwrap();
+        let picture = Attachment {
+            id: "picture".to_string(),
+            name: "docs/button.png".to_string(),
+            mime_type: "image/png".to_string(),
+            size: 3,
+            kind: "image".to_string(),
+            lines: None,
+            data: "AAAA".to_string(),
+        };
+        db.append_message(
+            session,
+            NewMessage {
+                attachments: std::slice::from_ref(&picture),
+                ..NewMessage::tool("picture", "read", "docs/button.png is a picture.", "ok", &[], 0)
+            },
+        )
+        .unwrap();
+        db.append_message(
+            session,
+            NewMessage::tool("text", "read", "1\tbutton {}", "ok", &[], 0),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_picture_that_was_read_follows_the_results_of_its_step() {
+        let (_temp, db, session) = chat();
+        prompt(&db, &session, "why is the button cut off?");
+        picture_step(&db, &session);
+
+        // A tool result holds text on every model server, so the picture
+        // comes after both results, in a message of its own.
+        let sent = history(&db, &session);
+        assert_eq!(
+            roles(&sent),
+            vec!["system", "user", "assistant", "tool", "tool", "user"]
+        );
+        assert_eq!(
+            sent[5].content,
+            json!([
+                { "type": "text", "text": "[pumr] Picture read from docs/button.png:" },
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+            ])
+        );
+        // It is the harness speaking, not a new request of the user.
+        assert!(is_note(&sent[5]) && is_pictures_note(&sent[5]));
+        assert_eq!(
+            latest_request(&sent).as_deref(),
+            Some("why is the button cut off?")
+        );
+
+        // The next step follows it, and what was sent before stays as it was.
+        step(&db, &session, "next", "file contents");
+        let later = history(&db, &session);
+        assert_eq!(roles(&later)[5..], ["user", "assistant", "tool"]);
+        assert_eq!(json!(later[..sent.len()]), json!(sent));
+    }
+
+    #[test]
+    fn a_picture_goes_when_old_tool_output_is_cleared() {
+        let (_temp, db, session) = chat();
+        prompt(&db, &session, "why is the button cut off?");
+        picture_step(&db, &session);
+        let stored = db.list_messages(&session).unwrap();
+        let picture = stored
+            .iter()
+            .find(|message| !message.attachments.is_empty())
+            .unwrap();
+        // Short as its text is, the result is worth clearing for its picture.
+        assert!(clearable(picture));
+        assert_eq!(
+            tool_result_tokens(picture),
+            estimate_tokens(&picture.content) + PICTURE_TOKENS
+        );
+
+        db.set_cleared_upto(&session, picture.seq).unwrap();
+        let sent = history(&db, &session);
+        assert_eq!(roles(&sent), vec!["system", "user", "assistant", "tool", "tool"]);
+        assert_eq!(tool_outputs(&sent), [CLEARED_OUTPUT, "1\tbutton {}"]);
+        assert!(!json!(sent).to_string().contains("AAAA"));
+        // The chat still shows it.
+        assert_eq!(picture.attachments[0].data, "AAAA");
+    }
+
+    #[test]
+    fn a_picture_is_named_but_not_sent_to_a_model_that_takes_none() {
+        let (_temp, db, session) = chat();
+        prompt(&db, &session, "why is the button cut off?");
+        picture_step(&db, &session);
+
+        // The chat was switched to such a model after the picture was read.
+        let sent = stored_history(&db, &session, "sys", false, true, Pictures::Unknown).unwrap();
+        assert_eq!(
+            roles(&sent),
+            vec!["system", "user", "assistant", "tool", "tool", "user"]
+        );
+        assert_eq!(
+            sent[5].content,
+            json!([{
+                "type": "text",
+                "text": "[pumr] Picture read from docs/button.png: left out, because the model in use does not take pictures."
+            }])
+        );
+        assert!(!json!(sent).to_string().contains("AAAA"));
+        // It is still the harness speaking, and stays with its step.
+        assert!(is_note(&sent[5]) && is_pictures_note(&sent[5]));
+
+        // Switched back, the model is shown the picture again.
+        let shown = json!(history(&db, &session)).to_string();
+        assert!(shown.contains("data:image/png;base64,AAAA"));
+    }
+
+    #[test]
+    fn a_picture_the_user_attached_is_kept_from_a_model_listed_as_taking_none() {
+        let (_temp, db, session) = chat();
+        let picture = Attachment {
+            id: "shot".to_string(),
+            name: "shot.png".to_string(),
+            mime_type: "image/png".to_string(),
+            size: 3,
+            kind: "image".to_string(),
+            lines: None,
+            data: "BBBB".to_string(),
+        };
+        db.append_message(
+            &session,
+            NewMessage::user("what is wrong here?", "", None, std::slice::from_ref(&picture), &[]),
+        )
+        .unwrap();
+        let sent = |pictures: Pictures| {
+            let history = stored_history(&db, &session, "sys", false, true, pictures).unwrap();
+            json!(history).to_string()
+        };
+
+        // The chat was switched to such a model after the prompt was sent.
+        let named = sent(Pictures::Refuses);
+        assert!(!named.contains("BBBB"));
+        assert!(named.contains(
+            "[pumr] Picture shot.png: left out, because the model in use does not take pictures."
+        ));
+        assert!(named.contains("what is wrong here?"));
+        // A model that is not listed may well take it: the user attached it.
+        assert!(sent(Pictures::Unknown).contains("data:image/png;base64,BBBB"));
+        assert!(sent(Pictures::Takes).contains("data:image/png;base64,BBBB"));
+    }
+
+    #[test]
+    fn compacting_keeps_a_picture_with_the_step_that_read_it() {
+        let mut note = ChatMessage::parts(
+            "user",
+            json!([
+                { "type": "text", "text": format!("{HARNESS_NOTE} Picture read from a.png:") },
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+            ]),
+        );
+        note.seq = Some(2);
+        let history = vec![
+            ChatMessage::text("system", "sys"),
+            with_seq(ChatMessage::text("user", "t".repeat(8_000)), 0),
+            with_seq(
+                ChatMessage::assistant_tool_calls(String::new(), calls(&["a"])),
+                1,
+            ),
+            with_seq(ChatMessage::tool_result("a", "a.png is a picture."), 2),
+            note,
+        ];
+        // The step is larger than what is kept and stays whole all the same.
+        assert_eq!(summary_cut(&history, 100), 2);
     }
 
     #[test]
@@ -3359,7 +3869,37 @@ mod tests {
     /// A model server that answers every chat request with `reply` as one
     /// streamed chunk, and hands the request bodies it got to the test.
     fn model_server(reply: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        scripted_server(vec![said(reply)])
+    }
+
+    /// The stream of a reply that is `text`.
+    fn said(text: &str) -> String {
+        format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({ "choices": [{ "delta": { "content": text } }] }),
+            json!({ "choices": [], "usage": { "prompt_tokens": 900, "completion_tokens": 40 } }),
+        )
+    }
+
+    /// The stream of a reply that calls `tool` with `arguments`.
+    fn called(tool: &str, arguments: Value) -> String {
+        format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({ "choices": [{ "delta": { "tool_calls": [{
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": tool, "arguments": arguments.to_string() }
+            }] } }] }),
+            json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }),
+        )
+    }
+
+    /// A model server that answers its requests with `replies` in turn (the
+    /// last one from then on), and hands the request bodies to the test.
+    fn scripted_server(replies: Vec<String>) -> (String, std::sync::mpsc::Receiver<String>) {
         use std::io::{Read, Write};
+        let mut replies = replies.into_iter().peekable();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let (requests, received) = std::sync::mpsc::channel();
@@ -3395,11 +3935,14 @@ mod tests {
                 }
                 let _ = requests.send(String::from_utf8_lossy(&request[body_start..]).to_string());
 
-                let events = format!(
-                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-                    json!({ "choices": [{ "delta": { "content": reply } }] }),
-                    json!({ "choices": [], "usage": { "prompt_tokens": 900, "completion_tokens": 40 } }),
-                );
+                let events = match replies.next() {
+                    Some(events) if replies.peek().is_some() => events,
+                    Some(last) => {
+                        replies = vec![last.clone()].into_iter().peekable();
+                        last
+                    }
+                    None => String::new(),
+                };
                 let _ = stream.write_all(
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{events}",
@@ -3430,6 +3973,409 @@ mod tests {
             direct_meta: Default::default(),
             quirks: Default::default(),
             in_flight: Default::default(),
+        }
+    }
+
+    /// What a turn of the chat in `db` takes, with its model served from
+    /// `base_url` and the project in `root`.
+    fn turn(
+        db: Db,
+        session: &str,
+        root: &Path,
+        base_url: &str,
+        hooks: Vec<crate::config::Hook>,
+    ) -> (TurnDeps, TurnRequest) {
+        let shadow = ShadowRepo::open(&root.join(".app-data"), "project", root).unwrap();
+        let request = TurnRequest {
+            model: "ollama:test".to_string(),
+            reasoning_effort: None,
+            provider: None,
+            system_prompt: "sys".to_string(),
+            session_id: session.to_string(),
+            conversation_id: session.to_string(),
+            project_id: "project".to_string(),
+            depth: 0,
+            project_root: root.to_path_buf(),
+            extra_folders: Vec::new(),
+            file_ignore: Default::default(),
+            context_length: 64_000,
+            auto_compact_threshold: 70,
+            auto_compact_max_tokens: 0,
+            max_tool_iterations: 10,
+            auto_continue: false,
+            fallback_pricing: None,
+            base_commit: shadow.snapshot("start").unwrap(),
+            resume: false,
+            plan_only: false,
+            read_only: false,
+            mcp_progressive_disclosure: false,
+            skills: Vec::new(),
+            prompt_caching: false,
+            subagent_model: "ollama:test".to_string(),
+            compaction_model: "ollama:test".to_string(),
+            completion_checks: Vec::new(),
+            hooks: Hooks::for_project(&hooks, root),
+            cancel: CancellationToken::new(),
+        };
+        let deps = TurnDeps {
+            db: Arc::new(db),
+            shadow: Arc::new(shadow),
+            processes: Arc::new(ProcessRegistry::new()),
+            files: Default::default(),
+            broker: Arc::new(PermissionBroker::new()),
+            questions: Arc::new(QuestionBroker::new()),
+            model_choices: Arc::new(ModelChoiceBroker::new()),
+            models: Default::default(),
+            permissions: Arc::new(LivePermissions::new(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Default::default(),
+            )),
+            client: local_client(base_url),
+            http: reqwest::Client::new(),
+            mcp: Arc::new(McpManager::empty()),
+        };
+        (deps, request)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hooks_refuse_a_call_and_hold_the_agent_at_the_end_of_the_turn() {
+        let (temp, db, session) = chat();
+        let root = temp.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        prompt(&db, &session, "publish the branch");
+        let hook = |event: &str, command: &str| crate::config::Hook {
+            event: event.to_string(),
+            command: command.to_string(),
+            ..Default::default()
+        };
+        let hooks = vec![
+            hook(
+                crate::hooks::BEFORE_TOOL,
+                "grep -q forced && { echo 'No forced pushes here.' >&2; exit 2; }; exit 0",
+            ),
+            hook(
+                crate::hooks::TURN_END,
+                r#"grep -q '"stop_hook_active":false' && { echo 'de.json lacks chat.send'; exit 2; }; exit 0"#,
+            ),
+        ];
+        let (base_url, requests) = scripted_server(vec![
+            called("bash", json!({ "command": "touch forced.txt" })),
+            said("Published."),
+            said("Added the key."),
+        ]);
+        let (deps, request) = turn(db, &session, &root, &base_url, hooks);
+
+        let result = run_turn(&deps, request, Arc::new(|_: RoutedEvent| {}))
+            .await
+            .unwrap();
+        assert_eq!(result.error, None);
+        assert_eq!(result.message.content, "Added the key.");
+
+        // The command never ran, and the agent was told who refused it.
+        assert!(!root.join("forced.txt").exists());
+        let sent: Vec<String> = requests.try_iter().collect();
+        assert_eq!(sent.len(), 3);
+        assert!(sent[1].contains("A hook the user set up refused this call:\\nNo forced pushes here."));
+        // Its first answer was held back by the hook for the end of the
+        // turn, once: the second one ended the turn.
+        assert!(!sent[1].contains("de.json lacks chat.send"));
+        assert!(sent[2].contains(
+            "[pumr] A hook the user set up for the end of a turn reports:\\nde.json lacks chat.send"
+        ));
+        let stored = deps.db.list_messages(&session).unwrap();
+        let roles: Vec<&str> = stored.iter().map(|message| message.role.as_str()).collect();
+        assert_eq!(
+            roles,
+            ["user", "assistant", "tool", "assistant", crate::db::NOTE_ROLE, "assistant"]
+        );
+        assert_eq!(stored[2].status.as_deref(), Some("denied"));
+    }
+
+    /// The project folder of the chat in `temp`, as `turn` takes it.
+    fn project(temp: &tempfile::TempDir) -> PathBuf {
+        let root = temp.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// The stored tool results of a chat: call id, status and text.
+    fn tool_results(db: &Db, session: &str) -> Vec<(String, String, String)> {
+        db.list_messages(session)
+            .unwrap()
+            .into_iter()
+            .filter(|message| message.role == "tool")
+            .map(|message| {
+                (
+                    message.tool_call_id.unwrap_or_default(),
+                    message.status.unwrap_or_default(),
+                    message.content,
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_tool_the_mode_leaves_out_is_refused_when_the_model_calls_it_all_the_same() {
+        // Planning, then read-only. The chat's earlier turns, in a coding
+        // mode, show the model calls it is no longer offered.
+        for (plan_only, read_only) in [(true, false), (false, true)] {
+            let (temp, db, session) = chat();
+            let root = project(&temp);
+            std::fs::write(root.join("a.txt"), "before\n").unwrap();
+            prompt(&db, &session, "rename it");
+            let mut replies = vec![
+                called(
+                    "edit",
+                    json!({ "path": "a.txt", "old_string": "before", "new_string": "after" }),
+                ),
+                called("write", json!({ "path": "new.txt", "content": "made\n" })),
+            ];
+            let mut refused = vec!["edit", "write"];
+            if plan_only {
+                replies.push(called("bash", json!({ "command": "ls" })));
+                refused.push("bash");
+            }
+            replies.push(said("That takes another mode."));
+            let (base_url, _requests) = scripted_server(replies);
+            let (deps, mut request) = turn(db, &session, &root, &base_url, Vec::new());
+            request.plan_only = plan_only;
+            request.read_only = read_only;
+
+            // What is offered and what is run are decided as one.
+            let offered = build_tool_schemas(&deps, &request);
+            let offered: Vec<&str> = offered
+                .iter()
+                .filter_map(|schema| schema.pointer("/function/name")?.as_str())
+                .collect();
+            let built_in = "read write edit bash bash_output task question";
+            for name in built_in.split(' ') {
+                let allowed = tool_allowed(&request, name);
+                assert_eq!(offered.contains(&name), allowed, "{name}");
+            }
+            assert!(refused.iter().all(|name| !offered.contains(name)));
+            // An MCP tool is offered in every mode, and so it runs in every mode.
+            assert!(tool_allowed(&request, "mcp__files__write_file"));
+            assert!(tool_allowed(&request, "mcp_invoke"));
+
+            let result = run_turn(&deps, request, Arc::new(|_: RoutedEvent| {}))
+                .await
+                .unwrap();
+            assert_eq!(result.message.content, "That takes another mode.");
+
+            // Nothing was changed or run, and the model was told why.
+            assert_eq!(
+                std::fs::read_to_string(root.join("a.txt")).unwrap(),
+                "before\n"
+            );
+            assert!(!root.join("new.txt").exists());
+            let results = tool_results(&deps.db, &session);
+            assert_eq!(results.len(), refused.len());
+            for (name, (_, status, result)) in refused.iter().zip(&results) {
+                assert_eq!(status, "error");
+                let told = "tool is not available in this mode, so this call was not run.";
+                assert_eq!(result, &format!("The {name} {told}"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subagent_can_neither_delegate_nor_ask_the_user() {
+        let (temp, db, session) = chat();
+        let root = project(&temp);
+        let (deps, mut request) = turn(db, &session, &root, "http://127.0.0.1:9/v1", Vec::new());
+        request.depth = MAX_SUBAGENT_DEPTH;
+        // Were the question asked all the same, it would be skipped here
+        // rather than waited on, and the test would fail.
+        let cancel = request.cancel.clone();
+        let sink: EventSink = Arc::new(move |event: RoutedEvent| {
+            if matches!(event.event, StreamEvent::QuestionRequest { .. }) {
+                cancel.cancel();
+            }
+        });
+
+        let asked = call("question", r#"{"questions":[{"question":"Which name?"}]}"#);
+        let outcome = run_call(&deps, &request, &asked, &sink).await;
+        assert_eq!(outcome.status, "error");
+        assert!(outcome.result.starts_with("The question tool is not"));
+        let outcome = run_subagent(
+            &deps,
+            &request,
+            json!({ "prompt": "look around" }),
+            request.model.clone(),
+            sink,
+        )
+        .await;
+        assert_eq!(outcome.result, "Subagents cannot spawn further subagents.");
+    }
+
+    #[tokio::test]
+    async fn stopping_the_turn_keeps_the_rest_of_a_batch_from_running() {
+        let (temp, db, session) = chat();
+        let root = project(&temp);
+        let (deps, request) = turn(db, &session, &root, "http://127.0.0.1:9/v1", Vec::new());
+        // The first call asks the user something; they press Stop instead.
+        let cancel = request.cancel.clone();
+        let sink: EventSink = Arc::new(move |event: RoutedEvent| {
+            if matches!(event.event, StreamEvent::QuestionRequest { .. }) {
+                cancel.cancel();
+            }
+        });
+        let batch = [
+            ToolCallRecord {
+                id: "ask".to_string(),
+                name: "question".to_string(),
+                arguments: r#"{"questions":[{"question":"Which name?"}]}"#.to_string(),
+            },
+            ToolCallRecord {
+                id: "make".to_string(),
+                name: "write".to_string(),
+                arguments: r#"{"path":"made.txt","content":"made\n"}"#.to_string(),
+            },
+        ];
+
+        let stopped = execute_tool_calls(
+            &deps,
+            &request,
+            &sink,
+            &batch,
+            &|_: StreamEvent| {},
+            &mut TurnWatch::default(),
+        )
+        .await
+        .unwrap();
+        assert!(stopped);
+
+        // The file was never written, and both calls have their outcome.
+        assert!(!root.join("made.txt").exists());
+        let results = tool_results(&deps.db, &session);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "ask");
+        assert_eq!(
+            results[1],
+            (
+                "make".to_string(),
+                "canceled".to_string(),
+                "Tool call cancelled before it ran.".to_string()
+            )
+        );
+
+        // A subagent is not started after it either.
+        let outcome = run_subagent(
+            &deps,
+            &request,
+            json!({ "prompt": "look around" }),
+            request.model.clone(),
+            sink,
+        )
+        .await;
+        assert_eq!(outcome.status, "canceled");
+    }
+
+    #[tokio::test]
+    async fn arguments_that_are_no_json_object_go_back_to_the_model_as_an_empty_one() {
+        let (temp, db, session) = chat();
+        let root = project(&temp);
+        prompt(&db, &session, "write the parser");
+        let cut_off = r#"{"path":"src/parser.rs","content":"fn pa"#;
+        let calls = [
+            ("whole", r#"{"path": "src/lexer.rs"}"#),
+            // The output limit ended the reply in the middle of the call.
+            ("cut", cut_off),
+            // Some servers send this for a call without arguments.
+            ("none", ""),
+            // Run as the object inside (see `tools::parse_arguments`).
+            ("twice", r#""{\"path\":\"src/a.rs\"}""#),
+        ]
+        .map(|(id, arguments)| ToolCallRecord {
+            id: id.to_string(),
+            name: "read".to_string(),
+            arguments: arguments.to_string(),
+        });
+        let assistant = db
+            .append_message(&session, NewMessage::assistant(Some("model"), None))
+            .unwrap();
+        db.update_assistant_message(&assistant.id, "", "", 0.0, 0, 0, 0, &calls, &[], 0)
+            .unwrap();
+        for call in &calls {
+            db.append_message(
+                &session,
+                NewMessage::tool(&call.id, "read", "result", "ok", &[], 0),
+            )
+            .unwrap();
+        }
+
+        let (base_url, requests) = model_server("Done.");
+        let (deps, request) = turn(db, &session, &root, &base_url, Vec::new());
+        run_turn(&deps, request, Arc::new(|_: RoutedEvent| {}))
+            .await
+            .unwrap();
+
+        let body: Value = serde_json::from_str(&requests.recv().unwrap()).unwrap();
+        let sent: Vec<&str> = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|message| message["tool_calls"].as_array())
+            .flatten()
+            .filter_map(|call| call.pointer("/function/arguments")?.as_str())
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                r#"{"path": "src/lexer.rs"}"#,
+                "{}",
+                "{}",
+                r#"{"path":"src/a.rs"}"#
+            ]
+        );
+        // What is stored, and so what the chat shows, is what the model sent.
+        let stored = deps.db.list_messages(&session).unwrap();
+        assert_eq!(stored[1].tool_calls[1].arguments, cut_off);
+    }
+
+    #[tokio::test]
+    async fn only_a_model_listed_as_taking_pictures_is_sent_the_ones_a_tool_read() {
+        for vision in [false, true] {
+            let (temp, db, session) = chat();
+            let root = project(&temp);
+            prompt(&db, &session, "why is the button cut off?");
+            picture_step(&db, &session);
+            let (base_url, requests) = model_server("It is clipped.");
+            let (mut deps, request) = turn(db, &session, &root, &base_url, Vec::new());
+            // A model that is not listed at all is taken not to take any.
+            if vision {
+                deps.models = Arc::new(vec![ModelInfo {
+                    id: request.model.clone(),
+                    name: "Test".to_string(),
+                    description: String::new(),
+                    context_length: 64_000,
+                    prompt_price_per_m: 0.0,
+                    completion_price_per_m: 0.0,
+                    cache_read_price_per_m: 0.0,
+                    supports_reasoning: false,
+                    supports_vision: true,
+                    supports_tools: true,
+                    input_modalities: Vec::new(),
+                    supported_parameters: Vec::new(),
+                    created: 0,
+                    source: "ollama".to_string(),
+                }]);
+            }
+            run_turn(&deps, request, Arc::new(|_: RoutedEvent| {}))
+                .await
+                .unwrap();
+
+            let sent = requests.recv().unwrap();
+            assert_eq!(sent.contains("data:image/png;base64,AAAA"), vision);
+            assert_eq!(
+                sent.contains("left out, because the model in use does not take pictures"),
+                !vision
+            );
         }
     }
 

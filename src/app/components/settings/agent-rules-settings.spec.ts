@@ -2,7 +2,7 @@ import { Pipe, PipeTransform, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api } from '../../core/api';
-import { CommandRule, Settings } from '../../core/models';
+import { CommandRule, McpToolGrant, Settings } from '../../core/models';
 import { FALLBACK_SETTINGS, SettingsService } from '../../core/settings.service';
 import { AgentRulesSettings } from './agent-rules-settings';
 import { SettingsDraftService } from './settings-draft.service';
@@ -19,6 +19,8 @@ describe('AgentRulesSettings command rules', () => {
   let settings: ReturnType<typeof signal<Settings>>;
   let addCommandRule: ReturnType<typeof vi.fn>;
   let deleteCommandRule: ReturnType<typeof vi.fn>;
+  let deleteMcpToolGrant: ReturnType<typeof vi.fn>;
+  let deleteSecretFolder: ReturnType<typeof vi.fn>;
   let patch: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -26,12 +28,23 @@ describe('AgentRulesSettings command rules', () => {
     settings = signal<Settings>({ ...FALLBACK_SETTINGS });
     addCommandRule = vi.fn().mockResolvedValue(undefined);
     deleteCommandRule = vi.fn().mockResolvedValue(undefined);
+    deleteMcpToolGrant = vi.fn().mockResolvedValue(undefined);
+    deleteSecretFolder = vi.fn().mockResolvedValue(undefined);
     patch = vi.fn((key: keyof Settings, value: Settings[keyof Settings]) =>
       settings.update((current) => ({ ...current, [key]: value })),
     );
     TestBed.configureTestingModule({
       providers: [
-        { provide: SettingsService, useValue: { settings, addCommandRule, deleteCommandRule } },
+        {
+          provide: SettingsService,
+          useValue: {
+            settings,
+            addCommandRule,
+            deleteCommandRule,
+            deleteMcpToolGrant,
+            deleteSecretFolder,
+          },
+        },
         { provide: SettingsDraftService, useValue: { draft: settings, patch } },
       ],
     });
@@ -130,6 +143,47 @@ describe('AgentRulesSettings command rules', () => {
       .find((button) => button.textContent?.includes('settings.allowCommand'))!
       .click();
     expect(addCommandRule).not.toHaveBeenCalled();
+  });
+
+  it('lists the always-allowed MCP tools and removes the one that was picked', () => {
+    const section = fixture.nativeElement.querySelector(
+      '[data-testid="mcp-tool-grants"]',
+    ) as HTMLElement;
+    expect(section.textContent).toContain('settings.noMcpToolGrants');
+
+    // The same tool name on two servers: two entries, told apart by server.
+    const grants: McpToolGrant[] = [
+      { server: 'codegraph', tool: 'explore', source: '/a/opencode.json', fingerprint: 'aaaa' },
+      { server: 'other', tool: 'explore', source: '/b/mcp.json', fingerprint: 'bbbb' },
+    ];
+    settings.update((current) => ({ ...current, mcpToolGrants: grants }));
+    fixture.detectChanges();
+    const rows = [...section.querySelectorAll('[data-testid="mcp-tool-grant"]')];
+    expect(rows.map((row) => row.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
+      'explore codegraph /a/opencode.json ✕',
+      'explore other /b/mcp.json ✕',
+    ]);
+    expect(section.textContent).not.toContain('settings.noMcpToolGrants');
+
+    rows[1].querySelector('button')!.click();
+    expect(deleteMcpToolGrant).toHaveBeenCalledExactlyOnceWith(grants[1]);
+  });
+
+  it('lists the folders with released sensitive files and takes one back', () => {
+    const section = fixture.nativeElement.querySelector(
+      '[data-testid="secret-folders"]',
+    ) as HTMLElement;
+    expect(section.textContent).toContain('settings.noSecretFolders');
+
+    const folders = ['/home/me/secrets/credentials', '/home/me/.ssh'];
+    settings.update((current) => ({ ...current, secretFolders: folders }));
+    fixture.detectChanges();
+    const rows = [...section.querySelectorAll('[data-testid="secret-folder"]')];
+    expect(rows.map((row) => row.querySelector('code')?.textContent?.trim())).toEqual(folders);
+    expect(section.textContent).not.toContain('settings.noSecretFolders');
+
+    rows[1].querySelector('button')!.click();
+    expect(deleteSecretFolder).toHaveBeenCalledExactlyOnceWith('/home/me/.ssh');
   });
 
   it('toggles automatic approval settings', () => {

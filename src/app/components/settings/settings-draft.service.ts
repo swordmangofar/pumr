@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { Settings } from '../../core/models';
 import { BackgroundService } from '../../core/background.service';
 import { BACKGROUND_CUSTOM, BACKGROUND_NONE } from '../../core/backgrounds';
+import { LogoService } from '../../core/logo.service';
 import { FALLBACK_SETTINGS, SettingsService } from '../../core/settings.service';
 import { SOUND_PATH_KEYS, SOUND_SELECTION_KEYS, SoundKind } from '../../core/sound.service';
 import { ThemeService } from '../../core/theme.service';
@@ -13,6 +14,7 @@ export class SettingsDraftService {
   private readonly settingsService = inject(SettingsService);
   private readonly theme = inject(ThemeService);
   private readonly background = inject(BackgroundService);
+  private readonly logo = inject(LogoService);
   private readonly zoom = inject(ZoomService);
 
   readonly draft = signal<Settings>({
@@ -88,6 +90,11 @@ export class SettingsDraftService {
     this.theme.applyGlassOpacity(value);
   }
 
+  selectLogo(id: string): void {
+    this.patch('logo', id);
+    this.logo.apply(id);
+  }
+
   setZoom(value: number): void {
     const zoom = this.zoom.apply(value);
     this.patch('zoom', zoom);
@@ -102,6 +109,8 @@ export class SettingsDraftService {
         deniedCommandRules: this.settingsService.settings()?.deniedCommandRules ?? [],
         allowedWebsites: this.settingsService.settings()?.allowedWebsites ?? [],
         deniedWebsites: this.settingsService.settings()?.deniedWebsites ?? [],
+        mcpToolGrants: this.settingsService.settings()?.mcpToolGrants ?? [],
+        secretFolders: this.settingsService.settings()?.secretFolders ?? [],
         // Starred straight from the model pickers, outside the draft.
         favoriteModels: this.settingsService.settings()?.favoriteModels ?? [],
       });

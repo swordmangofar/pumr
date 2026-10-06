@@ -16,6 +16,7 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import { listen } from '@tauri-apps/api/event';
 import { AgentStatus } from './components/agent-status';
 import { AttentionIndicator } from './components/attention-indicator';
+import { BackdropCanvas } from './components/backdrop-canvas';
 import { ChatView } from './components/chat-view';
 import { DebugView } from './components/debug-view';
 import { GitView } from './components/git-view';
@@ -32,7 +33,9 @@ import { WorkspaceEditor } from './components/workspace-editor';
 import { isTauri } from './core/api';
 import { displayHotkey, matchesAction, matchesHotkey } from './core/hotkeys';
 import { Session, Settings } from './core/models';
+import { LogoService } from './core/logo.service';
 import { ModelsService } from './core/models.service';
+import { RenderingService } from './core/rendering.service';
 import { SettingsService } from './core/settings.service';
 import { TerminalService } from './core/terminal.service';
 import { UpdaterService } from './core/updater.service';
@@ -63,6 +66,7 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
     TranslocoPipe,
     AgentStatus,
     AttentionIndicator,
+    BackdropCanvas,
     ProjectIcon,
     ProjectAppearanceDialog,
   ],
@@ -70,6 +74,9 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
     '(document:keydown)': 'onHotkey($event)',
   },
   template: `
+    @if (rendering.software()) {
+      <canvas appBackdrop class="app-backdrop" aria-hidden="true"></canvas>
+    }
     <div class="app-background" aria-hidden="true"></div>
 
     @if (splashVisible()) {
@@ -90,10 +97,14 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
         </div>
       }
 
-      <header class="flex min-h-14 shrink-0 items-center justify-between gap-3 px-4 py-2">
+      <header class="flex min-h-12 shrink-0 items-center justify-between gap-3 px-3 py-1.5">
         <div class="flex min-w-0 items-center gap-3">
-          <img src="logo.svg" alt="" class="h-7 w-7 shrink-0 rounded-lg" />
-          <span class="text-base font-bold tracking-tight text-white">pumr</span>
+          <img
+            [src]="logo.current().src"
+            alt=""
+            class="h-7 w-7 shrink-0 rounded-lg"
+            data-testid="app-logo"
+          />
           <button
             type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
@@ -117,14 +128,10 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
           @if (workspace.activeProject(); as project) {
             <app-project-icon [project]="project" [size]="22" />
             <span
-              class="flex min-w-0 max-w-[220px] items-baseline gap-1.5"
+              class="max-w-[180px] min-w-0 truncate text-sm font-medium text-mist/80"
               [title]="project.path"
+              >{{ project.name }}</span
             >
-              @if (parentPath(project.path); as parent) {
-                <span class="truncate text-xs text-mist/30">{{ parent }}</span>
-              }
-              <span class="truncate text-sm font-medium text-mist/80">{{ project.name }}</span>
-            </span>
           }
           @if (workspace.activeGitInfo(); as git) {
             @if (git.branch) {
@@ -342,8 +349,8 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
             </svg>
           </button>
         </div>
-        <div class="flex shrink-0 items-center gap-4 text-sm text-mist/50">
-          <app-spend-indicator class="hidden lg:block" />
+        <div class="flex shrink-0 items-center gap-1.5 text-sm text-mist/50">
+          <app-spend-indicator class="mr-1.5 hidden lg:block" />
           <app-process-indicator />
           <button
             type="button"
@@ -372,6 +379,38 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
           </button>
           <button
             type="button"
+            data-keep-awake
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors"
+            [class]="
+              keepAwake()
+                ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/30'
+                : 'bg-white/5 text-mist/60 hover:bg-white/10 hover:text-accent'
+            "
+            [title]="(keepAwake() ? 'app.keepAwakeOn' : 'app.keepAwakeOff') | transloco"
+            [attr.aria-label]="'app.keepAwake' | transloco"
+            [attr.aria-pressed]="keepAwake()"
+            (click)="toggleKeepAwake()"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <!-- The cup only steams while it keeps the machine awake. -->
+              @if (keepAwake()) {
+                <path d="M6 2v2M10 2v2M14 2v2" />
+              }
+              <path
+                d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
             [title]="'app.toggleRightPanel' | transloco"
             (click)="workspace.toggleRightPanel()"
@@ -391,10 +430,25 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
           </button>
           <button
             type="button"
-            class="relative rounded-full bg-white/5 px-4 py-1.5 text-sm text-mist transition-colors hover:bg-white/10 hover:text-accent"
+            class="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+            [title]="'app.settings' | transloco"
+            [attr.aria-label]="'app.settings' | transloco"
             (click)="settings.open()"
           >
-            {{ 'app.settings' | transloco }}
+            <svg
+              viewBox="0 0 24 24"
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
             @if (updater.available()) {
               <span
                 class="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-ink"
@@ -481,10 +535,12 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
 })
 export class App implements OnInit {
   protected readonly settings = inject(SettingsService);
+  protected readonly logo = inject(LogoService);
   protected readonly workspace = inject(WorkspaceService);
   protected readonly updater = inject(UpdaterService);
   protected readonly terminals = inject(TerminalService);
   private readonly models = inject(ModelsService);
+  protected readonly rendering = inject(RenderingService);
   private readonly zoom = inject(ZoomService);
 
   protected readonly tauri = isTauri();
@@ -492,6 +548,7 @@ export class App implements OnInit {
     const hotkey = displayHotkey(this.settings.settings()?.terminalHotkey);
     return hotkey ? ` (${hotkey})` : '';
   });
+  protected readonly keepAwake = computed(() => this.settings.settings()?.keepAwake ?? false);
 
   protected readonly resizing = signal<'left' | 'right' | null>(null);
   protected readonly booting = signal(true);
@@ -547,7 +604,7 @@ export class App implements OnInit {
 
   async ngOnInit(): Promise<void> {
     const started = Date.now();
-    await this.settings.init();
+    await Promise.all([this.settings.init(), this.rendering.init()]);
     if (this.tauri) {
       await Promise.all([this.models.load(), this.workspace.init()]);
       this.updater.start();
@@ -632,16 +689,6 @@ export class App implements OnInit {
 
   protected projectFor(projectId: string) {
     return this.workspace.projectFor(projectId);
-  }
-
-  protected parentPath(path: string): string {
-    const parent = path.split(/[\\/]/).filter(Boolean).slice(0, -1);
-    const home = parent.findIndex((part) => part === 'Users' || part === 'home');
-    if (home !== -1 && parent.length > home + 1) {
-      const rest = parent.slice(home + 2);
-      return rest.length ? `~/${rest.join('/')}` : '~';
-    }
-    return parent.join('/');
   }
 
   protected isCollapsed(sessionId: string): boolean {
@@ -779,6 +826,14 @@ export class App implements OnInit {
     await this.workspace.newSession(project.id);
   }
 
+  /** Saved at once: the backend applies it to turns that are already running. */
+  protected toggleKeepAwake(): void {
+    const settings = this.settings.settings();
+    if (settings) {
+      void this.settings.patch({ keepAwake: !settings.keepAwake });
+    }
+  }
+
   protected onHotkey(event: KeyboardEvent): void {
     if (event.repeat || event.isComposing) {
       return;
@@ -819,6 +874,11 @@ export class App implements OnInit {
       // which the terminal passes on (see TerminalView), reach the app.
       return;
     }
+    if (matchesAction(settings, 'chatToggleMode', event)) {
+      event.preventDefault();
+      void this.workspace.togglePlanMode();
+      return;
+    }
     if (matchesHotkey(settings.openTabHotkey, event)) {
       event.preventDefault();
       void this.startNewSession();
@@ -831,7 +891,7 @@ export class App implements OnInit {
     }
     if (matchesHotkey(settings.closeTabHotkey, event)) {
       const sidebarFocused =
-        this.workspace.focusedPanel() === 'left' && this.workspace.leftTab() === 'projects';
+        this.workspace.focusedPanel() === 'left' && this.workspace.leftTab() === 'sessions';
       if (sidebarFocused && matchesHotkey(settings.deleteSessionHotkey, event)) {
         // The sidebar handles this key as "delete the highlighted session".
         return;

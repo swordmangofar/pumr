@@ -5,12 +5,15 @@ import { Channel } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api';
 import { GitService } from './git.service';
+import { MessageQueueService } from './message-queue.service';
 import {
   Message,
   PermissionRequestEvent,
   Project,
+  ProjectRule,
   QuestionRequestEvent,
   RoutedEvent,
+  SendMessageArgs,
   Session,
   StreamEvent,
 } from './models';
@@ -231,6 +234,31 @@ describe('WorkspaceService after a webview reload', () => {
     expect(workspace.interruptedFor('chat')).toBe(false);
   });
 
+  it('says which MCP server a turn waits for and which ones it has to do without', async () => {
+    const issues = ["MCP server 'codegraph' stopped during initialize: exit status: 127"];
+    await workspace.resumeRunningTurns();
+
+    emit('chat', { kind: 'mcpStarting', server: 'codegraph' });
+    expect(workspace.mcpStartingFor('chat')).toBe('codegraph');
+    expect(workspace.mcpIssuesFor('chat')).toEqual([]);
+
+    emit('chat', { kind: 'mcpReady', issues });
+    expect(workspace.mcpStartingFor('chat')).toBeNull();
+    expect(workspace.mcpIssuesFor('chat')).toEqual(issues);
+
+    // Stopped while the next server starts: nothing is waited for anymore, and
+    // what was missing stays on screen until the chat goes on.
+    emit('chat', { kind: 'mcpStarting', server: 'slow' });
+    finishTurn(true);
+    await vi.waitFor(() => expect(workspace.isStreaming('chat')).toBe(false));
+    expect(workspace.mcpStartingFor('chat')).toBeNull();
+    expect(workspace.mcpIssuesFor('chat')).toEqual(issues);
+
+    vi.spyOn(api, 'sendMessage').mockReturnValue(new Promise(() => {}));
+    await Promise.race([workspace.continueSession('chat'), Promise.resolve()]);
+    expect(workspace.mcpIssuesFor('chat')).toEqual([]);
+  });
+
   it('reads the files of the project again whenever the turn reports changes', async () => {
     await workspace.resumeRunningTurns();
     const changes = [{ path: 'src/a.ts', additions: 1, deletions: 0, status: 'M' }];
@@ -388,6 +416,232 @@ describe('WorkspaceService session lifecycle', () => {
 
     expect(workspace.errorFor('chat')).toBe('Stop the running turn before reverting.');
     expect(workspace.messagesFor('chat')).toEqual([prompt]);
+  });
+
+  it('takes the notices of a turn back with the prompt it is reverted to', async () => {
+    const prompt = { id: 'prompt', sessionId: 'chat', role: 'user', content: 'Go on' } as Message;
+    // The turn stopped at the tool limit; another one was cut off.
+    vi.mocked(api.listSessions).mockResolvedValue([
+      { ...session('chat'), limitReached: true, interrupted: true },
+    ]);
+    await workspace.reloadSessions('project');
+    const listed = vi.spyOn(api, 'listMessages').mockResolvedValue([prompt]);
+    await workspace.loadMessages('chat', true);
+    expect(workspace.limitReachedFor('chat')).toBe(true);
+    listed.mockResolvedValue([]);
+    vi.spyOn(api, 'getSessionChanges').mockResolvedValue([]);
+    vi.spyOn(api, 'revertToMessage').mockResolvedValue({ prompt: 'Go on', restoredFiles: [] });
+
+    await workspace.revertToMessage('prompt', true);
+
+    expect(workspace.limitReachedFor('chat')).toBe(false);
+    expect(workspace.interruptedFor('chat')).toBe(false);
+    expect(workspace.pendingDraft()).toBe('Go on');
+  });
+});
+
+describe('WorkspaceService sending a prompt', () => {
+  let workspace: WorkspaceService;
+  let queue: MessageQueueService;
+  /** What the backend has stored of the chat. */
+  let stored: Message[];
+
+  function message(id: string, role: Message['role'], content = ''): Message {
+    return { id, sessionId: 'chat', role, content, toolCalls: [] } as unknown as Message;
+  }
+
+  function prompt(content: string): SendMessageArgs {
+    return { sessionId: 'chat', content, model: 'model' };
+  }
+
+  /** A backend that stores the prompt and then lets `turn` report how it went. */
+  function taking(turn: (emit: (event: StreamEvent) => void) => void): void {
+    vi.spyOn(api, 'sendMessage').mockImplementation(async (args, channel) => {
+      stored.push(message(`stored-${stored.length}`, 'user', args.content));
+      turn((event) => channel.onmessage({ sessionId: args.sessionId, event }));
+      return message('reply', 'assistant');
+    });
+  }
+
+  /** Lets a prompt sent from the queue, which nobody awaits, run to its end. */
+  async function idle(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve));
+    await vi.waitFor(() => expect(workspace.isStreaming('chat')).toBe(false));
+  }
+
+  beforeEach(async () => {
+    // `new Channel()` registers its callback with the Tauri runtime.
+    let callbackId = 0;
+    Object.assign(window, {
+      __TAURI_INTERNALS__: { transformCallback: () => ++callbackId, unregisterCallback: () => {} },
+    });
+    TestBed.configureTestingModule({
+      providers: [
+        WorkspaceService,
+        { provide: SettingsService, useValue: { settings: signal(null) } },
+        { provide: SoundService, useValue: { play: vi.fn() } },
+        { provide: TranslocoService, useValue: { translate: (key: string) => key } },
+        { provide: ProcessService, useValue: { processes: signal([]) } },
+        {
+          provide: GitService,
+          useValue: { loadInfo: async () => {}, followWorkingTree: async () => {} },
+        },
+        {
+          provide: WorkspaceEditorService,
+          useValue: { loadWorkspaceEntries: async () => {}, activeFileFor: () => null },
+        },
+      ],
+    });
+    workspace = TestBed.inject(WorkspaceService);
+    queue = TestBed.inject(MessageQueueService);
+    stored = [message('earlier', 'user', 'An earlier prompt')];
+    vi.spyOn(api, 'listProjects').mockResolvedValue([]);
+    vi.spyOn(api, 'listSessions').mockResolvedValue([session('chat'), session('other')]);
+    vi.spyOn(api, 'listSubSessionsForProject').mockResolvedValue([]);
+    vi.spyOn(api, 'listSubSessions').mockResolvedValue([]);
+    vi.spyOn(api, 'listMessages').mockImplementation(async () => [...stored]);
+    vi.spyOn(api, 'getSpend').mockRejectedValue(new Error('no spend'));
+    vi.spyOn(api, 'getSessionChanges').mockResolvedValue([]);
+    vi.spyOn(api, 'getProjectRules').mockImplementation(async (_project, sessionId) => [
+      { path: `${sessionId}/AGENTS.md`, scope: 'project', content: '' },
+    ]);
+    vi.spyOn(api, 'listRunningTurns').mockResolvedValue({
+      sessionIds: [],
+      permissions: [],
+      questions: [],
+      modelChoices: [],
+    });
+    await workspace.reloadSessions('project');
+    await workspace.loadMessages('chat');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  it('says so when the backend turns the prompt down before storing it', async () => {
+    // As for a model without an API key: no turn, no event, only the refusal.
+    vi.spyOn(api, 'sendMessage').mockRejectedValue('No API key for this model.');
+
+    expect(await workspace.send(prompt('Fix the tests'))).toBe(false);
+
+    expect(workspace.errorFor('chat')).toBe('No API key for this model.');
+    expect(workspace.messagesFor('chat').map((entry) => entry.id)).toEqual(['earlier']);
+    expect(workspace.isStreaming('chat')).toBe(false);
+  });
+
+  it('takes the prompt out of the chat when it cannot even be read again', async () => {
+    vi.spyOn(api, 'sendMessage').mockRejectedValue('Project folder no longer exists: /code/app');
+    vi.mocked(api.listMessages).mockRejectedValue(new Error('database is locked'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(await workspace.send(prompt('Fix the tests'))).toBe(false);
+
+    expect(workspace.messagesFor('chat').map((entry) => entry.id)).toEqual(['earlier']);
+  });
+
+  it('counts a prompt as taken when its turn fails after the reply began', async () => {
+    taking((emit) => {
+      emit({ kind: 'started', message: message('reply', 'assistant') });
+      throw 'The provider is overloaded.';
+    });
+
+    expect(await workspace.send(prompt('Fix the tests'))).toBe(true);
+
+    expect(workspace.errorFor('chat')).toBe('The provider is overloaded.');
+    expect(workspace.messagesFor('chat').map((entry) => entry.content)).toEqual([
+      'An earlier prompt',
+      'Fix the tests',
+    ]);
+  });
+
+  it('counts a prompt as taken when its turn fails before a reply began', async () => {
+    taking((emit) => {
+      emit({ kind: 'error', message: 'The history could not be compacted.' });
+      throw 'The history could not be compacted.';
+    });
+
+    expect(await workspace.send(prompt('Fix the tests'))).toBe(true);
+  });
+
+  it('stops the queue at a prompt the backend turns down and keeps it queued', async () => {
+    const first = prompt('First in the queue');
+    const second = prompt('Second in the queue');
+    queue.enqueue(first);
+    queue.enqueue(second);
+    // The turn before them ends; from then on the backend refuses.
+    const sent = vi
+      .spyOn(api, 'sendMessage')
+      .mockResolvedValueOnce(message('reply', 'assistant'))
+      .mockRejectedValue('Project folder no longer exists: /code/app');
+
+    expect(await workspace.send(prompt('Sent by hand'))).toBe(true);
+    await idle();
+
+    expect(sent.mock.calls.map(([args]) => args.content)).toEqual([
+      'Sent by hand',
+      'First in the queue',
+    ]);
+    expect(queue.forSession('chat')).toEqual([first, second]);
+    expect(queue.first('chat')).toBe(first);
+    expect(workspace.errorFor('chat')).toBe('Project folder no longer exists: /code/app');
+  });
+
+  it('goes on with the queue after a turn that failed on its way', async () => {
+    queue.enqueue(prompt('Queued'));
+    const sent = vi
+      .spyOn(api, 'sendMessage')
+      .mockImplementationOnce(async (args, channel) => {
+        channel.onmessage({
+          sessionId: args.sessionId,
+          event: { kind: 'error', message: 'The provider is overloaded.' },
+        });
+        throw 'The provider is overloaded.';
+      })
+      .mockResolvedValue(message('reply', 'assistant'));
+
+    await workspace.send(prompt('Sent by hand'));
+    await idle();
+
+    expect(sent.mock.calls.map(([args]) => args.content)).toEqual(['Sent by hand', 'Queued']);
+    expect(queue.forSession('chat')).toEqual([]);
+  });
+
+  describe('and the rules of the chat on screen', () => {
+    const rulesOf = (sessionId: string) => [
+      { path: `${sessionId}/AGENTS.md`, scope: 'project', content: '' },
+    ];
+
+    it('are not replaced when a turn ends in another chat', async () => {
+      workspace.openTab('other');
+      await vi.waitFor(() => expect(workspace.rules()).toEqual(rulesOf('other')));
+      vi.spyOn(api, 'sendMessage').mockResolvedValue(message('reply', 'assistant'));
+
+      await workspace.send(prompt('Fix the tests'));
+
+      expect(api.getProjectRules).toHaveBeenCalledWith('project', 'chat');
+      expect(workspace.rules()).toEqual(rulesOf('other'));
+    });
+
+    it('are not replaced by the slow answer for the chat that was shown before', async () => {
+      let answer!: (rules: ProjectRule[]) => void;
+      vi.mocked(api.getProjectRules).mockImplementation((_project, sessionId) =>
+        sessionId === 'chat'
+          ? new Promise((resolve) => (answer = resolve))
+          : Promise.resolve(rulesOf('other')),
+      );
+      workspace.openTab('chat');
+      await vi.waitFor(() => expect(answer).toBeDefined());
+      workspace.openTab('other');
+      await vi.waitFor(() => expect(workspace.rules()).toEqual(rulesOf('other')));
+
+      answer(rulesOf('chat'));
+      await new Promise((resolve) => setTimeout(resolve));
+
+      expect(workspace.rules()).toEqual(rulesOf('other'));
+    });
   });
 });
 
@@ -585,5 +839,124 @@ describe('WorkspaceService project order', () => {
     localStorage.setItem('pumr.projectSort', 'random');
     TestBed.resetTestingModule();
     expect(create().projectSort()).toBe('name');
+  });
+});
+
+describe('WorkspaceService browsed project', () => {
+  let resetView: ReturnType<typeof vi.fn>;
+  let projects: Project[];
+
+  function project(id: string): Project {
+    return {
+      id,
+      path: `/code/${id}`,
+      name: id,
+      createdAt: 0,
+      lastOpenedAt: 0,
+      sessionCount: 1,
+      totalCost: 0,
+      color: null,
+      icon: null,
+      iconImage: null,
+    };
+  }
+
+  function create(): WorkspaceService {
+    resetView = vi.fn();
+    TestBed.configureTestingModule({
+      providers: [
+        WorkspaceService,
+        { provide: SettingsService, useValue: { settings: signal(null) } },
+        { provide: SoundService, useValue: { play: vi.fn() } },
+        { provide: TranslocoService, useValue: { translate: (key: string) => key } },
+        {
+          provide: ProcessService,
+          useValue: { processes: signal([]), refresh: async () => {}, startPolling: () => {} },
+        },
+        { provide: GitService, useValue: { resetView, loadInfo: async () => {} } },
+        {
+          provide: WorkspaceEditorService,
+          useValue: { loadWorkspaceEntries: async () => {}, activeFileFor: () => null },
+        },
+      ],
+    });
+    return TestBed.inject(WorkspaceService);
+  }
+
+  /** Starts the app with the chat of `projectId` on screen. */
+  async function start(projectId: string): Promise<WorkspaceService> {
+    localStorage.setItem('pumr.tabs', JSON.stringify([`${projectId}-chat`]));
+    localStorage.setItem('pumr.activeTab', `${projectId}-chat`);
+    const workspace = create();
+    await workspace.init();
+    return workspace;
+  }
+
+  beforeEach(() => {
+    projects = [project('apple'), project('mango')];
+    vi.spyOn(api, 'listProjects').mockImplementation(async () => projects);
+    vi.spyOn(api, 'listSessions').mockImplementation(async (projectId) => [
+      { ...session(`${projectId}-chat`), projectId },
+    ]);
+    vi.spyOn(api, 'listSubSessionsForProject').mockResolvedValue([]);
+    vi.spyOn(api, 'listSubSessions').mockResolvedValue([]);
+    vi.spyOn(api, 'listMessages').mockResolvedValue([]);
+    vi.spyOn(api, 'getSpend').mockRejectedValue(new Error('no spend'));
+    vi.spyOn(api, 'getSessionChanges').mockResolvedValue([]);
+    vi.spyOn(api, 'getProjectRules').mockResolvedValue([]);
+    vi.spyOn(api, 'listRunningTurns').mockResolvedValue({
+      sessionIds: [],
+      permissions: [],
+      questions: [],
+      modelChoices: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('starts on the project of the session on screen', async () => {
+    const workspace = await start('mango');
+
+    expect(workspace.browseProject()?.id).toBe('mango');
+  });
+
+  it('stays on the chosen project when a session of another one opens', async () => {
+    const workspace = await start('mango');
+
+    workspace.setBrowseProject('apple');
+    workspace.openTab('mango-chat');
+
+    expect(workspace.activeProject()?.id).toBe('mango');
+    expect(workspace.browseProject()?.id).toBe('apple');
+    // Only the choice starts a fresh git view, a session coming on screen does not.
+    expect(resetView.mock.calls).toEqual([['apple']]);
+  });
+
+  it('remembers the choice over the session on screen', async () => {
+    (await start('mango')).setBrowseProject('apple');
+    TestBed.resetTestingModule();
+
+    expect((await start('mango')).browseProject()?.id).toBe('apple');
+  });
+
+  it('moves on when the chosen project is removed', async () => {
+    const workspace = await start('mango');
+    vi.spyOn(api, 'removeProject').mockImplementation(async () => {
+      projects = [project('apple')];
+    });
+
+    await workspace.removeProject('mango');
+
+    expect(workspace.browseProject()?.id).toBe('apple');
+  });
+
+  it('attributes the changes of the active session to its own project only', async () => {
+    const workspace = await start('mango');
+
+    expect(workspace.sessionIn('mango')?.id).toBe('mango-chat');
+    expect(workspace.sessionIn('apple')).toBeNull();
   });
 });

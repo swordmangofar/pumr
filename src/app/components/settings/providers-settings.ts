@@ -6,6 +6,7 @@ import {
   computed,
   inject,
   signal,
+  viewChild,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { OPENROUTER_PROVIDER, api } from '../../core/api';
@@ -38,6 +39,29 @@ const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
         </span>
       </div>
       <p class="mb-4 text-xs text-mist/40">{{ 'settings.providers.hint' | transloco }}</p>
+
+      @if (settingsService.needsDefaultModel()) {
+        <div
+          class="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-accent/25 bg-accent/10 px-4 py-3"
+          data-testid="default-model-setup"
+        >
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-accent">
+              {{ 'settings.defaultModelSetupTitle' | transloco }}
+            </p>
+            <p class="mt-0.5 text-xs text-accent/80">
+              {{ 'settings.defaultModelSetup' | transloco }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-3.5 py-1 text-sm font-medium text-accent hover:bg-accent/20"
+            (click)="showDefaultModel()"
+          >
+            {{ 'settings.defaultModelSetupAction' | transloco }}
+          </button>
+        </div>
+      }
 
       <input
         type="search"
@@ -283,14 +307,22 @@ const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
     </section>
 
     <section class="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
-      <div>
+      <!-- The negative margin makes room for the highlight ring without moving the field. -->
+      <div
+        #defaultModel
+        class="-m-2 rounded-2xl p-2 transition-shadow"
+        [class]="defaultModelHighlight() ? 'ring-2 ring-accent/60' : ''"
+      >
         <label class="mb-2 block text-sm text-mist/50">{{
           'settings.defaultModel' | transloco
         }}</label>
         <app-model-select
           [value]="draft.draft().defaultModel"
           [label]="'settings.defaultModel' | transloco"
-          [placeholder]="'composer.noModels' | transloco"
+          [placeholder]="
+            (modelsService.models().length > 0 ? 'modelChoice.placeholder' : 'composer.noModels')
+              | transloco
+          "
           (valueChange)="draft.patch('defaultModel', $event)"
         />
         <p class="mt-2 text-xs text-mist/30">{{ 'settings.defaultModelHint' | transloco }}</p>
@@ -362,6 +394,8 @@ export class ProvidersSettings {
   protected readonly reasoningOptions = REASONING_OPTIONS;
   protected readonly expanded = signal<string | null>(null);
   protected readonly highlight = signal<string | null>(null);
+  protected readonly defaultModelHighlight = signal(false);
+  private readonly defaultModelRef = viewChild<ElementRef<HTMLElement>>('defaultModel');
   protected readonly keyDraft = signal('');
   protected readonly actionError = signal<string | null>(null);
   protected readonly refreshing = signal(false);
@@ -414,7 +448,13 @@ export class ProvidersSettings {
   constructor() {
     void this.providers.load();
     afterNextRender(() => {
-      if (this.settingsService.focusAnchor() !== 'apiKey') {
+      const anchor = this.settingsService.focusAnchor();
+      if (anchor === 'defaultModel') {
+        // The "choose a default model" hint leads here.
+        setTimeout(() => this.showDefaultModel());
+        return;
+      }
+      if (anchor !== 'apiKey') {
         return;
       }
       // The "add a key" hint leads here: open OpenRouter unless another
@@ -431,6 +471,18 @@ export class ProvidersSettings {
         input?.focus();
       });
     });
+  }
+
+  /** Brings the default model field into view and marks it for a moment. */
+  protected showDefaultModel(): void {
+    const field = this.defaultModelRef()?.nativeElement;
+    if (!field) {
+      return;
+    }
+    this.defaultModelHighlight.set(true);
+    setTimeout(() => this.defaultModelHighlight.set(false), 2000);
+    field.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    field.querySelector('button')?.focus({ preventScroll: true });
   }
 
   protected modelCount(id: string): number {

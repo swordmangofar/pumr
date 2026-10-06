@@ -1,8 +1,11 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
+  Injector,
   ViewEncapsulation,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -11,15 +14,18 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import {
   EndpointInfo,
   Mention,
   MentionKind,
+  Message,
   MessageAttachment,
   Mode,
   SendMessageArgs,
   TextBlock,
+  UserSystemPrompt,
   WorkspaceEntry,
 } from '../core/models';
 import { OPENROUTER_PROVIDER, api, providerIdOf } from '../core/api';
@@ -31,15 +37,98 @@ import { ProvidersService } from '../core/providers.service';
 import { SettingsService } from '../core/settings.service';
 import { WorkspaceService } from '../core/workspace.service';
 import { MessageQueueService } from '../core/message-queue.service';
+import { resolveMode } from '../core/modes';
+import { promptCommands } from '../core/prompt-commands';
+import {
+  SIDE_QUESTION_COMMAND,
+  SideQuestionService,
+  sideQuestionOf,
+} from '../core/side-question.service';
 import { AttachmentPreview } from './attachment-preview';
 import { ModelMenu, formatModelContext, formatModelPrice } from './model-menu';
 import { ProviderMark } from './provider-mark';
-import { ComposerEditorService, MentionQuery } from './composer-editor.service';
+import { ComposerEditorService, MentionQuery, trimEdges } from './composer-editor.service';
 
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
 const MENTION_KINDS: MentionKind[] = ['file', 'directory', 'website', 'skill', 'mcp'];
 
 const MENTION_TOKEN_RE = /@(file|directory|website|skill|mcp):([^\s]+)/g;
+/** One or more such tokens in a row, with the single space on either side. */
+const MENTION_GAP_RE = /[ \t]?(?:@(?:file|directory|website|skill|mcp):[^\s]+[ \t]?)+/g;
+
+/**
+ * A line the chat box does not send as typed because it starts with a slash:
+ * - `ask` takes the text after its name (`/btw`),
+ * - `prompt` calls one of the user's prompts: the line goes to the agent with
+ *   that prompt and needs nothing after its name (`/code-review`),
+ * - `picker` lists choices to pick from with the keyboard,
+ * - `action` does something in the app as soon as it is picked (`/revert`).
+ */
+interface SlashCommand {
+  name: string;
+  kind: 'ask' | 'prompt' | 'picker' | 'action';
+  /** Translation key of the line that explains a command of the chat box. */
+  hint?: string;
+  /** The prompt of "Your prompts" that the command calls. */
+  prompt?: UserSystemPrompt;
+}
+
+/** The command that takes the session back to its latest prompt. */
+const REVERT_COMMAND = 'revert';
+
+/** The chat box's own commands; each of the user's prompts adds one. */
+const CHAT_BOX_SLASH_COMMANDS: readonly SlashCommand[] = [
+  { name: SIDE_QUESTION_COMMAND, hint: 'chat.sideQuestionHint', kind: 'ask' },
+  { name: 'effort', hint: 'composer.commandEffort', kind: 'picker' },
+  { name: 'mode', hint: 'composer.commandMode', kind: 'picker' },
+  { name: 'model', hint: 'composer.commandModel', kind: 'picker' },
+  { name: 'provider', hint: 'composer.commandProvider', kind: 'picker' },
+  { name: REVERT_COMMAND, hint: 'composer.commandRevert', kind: 'action' },
+];
+
+/** An editor that holds nothing but a command name still being typed. */
+const SLASH_QUERY_RE = /^\/([\p{L}\p{N}-]*)$/u;
+/** An editor that holds a command name and, on the same line, what follows it. */
+const SLASH_ARGUMENT_RE = /^\/([\p{L}\p{N}-]+)[ \u00a0]([^\n]*)$/u;
+/** A draft that starts with a command name. */
+const SLASH_DRAFT_RE = /^\/([\p{L}\p{N}-]+)(?:\s|$)/u;
+
+/** Models `/model` lists at most; typing narrows the list down. */
+const SLASH_MODEL_ROWS = 60;
+
+/** What a row of the slash menu shows. */
+interface SlashRow {
+  id: string;
+  label: string;
+  detail: string;
+  /** The choice that is in effect now. */
+  current: boolean;
+  /** Icon of a routing choice, as a path in a 20-unit box. */
+  icon?: string;
+  /** Drawn as a solid shape instead of an outline. */
+  iconFilled?: boolean;
+  /** Provider whose mark leads a model. */
+  source?: string;
+  /** The endpoint a provider row stands for, shown with its price and health. */
+  endpoint?: EndpointInfo;
+}
+
+/** Something a picker command offers. */
+interface SlashChoice extends SlashRow {
+  /** What a typed term is matched against. */
+  search: string;
+  apply: () => Promise<void>;
+}
+
+/** A row of the slash menu: a command, or a choice of a picker command. */
+interface SlashItem extends SlashRow {
+  /** Commands are shown in the monospace face they are typed in. */
+  command: boolean;
+  select: () => void;
+}
+
+/** The mark of routing left to OpenRouter, as in the provider menu. */
+const AUTO_PROVIDER_ICON = 'm10 2 1.6 4.4L16 8l-4.4 1.6L10 14l-1.6-4.4L4 8l4.4-1.6z';
 
 /** Semantic indicator colours for endpoint/usage meters. */
 const METER_GOOD = '#34d399';
@@ -161,7 +250,7 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [ComposerEditorService],
   encapsulation: ViewEncapsulation.None,
-  imports: [TranslocoPipe, AttachmentPreview, ProviderMark, ModelMenu],
+  imports: [NgTemplateOutlet, TranslocoPipe, AttachmentPreview, ProviderMark, ModelMenu],
   styles: [
     `
       .composer-editor:empty::before {
@@ -261,8 +350,96 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
     `,
   ],
   template: `
+    <!-- What the provider menu and /provider show of an endpoint. -->
+    <ng-template #endpointInfo let-endpoint>
+      <div class="flex items-center justify-between gap-3">
+        <span class="flex min-w-0 items-center gap-2">
+          @if (providerIcon(endpoint.providerSlug); as icon) {
+            <img
+              [src]="icon"
+              alt=""
+              class="h-5 w-5 shrink-0 rounded object-contain"
+              (error)="providerIconError(endpoint.providerSlug)"
+            />
+          } @else {
+            <span
+              class="grid h-5 w-5 shrink-0 place-items-center rounded bg-white/10 text-[10px] font-semibold text-mist/60"
+            >
+              {{ initial(endpoint.providerName) }}
+            </span>
+          }
+          <span class="truncate text-sm text-white">{{
+            endpoint.providerName
+          }}</span>
+          @if (endpoint.training) {
+            <span
+              class="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+              [attr.title]="'provider.trainsHint' | transloco"
+            >
+              {{ 'provider.trains' | transloco }}
+            </span>
+          }
+          @if (endpoint.quantization) {
+            <span
+              class="shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-mist/40"
+            >
+              {{ endpoint.quantization }}
+            </span>
+          }
+        </span>
+        <span
+          class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums"
+          [style.color]="priceColor(endpoint)"
+          [style.background-color]="priceBackground(endpoint)"
+          [attr.title]="'provider.priceHint' | transloco"
+        >
+          {{ price(endpoint.promptPricePerM) }} /
+          {{ price(endpoint.completionPricePerM) }}
+        </span>
+      </div>
+      <div class="mt-1.5 flex items-center gap-3 text-xs text-mist/40">
+        @let up = uptime(endpoint);
+        @if (up !== null) {
+          <span
+            class="flex items-center gap-1.5 font-medium"
+            [style.color]="uptimeColor(endpoint)"
+            [attr.title]="'provider.uptime' | transloco"
+          >
+            <span
+              class="h-1.5 w-1.5 shrink-0 rounded-full"
+              [style.background-color]="uptimeColor(endpoint)"
+            ></span>
+            {{ up.toFixed(1) }}%
+          </span>
+        }
+        @if (endpoint.throughputLast30m !== null) {
+          <span [attr.title]="'provider.tokensPerSecond' | transloco">
+            {{ endpoint.throughputLast30m.toFixed(0) }} tok/s
+          </span>
+        }
+        @if (endpoint.latencyLast30m !== null) {
+          <span [attr.title]="'provider.latency' | transloco">
+            {{ endpoint.latencyLast30m.toFixed(0) }} ms
+          </span>
+        }
+        <span
+          [attr.title]="
+            ('provider.context' | transloco) +
+            ': ' +
+            endpoint.contextLength.toLocaleString()
+          "
+        >
+          {{ context(endpoint.contextLength) }}
+        </span>
+        @if (region(endpoint.slug); as reg) {
+          <span class="text-mist/40">{{ reg }}</span>
+        }
+      </div>
+    </ng-template>
+
     <div class="px-4 pt-2 pb-3">
       <div
+        #card
         class="glass-inset relative mx-auto w-full max-w-4xl rounded-2xl shadow-lg shadow-black/20 transition-colors focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/15"
         [class]="dragging() ? 'border-accent/60 ring-2 ring-accent/25' : ''"
         (dragover)="onDragOver($event)"
@@ -447,6 +624,87 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           </div>
         }
 
+        @if (slashOpen()) {
+          <div
+            #slashMenu
+            class="absolute right-3 bottom-full left-3 z-40 mb-2 max-h-[min(22rem,50vh)] overflow-y-auto glass-pop rounded-2xl shadow-2xl"
+            id="composer-command-menu"
+            role="listbox"
+          >
+            @for (item of slashItems(); track item.id; let index = $index) {
+              <button
+                type="button"
+                role="option"
+                class="flex w-full items-baseline gap-3 px-4 py-2 text-left text-sm transition-colors"
+                [class]="
+                  index === slashActive() ? 'bg-accent/10 text-white' : 'text-mist hover:bg-white/5'
+                "
+                [attr.aria-selected]="index === slashActive()"
+                (mousedown)="$event.preventDefault()"
+                (click)="item.select()"
+              >
+                @if (item.endpoint; as endpoint) {
+                  <span class="block min-w-0 flex-1">
+                    <ng-container
+                      [ngTemplateOutlet]="endpointInfo"
+                      [ngTemplateOutletContext]="{ $implicit: endpoint }"
+                    />
+                  </span>
+                } @else {
+                  @if (item.icon; as icon) {
+                    <svg
+                      class="h-4 w-4 shrink-0 self-center text-accent"
+                      viewBox="0 0 20 20"
+                      [attr.fill]="item.iconFilled ? 'currentColor' : 'none'"
+                      aria-hidden="true"
+                    >
+                      <path
+                        [attr.d]="icon"
+                        [attr.stroke]="item.iconFilled ? null : 'currentColor'"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  }
+                  @if (item.source; as source) {
+                    <app-provider-mark class="shrink-0 self-center" [provider]="source" size="xs" />
+                  }
+                  <span class="shrink-0" [class]="item.command ? 'font-mono text-accent' : ''">{{
+                    item.label
+                  }}</span>
+                  <span class="min-w-0 flex-1 text-xs leading-snug text-mist/50">{{
+                    item.detail
+                  }}</span>
+                }
+                @if (item.current) {
+                  <svg
+                    class="h-4 w-4 shrink-0 self-center text-accent"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M5 10.5 9 14.5 15.5 6"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                }
+              </button>
+            } @empty {
+              @if (!slashLoading()) {
+                <p class="px-4 py-3 text-sm text-mist/40">{{ slashNotice() | transloco }}</p>
+              }
+            }
+            @if (slashLoading()) {
+              <p class="px-4 py-3 text-sm text-mist/40">{{ 'common.loading' | transloco }}</p>
+            }
+          </div>
+        }
+
         <!-- The editor grows and shrinks with its content through CSS alone.
              Sizing it from script forces a full layout on every keystroke. -->
         <div
@@ -457,7 +715,9 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           aria-multiline="true"
           enterkeyhint="send"
           [attr.aria-label]="'chat.placeholder' | transloco"
-          [attr.data-placeholder]="'chat.placeholder' | transloco"
+          [attr.data-placeholder]="
+            ('chat.placeholder' | transloco) + ' · ' + ('chat.hintCommands' | transloco)
+          "
           (input)="onEditorInput()"
           (keydown)="onKeydown($event)"
           (keyup.arrowleft)="onCaretMove()"
@@ -466,13 +726,16 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           (paste)="onPaste($event)"
         ></div>
 
+        <!-- One row where it fits: labels go and the model name shortens
+             before a picker wraps, and only a very narrow chat puts the buttons
+             on a line of their own. -->
         <div
-          class="flex flex-wrap items-end justify-between gap-2 border-t border-white/5 px-4 py-2"
+          class="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5 border-t border-white/5 px-4 py-2"
         >
-          <div class="flex min-w-0 flex-wrap items-center gap-1">
+          <div class="flex min-w-[min(100%,20rem)] flex-1 flex-wrap items-center gap-1">
             <button
               type="button"
-              class="flex h-7 w-7 items-center justify-center rounded-full text-mist/50 transition-colors hover:bg-white/5 hover:text-white"
+              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-mist/50 transition-colors hover:bg-white/5 hover:text-white"
               [attr.aria-label]="'composer.attach' | transloco"
               [attr.title]="'composer.attach' | transloco"
               (click)="openFilePicker()"
@@ -494,11 +757,13 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
               class="hidden"
               (change)="onFilesSelected($event)"
             />
-            <!-- Model picker: the provider is always shown next to the model -->
-            <div>
+            <!-- Model picker: the provider is always named next to the model,
+                 by its mark and, unless the row is tight, in words. The small
+                 basis lets a long model name shorten before the pickers wrap. -->
+            <div class="max-w-max min-w-0 flex-[1_1_6rem]">
               <button
                 type="button"
-                class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
+                class="flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
                 [attr.aria-expanded]="modelOpen()"
                 [attr.aria-controls]="modelOpen() ? 'composer-model-menu' : null"
                 [attr.title]="
@@ -512,13 +777,22 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                 @if (selectedModel()) {
                   <app-provider-mark [provider]="selectedProviderId()" size="xs" />
                 }
-                <span class="max-w-56 truncate">{{
-                  selectedModel()?.name ?? ('composer.noModels' | transloco)
+                <span class="max-w-56 min-w-0 truncate">{{
+                  selectedModel()?.name ??
+                    ((modelsService.models().length > 0
+                      ? 'modelChoice.placeholder'
+                      : 'composer.noModels'
+                    ) | transloco)
                 }}</span>
                 @if (selectedModel()) {
-                  <span class="hidden max-w-28 truncate text-mist/35 sm:inline">{{
-                    selectedProviderName()
-                  }}</span>
+                  <span
+                    [class]="
+                      toolbarSpace() === 'tight'
+                        ? 'sr-only'
+                        : 'max-w-28 shrink-0 truncate text-mist/35'
+                    "
+                    >{{ selectedProviderName() }}</span
+                  >
                 }
                 <svg
                   class="h-3 w-3 shrink-0 text-mist/40"
@@ -549,16 +823,26 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
             </div>
 
             <!-- Mode picker -->
-            <div>
+            <div class="shrink-0">
               <button
                 type="button"
                 class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
                 [attr.aria-expanded]="modeOpen()"
                 [attr.aria-controls]="modeOpen() ? 'composer-mode-menu' : null"
+                [attr.title]="
+                  ('settings.hotkeys.chatToggleMode' | transloco) +
+                  ' (' +
+                  hintKeys().toggleMode +
+                  ')'
+                "
                 (click)="modeOpen.set(!modeOpen())"
                 (keydown.escape)="closeMenus()"
               >
-                <span class="max-w-40 truncate">{{ selectedMode()?.name }}</span>
+                <span
+                  class="truncate"
+                  [class]="toolbarSpace() === 'roomy' ? 'max-w-40' : 'max-w-28'"
+                  >{{ selectedMode()?.name }}</span
+                >
                 @if (selectedMode()?.planOnly) {
                   <svg
                     class="h-3 w-3 shrink-0 text-accent"
@@ -626,40 +910,105 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
               }
             </div>
 
-            <!-- Reasoning -->
-            <div
-              class="flex h-7 overflow-hidden rounded-full bg-white/5 p-0.5"
-              role="group"
-              [attr.aria-label]="'composer.reasoning' | transloco"
-            >
-              @for (option of reasoningOptions; track option) {
-                <button
-                  type="button"
-                  class="rounded-full px-2 text-xs transition-colors disabled:opacity-30"
-                  [class]="
-                    option === reasoning()
-                      ? 'bg-white/10 font-medium text-white'
-                      : 'text-mist/50 hover:text-mist'
-                  "
-                  [attr.aria-pressed]="option === reasoning()"
-                  [attr.aria-label]="'reasoning.' + option | transloco"
-                  [attr.title]="'reasoning.' + option | transloco"
-                  [disabled]="!supportsReasoning() && option !== 'off'"
-                  (click)="selectReasoning(option)"
+            <!-- Reasoning: one chip showing the level in effect, so the row
+                 stays on one line; the levels are in its menu -->
+            <div class="shrink-0" role="group" [attr.aria-label]="'composer.reasoning' | transloco">
+              <button
+                type="button"
+                class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
+                aria-haspopup="menu"
+                [attr.aria-expanded]="reasoningOpen()"
+                [attr.aria-controls]="reasoningOpen() ? 'composer-reasoning-menu' : null"
+                [attr.title]="'composer.reasoning' | transloco"
+                (click)="reasoningOpen.set(!reasoningOpen())"
+                (keydown.escape)="closeMenus()"
+              >
+                <svg
+                  class="h-3 w-3 shrink-0 text-mist/40"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
                 >
-                  {{ 'reasoning.' + option | transloco }}
-                </button>
+                  <path
+                    d="M10 11.5 13.5 8M3 16a8 8 0 1 1 14 0"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span>{{ 'reasoning.' + reasoning() | transloco }}</span>
+                <svg
+                  class="h-3 w-3 shrink-0 text-mist/40"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M5 7.5 10 12.5 15 7.5"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+
+              @if (reasoningOpen()) {
+                <div class="fixed inset-0 z-30" (click)="reasoningOpen.set(false)"></div>
+                <div
+                  class="absolute bottom-full left-0 z-40 mb-2 w-[min(14rem,100%)] overflow-hidden glass-pop rounded-2xl shadow-2xl"
+                  id="composer-reasoning-menu"
+                  role="menu"
+                  [attr.aria-label]="'composer.reasoning' | transloco"
+                  (keydown.escape)="closeMenus()"
+                >
+                  @for (option of reasoningOptions; track option) {
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      class="flex w-full items-center gap-2.5 border-b border-white/5 px-4 py-2 text-left text-sm transition-colors last:border-0 disabled:opacity-30"
+                      [class]="
+                        option === reasoning()
+                          ? 'bg-accent/10 text-white'
+                          : 'text-mist hover:bg-white/5'
+                      "
+                      [attr.aria-checked]="option === reasoning()"
+                      [disabled]="!supportsReasoning() && option !== 'off'"
+                      (click)="pickReasoning(option)"
+                    >
+                      <span class="flex-1">{{ 'reasoning.' + option | transloco }}</span>
+                      @if (option === reasoning()) {
+                        <svg
+                          class="h-4 w-4 shrink-0 text-accent"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M5 10.5 9 14.5 15.5 6"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
+                      }
+                    </button>
+                  }
+                </div>
               }
             </div>
 
             <!-- Routing picker: only OpenRouter models are served by several providers -->
             @if (isOpenRouterModel()) {
-              <div>
+              <div class="shrink-0">
                 <button
                   type="button"
                   class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
                   [attr.aria-expanded]="providerOpen()"
                   [attr.aria-controls]="providerOpen() ? 'composer-provider-menu' : null"
+                  [attr.title]="provider() === 'auto' ? ('provider.auto' | transloco) : null"
                   (click)="toggleProvider()"
                   (keydown.escape)="closeMenus()"
                 >
@@ -679,7 +1028,11 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                           stroke-linejoin="round"
                         />
                       </svg>
-                      <span class="max-w-40 truncate">{{ key | transloco }}</span>
+                      <span
+                        class="truncate"
+                        [class]="toolbarSpace() === 'roomy' ? 'max-w-40' : 'max-w-20'"
+                        >{{ key | transloco }}</span
+                      >
                     } @else {
                       @if (provider() !== 'auto') {
                         @if (providerIcon(provider()); as icon) {
@@ -690,8 +1043,18 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                             (error)="providerIconError(provider())"
                           />
                         }
+                      } @else if (toolbarSpace() !== 'roomy') {
+                        <!-- The mark of the automatic choice in the menu stands in for its label -->
+                        <svg
+                          class="h-3 w-3 shrink-0 text-accent"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <path d="m10 2 1.6 4.4L16 8l-4.4 1.6L10 14l-1.6-4.4L4 8l4.4-1.6z" />
+                        </svg>
                       }
-                      <span class="max-w-40 truncate">
+                      <span [class]="routingLabelClass()">
                         @if (provider() === 'auto') {
                           {{ 'provider.auto' | transloco }}
                         } @else {
@@ -811,88 +1174,10 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                         class="block w-full border-b border-white/5 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
                         (click)="selectProvider(endpoint)"
                       >
-                        <div class="flex items-center justify-between gap-3">
-                          <span class="flex min-w-0 items-center gap-2">
-                            @if (providerIcon(endpoint.providerSlug); as icon) {
-                              <img
-                                [src]="icon"
-                                alt=""
-                                class="h-5 w-5 shrink-0 rounded object-contain"
-                                (error)="providerIconError(endpoint.providerSlug)"
-                              />
-                            } @else {
-                              <span
-                                class="grid h-5 w-5 shrink-0 place-items-center rounded bg-white/10 text-[10px] font-semibold text-mist/60"
-                              >
-                                {{ initial(endpoint.providerName) }}
-                              </span>
-                            }
-                            <span class="truncate text-sm text-white">{{
-                              endpoint.providerName
-                            }}</span>
-                            @if (endpoint.training) {
-                              <span
-                                class="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
-                                [attr.title]="'provider.trainsHint' | transloco"
-                              >
-                                {{ 'provider.trains' | transloco }}
-                              </span>
-                            }
-                            @if (endpoint.quantization) {
-                              <span
-                                class="shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-mist/40"
-                              >
-                                {{ endpoint.quantization }}
-                              </span>
-                            }
-                          </span>
-                          <span
-                            class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums"
-                            [style.color]="priceColor(endpoint)"
-                            [style.background-color]="priceBackground(endpoint)"
-                            [attr.title]="'provider.priceHint' | transloco"
-                          >
-                            {{ price(endpoint.promptPricePerM) }} /
-                            {{ price(endpoint.completionPricePerM) }}
-                          </span>
-                        </div>
-                        <div class="mt-1.5 flex items-center gap-3 text-xs text-mist/40">
-                          @if (uptime(endpoint); as up) {
-                            <span
-                              class="flex items-center gap-1.5 font-medium"
-                              [style.color]="uptimeColor(endpoint)"
-                              [attr.title]="'provider.uptime' | transloco"
-                            >
-                              <span
-                                class="h-1.5 w-1.5 shrink-0 rounded-full"
-                                [style.background-color]="uptimeColor(endpoint)"
-                              ></span>
-                              {{ up.toFixed(1) }}%
-                            </span>
-                          }
-                          @if (endpoint.throughputLast30m !== null) {
-                            <span [attr.title]="'provider.tokensPerSecond' | transloco">
-                              {{ endpoint.throughputLast30m.toFixed(0) }} tok/s
-                            </span>
-                          }
-                          @if (endpoint.latencyLast30m !== null) {
-                            <span [attr.title]="'provider.latency' | transloco">
-                              {{ endpoint.latencyLast30m.toFixed(0) }} ms
-                            </span>
-                          }
-                          <span
-                            [attr.title]="
-                              ('provider.context' | transloco) +
-                              ': ' +
-                              endpoint.contextLength.toLocaleString()
-                            "
-                          >
-                            {{ context(endpoint.contextLength) }}
-                          </span>
-                          @if (region(endpoint.slug); as reg) {
-                            <span class="text-mist/40">{{ reg }}</span>
-                          }
-                        </div>
+                        <ng-container
+                          [ngTemplateOutlet]="endpointInfo"
+                          [ngTemplateOutletContext]="{ $implicit: endpoint }"
+                        />
                       </button>
                     } @empty {
                       @if (!modelsService.endpointsLoading()[model()]) {
@@ -911,11 +1196,13 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
             }
           </div>
 
-          <div class="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <div class="flex shrink-0 items-center gap-1.5">
             @if (streaming()) {
               <button
                 type="button"
-                class="flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-full bg-accent/15 px-4 text-sm font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-full bg-accent/15 text-sm font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+                [class]="actionButtonClass()"
+                [attr.title]="toolbarSpace() === 'tight' ? ('chat.queue' | transloco) : null"
                 [disabled]="!canQueue()"
                 (click)="enqueue()"
               >
@@ -927,29 +1214,39 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                     stroke-linecap="round"
                   />
                 </svg>
-                {{ 'chat.queue' | transloco }}
+                <span [class.sr-only]="toolbarSpace() === 'tight'">{{
+                  'chat.queue' | transloco
+                }}</span>
               </button>
               <button
                 type="button"
-                class="flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-full bg-rose-500/15 px-4 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-full bg-rose-500/15 text-sm font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
+                [class]="actionButtonClass()"
+                [attr.title]="toolbarSpace() === 'tight' ? ('chat.stop' | transloco) : null"
                 (click)="stop()"
               >
                 <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                   <rect x="6" y="6" width="8" height="8" rx="1.5" />
                 </svg>
-                {{ 'chat.stop' | transloco }}
+                <span [class.sr-only]="toolbarSpace() === 'tight'">{{
+                  'chat.stop' | transloco
+                }}</span>
               </button>
             } @else {
               <button
                 type="button"
-                class="flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-full bg-accent px-4 text-sm font-semibold text-ink transition-colors hover:bg-accent/90 disabled:opacity-40"
+                class="flex h-8 items-center justify-center gap-1.5 rounded-full bg-accent text-sm font-semibold text-ink transition-colors hover:bg-accent/90 disabled:opacity-40"
+                [class]="actionButtonClass()"
+                [attr.title]="toolbarSpace() === 'tight' ? ('chat.send' | transloco) : null"
                 [disabled]="!canSend()"
                 (click)="send()"
               >
                 <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                   <path d="M4 16V4l12 6z" />
                 </svg>
-                {{ 'chat.send' | transloco }}
+                <span [class.sr-only]="toolbarSpace() === 'tight'">{{
+                  'chat.send' | transloco
+                }}</span>
               </button>
             }
           </div>
@@ -1239,6 +1536,7 @@ export class Composer {
       newLine: label('chatNewLine'),
       stop: label('chatStop'),
       recall: label('chatRecallPrompt'),
+      toggleMode: label('chatToggleMode'),
     };
   });
   protected readonly modelsService = inject(ModelsService);
@@ -1249,6 +1547,8 @@ export class Composer {
   protected readonly providerPresets = PROVIDER_PRESETS;
   protected readonly circumference = CONTEXT_CIRCUMFERENCE;
   readonly composing = output<boolean>();
+  /** `/revert` asks to take the session back to this prompt, its latest one. */
+  readonly revertRequested = output<Message>();
   protected readonly draft = signal('');
   protected readonly attachments = signal<MessageAttachment[]>([]);
   protected readonly previewAttachment = signal<MessageAttachment | null>(null);
@@ -1258,30 +1558,130 @@ export class Composer {
   protected readonly modelOpen = signal(false);
   protected readonly providerOpen = signal(false);
   protected readonly modeOpen = signal(false);
+  protected readonly reasoningOpen = signal(false);
+  /**
+   * How much room the toolbar has. It stays on one row by dropping labels:
+   * a tight one shows its buttons as icons and the provider as its mark, and
+   * only a roomy one spells out the routing.
+   */
+  protected readonly toolbarSpace = signal<'tight' | 'normal' | 'roomy'>('normal');
+  protected readonly actionButtonClass = computed(() =>
+    this.toolbarSpace() === 'tight' ? 'w-8' : 'min-w-24 px-4',
+  );
+  /** Automatic routing is its mark alone until the row is roomy; a chosen one keeps a short name. */
+  protected readonly routingLabelClass = computed(() => {
+    if (this.toolbarSpace() === 'roomy') {
+      return 'max-w-40 truncate';
+    }
+    return this.provider() === 'auto' ? 'sr-only' : 'max-w-20 truncate';
+  });
   protected readonly mentionOpen = signal(false);
   protected readonly mentionIndex = signal(0);
   protected readonly mentionKind = signal<MentionKind | null>(null);
   protected readonly mentionTerm = signal('');
   protected readonly mentionItems = signal<MentionItem[]>([]);
+  /**
+   * What the editor holds of a slash command: the start of a name (`command`
+   * is `null`), or a picker command and the term typed after it.
+   */
+  private readonly slash = signal<{ command: SlashCommand | null; term: string } | null>(null);
+  private readonly slashIndex = signal(0);
+  /** The chat box's own commands and one for each prompt the user wrote, by name. */
+  private readonly slashCommands = computed<SlashCommand[]>(() => {
+    const prompts = promptCommands(this.settings.settings()?.userSystemPrompts ?? [])
+      .filter(({ prompt }) => prompt.prompt.trim())
+      .map(({ prompt, name }): SlashCommand => ({ name, kind: 'prompt', prompt }));
+    return [...CHAT_BOX_SLASH_COMMANDS, ...prompts].sort((a, b) => a.name.localeCompare(b.name));
+  });
+  protected readonly slashItems = computed<SlashItem[]>(() => {
+    const slash = this.slash();
+    if (!slash) {
+      return [];
+    }
+    if (!slash.command) {
+      return this.slashCommands()
+        .filter((entry) => entry.name.startsWith(slash.term))
+        .map((entry) => ({
+          id: entry.name,
+          label: `/${entry.name}`,
+          detail: entry.prompt
+            ? this.transloco.translate('composer.commandPrompt', { name: entry.prompt.name })
+            : this.transloco.translate(
+                entry.name === REVERT_COMMAND ? this.revertHint() : (entry.hint ?? ''),
+              ),
+          command: true,
+          current: false,
+          select: () => this.selectCommand(entry),
+        }));
+    }
+    const words = slash.term.toLowerCase().split(/\s+/).filter(Boolean);
+    return this.slashChoices(slash.command.name)
+      .filter((choice) => {
+        const text = `${choice.label} ${choice.search}`.toLowerCase();
+        return words.every((word) => text.includes(word));
+      })
+      .slice(0, SLASH_MODEL_ROWS)
+      .map((choice) => ({ ...choice, command: false, select: () => this.choose(choice) }));
+  });
+  /** The providers that serve the model are still being fetched for `/provider`. */
+  protected readonly slashLoading = computed(
+    () =>
+      this.slash()?.command?.name === 'provider' &&
+      this.isOpenRouterModel() &&
+      !!this.modelsService.endpointsLoading()[this.model()],
+  );
+  /** A picker stays open with a note when it has nothing to list. */
+  protected readonly slashOpen = computed(
+    () => this.slashItems().length > 0 || !!this.slash()?.command,
+  );
+  /** The highlighted row, also when the list got shorter under it. */
+  protected readonly slashActive = computed(() =>
+    Math.max(0, Math.min(this.slashIndex(), this.slashItems().length - 1)),
+  );
+  /** Why a picker lists nothing, as a translation key. */
+  protected readonly slashNotice = computed(() => {
+    switch (this.slash()?.command?.name) {
+      case 'effort':
+        return this.supportsReasoning() ? 'composer.mentionNoResults' : 'composer.commandNoEffort';
+      case 'provider':
+        return this.isOpenRouterModel() ? 'composer.mentionNoResults' : 'composer.commandNoProvider';
+      case 'model':
+        return this.modelsService.models().length > 0
+          ? 'composer.mentionNoResults'
+          : 'composer.noModels';
+      default:
+        return 'composer.mentionNoResults';
+    }
+  });
   protected readonly textBlocks = signal<TextBlock[]>([]);
   protected readonly editingBlockId = signal<string | null>(null);
   protected readonly blockDraft = signal('');
 
   private readonly workspaceEntries = signal<WorkspaceEntry[]>([]);
   private readonly catalog = inject(CapabilityCatalogService);
+  private readonly sideQuestions = inject(SideQuestionService);
+  private readonly injector = inject(Injector);
+  private readonly destroyRef = inject(DestroyRef);
   private catalogRefreshedFor: MentionKind | null = null;
   private mentionQuery: MentionQuery | null = null;
+  /** The project whose files `workspaceEntries` lists. */
   private loadedEntriesFor = '';
+  /** The project whose files were read again for the picker that is open. */
+  private entriesRefreshedFor: string | null = null;
+  /** The session whose draft and attachments the chat box holds. */
   private lastSessionId: string | null = null;
-  private pendingDraftSessionId: string | null = null;
+  /** The editor as `restore` brings it back, pills included; see `serialize`. */
+  private saved = '';
   private lastComposerFocusNonce = this.workspace.composerFocusNonce();
   private readonly pendingEditorText = signal<string | null>(null);
 
   private readonly transloco = inject(TranslocoService);
 
+  private readonly cardRef = viewChild<ElementRef<HTMLDivElement>>('card');
   private readonly editorRef = viewChild<ElementRef<HTMLDivElement>>('editor');
   private readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
   private readonly blockTextareaRef = viewChild<ElementRef<HTMLTextAreaElement>>('blockTextarea');
+  private readonly slashMenuRef = viewChild<ElementRef<HTMLElement>>('slashMenu');
 
   private readonly modelOverride = signal<{ sessionId: string; value: string } | null>(null);
   private readonly reasoningOverride = signal<{ sessionId: string; value: string } | null>(null);
@@ -1326,10 +1726,7 @@ export class Composer {
   protected readonly selectedMode = computed<Mode | undefined>(() => {
     const modes = this.settings.modes();
     const session = this.workspace.activeAgent();
-    const id = session?.modeId ?? this.settings.settings()?.defaultModeId ?? 'coding';
-    return (
-      modes.find((mode) => mode.id === id) ?? modes.find((mode) => mode.id === 'coding') ?? modes[0]
-    );
+    return resolveMode(modes, session?.modeId ?? this.settings.settings()?.defaultModeId);
   });
   protected readonly endpoints = computed(() => this.modelsService.endpoints()[this.model()] ?? []);
   protected readonly supportsReasoning = computed(
@@ -1442,6 +1839,20 @@ export class Composer {
 
   constructor() {
     void this.modelsService.loadProviders();
+    afterNextRender(() => {
+      const card = this.cardRef()?.nativeElement;
+      if (!card || typeof ResizeObserver === 'undefined') {
+        return;
+      }
+      // The chat's width follows the side panels, not the window, so the
+      // toolbar is sized from its own box rather than with breakpoints.
+      const observer = new ResizeObserver(() => {
+        const width = card.clientWidth;
+        this.toolbarSpace.set(width < 720 ? 'tight' : width < 840 ? 'normal' : 'roomy');
+      });
+      observer.observe(card);
+      this.destroyRef.onDestroy(() => observer.disconnect());
+    });
     effect(() => {
       const model = this.model();
       if (model && providerIdOf(model) === OPENROUTER_PROVIDER) {
@@ -1451,7 +1862,10 @@ export class Composer {
     effect(() => {
       const draft = this.workspace.pendingDraft();
       if (draft !== null) {
-        this.pendingDraftSessionId = this.workspace.activeAgent()?.id ?? null;
+        // A draft can arrive together with its session, as the summary of a
+        // handover does. The switch comes first, or the draft would be saved
+        // as what the previous session held.
+        this.syncSession();
         this.setEditorText(draft);
         this.workspace.consumeDraft();
       }
@@ -1474,6 +1888,9 @@ export class Composer {
         return;
       }
       untracked(() => {
+        // The insert is for the session on screen, often one that just opened:
+        // its draft is loaded first, or loading it would wipe the pills again.
+        this.syncSession();
         this.workspace.consumeComposerInsert();
         this.placeCaretAtEnd(editor);
         if (insert.mention) {
@@ -1491,44 +1908,54 @@ export class Composer {
       }
       untracked(() => {
         this.pendingEditorText.set(null);
-        this.setEditorText(text);
+        this.setEditorDraft(text);
       });
     });
-    effect(() => {
-      const sessionId = this.workspace.activeAgent()?.id ?? null;
-      if (sessionId === this.lastSessionId) {
-        return;
-      }
-      const previous = this.lastSessionId;
-      this.lastSessionId = sessionId;
-      untracked(() => {
-        if (previous !== null) {
-          this.workspace.setComposerDraft(previous, this.draft());
-          this.workspace.setComposerAttachments(previous, this.attachments());
-        }
-        this.previewAttachment.set(null);
-        this.attachmentError.set(null);
-        if (sessionId !== null && sessionId !== this.pendingDraftSessionId) {
-          const text = this.workspace.composerDraftFor(sessionId);
-          if (this.editorRef()) {
-            this.setEditorText(text);
-          } else if (text.length > 0) {
-            this.pendingEditorText.set(text);
-          }
-        }
-        this.attachments.set(
-          sessionId !== null ? this.workspace.composerAttachmentsFor(sessionId) : [],
-        );
-        this.pendingDraftSessionId = null;
-      });
-    });
+    effect(() => this.syncSession());
     effect(() => {
       const nonce = this.workspace.composerFocusNonce();
       if (nonce === this.lastComposerFocusNonce) {
         return;
       }
       this.lastComposerFocusNonce = nonce;
-      untracked(() => this.focusInput());
+      untracked(() => this.focusAtText());
+    });
+  }
+
+  /**
+   * Makes the chat box hold what belongs to the session on screen: what it
+   * held goes to the session it showed until now, and the draft and the
+   * attachments of the new one come in. Whatever is about to put something
+   * into the chat box for the session on screen calls this first: the effects
+   * for a pending draft or insert run before the one that follows the session,
+   * and what they write must neither be saved for the previous session nor be
+   * wiped by loading a draft.
+   */
+  private syncSession(): void {
+    const sessionId = this.workspace.activeAgent()?.id ?? null;
+    if (sessionId === this.lastSessionId) {
+      return;
+    }
+    const previous = this.lastSessionId;
+    this.lastSessionId = sessionId;
+    untracked(() => {
+      if (previous !== null) {
+        this.workspace.setComposerDraft(previous, this.saved);
+        this.workspace.setComposerAttachments(previous, this.attachments());
+      }
+      this.previewAttachment.set(null);
+      this.attachmentError.set(null);
+      if (sessionId !== null) {
+        const saved = this.workspace.composerDraftFor(sessionId);
+        if (this.editorRef()) {
+          this.setEditorDraft(saved);
+        } else if (saved.length > 0) {
+          this.pendingEditorText.set(saved);
+        }
+      }
+      this.attachments.set(
+        sessionId !== null ? this.workspace.composerAttachmentsFor(sessionId) : [],
+      );
     });
   }
 
@@ -1540,15 +1967,285 @@ export class Composer {
   }
 
   protected onEditorInput(): void {
-    const { content, mentions } = this.serializeEditor();
+    const { content, mentions, saved } = this.serializeEditor();
     this.draft.set(content);
     this.mentions.set(mentions);
+    this.saved = saved;
     const session = this.workspace.activeAgent();
     if (session) {
-      this.workspace.setComposerDraft(session.id, content);
+      // The draft is kept with its pills, so that a mention is still there
+      // after another session was on screen.
+      this.workspace.setComposerDraft(session.id, saved);
     }
     this.composing.emit(content.trim().length > 0 || mentions.length > 0);
     this.updateMention();
+    this.updateCommands();
+  }
+
+  /**
+   * Opens the slash menu while the editor holds the start of a command name,
+   * or a picker command and what was typed after it. Read from the editor
+   * itself: the draft is trimmed, so it cannot tell "/btw" from "/btw " with
+   * the question about to follow.
+   */
+  private updateCommands(): void {
+    const text = this.editorRef()?.nativeElement.textContent ?? '';
+    const name = SLASH_QUERY_RE.exec(text);
+    const argument = name ? null : SLASH_ARGUMENT_RE.exec(text);
+    const picker = argument ? this.pickerCommand(argument[1]) : undefined;
+    if (name) {
+      this.slash.set({ command: null, term: name[1].toLowerCase() });
+    } else if (argument && picker) {
+      this.slash.set({ command: picker, term: argument[2].trim() });
+      if (picker.name === 'provider' && this.isOpenRouterModel()) {
+        // Already there for the model in use, unless fetching them failed.
+        void this.modelsService.loadEndpoints(this.model());
+      }
+    } else {
+      this.slash.set(null);
+    }
+    // A picker opens on the choice in effect, a typed term on its first match.
+    const current = this.slash()?.term ? -1 : this.slashItems().findIndex((item) => item.current);
+    this.slashIndex.set(Math.max(0, current));
+    this.revealSlashItem();
+  }
+
+  private pickerCommand(name: string | undefined): SlashCommand | undefined {
+    const wanted = name?.toLowerCase();
+    return this.slashCommands().find(
+      (entry) => entry.kind === 'picker' && entry.name === wanted,
+    );
+  }
+
+  /** Scrolls the menu to its highlighted row once that row is rendered. */
+  private revealSlashItem(): void {
+    if (!this.slashOpen()) {
+      return;
+    }
+    afterNextRender(
+      () => {
+        const menu = this.slashMenuRef()?.nativeElement;
+        const row = menu?.querySelector<HTMLElement>('[aria-selected="true"]');
+        if (!menu || !row) {
+          return;
+        }
+        if (row.offsetTop < menu.scrollTop) {
+          menu.scrollTop = row.offsetTop;
+        } else if (row.offsetTop + row.offsetHeight > menu.scrollTop + menu.clientHeight) {
+          menu.scrollTop = row.offsetTop + row.offsetHeight - menu.clientHeight;
+        }
+      },
+      { injector: this.injector },
+    );
+  }
+
+  /**
+   * Picks a command from the menu. Its name is completed for what follows it;
+   * a command that needs nothing more runs once its whole name is typed.
+   */
+  private selectCommand(command: SlashCommand): void {
+    if (!this.editorRef()) {
+      return;
+    }
+    if (command.kind === 'action') {
+      this.requestRevert();
+      return;
+    }
+    if (command.kind === 'prompt' && this.slash()?.term === command.name) {
+      this.slash.set(null);
+      void this.send();
+      return;
+    }
+    this.completeCommand(command.name);
+  }
+
+  /** Writes a command's name into the chat box, ready for what follows it. */
+  private completeCommand(name: string): void {
+    const editor = this.editorRef()?.nativeElement;
+    if (!editor) {
+      return;
+    }
+    this.setEditorText(`/${name} `);
+    this.moveCaretToEnd(editor);
+  }
+
+  /** Everything a picker command offers, before a typed term narrows it down. */
+  private slashChoices(command: string): SlashChoice[] {
+    switch (command) {
+      case 'effort':
+        if (!this.supportsReasoning()) {
+          return [];
+        }
+        return REASONING_OPTIONS.map((option) => {
+          const label = this.transloco.translate(`reasoning.${option}`);
+          return {
+            id: option,
+            label,
+            detail: '',
+            search: `${option} ${label}`,
+            current: option === this.reasoning(),
+            apply: () => this.selectReasoning(option),
+          };
+        });
+      case 'mode': {
+        const current = this.selectedMode()?.id;
+        return this.modes().map((mode) => {
+          const planOnly = mode.planOnly ? this.transloco.translate('right.planOnly') : '';
+          return {
+            id: mode.id,
+            label: mode.name,
+            detail: [planOnly, this.modeSummary(mode)].filter(Boolean).join(' · '),
+            search: `${mode.id} ${planOnly}`,
+            current: mode.id === current,
+            apply: async () => this.selectMode(mode.id),
+          };
+        });
+      }
+      case 'model': {
+        const favorites = new Set(this.settings.settings()?.favoriteModels ?? []);
+        const current = this.model();
+        return [...this.modelsService.models()]
+          .sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)))
+          .map((model) => {
+            const provider = this.providers.name(model.source);
+            return {
+              id: model.id,
+              label: model.name,
+              detail: [
+                provider,
+                this.context(model.contextLength),
+                `${this.price(model.promptPricePerM)} / ${this.price(model.completionPricePerM)}`,
+              ].join(' · '),
+              source: model.source,
+              search: `${model.name} ${model.id} ${provider}`,
+              current: model.id === current,
+              apply: () => this.selectModel(model.id),
+            };
+          });
+      }
+      case 'provider': {
+        if (!this.isOpenRouterModel()) {
+          return [];
+        }
+        const active = this.provider();
+        const choices: SlashChoice[] = [
+          {
+            id: 'auto',
+            label: this.transloco.translate('provider.auto'),
+            detail: '',
+            icon: AUTO_PROVIDER_ICON,
+            iconFilled: true,
+            search: 'auto',
+            current: active === 'auto',
+            apply: () => this.selectAutoProvider(),
+          },
+          ...PROVIDER_PRESETS.map((preset) => ({
+            id: preset.value,
+            label: this.transloco.translate(preset.key),
+            detail: this.transloco.translate(preset.hint),
+            icon: this.presetIcon(preset.value),
+            search: preset.value,
+            current: active === preset.value,
+            apply: () => this.selectPreset(preset.value),
+          })),
+        ];
+        // Every endpoint as in the provider menu, with its price, speed and health.
+        for (const endpoint of this.endpoints()) {
+          const value = endpoint.slug.split('/')[0] || endpoint.providerName;
+          choices.push({
+            id: `${endpoint.slug}|${endpoint.name}`,
+            label: endpoint.providerName,
+            detail: '',
+            endpoint,
+            search: `${endpoint.providerName} ${endpoint.slug} ${endpoint.quantization ?? ''}`,
+            current: active === value || active === endpoint.slug,
+            apply: () => this.selectProvider(endpoint),
+          });
+        }
+        return choices;
+      }
+      default:
+        return [];
+    }
+  }
+
+  /** Applies a picker's choice and empties the chat box for the next prompt. */
+  private choose(choice: SlashChoice): void {
+    this.clearText();
+    void choice.apply();
+  }
+
+  /** Empties the editor and keeps what is attached. */
+  private clearText(): void {
+    const session = this.workspace.activeAgent();
+    if (session) {
+      this.workspace.clearComposerDraft(session.id);
+    }
+    this.setEditorText('');
+    this.focusInput();
+  }
+
+  /** The prompt of "Your prompts" that a draft calls with its slash command. */
+  private calledPrompt(draft: string): UserSystemPrompt | undefined {
+    const name = SLASH_DRAFT_RE.exec(draft.trimStart())?.[1].toLowerCase();
+    return this.slashCommands().find((entry) => entry.kind === 'prompt' && entry.name === name)
+      ?.prompt;
+  }
+
+  /**
+   * Handles a draft that still starts with `/revert` or a picker command, for
+   * example after Escape closed the menu: the one runs, the other gets its
+   * choices back. Reports whether it did; the line of such a command is not
+   * sent to the agent as a prompt.
+   */
+  private runOwnCommand(): boolean {
+    const name = SLASH_DRAFT_RE.exec(this.draft().trimStart())?.[1].toLowerCase();
+    if (name === REVERT_COMMAND) {
+      this.requestRevert();
+      return true;
+    }
+    if (!this.pickerCommand(name)) {
+      return false;
+    }
+    this.updateCommands();
+    return this.slashOpen();
+  }
+
+  /** The prompt `/revert` goes back to: the latest one of the session shown. */
+  private lastUserMessage(): Message | null {
+    const session = this.workspace.activeAgent();
+    const messages = session ? this.workspace.messagesFor(session.id) : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === 'user') {
+        return messages[index];
+      }
+    }
+    return null;
+  }
+
+  /** What the menu says about `/revert`: what it does, or why it cannot run now. */
+  private revertHint(): string {
+    if (this.streaming()) {
+      return 'composer.commandRevertRunning';
+    }
+    return this.lastUserMessage() ? 'composer.commandRevert' : 'composer.commandRevertNone';
+  }
+
+  /**
+   * Asks the chat to take the session back to its latest prompt, which the
+   * user confirms there. While that cannot be done, the command stays in the
+   * chat box with the menu saying why.
+   */
+  private requestRevert(): void {
+    const target = this.streaming() ? null : this.lastUserMessage();
+    const editor = this.editorRef()?.nativeElement;
+    if (target) {
+      this.clearText();
+      this.revertRequested.emit(target);
+    } else if (editor) {
+      this.setEditorText(`/${REVERT_COMMAND}`);
+      this.moveCaretToEnd(editor);
+    }
   }
 
   protected onCaretMove(): void {
@@ -1559,6 +2256,30 @@ export class Composer {
 
   private focusInput(): void {
     this.editorRef()?.nativeElement.focus();
+  }
+
+  /**
+   * Focuses the editor for typing on. A caret that would land in front of
+   * text put there meanwhile, such as a prompt a revert brought back, goes to
+   * the end of it instead.
+   */
+  private focusAtText(): void {
+    const editor = this.editorRef()?.nativeElement;
+    if (!editor) {
+      return;
+    }
+    editor.focus();
+    const selection = window.getSelection();
+    const node = selection?.anchorNode;
+    const atStart =
+      !selection ||
+      selection.rangeCount === 0 ||
+      (selection.isCollapsed &&
+        selection.anchorOffset === 0 &&
+        (node === editor || node === editor.firstChild));
+    if (atStart && editor.textContent) {
+      this.moveCaretToEnd(editor);
+    }
   }
 
   /** Moves the caret to the end of the editor unless it already is inside it. */
@@ -1590,10 +2311,32 @@ export class Composer {
     this.onEditorInput();
   }
 
-  private serializeEditor(): { content: string; mentions: Mention[] } {
+  /**
+   * Fills the editor from a draft as `onEditorInput` saves it: its text, and
+   * its mentions and pasted blocks as the pills they were.
+   */
+  private setEditorDraft(saved: string): void {
     const editor = this.editorRef()?.nativeElement;
     if (!editor) {
-      return { content: '', mentions: [] };
+      return;
+    }
+    const blocks: TextBlock[] = [];
+    this.editorDom.restore(editor, saved, (pill) => {
+      if ('mention' in pill) {
+        return this.createPill(pill.mention);
+      }
+      const block: TextBlock = { id: this.newId('text-block'), text: pill.block };
+      blocks.push(block);
+      return this.createTextBlockPill(block);
+    });
+    this.textBlocks.set(blocks);
+    this.onEditorInput();
+  }
+
+  private serializeEditor(): { content: string; mentions: Mention[]; saved: string } {
+    const editor = this.editorRef()?.nativeElement;
+    if (!editor) {
+      return { content: '', mentions: [], saved: '' };
     }
     return this.editorDom.serialize(editor, this.textBlocks());
   }
@@ -1716,11 +2459,7 @@ export class Composer {
     const element =
       pill ?? editor?.querySelector<HTMLElement>(`[data-text-block-id="${id}"]`) ?? null;
     if (element) {
-      const next = element.nextSibling;
-      element.remove();
-      if (next && next.nodeType === Node.TEXT_NODE && next.textContent === ' ') {
-        next.remove();
-      }
+      this.editorDom.removePill(element, () => {});
     }
     this.textBlocks.update((list) => list.filter((entry) => entry.id !== id));
     if (this.editingBlockId() === id) {
@@ -1865,13 +2604,22 @@ export class Composer {
       return;
     }
     this.attachmentError.set(null);
-    const current = this.attachments();
+    // Reading a file takes a while: by then another paste may have added
+    // files, a chip may be gone or another session may be on screen. So the
+    // list is read where it is used, and the files stay with this session.
+    const sessionId = this.workspace.activeAgent()?.id ?? null;
+    const held = (): MessageAttachment[] => {
+      this.syncSession();
+      return sessionId === null || sessionId === this.lastSessionId
+        ? this.attachments()
+        : this.workspace.composerAttachmentsFor(sessionId);
+    };
     const accepted: MessageAttachment[] = [];
     let unsupported = false;
     let tooLarge = false;
     let tooMany = false;
     for (const file of selected) {
-      if (current.length + accepted.length >= MAX_ATTACHMENTS) {
+      if (held().length + accepted.length >= MAX_ATTACHMENTS) {
         tooMany = true;
         continue;
       }
@@ -1886,8 +2634,23 @@ export class Composer {
       }
       accepted.push(attachment);
     }
-    if (accepted.length > 0) {
-      this.attachments.set([...current, ...accepted]);
+    const current = held();
+    const room = Math.max(0, MAX_ATTACHMENTS - current.length);
+    if (accepted.length > room) {
+      // A paste that overlapped this one took the room that was left.
+      tooMany = true;
+    }
+    const added = [...current, ...accepted.slice(0, room)];
+    if (sessionId !== null && sessionId !== this.lastSessionId) {
+      // Another session is on screen by now. The files wait with the one they
+      // were added to, and what went wrong with them is not this one's news.
+      if (added.length > current.length) {
+        this.workspace.setComposerAttachments(sessionId, added);
+      }
+      return;
+    }
+    if (added.length > current.length) {
+      this.attachments.set(added);
       this.persistAttachments();
     }
     if (tooMany) {
@@ -1964,12 +2727,17 @@ export class Composer {
   }
 
   protected closeMenus(): void {
-    if (this.modelOpen() || this.providerOpen() || this.modeOpen()) {
+    if (this.menuOpen()) {
       this.modelOpen.set(false);
       this.providerOpen.set(false);
       this.modeOpen.set(false);
+      this.reasoningOpen.set(false);
       this.focusInput();
     }
+  }
+
+  private menuOpen(): boolean {
+    return this.modelOpen() || this.providerOpen() || this.modeOpen() || this.reasoningOpen();
   }
 
   private updateMention(): void {
@@ -2017,17 +2785,37 @@ export class Composer {
   private async loadMentionData(kind: MentionKind): Promise<void> {
     if (kind === 'file' || kind === 'directory') {
       const project = this.workspace.activeProject();
-      if (!project || this.loadedEntriesFor === project.id) {
+      if (!project || this.entriesRefreshedFor === project.id) {
+        return;
+      }
+      // The agent adds and deletes files, so they are read again once each
+      // time the picker opens; the list from before shows meanwhile.
+      this.entriesRefreshedFor = project.id;
+      if (this.loadedEntriesFor !== project.id) {
+        // Unless it lists the files of another project.
+        this.loadedEntriesFor = '';
+        this.workspaceEntries.set([]);
+        this.mentionItems.set(this.filterMentionItems(kind, this.mentionTerm()));
+      }
+      let entries: WorkspaceEntry[];
+      try {
+        entries = await api.listWorkspaceEntries(project.id);
+      } catch {
+        // Whatever is listed stays, and the next keystroke tries again.
+        if (this.entriesRefreshedFor === project.id) {
+          this.entriesRefreshedFor = null;
+        }
+        return;
+      }
+      // A slow answer for a project that is no longer the one on screen.
+      if (this.workspace.activeProject()?.id !== project.id) {
         return;
       }
       this.loadedEntriesFor = project.id;
-      try {
-        this.workspaceEntries.set(await api.listWorkspaceEntries(project.id));
-      } catch {
-        this.workspaceEntries.set([]);
-      }
-      if (this.mentionKind() === kind) {
-        this.mentionItems.set(this.filterMentionItems(kind, this.mentionTerm()));
+      this.workspaceEntries.set(entries);
+      const open = this.mentionKind();
+      if (open === 'file' || open === 'directory') {
+        this.mentionItems.set(this.filterMentionItems(open, this.mentionTerm()));
       }
       return;
     }
@@ -2135,6 +2923,7 @@ export class Composer {
 
   protected closeMention(): void {
     this.catalogRefreshedFor = null;
+    this.entriesRefreshedFor = null;
     this.mentionOpen.set(false);
     this.mentionKind.set(null);
     this.mentionTerm.set('');
@@ -2183,11 +2972,19 @@ export class Composer {
     return mentions;
   }
 
+  /**
+   * Takes mentions typed as `@kind:value` out of a message. Each goes with the
+   * one space beside it, as a pill does; everything else stays as typed, the
+   * indentation of code included.
+   */
   private stripMentions(text: string): string {
-    return text
-      .replace(MENTION_TOKEN_RE, '')
-      .replace(/[ \t]{2,}/g, ' ')
-      .trim();
+    const stripped = text.replace(MENTION_GAP_RE, (match: string, offset: number) => {
+      const before = text[offset - 1];
+      const after = text[offset + match.length];
+      const lineEdge = !before || before === '\n' || !after || after === '\n';
+      return lineEdge ? '' : ' ';
+    });
+    return trimEdges(stripped);
   }
 
   protected onKeydown(event: KeyboardEvent): void {
@@ -2222,8 +3019,43 @@ export class Composer {
         return;
       }
     }
-    if (event.key === 'Escape' && (this.modelOpen() || this.providerOpen() || this.modeOpen())) {
+    if (this.slashOpen()) {
+      const items = this.slashItems();
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (items.length > 0) {
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          this.slashIndex.set((this.slashActive() + step + items.length) % items.length);
+          this.revealSlashItem();
+        }
+        return;
+      }
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+        // A picker with nothing to pick keeps its line instead of sending it.
+        event.preventDefault();
+        const item = items[this.slashActive()];
+        if (event.key === 'Tab' && item?.command) {
+          // Tab only writes the name out, for an argument to follow. Running
+          // a command, also one whose whole name is typed, is left to Enter.
+          this.completeCommand(item.id);
+        } else {
+          item?.select();
+        }
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.slash.set(null);
+        return;
+      }
+    }
+    if (event.key === 'Escape' && this.menuOpen()) {
       this.closeMenus();
+      return;
+    }
+    // Before Stop: closing an answer must never end the turn that is running.
+    if (event.key === 'Escape' && this.dismissSideAnswer()) {
+      event.preventDefault();
       return;
     }
     const settings = this.settings.settings();
@@ -2240,7 +3072,7 @@ export class Composer {
       }
       return;
     }
-    if (this.modelOpen() || this.providerOpen() || this.modeOpen()) {
+    if (this.menuOpen()) {
       return;
     }
     if (matchesAction(settings, 'chatSend', event)) {
@@ -2282,6 +3114,9 @@ export class Composer {
   }
 
   protected async send(): Promise<void> {
+    if (this.askSideQuestion() || this.runOwnCommand()) {
+      return;
+    }
     if (this.streaming()) {
       this.enqueue();
       return;
@@ -2290,12 +3125,81 @@ export class Composer {
     if (!args) {
       return;
     }
+    // The chat box empties at once, but the backend can still turn the prompt
+    // down before it has stored it, for a model without an API key say.
+    const saved = this.saved;
     this.clearComposer();
-    await this.workspace.send(args);
+    if (!(await this.workspace.send(args))) {
+      this.putBack(args, saved);
+    }
     this.focusInput();
   }
 
+  /**
+   * Brings back a prompt the backend did not take, pills and attachments
+   * included, so that it is not lost: into the chat box when that still shows
+   * its session, in front of whatever was typed there since, and else into
+   * the draft that session keeps.
+   */
+  private putBack(args: SendMessageArgs, saved: string): void {
+    const attachments = args.attachments ?? [];
+    const before = (typed: string): string => [saved, typed].filter(Boolean).join('\n\n');
+    this.syncSession();
+    if (this.lastSessionId !== args.sessionId) {
+      const { sessionId } = args;
+      this.workspace.setComposerDraft(
+        sessionId,
+        before(this.workspace.composerDraftFor(sessionId)),
+      );
+      this.workspace.setComposerAttachments(sessionId, [
+        ...attachments,
+        ...this.workspace.composerAttachmentsFor(sessionId),
+      ]);
+      return;
+    }
+    this.setEditorDraft(before(this.saved));
+    this.attachments.update((list) => [...attachments, ...list]);
+    this.persistAttachments();
+    const editor = this.editorRef()?.nativeElement;
+    if (editor) {
+      // Typing goes on behind the prompt, not in front of it.
+      this.moveCaretToEnd(editor);
+    }
+  }
+
+  /**
+   * Asks the draft as a side question when it is a `/btw` command and reports
+   * whether it was one. That never waits for a running turn, and attachments
+   * stay in the chat box for the next prompt.
+   */
+  private askSideQuestion(): boolean {
+    const question = sideQuestionOf(this.draft());
+    if (question === null) {
+      return false;
+    }
+    const session = this.workspace.activeAgent();
+    const model = this.model();
+    if (session && model && question) {
+      void this.sideQuestions.ask(session.id, question, model);
+      this.clearText();
+    }
+    return true;
+  }
+
+  /** Closes the side answer shown for this session; false when there is none. */
+  private dismissSideAnswer(): boolean {
+    const session = this.workspace.activeAgent();
+    if (!session || !this.sideQuestions.forSession(session.id)) {
+      return false;
+    }
+    this.sideQuestions.dismiss(session.id);
+    return true;
+  }
+
   protected enqueue(): void {
+    if (this.askSideQuestion() || this.runOwnCommand()) {
+      return;
+    }
     const args = this.buildArgs();
     if (!args) {
       return;
@@ -2321,7 +3225,8 @@ export class Composer {
 
   private buildArgs(): SendMessageArgs | null {
     const session = this.workspace.activeAgent();
-    const raw = this.draft().trim();
+    // Already without the blank lines around it; the rest goes out as typed.
+    const raw = this.draft();
     const content = this.stripMentions(raw);
     const mentions = [...this.mentions()];
     for (const typed of this.parseMentions(raw)) {
@@ -2334,6 +3239,8 @@ export class Composer {
     if (!session || (!content && attachments.length === 0 && mentions.length === 0) || !model) {
       return null;
     }
+    // The chat keeps the line as typed; the backend adds the prompt it calls.
+    const prompt = this.calledPrompt(content);
     return {
       sessionId: session.id,
       content,
@@ -2342,6 +3249,7 @@ export class Composer {
       provider: !this.isOpenRouterModel() || this.provider() === 'auto' ? null : this.provider(),
       attachments,
       mentions,
+      ...(prompt ? { promptId: prompt.id } : {}),
     };
   }
 
@@ -2418,6 +3326,13 @@ export class Composer {
     if (session) {
       await this.workspace.updateSession({ sessionId: session.id, reasoningEffort: option });
     }
+  }
+
+  /** Picks a level from the chip's menu and hands the caret back to the chat box. */
+  protected pickReasoning(option: string): void {
+    this.reasoningOpen.set(false);
+    this.focusInput();
+    void this.selectReasoning(option);
   }
 
   protected selectMode(modeId: string): void {

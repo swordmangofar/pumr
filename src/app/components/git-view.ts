@@ -6,6 +6,7 @@ import {
   effect,
   inject,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
@@ -28,12 +29,14 @@ import {
 import { WorkspaceService } from '../core/workspace.service';
 import { matchesAction } from '../core/hotkeys';
 import { SettingsService } from '../core/settings.service';
-import { GitService } from '../core/git.service';
+import { GitService, hasConflictMarkers } from '../core/git.service';
 import { ChangeStatusIcon } from './change-status-icon';
 import { DiffView } from './diff-view';
 import { FileIcon } from './file-icon';
 import { GitCommitMenu } from './git-commit-menu';
 import { GitFileMenu } from './git-file-menu';
+import { GitNameDialog, GitNameDialogResult } from './git-name-dialog';
+import { GitStashDialog, GitStashDialogResult } from './git-stash-dialog';
 import { DiffQuestion, HunkDiffView, LineActionRequest } from './hunk-diff-view';
 import { TypedInput } from './typed-input';
 
@@ -55,6 +58,14 @@ interface VirtualWindow {
   bottom: number;
 }
 
+interface CommitDraft {
+  subject: string;
+  description: string;
+  amend: boolean;
+}
+
+const EMPTY_COMMIT_DRAFT: CommitDraft = { subject: '', description: '', amend: false };
+
 @Component({
   selector: 'app-git-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -66,6 +77,8 @@ interface VirtualWindow {
     FileIcon,
     GitCommitMenu,
     GitFileMenu,
+    GitNameDialog,
+    GitStashDialog,
     HunkDiffView,
   ],
   template: `
@@ -87,9 +100,11 @@ interface VirtualWindow {
             <path d="M4 5.1v5.8M5.6 6.5h2.9a2 2 0 0 0 2-2v-.4" />
           </svg>
           @if (status(); as current) {
-            <span class="truncate text-[13px] font-semibold text-mist">
-              {{ current.branch ?? ('git.detached' | transloco) }}
-            </span>
+            @if (current.isRepo) {
+              <span class="truncate text-[13px] font-semibold text-mist">
+                {{ current.branch ?? ('git.detached' | transloco) }}
+              </span>
+            }
           }
           @if (status()?.upstream; as upstream) {
             <span class="shrink-0 text-[11px] text-mist/30">{{ upstream }}</span>
@@ -119,7 +134,52 @@ interface VirtualWindow {
           <button
             type="button"
             class="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs text-mist/60 transition-colors hover:bg-white/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-            [disabled]="busy()"
+            [disabled]="!canSync()"
+            [title]="'git.createBranch' | transloco"
+            (click)="branchDialogOpen.set(true)"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="4" cy="3.5" r="1.6" />
+              <circle cx="4" cy="12.5" r="1.6" />
+              <circle cx="12" cy="6.5" r="1.6" />
+              <path d="M4 5.1v5.8M5.6 6.5h2.9a2 2 0 0 0 2-2v-.4" />
+            </svg>
+            <span>{{ 'git.branch' | transloco }}</span>
+          </button>
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs text-mist/60 transition-colors hover:bg-white/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            [disabled]="!canStash()"
+            [title]="'git.stashCreate' | transloco"
+            (click)="stashDialogOpen.set(true)"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M2.5 3.5h11v3h-11z" />
+              <path d="M3.5 6.5v6h9v-6M6.5 9.5h3" />
+            </svg>
+            <span>{{ 'git.stash' | transloco }}</span>
+          </button>
+          <span class="mx-1 h-4 w-px shrink-0 bg-white/10" aria-hidden="true"></span>
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs text-mist/60 transition-colors hover:bg-white/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            [disabled]="!canSync()"
             [title]="'git.fetch' | transloco"
             (click)="run('fetch')"
           >
@@ -150,7 +210,7 @@ interface VirtualWindow {
           <button
             type="button"
             class="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs text-mist/60 transition-colors hover:bg-white/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-            [disabled]="busy()"
+            [disabled]="!canSync()"
             [title]="'git.pull' | transloco"
             (click)="run('pull')"
           >
@@ -171,7 +231,7 @@ interface VirtualWindow {
           <button
             type="button"
             class="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1 text-xs text-mist/60 transition-colors hover:bg-white/10 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-            [disabled]="busy()"
+            [disabled]="!canSync()"
             [title]="'git.push' | transloco"
             (click)="run('push')"
           >
@@ -258,7 +318,7 @@ interface VirtualWindow {
         }
 
         @if (!project()) {
-          <p class="p-4 text-sm text-mist/40">{{ 'workspace.noSession' | transloco }}</p>
+          <p class="p-4 text-sm text-mist/40">{{ 'sidebar.noProjects' | transloco }}</p>
         } @else if (!status()?.isRepo) {
           <div class="flex flex-col items-start gap-3 p-4">
             <p class="text-sm text-mist/40">{{ 'git.noRepo' | transloco }}</p>
@@ -657,15 +717,17 @@ interface VirtualWindow {
                   {{ 'git.staged' | transloco }}
                   <span class="ml-1 text-mist/25">{{ staged().length }}</span>
                 </span>
-                @if (staged().length > 0) {
+                @if (unstageable().length > 0) {
                   <div class="flex items-center gap-1">
-                    @if (markedStaged().length > 1) {
+                    @if (markedUnstageable().length > 1) {
                       <button
                         type="button"
                         class="rounded-md bg-accent/15 px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25"
                         (click)="unstageMarked()"
                       >
-                        {{ 'git.unstageSelected' | transloco: { count: markedStaged().length } }}
+                        {{
+                          'git.unstageSelected' | transloco: { count: markedUnstageable().length }
+                        }}
                       </button>
                     }
                     <button
@@ -722,18 +784,20 @@ interface VirtualWindow {
                           >
                         }
                       </button>
-                      <div
-                        class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                      >
-                        <button
-                          type="button"
-                          class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
-                          [title]="'git.unstage' | transloco"
-                          (click)="unstage(row.change.path)"
+                      @if (!isConflicted(row.change)) {
+                        <div
+                          class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
                         >
-                          {{ 'git.unstage' | transloco }}
-                        </button>
-                      </div>
+                          <button
+                            type="button"
+                            class="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-mist/60 transition-colors hover:bg-white/10 hover:text-accent"
+                            [title]="'git.unstage' | transloco"
+                            (click)="unstage(row.change.path)"
+                          >
+                            {{ 'git.unstage' | transloco }}
+                          </button>
+                        </div>
+                      }
                     </div>
                   }
                   <div [style.height.px]="stagedWindow().bottom"></div>
@@ -906,7 +970,7 @@ interface VirtualWindow {
                         [layout]="diffOptions().layout"
                         [wrap]="diffOptions().wrap"
                         [busy]="busy()"
-                        (lineAction)="onLineAction($event)"
+                        (lineAction)="onLineAction($event, active.context)"
                         (ask)="askPumr($event)"
                         (showWhitespace)="setDiffOption({ ignoreWhitespace: false })"
                       />
@@ -927,7 +991,7 @@ interface VirtualWindow {
                   class="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
                   [placeholder]="'git.commitSubject' | transloco"
                   [value]="subject()"
-                  (typedValue)="subject.set($event)"
+                  (typedValue)="editCommitDraft({ subject: $event })"
                 />
                 <button
                   type="button"
@@ -954,7 +1018,7 @@ interface VirtualWindow {
                 class="mt-1.5 w-full resize-none rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-mist placeholder:text-mist/30 focus:border-accent/50 focus:outline-none"
                 [placeholder]="'git.commitDescription' | transloco"
                 [value]="description()"
-                (typedValue)="description.set($event)"
+                (typedValue)="editCommitDraft({ description: $event })"
               ></textarea>
               <div class="mt-2 flex items-center gap-2">
                 <label class="flex cursor-pointer items-center gap-2 text-xs text-mist/60">
@@ -996,11 +1060,31 @@ interface VirtualWindow {
         [path]="menu.path"
         [paths]="menu.paths"
         [staged]="menu.staged"
-        [conflicted]="conflicted().includes(menu.path)"
+        [conflicted]="conflictedPaths().has(menu.path)"
+        [conflictedPaths]="conflictedPaths()"
         [x]="menu.x"
         [y]="menu.y"
         (closed)="closeFileMenu()"
       />
+    }
+
+    @if (branchDialogOpen()) {
+      <app-git-name-dialog
+        titleKey="git.createBranch"
+        labelKey="git.branchName"
+        placeholder="feature/my-branch"
+        hintKey="git.createBranchAt"
+        [hintParams]="{ branch: status()?.branch ?? 'HEAD' }"
+        checkoutLabelKey="git.checkoutAfterCreate"
+        confirmKey="git.create"
+        confirmCheckoutKey="git.createAndCheckout"
+        [submit]="createBranch"
+        (closed)="branchDialogOpen.set(false)"
+      />
+    }
+
+    @if (stashDialogOpen()) {
+      <app-git-stash-dialog [submit]="stashChanges" (closed)="stashDialogOpen.set(false)" />
     }
 
     @if (commitMenu(); as menu) {
@@ -1042,7 +1126,7 @@ export class GitView {
   private readonly settings = inject(SettingsService);
   private readonly transloco = inject(TranslocoService);
 
-  protected readonly project = this.workspace.activeProject;
+  protected readonly project = this.workspace.browseProject;
   private readonly gitState = this.git.scope(() => this.project()?.id ?? null);
   protected readonly status = this.gitState.status;
   protected readonly busy = this.gitState.busy;
@@ -1064,9 +1148,17 @@ export class GitView {
     revert: 'git.operation.revert',
   };
 
-  protected readonly subject = signal('');
-  protected readonly description = signal('');
-  protected readonly amend = signal(false);
+  private readonly projectId = computed(() => this.project()?.id ?? null);
+  /**
+   * The commit form of each project. This view stays mounted while the
+   * project shown changes, and a message or a ticked Amend that came along
+   * would rewrite the other project's last commit.
+   */
+  private readonly commitDrafts = signal<Record<string, CommitDraft>>({});
+  private readonly commitDraft = computed(() => this.draftOf(this.projectId()));
+  protected readonly subject = computed(() => this.commitDraft().subject);
+  protected readonly description = computed(() => this.commitDraft().description);
+  protected readonly amend = computed(() => this.commitDraft().amend);
   protected readonly detailTab = signal<'commit' | 'changes'>('commit');
   protected readonly selectedCommitFile = signal<string | null>(null);
   protected readonly searchTerm = signal('');
@@ -1125,6 +1217,12 @@ export class GitView {
         document.querySelector(`[data-git-commit="${hash}"]`)?.scrollIntoView({ block: 'nearest' });
       }, 0);
     });
+    // Rows marked in one project say nothing about another one, even where
+    // both list the same path.
+    effect(() => {
+      this.projectId();
+      untracked(() => this.clearMarked());
+    });
     effect(() => {
       const current = this.markedKeys();
       if (current.size === 0) {
@@ -1158,6 +1256,25 @@ export class GitView {
   protected readonly markedStaged = computed(() =>
     this.staged().filter((change) => this.isMarked(change.path, true)),
   );
+  /**
+   * The unmerged paths. They are listed as staged, but there is nothing to
+   * unstage: a conflict is resolved, and unstaging it would only lose it.
+   */
+  protected readonly conflictedPaths = computed(() => {
+    const paths = new Set(this.status()?.conflicted ?? []);
+    for (const change of this.staged()) {
+      if (change.status === 'U') {
+        paths.add(change.path);
+      }
+    }
+    return paths;
+  });
+  protected readonly unstageable = computed(() =>
+    this.staged().filter((change) => !this.isConflicted(change)),
+  );
+  protected readonly markedUnstageable = computed(() =>
+    this.unstageable().filter((change) => this.isMarked(change.path, true)),
+  );
   protected readonly ahead = computed(() => this.status()?.ahead ?? 0);
   protected readonly behind = computed(() => this.status()?.behind ?? 0);
   protected readonly branchTips = computed(() => {
@@ -1183,6 +1300,30 @@ export class GitView {
   protected readonly rowHeight = GIT_GRAPH_ROW_HEIGHT;
   protected readonly radius = GIT_GRAPH_RADIUS;
   protected readonly operation = computed(() => this.status()?.operation ?? null);
+  /** Fetch, pull and push need a repository; a plain folder only offers to create one. */
+  protected readonly canSync = computed(() => !this.busy() && this.status()?.isRepo === true);
+  /** Stashing needs local changes, and git refuses it in the middle of a merge or rebase. */
+  protected readonly canStash = computed(
+    () =>
+      this.canSync() &&
+      this.operation() === null &&
+      this.staged().length + this.unstaged().length > 0,
+  );
+  protected readonly branchDialogOpen = signal(false);
+  protected readonly stashDialogOpen = signal(false);
+  /** The new branch starts at HEAD, like the one the sidebar creates. */
+  protected readonly createBranch = (result: GitNameDialogResult) => {
+    const projectId = this.project()?.id;
+    return projectId
+      ? this.git.branchCreate(projectId, result.name, null, result.checkout)
+      : Promise.resolve();
+  };
+  protected readonly stashChanges = (result: GitStashDialogResult) => {
+    const projectId = this.project()?.id;
+    return projectId
+      ? this.git.stashPush(projectId, result.message || null, result.includeUntracked)
+      : Promise.resolve();
+  };
   /** A merge can be concluded with nothing new staged; everything else needs staged changes. */
   protected readonly canCommit = computed(
     () =>
@@ -1296,7 +1437,7 @@ export class GitView {
       if (staged) {
         this.unstageMarked();
       } else {
-        this.stageMarked();
+        void this.stageMarked();
       }
     }
   }
@@ -1464,8 +1605,13 @@ export class GitView {
     this.hunkView()?.openFind();
   }
 
-  /** Discarding lines cannot be undone, so it is confirmed like a whole-file discard. */
-  protected async onLineAction(request: LineActionRequest): Promise<void> {
+  /**
+   * Discarding lines cannot be undone, so it is confirmed like a whole-file
+   * discard. The project and the diff are the ones the lines were chosen in,
+   * with the `context` that diff was loaded with: while the confirmation is
+   * open an agent turn may load the diff again, or another project be shown.
+   */
+  protected async onLineAction(request: LineActionRequest, context: number): Promise<void> {
     const projectId = this.project()?.id;
     if (!projectId) {
       return;
@@ -1478,14 +1624,17 @@ export class GitView {
     ) {
       return;
     }
-    await this.git.applyLines(projectId, request.action, request.lines);
+    await this.git.applyLines(projectId, { ...request, context });
   }
 
   protected askPumr(question: DiffQuestion): void {
-    this.workspace.askInChat({
-      mention: { kind: 'file', value: question.path, label: this.baseName(question.path) },
-      text: question.text,
-    });
+    const projectId = this.project()?.id;
+    if (projectId) {
+      void this.workspace.askInChat(projectId, {
+        mention: { kind: 'file', value: question.path, label: this.baseName(question.path) },
+        text: question.text,
+      });
+    }
   }
 
   protected async resolveConflict(path: string, side: GitConflictSide): Promise<void> {
@@ -1501,7 +1650,7 @@ export class GitView {
     if (!projectId) {
       return;
     }
-    const markers = /^(<{7}|>{7})(\s|$)/m.test(content);
+    const markers = hasConflictMarkers(content);
     if (markers && !(await confirmWarning(this.transloco.translate('git.conflict.markersLeft')))) {
       return;
     }
@@ -1517,8 +1666,7 @@ export class GitView {
     try {
       const message = await this.git.generateCommitMessage(projectId);
       if (message) {
-        this.subject.set(message.subject);
-        this.description.set(message.body);
+        this.patchCommitDraft(projectId, { subject: message.subject, description: message.body });
       }
     } finally {
       this.generating.set(false);
@@ -1579,27 +1727,42 @@ export class GitView {
     }
   }
 
-  protected stageAll(): void {
+  /**
+   * Staging a conflicted file marks it resolved, so every way to stage asks
+   * first while such a file still has conflict markers in it.
+   */
+  protected async stageAll(): Promise<void> {
     const projectId = this.project()?.id;
-    if (projectId) {
+    if (projectId && (await this.git.confirmResolving(projectId, null))) {
       void this.git.stagePath(projectId, null);
     }
   }
 
+  /** Unstages everything but the conflicted files, which are named apart to leave them out. */
   protected unstageAll(): void {
     const projectId = this.project()?.id;
-    if (projectId) {
+    if (!projectId) {
+      return;
+    }
+    const paths = this.unstageable().map((change) => change.path);
+    if (paths.length === this.staged().length) {
       void this.git.unstagePath(projectId, null);
+    } else {
+      void this.git.unstagePaths(projectId, paths);
     }
   }
 
-  protected stage(path: string): void {
+  protected isConflicted(change: FileChange): boolean {
+    return this.conflictedPaths().has(change.path);
+  }
+
+  protected async stage(path: string): Promise<void> {
     if (this.isMarked(path, false) && this.markedUnstaged().length > 1) {
-      this.stageMarked();
+      await this.stageMarked();
       return;
     }
     const projectId = this.project()?.id;
-    if (projectId) {
+    if (projectId && (await this.git.confirmResolving(projectId, [path]))) {
       void this.git.stagePath(projectId, path);
     }
   }
@@ -1610,18 +1773,22 @@ export class GitView {
       return;
     }
     const projectId = this.project()?.id;
-    if (projectId) {
+    if (projectId && !this.conflictedPaths().has(path)) {
       void this.git.unstagePath(projectId, path);
     }
   }
 
-  protected stageMarked(): void {
+  protected async stageMarked(): Promise<void> {
     const projectId = this.project()?.id;
     const paths = this.markedUnstaged().map((change) => change.path);
     if (!projectId || paths.length === 0) {
       return;
     }
-    if (paths.length === this.unstaged().length) {
+    const everything = paths.length === this.unstaged().length;
+    if (!(await this.git.confirmResolving(projectId, paths))) {
+      return;
+    }
+    if (everything) {
       void this.git.stagePath(projectId, null);
     } else {
       void this.git.stagePaths(projectId, paths);
@@ -1629,9 +1796,10 @@ export class GitView {
     this.clearMarked();
   }
 
+  /** Unstages the marked files; conflicted ones among them stay as they are. */
   protected unstageMarked(): void {
     const projectId = this.project()?.id;
-    const paths = this.markedStaged().map((change) => change.path);
+    const paths = this.markedUnstageable().map((change) => change.path);
     if (!projectId || paths.length === 0) {
       return;
     }
@@ -1666,9 +1834,7 @@ export class GitView {
       .join('\n\n');
     try {
       await this.git.commit(projectId, message, this.amend());
-      this.subject.set('');
-      this.description.set('');
-      this.amend.set(false);
+      this.patchCommitDraft(projectId, EMPTY_COMMIT_DRAFT);
       if (push) {
         await this.git.runOperation(projectId, 'push');
       }
@@ -1678,18 +1844,41 @@ export class GitView {
   }
 
   protected async toggleAmend(): Promise<void> {
-    const next = !this.amend();
-    this.amend.set(next);
     const projectId = this.project()?.id;
-    if (!next || !projectId || this.subject().trim().length > 0) {
+    if (!projectId) {
+      return;
+    }
+    const next = !this.amend();
+    this.patchCommitDraft(projectId, { amend: next });
+    if (!next || this.subject().trim().length > 0) {
       return;
     }
     const head = await this.git.headMessage(projectId);
-    // The user may have unticked amend or started typing meanwhile.
-    if (head && this.amend() && this.subject().trim().length === 0) {
-      this.subject.set(head.subject);
-      this.description.set(head.body);
+    // The user may have unticked amend or started typing meanwhile, or be
+    // looking at another project by now: the message is this project's.
+    const draft = this.draftOf(projectId);
+    if (head && draft.amend && draft.subject.trim().length === 0) {
+      this.patchCommitDraft(projectId, { subject: head.subject, description: head.body });
     }
+  }
+
+  private draftOf(projectId: string | null): CommitDraft {
+    return (projectId ? this.commitDrafts()[projectId] : null) ?? EMPTY_COMMIT_DRAFT;
+  }
+
+  /** Changes the commit form of the project shown. */
+  protected editCommitDraft(patch: Partial<CommitDraft>): void {
+    const projectId = this.projectId();
+    if (projectId) {
+      this.patchCommitDraft(projectId, patch);
+    }
+  }
+
+  private patchCommitDraft(projectId: string, patch: Partial<CommitDraft>): void {
+    this.commitDrafts.update((drafts) => ({
+      ...drafts,
+      [projectId]: { ...(drafts[projectId] ?? EMPTY_COMMIT_DRAFT), ...patch },
+    }));
   }
 
   protected setPullStrategy(strategy: GitPullStrategy): void {

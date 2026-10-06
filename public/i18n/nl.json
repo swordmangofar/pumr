@@ -6,16 +6,18 @@
     "toggleSidebar": "Zijbalk in-/uitschakelen",
     "toggleRightPanel": "Rechterpaneel in-/uitschakelen",
     "toggleTerminal": "Terminal tonen/verbergen",
+    "keepAwake": "Wakker houden terwijl agents werken",
+    "keepAwakeOn": "De computer blijft wakker terwijl agents werken. Klik om uit te schakelen.",
+    "keepAwakeOff": "De computer kan in slaapstand gaan terwijl agents werken. Klik om hem wakker te houden.",
     "refresh": "Vernieuwen",
     "notTauri": "pumr moet binnen Tauri draaien. Start het met: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projecten",
+    "sessions": "Sessies",
     "workspace": "Werkruimte",
     "git": "Git",
     "addProject": "Project toevoegen",
     "newSession": "Nieuwe sessie",
-    "new": "Nieuw",
     "noProjects": "Nog geen projecten. Voeg een map toe om te beginnen.",
     "noSessions": "Geen sessies",
     "removeProject": "Project verwijderen",
@@ -36,8 +38,6 @@
     "yesterday": "Gisteren"
   },
   "workspace": {
-    "title": "Werkruimte",
-    "noSession": "Open een sessie om door de bestanden te bladeren.",
     "empty": "Geen bestanden gevonden.",
     "libraryRoot": "bibliotheek root",
     "noOpenFiles": "Geen geopende bestanden. Selecteer een bestand in de boomstructuur.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Tag {{ tag }} verwijderen?",
     "stashes": "Stashes",
     "stashCreate": "Wijzigingen opslaan",
+    "stash": "Stash",
+    "stashMessage": "Bericht (optioneel)",
+    "stashIncludeUntracked": "Niet-gevolgde bestanden meenemen",
     "stashApply": "Toepassen",
     "stashPop": "Terughalen",
     "stashDropConfirm": "{{ stash }} verwijderen?",
@@ -129,6 +132,7 @@
       "useTheirs": "Inkomende gebruiken (theirs)",
       "markResolved": "Markeren als opgelost",
       "fileHint": "Dit bestand heeft conflicten. Behoud één kant, of bewerk het bestand en markeer het als opgelost.",
+      "markersLeftIn": "Bestanden met conflicten die nog conflictmarkeringen bevatten (<<<<<<< of >>>>>>>): {{ count }}. Toch markeren als opgelost?",
       "markersLeft": "Het bestand bevat nog conflictmarkeringen (<<<<<<< of >>>>>>>). Toch markeren als opgelost?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Doelmap",
     "cloneChoose": "Kiezen…",
     "createBranch": "Branch maken",
+    "branch": "Branch",
     "branchName": "Branchnaam",
     "createBranchAt": "Branch maken op: {{branch}}",
     "checkoutAfterCreate": "Na aanmaken uitchecken",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Koppel een modelprovider in de instellingen om te beginnen met chatten.",
+    "noDefaultModel": "Nog geen standaardmodel gekozen. Open de instellingen, kies bij “Modelproviders” een model onder “Standaardmodel” en klik op “Opslaan”.",
     "openSettings": "Instellingen openen",
     "error": "Fout",
     "retry": "Opnieuw proberen",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} om te verzenden · {{ newLine }} voor een nieuwe regel",
     "hintStreaming": "{{ send }} om in de wachtrij te zetten · {{ stop }} om te stoppen",
     "hintRecall": "{{ recall }} voor de laatste prompt",
+    "hintCommands": "/ voor opdrachten",
     "handover": "Overdracht",
     "handovering": "Samenvatten…",
     "handoverHint": "Vat deze sessie samen en ga verder in een nieuwe",
@@ -328,6 +335,13 @@
     "compacting": "Context wordt gecomprimeerd",
     "compacted": "Context gecomprimeerd",
     "compactedHint": "Vanaf hier werkt het model met deze samenvatting in plaats van de berichten hierboven.",
+    "mcpStarting": "MCP-server {{ name }} wordt gestart",
+    "mcpIssues": "Sommige MCP-servers konden niet worden gebruikt voor dit bericht:",
+    "sideQuestion": "Tussenvraag",
+    "sideQuestionHint": "Stel een korte vraag over deze sessie of over iets anders. Het antwoord wordt niet aan de sessie toegevoegd.",
+    "sideQuestionPrivate": "Niet toegevoegd aan de sessie",
+    "sideQuestionAnswering": "Antwoordt…",
+    "sideQuestionStopped": "Gestopt",
     "interrupted": "Deze chat is onderbroken voordat de agent klaar was: pumr is gesloten of de computer ging in slaapstand. Je kunt verdergaan waar hij is gestopt.",
     "limitReached": "Gepauzeerd na {{ count }} gereedschapsoproepen zonder definitief antwoord. De limiet voorkomt dat een vastgelopen agent voor altijd in een lus blijft. Blijf het een nieuw budget geven of schakel automatisch doorgaan in.",
     "continue": "Doorgaan",
@@ -456,7 +470,8 @@
         "cascade": "Geweigerd samen met een ander verzoek",
         "stopped": "Gestopt",
         "timeout": "Time-out",
-        "cancelled": "Geannuleerd"
+        "cancelled": "Geannuleerd",
+        "hook": "Jouw hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Geen overeenkomsten. Blijf typen of druk op Escape.",
     "mentionFetch": "{{ url }} ophalen",
     "removeMention": "Verwijzing verwijderen",
+    "commandPrompt": "Past je prompt “{{ name }}” toe op wat je erna typt",
+    "commandEffort": "Stel in hoeveel het model redeneert",
+    "commandMode": "Wissel de modus van deze sessie",
+    "commandModel": "Wissel het model van deze sessie",
+    "commandProvider": "Kies de provider die het model levert",
+    "commandRevert": "Gaat terug naar je laatste prompt: alles daarna wordt verwijderd en de bestanden kunnen worden hersteld",
+    "commandRevertNone": "Er is nog geen prompt om naar terug te gaan",
+    "commandRevertRunning": "Stop eerst de agent",
+    "commandNoEffort": "Dit model heeft geen redeneerniveau om in te stellen.",
+    "commandNoProvider": "Alleen OpenRouter-modellen kunnen naar een provider worden geleid.",
     "textBlockWords": "{{ count }} woorden",
     "textBlockRemove": "Geplakte tekst verwijderen",
     "textBlockTitle": "Geplakte tekst",
@@ -634,7 +659,7 @@
     "alwaysOn": "Altijd aan",
     "editInSettings": "Bewerken in instellingen",
     "yourPrompts": "Jouw prompts",
-    "yourPromptsHint": "Ingeschakelde prompts worden toegevoegd aan de actieve systeemprompts. Bewerk ze of zet ingebouwde prompts terug naar hun originele tekst.",
+    "yourPromptsHint": "Roep een prompt aan vanuit het chatvak met een schuine streep en de naam, bijvoorbeeld /code-review. Die geldt dan alleen voor dat bericht. Bewerk ze of zet de ingebouwde terug naar hun oorspronkelijke tekst.",
     "addPrompt": "Nieuw",
     "customPrompt": "Aangepaste prompt",
     "promptName": "Promptnaam",
@@ -718,6 +743,8 @@
       "providers": "Providers",
       "agent": "Agentconfiguratie",
       "agentRules": "Agent whitelist en blacklist",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "Algemeen",
       "chat": "Chat",
       "appearance": "Weergave",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP-server",
       "workspace": "Werkruimte"
+    },
+    "sandbox": {
+      "title": "Sandbox voor opdrachten",
+      "hint": "Het besturingssysteem perkt elke opdracht in die de agent uitvoert, en alles wat die opdracht start. Het is een tweede laag achter de toestemmingsregels, voor een opdracht die ze verkeerd inschatten. Een opdracht die de sandbox tegenhoudt, kan vragen om erbuiten te draaien; dat wordt je elke keer gevraagd.",
+      "unavailable": "Dit systeem heeft geen sandbox die pumr kan gebruiken, dus opdrachten draaien zonder inperking. Daarvoor is macOS nodig, of Linux 5.19 of nieuwer met Landlock.",
+      "networkUnavailable": "Het netwerk afsluiten kan alleen op macOS.",
+      "modes": {
+        "off": "Uit",
+        "files": "Bestanden",
+        "filesAndNetwork": "Bestanden en netwerk"
+      },
+      "modeHints": {
+        "off": "Opdrachten draaien als jouw gebruiker, alleen beperkt door de toestemmingsregels.",
+        "files": "Opdrachten schrijven alleen naar het project, je extra mappen, tijdelijke mappen en de mappen die hieronder staan. Ze kunnen de mappen waarin sleutels staan niet lezen.",
+        "filesAndNetwork": "Hetzelfde, en opdrachten bereiken alleen deze computer, behalve opdrachten waarvan je de hosts hebt toegestaan. Pakketten installeren vraagt dan om buiten de sandbox te draaien."
+      },
+      "writable": "Mappen waarnaar opdrachten ook mogen schrijven",
+      "writableHint": "De caches van build-tools. Zonder deze caches mislukt een build bij zijn eerste download. Een pad begint met / of ~.",
+      "unreadable": "Mappen die opdrachten niet kunnen lezen",
+      "unreadableHint": "Waar sleutels en tokens staan. git, ssh en de cloudtools behouden de mappen waarmee ze werken, en een map die je voor opdrachten hebt vrijgegeven, blijft open.",
+      "excluded": "Opdrachten die buiten de sandbox draaien",
+      "excludedHint": "Voor tools die een eigen sandbox meebrengen en binnen deze sandbox mislukken, zoals browsertests. Een vermelding geeft aan hoe de opdrachtregel begint; met * is het een patroon voor de hele regel.",
+      "addCommand": "Opdracht toevoegen",
+      "noCommands": "Nog geen opdrachten toegevoegd."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Een hook is een opdracht van jou die pumr op een vast moment in het werk van de agent uitvoert. Het model beslist niet of hij wordt uitgevoerd en kan hem dus niet vergeten. Hooks draaien zoals je ze hebt geschreven, zonder toestemmingsvragen en buiten de sandbox.",
+      "protocol": "Een hook krijgt de details als JSON op de standaardinvoer (tool_name, tool_input, tool_response) en het bestand dat een aanroep noemt, als $PUMR_FILE. Exitcode 0 laat de agent doorgaan. Exitcode 2 geeft de uitvoer van de hook door aan de agent en weigert, vóór een toolaanroep, die aanroep.",
+      "add": "Hook toevoegen",
+      "empty": "Nog geen hooks toegevoegd.",
+      "remove": "Hook verwijderen",
+      "event": "Wanneer de hook draait",
+      "events": {
+        "beforeTool": "Vóór een toolaanroep",
+        "afterTool": "Na een toolaanroep",
+        "turnEnd": "Wanneer de agent wil afronden"
+      },
+      "tools": "Tools",
+      "toolsPlaceholder": "Elke tool, of namen zoals edit|write",
+      "files": "Bestanden",
+      "filesPlaceholder": "Elk bestand, of patronen zoals *.ts",
+      "command": "Opdracht",
+      "timeout": "Stoppen na (seconden)",
+      "project": "Project",
+      "allProjects": "Alle projecten"
     },
     "providers": {
       "title": "Modelproviders",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Wijzig dit alleen als je een proxy of een compatibele gateway gebruikt.",
     "defaultModel": "Standaardmodel",
     "defaultModelHint": "Wordt gebruikt voor nieuwe sessies.",
+    "defaultModelSetupTitle": "Kies een standaardmodel",
+    "defaultModelSetup": "Je provider is gekoppeld. Nieuwe sessies starten met het standaardmodel: kies het verderop op deze pagina onder “Standaardmodel” en klik op “Opslaan”. Je kunt in elke chat nog steeds van model wisselen.",
+    "defaultModelSetupAction": "Naar standaardmodel",
     "handoverModel": "Overdrachtsmodel",
     "handoverModelPlaceholder": "Gebruik het model van de huidige sessie",
     "handoverModelHint": "Model dat wordt gebruikt om een sessie samen te vatten bij overdracht. Laat leeg om het model van de huidige sessie te gebruiken.",
@@ -998,6 +1074,14 @@
       "mist": "Gedempte tekst",
       "white": "Tekst"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Wordt getoond in de kopbalk van de app en als app-pictogram zolang pumr actief is.",
+      "mascot": "Zittende poema",
+      "classic": "Klassiek gezicht",
+      "shaded": "Poema met schaduw",
+      "tailup": "Poema met geheven staart"
+    },
     "background": {
       "title": "App-achtergrond",
       "hint": "Kies een ingebouwde achtergrond of gebruik uw eigen afbeelding. Hij zit achter de glaspanelen en volgt jouw thema.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Nieuwe regel",
       "chatStop": "Antwoord stoppen",
       "chatRecallPrompt": "Laatste prompt terughalen",
+      "chatToggleMode": "Wisselen tussen plannen en programmeren",
+      "chatToggleModeHint": "Gaat terug naar de modus waarin de sessie vóór het plannen was.",
       "gitToggleStage": "Geselecteerde bestanden stagen of unstagen",
       "gitDiscardFiles": "Geselecteerde bestanden verwerpen",
       "gitSelectAllFiles": "Alle bestanden selecteren",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimaliseren",
       "fillScreen": "Scherm vullen",
       "fillScreenHint": "Het opgeroepen venster vult het actieve scherm in plaats van de vorige grootte te behouden.",
+      "shortcutError": "De systeembrede sneltoets kon niet worden geregistreerd en roept pumr dus niet op. Waarschijnlijk gebruikt een andere app deze toetscombinatie al: kies een andere en sla opnieuw op.",
+      "waylandHint": "Op Wayland kunnen apps geen systeembrede sneltoetsen registreren, dus deze sneltoets werkt hier niet betrouwbaar. Koppel in plaats daarvan de onderstaande opdracht aan een toets in de toetsenbordinstellingen van je bureaublad.",
+      "command": "Opdracht voor de sneltoets",
+      "commandHint": "Doet wat de sneltoets doet: roept pumr op, of verbergt of minimaliseert het wanneer het op de voorgrond staat. Koppel de opdracht aan een toets in de toetsenbordinstellingen van je bureaublad.",
+      "commandActions": "Sluit de opdracht voor één enkele actie in plaats daarvan af met een van deze opties:",
       "zoom": "Weergaveschaal",
       "zoomHint": "Schaalt de hele interface. Sneltoets: Ctrl/⌘ + + om in te zoomen, Ctrl/⌘ + - om uit te zoomen, Ctrl/⌘ + 0 om te resetten.",
       "zoomReset": "Resetten"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Opdracht toestaan",
     "denyCommand": "Opdracht blokkeren",
     "noDeniedCommandRules": "Geen geblokkeerde opdrachten.",
+    "mcpToolGrants": "Toegestane MCP-tools",
+    "mcpToolGrantsHint": "Tools van MCP-servers die zonder vragen worden uitgevoerd. Een vermelding geldt voor één tool van één server, ongeacht de argumenten, en vervalt zodra de configuratie van die server verandert. Gebruik \"altijd toestaan\" in een toestemmingsvraag om er een aan te maken.",
+    "noMcpToolGrants": "Nog geen altijd-toegestane MCP-tools.",
+    "secretFolders": "Mappen met vrijgegeven gevoelige bestanden",
+    "secretFoldersHint": "Opdrachten mogen de gevoelige bestanden (sleutels, tokens, inloggegevens) direct in deze mappen zonder vragen gebruiken. Submappen vallen er niet onder. Gebruik \"altijd toestaan\" in een toestemmingsvraag om er een aan te maken.",
+    "noSecretFolders": "Nog geen mappen met vrijgegeven gevoelige bestanden.",
     "scope": {
       "program": "Programma",
       "subcommand": "Programma + subopdracht",
@@ -1276,7 +1373,8 @@
       "file": "Bestand",
       "web": "Website",
       "websearch": "Zoeken op internet",
-      "folder": "Map"
+      "folder": "Map",
+      "hook": "Hook"
     },
     "allowAlways": "Altijd toestaan",
     "siteRuleLabel": "Website-regel (domein of glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Voegt de website en de subdomeinen toe aan de toegestane websites.",
       "option": "Website + subdomeinen"
     },
+    "secretScope": {
+      "title": "Gevoelige bestanden",
+      "hint": "Opdrachten mogen de sleutels, tokens en bestanden met inloggegevens direct in deze map dan zonder vragen gebruiken. Submappen vallen er niet onder.",
+      "option": "Gevoelige bestanden in deze map",
+      "chip": "gevoelige bestanden in {{ folder }}"
+    },
     "allowChat": "Toestaan in deze chat",
     "option": {
       "yes": "Ja",
@@ -1315,6 +1419,7 @@
     "customize": "Aanpassen",
     "justification": "Waarom",
     "keyboardHint": "Druk op 1–{{ count }} of gebruik ↑ ↓ en Enter · Esc weigert",
+    "mcpToolHint": "Niet meer vragen geldt voor elke aanroep van deze tool op deze server, ongeacht de argumenten.",
     "url": {
       "queryWarning": "Dit adres bevat veel gegevens in de querystring. Controleer of er niets privés in staat voordat je het toestaat."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Sta alleen dit verzoek toe.",
       "allowSession": "Onthouden in elke chat totdat de app opnieuw start.",
       "allowChat": "Opdrachtregels worden onthouden voor deze chat en de subagenten; mappen en websites totdat de app opnieuw start.",
+      "allowChatMcp": "Onthouden voor deze chat en de subagenten: elke aanroep van deze tool op deze server, ongeacht de argumenten.",
       "allowAlways": "Opgeslagen in je instellingen en geldt voor elke chat."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Nieuwe terminal",
     "close": "Terminal sluiten",
     "hide": "Terminal verbergen",
+    "run": "Uitvoeren in terminal",
     "noProject": "Open een sessie om de terminal te gebruiken.",
     "exited": "Proces beëindigd met code {{ code }}",
     "failed": "Kan de terminal niet starten: {{ error }}"

@@ -6,16 +6,18 @@
     "toggleSidebar": "Scoránaigh an barra taoibh",
     "toggleRightPanel": "Scoránaigh an painéal ar dheis",
     "toggleTerminal": "Taispeáin/folaigh an teirminéal",
+    "keepAwake": "Coinnigh ina dhúiseacht agus gníomhairí ag obair",
+    "keepAwakeOn": "Fanann an ríomhaire ina dhúiseacht agus gníomhairí ag obair. Cliceáil chun é a mhúchadh.",
+    "keepAwakeOff": "Féadfaidh an ríomhaire dul a chodladh agus gníomhairí ag obair. Cliceáil chun é a choinneáil ina dhúiseacht.",
     "refresh": "Athnuaigh",
     "notTauri": "Caithfidh pumr rith laistigh de Tauri. Tosaigh é le: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Tionscadail",
+    "sessions": "Seisiúin",
     "workspace": "Spás oibre",
     "git": "Git",
     "addProject": "Cuir tionscadal leis",
     "newSession": "Seisiún nua",
-    "new": "Nua",
     "noProjects": "Níl aon tionscadal ann fós. Cuir fillteán leis chun tosú.",
     "noSessions": "Níl aon seisiún ann",
     "removeProject": "Bain an tionscadal",
@@ -36,8 +38,6 @@
     "yesterday": "Inné"
   },
   "workspace": {
-    "title": "Spás oibre",
-    "noSession": "Oscail seisiún chun a chomhaid a bhrabhsáil.",
     "empty": "Níor aimsíodh aon chomhaid.",
     "libraryRoot": "fréamh leabharlainne",
     "noOpenFiles": "Gan comhaid oscailte. Roghnaigh comhad sa chrann.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Scrios clib {{ tag }}?",
     "stashes": "Stashes",
     "stashCreate": "Stáiseáil athruithe",
+    "stash": "Stáiseáil",
+    "stashMessage": "Teachtaireacht (roghnach)",
+    "stashIncludeUntracked": "Cuir comhaid gan rianú san áireamh",
     "stashApply": "Cuir i bhfeidhm",
     "stashPop": "Bain amach",
     "stashDropConfirm": "Scaoil {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Úsáid an leagan isteach (theirs)",
       "markResolved": "Marcáil mar réitithe",
       "fileHint": "Tá coinbhleachtaí sa chomhad seo. Coinnigh taobh amháin, nó cuir an comhad in eagar agus marcáil é mar réitithe.",
+      "markersLeftIn": "Comhaid in achrann a bhfuil marcóirí coinbhleachta fós iontu (<<<<<<< nó >>>>>>>): {{ count }}. An bhfuil tú ag iarraidh iad a mharcáil mar réitithe mar sin féin?",
       "markersLeft": "Tá marcóirí coinbhleachta fós sa chomhad (<<<<<<< nó >>>>>>>). An bhfuil tú ag iarraidh é a mharcáil mar réitithe mar sin féin?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Fillteán sprice",
     "cloneChoose": "Roghnaigh…",
     "createBranch": "Cruthaigh brainse",
+    "branch": "Brainse",
     "branchName": "Ainm an bhrainse",
     "createBranchAt": "Cruthaigh brainse ag: {{branch}}",
     "checkoutAfterCreate": "Aistrigh tar éis cruthaithe",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Taisce",
     "noKey": "Ceangail soláthraí múnlaí sna Socruithe chun tosú ag comhrá.",
+    "noDefaultModel": "Níl múnla réamhshocraithe roghnaithe fós. Oscail na Socruithe, roghnaigh múnla faoi “Múnla réamhshocraithe” in “Soláthraithe múnlaí” agus brúigh “Sábháil”.",
     "openSettings": "Oscail na socruithe",
     "error": "Earráid",
     "retry": "Bain triail eile as",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} chun seoladh · {{ newLine }} le haghaidh líne nua",
     "hintStreaming": "{{ send }} chun cur sa scuaine · {{ stop }} chun stopadh",
     "hintRecall": "{{ recall }} don leid is déanaí",
+    "hintCommands": "/ le haghaidh orduithe",
     "handover": "Aistriú",
     "handovering": "Á achoimriú…",
     "handoverHint": "Achoimrigh an seisiún seo agus lean ar aghaidh i gceann nua",
@@ -328,6 +335,13 @@
     "compacting": "An comhthéacs á dhlúthú",
     "compacted": "Comhthéacs dlúthaithe",
     "compactedHint": "As seo amach oibríonn an tsamhail ón achoimre seo in ionad na dteachtaireachtaí thuas.",
+    "mcpStarting": "Freastalaí MCP {{ name }} á thosú",
+    "mcpIssues": "Níorbh fhéidir roinnt freastalaithe MCP a úsáid don teachtaireacht seo:",
+    "sideQuestion": "Ceist taobh",
+    "sideQuestionHint": "Cuir ceist thapa faoin seisiún seo nó faoi rud ar bith eile. Ní chuirtear an freagra leis an seisiún.",
+    "sideQuestionPrivate": "Ní chuirtear leis an seisiún é",
+    "sideQuestionAnswering": "Ag freagairt…",
+    "sideQuestionStopped": "Stoptha",
     "interrupted": "Cuireadh isteach ar an gcomhrá seo sular chríochnaigh an gníomhaire: dúnadh pumr nó chuaigh an ríomhaire a chodladh. Is féidir leat leanúint ar aghaidh ón áit ar stop sé.",
     "limitReached": "Ar sos tar éis glaonna uirlis {{ count }} gan freagra deiridh. Cuireann an teorainn cosc ​​ar ghníomhaire greamaithe ó lúbadh go deo. Lean ort le buiséad úr a thabhairt dó, nó cuir an t-uathoibríoch ar siúl.",
     "continue": "Lean ort",
@@ -456,7 +470,8 @@
         "cascade": "Séanta le hiarratas eile",
         "stopped": "Stoptha",
         "timeout": "Imithe thar am",
-        "cancelled": "Cealaithe"
+        "cancelled": "Cealaithe",
+        "hook": "Do hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Níl aon mheaitseáil. Lean ort ag clóscríobh nó brúigh Escape.",
     "mentionFetch": "Faigh {{ url }}",
     "removeMention": "Bain an tagairt",
+    "commandPrompt": "Cuireann sé do leid “{{ name }}” i bhfeidhm ar a scríobhann tú ina dhiaidh",
+    "commandEffort": "Socraigh cé mhéad réasúnaíochta a dhéanann an múnla",
+    "commandMode": "Athraigh mód an tseisiúin seo",
+    "commandModel": "Athraigh múnla an tseisiúin seo",
+    "commandProvider": "Roghnaigh an soláthraí a sholáthraíonn an múnla",
+    "commandRevert": "Téann sé ar ais chuig an leid is déanaí uait: baintear a tháinig ina diaidh agus is féidir na comhaid a aischur",
+    "commandRevertNone": "Níl aon leid ann fós le dul ar ais chuici",
+    "commandRevertRunning": "Stop an gníomhaire ar dtús",
+    "commandNoEffort": "Níl aon leibhéal réasúnaíochta le socrú ag an múnla seo.",
+    "commandNoProvider": "Ní féidir ach múnlaí OpenRouter a threorú chuig soláthraí.",
     "textBlockWords": "{{ count }} focal",
     "textBlockRemove": "Bain téacs greamaithe",
     "textBlockTitle": "Téacs greamaithe",
@@ -634,7 +659,7 @@
     "alwaysOn": "Ar siúl i gcónaí",
     "editInSettings": "Cuir in eagar sna socruithe",
     "yourPrompts": "Do chuid leideanna",
-    "yourPromptsHint": "Cuirtear leideanna cumasaithe le deireadh na leideanna córais gníomhacha. Cuir in eagar iad nó athshocraigh leideanna ionsuite chuig a mbuntéacs.",
+    "yourPromptsHint": "Glaoigh ar leid ón mbosca comhrá le slais agus a hainm, mar shampla /code-review. Ní bhaineann sí ansin ach leis an teachtaireacht sin. Cuir in eagar iad nó athshocraigh na cinn ionsuite go dtí a mbuntéacs.",
     "addPrompt": "Nua",
     "customPrompt": "Leid shaincheaptha",
     "promptName": "Ainm na leide",
@@ -718,6 +743,8 @@
       "providers": "Soláthraithe",
       "agent": "Cumraíocht an ghníomhaire",
       "agentRules": "Liosta bán agus liosta dubh an ghníomhaire",
+      "sandbox": "Bosca gainimh",
+      "hooks": "Hooks",
       "general": "Ginearálta",
       "chat": "Comhrá",
       "appearance": "Cuma",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP server",
       "workspace": "Spás oibre"
+    },
+    "sandbox": {
+      "title": "Bosca gainimh d'orduithe",
+      "hint": "Cuireann an córas oibriúcháin srian ar gach ordú a ritheann an gníomhaire, agus ar cibé rud a thosaíonn an t-ordú sin. Is é an dara sraith é, taobh thiar de na rialacha ceada, d'ordú a mheasann siad go mícheart. Is féidir le hordú atá stoptha ag an mbosca gainimh iarraidh rith lasmuigh de; fiafraítear díot gach uair.",
+      "unavailable": "Níl aon bhosca gainimh ar an gcóras seo is féidir le pumr a úsáid, mar sin ritheann orduithe gan srian. Teastaíonn macOS, nó Linux 5.19 nó níos nuaí le Landlock.",
+      "networkUnavailable": "Ní féidir an líonra a dhúnadh ach ar macOS.",
+      "modes": {
+        "off": "As",
+        "files": "Comhaid",
+        "filesAndNetwork": "Comhaid agus líonra"
+      },
+      "modeHints": {
+        "off": "Ritheann orduithe mar d'úsáideoir, gan ach na rialacha ceada á gcoinneáil siar.",
+        "files": "Ní scríobhann orduithe ach sa tionscadal, i d'fhillteáin bhreise, i bhfillteáin shealadacha agus sna fillteáin atá liostaithe thíos. Ní féidir leo na fillteáin ina bhfuil eochracha a léamh.",
+        "filesAndNetwork": "Mar an gcéanna, agus ní shroicheann orduithe ach an ríomhaire seo, seachas orduithe ar cheadaigh tú a n-óstaigh. Ansin iarrann suiteáil pacáistí rith lasmuigh den bhosca gainimh."
+      },
+      "writable": "Fillteáin ar féidir le horduithe scríobh iontu freisin",
+      "writableHint": "Taiscí na n-uirlisí tógála. Gan iad, teipeann ar thógáil ar a céad íoslódáil. Tosaíonn cosán le / nó ~.",
+      "unreadable": "Fillteáin nach féidir le horduithe a léamh",
+      "unreadableHint": "An áit a mbíonn eochracha agus comharthaí. Coinníonn git, ssh agus na huirlisí néil na fillteáin a n-oibríonn siad leo, agus fanann fillteán a cheadaigh tú d'orduithe ar oscailt.",
+      "excluded": "Orduithe a ritheann lasmuigh den bhosca gainimh",
+      "excludedHint": "D'uirlisí a thugann a mbosca gainimh féin leo agus a dteipeann orthu laistigh den cheann seo, amhail tástálacha brabhsálaí. Ainmníonn iontráil an chaoi a dtosaíonn líne an ordaithe; le * is patrún don líne iomlán í.",
+      "addCommand": "Cuir ordú leis",
+      "noCommands": "Níor cuireadh aon ordú leis fós."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Is ordú de do chuid féin é hook, a ritheann pumr ag pointe socraithe in obair an ghníomhaire. Ní chinneann an múnla an ritheann sé, mar sin ní féidir leis dearmad a dhéanamh air. Ritheann hooks mar a scríobh tú iad, gan leideanna ceada agus lasmuigh den bhosca gainimh.",
+      "protocol": "Faigheann hook na sonraí mar JSON ar an ionchur caighdeánach (tool_name, tool_input, tool_response) agus an comhad a ainmníonn glao mar $PUMR_FILE. Ligeann cód scoir 0 don ghníomhaire leanúint ar aghaidh. Tugann cód scoir 2 a bhfuil priontáilte ag an hook don ghníomhaire agus, roimh ghlao uirlise, diúltaíonn sé don ghlao.",
+      "add": "Cuir hook leis",
+      "empty": "Níor cuireadh aon hook leis fós.",
+      "remove": "Bain an hook",
+      "event": "Cathain a ritheann an hook",
+      "events": {
+        "beforeTool": "Roimh ghlao uirlise",
+        "afterTool": "Tar éis glao uirlise",
+        "turnEnd": "Nuair is mian leis an ngníomhaire críochnú"
+      },
+      "tools": "Uirlisí",
+      "toolsPlaceholder": "Gach uirlis, nó ainmneacha amhail edit|write",
+      "files": "Comhaid",
+      "filesPlaceholder": "Gach comhad, nó patrúin amhail *.ts",
+      "command": "Ordú",
+      "timeout": "Stop tar éis (soicindí)",
+      "project": "Tionscadal",
+      "allProjects": "Gach tionscadal"
     },
     "providers": {
       "title": "Soláthraithe múnlaí",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Ná hathraigh é seo ach amháin má úsáideann tú seachfhreastalaí nó geata comhoiriúnach.",
     "defaultModel": "Múnla réamhshocraithe",
     "defaultModelHint": "Úsáidtear do sheisiúin nua é.",
+    "defaultModelSetupTitle": "Roghnaigh múnla réamhshocraithe",
+    "defaultModelSetup": "Tá do sholáthraí ceangailte. Tosaíonn seisiúin nua leis an múnla réamhshocraithe: roghnaigh é faoi “Múnla réamhshocraithe” níos faide síos ar an leathanach seo agus brúigh “Sábháil”. Is féidir leat an múnla a athrú i ngach comhrá fós.",
+    "defaultModelSetupAction": "Téigh go dtí an múnla réamhshocraithe",
     "handoverModel": "Múnla aistrithe",
     "handoverModelPlaceholder": "Úsáid múnla an tseisiúin reatha",
     "handoverModelHint": "An múnla a úsáidtear chun seisiún a achoimriú nuair a aistrítear é. Fág folamh chun múnla an tseisiúin reatha a úsáid.",
@@ -998,6 +1074,14 @@
       "mist": "Téacs maol",
       "white": "Téacs"
     },
+    "logo": {
+      "title": "Lógó",
+      "hint": "Taispeántar é i gceanntásc na haipe agus mar dheilbhín na haipe fad a bhíonn pumr ar siúl.",
+      "mascot": "Púma ina shuí",
+      "classic": "Aghaidh chlasaiceach",
+      "shaded": "Púma scáthaithe",
+      "tailup": "Púma lena eireaball in airde"
+    },
     "background": {
       "title": "Cúlra app",
       "hint": "Roghnaigh cúlra ionsuite nó úsáid d'íomhá féin. Suíonn sé taobh thiar de na painéil ghloine agus leanann sé do théama.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Líne nua",
       "chatStop": "Stop an freagra",
       "chatRecallPrompt": "Aisghair an leid is déanaí",
+      "chatToggleMode": "Athraigh idir pleanáil agus códú",
+      "chatToggleModeHint": "Téann sé ar ais chuig an mód ina raibh an seisiún roimh an bpleanáil.",
       "gitToggleStage": "Ullmhaigh nó dí-ullmhaigh na comhaid roghnaithe",
       "gitDiscardFiles": "Caith amach na comhaid roghnaithe",
       "gitSelectAllFiles": "Roghnaigh gach comhad",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Íoslaghdaigh",
       "fillScreen": "Líon an scáileán",
       "fillScreenHint": "Líonann an fhuinneog a ghlaoitear an monatóir gníomhach in ionad a méid roimhe a choinneáil.",
+      "shortcutError": "Níorbh fhéidir an t-aicearra ar fud an chórais a chlárú, mar sin ní ghlaonn sé ar pumr. Is dócha go bhfuil aip eile ag úsáid na teaglama eochracha seo: roghnaigh ceann eile agus sábháil arís.",
+      "waylandHint": "Ar Wayland ní féidir le haipeanna aicearraí ar fud an chórais a chlárú, mar sin ní oibríonn an t-aicearra seo go hiontaofa anseo. Ina ionad sin, ceangail an t-ordú thíos le heochair i socruithe méarchláir do dheisce.",
+      "command": "Ordú don aicearra",
+      "commandHint": "Déanann sé an rud céanna leis an aicearra: tugann sé pumr chun tosaigh, nó ceileann nó íoslaghdaíonn sé é nuair atá sé chun tosaigh. Ceangail é le heochair i socruithe méarchláir do dheisce.",
+      "commandActions": "Le haghaidh gnímh aonair, cuir ceann díobh seo ag deireadh an ordaithe ina ionad:",
       "zoom": "Scálú taispeána",
       "zoomHint": "Scálaíonn sé an comhéadan iomlán. Aicearra: Ctrl/⌘ + + chun zúmáil isteach, Ctrl/⌘ + - chun zúmáil amach, Ctrl/⌘ + 0 chun athshocrú.",
       "zoomReset": "Athshocraigh"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Ceadaigh ordú",
     "denyCommand": "Blocáil ordú",
     "noDeniedCommandRules": "Níl aon ordú blocáilte.",
+    "mcpToolGrants": "Uirlisí MCP ceadaithe",
+    "mcpToolGrantsHint": "Uirlisí freastalaithe MCP a ritheann gan fiafraí. Baineann iontráil le huirlis amháin de chuid freastalaí amháin, is cuma cad iad na hargóintí, agus scoireann sí de bheith i bhfeidhm nuair a athraíonn cumraíocht an fhreastalaí sin. Úsáid \"ceadaigh i gcónaí\" i leid ceada chun ceann a chruthú.",
+    "noMcpToolGrants": "Níl aon uirlisí MCP a cheadaítear i gcónaí fós.",
+    "secretFolders": "Fillteáin a bhfuil a gcomhaid íogaire ceadaithe",
+    "secretFoldersHint": "Féadfaidh orduithe na comhaid íogaire (eochracha, comharthaí, dintiúir) atá go díreach sna fillteáin seo a úsáid gan fiafraí. Ní áirítear fofhillteáin. Úsáid \"ceadaigh i gcónaí\" i leid ceada chun ceann a chruthú.",
+    "noSecretFolders": "Níl aon fhillteáin a bhfuil a gcomhaid íogaire ceadaithe fós.",
     "scope": {
       "program": "Clár",
       "subcommand": "Ríomhchlár + fo-ordú",
@@ -1276,7 +1373,8 @@
       "file": "Comhad",
       "web": "Suíomh Gréasáin",
       "websearch": "Cuardach gréasáin",
-      "folder": "Fillteán"
+      "folder": "Fillteán",
+      "hook": "Hook"
     },
     "allowAlways": "Ceadaigh i gcónaí",
     "siteRuleLabel": "Riail suímh ghréasáin (fearann nó glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Cuireann sé an suíomh gréasáin agus a fhofhearainn leis na suíomhanna gréasáin ceadaithe.",
       "option": "Suíomh gréasáin + fofhearainn"
     },
+    "secretScope": {
+      "title": "Comhaid íogaire",
+      "hint": "Féadfaidh orduithe ansin na heochracha, na comharthaí agus na comhaid dintiúr atá go díreach san fhillteán seo a úsáid gan fiafraí. Ní áirítear fofhillteáin.",
+      "option": "Comhaid íogaire san fhillteán seo",
+      "chip": "comhaid íogaire in {{ folder }}"
+    },
     "allowChat": "Ceadaigh sa chomhrá seo",
     "option": {
       "yes": "Tá",
@@ -1315,6 +1419,7 @@
     "customize": "Saincheap",
     "justification": "Cén fáth",
     "keyboardHint": "Brúigh 1–{{ count }} nó úsáid ↑ ↓ agus Enter · Séanann Esc",
+    "mcpToolHint": "Gan fiafraí arís, ritear gach glao ar an uirlis seo ar an bhfreastalaí seo, is cuma cad iad na hargóintí.",
     "url": {
       "queryWarning": "Iompraíonn an seoladh seo go leor sonraí ina theaghrán iarratais. Déan cinnte nach bhfuil aon rud príobháideach ann sula gceadaíonn tú é."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Ceadaigh an t-iarratas seo amháin.",
       "allowSession": "Cuimhnítear air i ngach comhrá go dtí go n-atosaítear an aip.",
       "allowChat": "Cuimhnítear rialacha ordaithe don chomhrá seo agus dá fho-ghníomhairí; fillteáin agus suíomhanna gréasáin go dtí go n-atosaítear an aip.",
+      "allowChatMcp": "Cuimhnítear don chomhrá seo agus dá fho-ghníomhairí: gach glao ar an uirlis seo ar an bhfreastalaí seo, is cuma cad iad na hargóintí.",
       "allowAlways": "Sábháiltear i do shocruithe é agus baineann sé le gach comhrá."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Teirminéal nua",
     "close": "Dún an teirminéal",
     "hide": "Folaigh an teirminéal",
+    "run": "Rith sa teirminéal",
     "noProject": "Oscail seisiún chun an teirminéal a úsáid.",
     "exited": "Scoir an próiseas le cód {{ code }}",
     "failed": "Níorbh fhéidir an teirminéal a thosú: {{ error }}"

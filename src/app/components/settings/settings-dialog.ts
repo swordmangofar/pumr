@@ -6,11 +6,13 @@ import { AgentSettings } from './agent-settings';
 import { AppearanceSettings } from './appearance-settings';
 import { ChatSettings } from './chat-settings';
 import { GeneralSettings } from './general-settings';
+import { HooksSettings } from './hooks-settings';
 import { HotkeysSettings } from './hotkeys-settings';
 import { McpSettings } from './mcp-settings';
 import { AgentRulesSettings } from './agent-rules-settings';
 import { NotificationsSettings } from './notifications-settings';
 import { ProvidersSettings } from './providers-settings';
+import { SandboxSettings } from './sandbox-settings';
 import { SettingsDraftService } from './settings-draft.service';
 import { SkillsSettings } from './skills-settings';
 import { WindowSettings } from './window-settings';
@@ -45,6 +47,24 @@ const CATEGORIES: Category[] = [
     id: 'agentRules',
     label: 'settings.categories.agentRules',
     icon: ['M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z', 'm9 12 2 2 4-4'],
+  },
+  {
+    id: 'sandbox',
+    label: 'settings.categories.sandbox',
+    icon: [
+      'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
+      'M3.3 7 12 12l8.7-5',
+      'M12 22V12',
+    ],
+  },
+  {
+    id: 'hooks',
+    label: 'settings.categories.hooks',
+    icon: [
+      'M18 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+      'M18 8v5a6 6 0 0 1-12 0v-2',
+      'm3 14 3-3 3 3',
+    ],
   },
   {
     id: 'general',
@@ -126,6 +146,8 @@ const CATEGORIES: Category[] = [
     ProvidersSettings,
     AgentSettings,
     AgentRulesSettings,
+    SandboxSettings,
+    HooksSettings,
     GeneralSettings,
     ChatSettings,
     AppearanceSettings,
@@ -215,6 +237,12 @@ const CATEGORIES: Category[] = [
               }
               @case ('agentRules') {
                 <app-agent-rules-settings />
+              }
+              @case ('sandbox') {
+                <app-sandbox-settings />
+              }
+              @case ('hooks') {
+                <app-hooks-settings />
               }
               @case ('general') {
                 <app-general-settings />

@@ -8,10 +8,11 @@ use crate::mcp::McpManager;
 use crate::mentions;
 use crate::models::{
     Attachment, CommandRule, CompactResult, EndpointInfo, EventSink, FileChange, FileDiff,
-    GitBlameLine, GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus, Mention,
-    Message, ModelInfo, PermissionDecision, ProcessInfo, Project, ProjectRule, ProviderInfo,
-    ProviderStatus, QuestionAnswer, RoutedEvent, RunningTurns, Session, SpendStats, SpendSummary,
-    StreamEvent, WorkspaceEntry, WorkspaceFile,
+    GitBlameLine, GitCommit, GitCommitDetail, GitHunkDiff, GitInfo, GitRefs, GitStatus,
+    McpToolGrant, Mention, Message, ModelInfo, PermissionDecision, ProcessInfo, Project,
+    ProjectRule, ProviderInfo, ProviderStatus, QuestionAnswer, RoutedEvent, RunningTurns, Session,
+    SideAnswer, SideAnswerEvent, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry,
+    WorkspaceFile,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::catalog::{self, ProviderDef, ProviderKind};
@@ -63,12 +64,30 @@ pub fn save_settings(
     }
     let mut settings = settings;
     keep_key_flags(&mut settings, &state.settings());
+    keep_granted(&mut settings, &state.settings());
     drop_default_providers(&mut settings);
     config::save_settings(&state.settings_path, &settings)?;
     state.power.set_enabled(settings.interface.keep_awake);
     crate::window::apply(&app, &settings.window);
+    crate::app_icon::apply(&app, &settings.appearance.logo);
     state.set_settings(settings.clone());
     Ok(settings)
+}
+
+/// A remembered approval for an MCP tool, and a folder whose sensitive files
+/// commands may use, come from a prompt the user answered: saving the
+/// settings may drop one and never adds one.
+fn keep_granted(settings: &mut Settings, current: &Settings) {
+    let tools = &current.permissions.mcp_tool_grants;
+    settings
+        .permissions
+        .mcp_tool_grants
+        .retain(|grant| tools.contains(grant));
+    let folders = &current.permissions.secret_folders;
+    settings
+        .permissions
+        .secret_folders
+        .retain(|folder| folders.contains(folder));
 }
 
 /// The provider key is sent to whatever host this URL points at, so require
@@ -112,9 +131,46 @@ pub fn suspend_window_shortcut(
     if suspended {
         crate::window::suspend(&app);
     } else {
-        crate::window::apply(&app, &state.settings().window);
+        // Only the shortcut: a zoom being previewed in the settings is not
+        // saved yet and must not jump back.
+        crate::window::apply_shortcut(&app, &state.settings().window);
     }
     Ok(())
+}
+
+/// What the sandbox around the agent's commands can do on this machine, for
+/// the settings.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxSupport {
+    /// Whether commands can be confined at all.
+    pub files: bool,
+    /// Whether the network can be closed for them as well.
+    pub network: bool,
+}
+
+#[tauri::command]
+pub fn get_sandbox_support() -> SandboxSupport {
+    let support = crate::sandbox::support();
+    SandboxSupport {
+        files: support.files,
+        network: support.network,
+    }
+}
+
+/// How the window can be summoned on this desktop: the command line that
+/// toggles it, whether a system-wide shortcut works here at all, and why the
+/// one in the settings could not be registered.
+#[tauri::command]
+pub fn get_window_control() -> crate::control::WindowControl {
+    crate::control::window_control()
+}
+
+/// Whether the webview paints without GPU compositing, which the interface
+/// answers with cheaper effects (see [`crate::rendering::software`]).
+#[tauri::command]
+pub fn is_software_rendered() -> bool {
+    crate::rendering::software()
 }
 
 /// Applies an interface zoom to the webview, e.g. while previewing it in the
@@ -906,7 +962,8 @@ pub fn list_workspace_entries(
 }
 
 /// Reads a project file for the workspace viewer. The path must resolve inside
-/// the project root; binary or unreadable files open as an empty viewer.
+/// the project root. A file that is not text comes back marked as binary and
+/// without content; one that does not exist yet opens empty.
 #[tauri::command]
 pub fn read_workspace_file(
     state: State<'_, AppState>,
@@ -914,19 +971,33 @@ pub fn read_workspace_file(
     path: String,
 ) -> Result<WorkspaceFile> {
     let project = state.db.get_project(&project_id)?;
-    let root = PathBuf::from(&project.path);
-    let absolute = crate::permissions::resolve_inside_project(&root, &path)
+    read_project_file(Path::new(&project.path), &path)
+}
+
+fn read_project_file(root: &Path, path: &str) -> Result<WorkspaceFile> {
+    let absolute = crate::permissions::resolve_inside_project(root, path)
         .ok_or_else(|| AppError::msg("path is outside the project"))?;
-    let content = std::fs::read_to_string(&absolute).unwrap_or_default();
+    let (content, binary) = match std::fs::read(&absolute) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => (text, false),
+            // Shown as an empty file, it would be saved as one.
+            Err(_) => (String::new(), true),
+        },
+        // Saving what is typed into it creates the file.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
+        Err(error) => return Err(error.into()),
+    };
     Ok(WorkspaceFile {
         path: path.replace('\\', "/"),
         content,
-        language: language_for(&path).to_string(),
+        language: language_for(path).to_string(),
+        binary,
     })
 }
 
 /// Writes a file edited in the workspace viewer. The path must resolve inside
-/// the project root; missing parent directories are created.
+/// the project root; missing parent directories are created. A file that is
+/// not text is left as it is.
 #[tauri::command]
 pub fn write_workspace_file(
     state: State<'_, AppState>,
@@ -935,9 +1006,19 @@ pub fn write_workspace_file(
     content: String,
 ) -> Result<()> {
     let project = state.db.get_project(&project_id)?;
-    let root = PathBuf::from(&project.path);
-    let absolute = crate::permissions::resolve_inside_project(&root, &path)
+    write_project_file(Path::new(&project.path), &path, &content)
+}
+
+fn write_project_file(root: &Path, path: &str, content: &str) -> Result<()> {
+    let absolute = crate::permissions::resolve_inside_project(root, path)
         .ok_or_else(|| AppError::msg("path is outside the project"))?;
+    // The viewer was never given such a file's content, so whatever it sends
+    // would replace bytes it has not seen.
+    if std::fs::read(&absolute).is_ok_and(|bytes| std::str::from_utf8(&bytes).is_err()) {
+        return Err(AppError::msg(
+            "This file is not text and cannot be saved from the editor.",
+        ));
+    }
     if let Some(parent) = absolute.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1093,6 +1174,8 @@ mod permission_rule_tests {
             scope_options: options(command),
             folders: Vec::new(),
             hosts: Vec::new(),
+            mcp_tool: None,
+            secret_folders: Vec::new(),
             url: None,
             session_id: "chat".into(),
             grant_session_id: "chat".into(),
@@ -1143,8 +1226,8 @@ mod permission_rule_tests {
         )
         .is_ask());
 
-        // An MCP prompt carries no command and no scopes, so nothing is
-        // remembered for it.
+        // An MCP prompt carries no command and no scopes, so no command rule
+        // is remembered for it: what it remembers is its tool.
         let mcp = crate::broker::PendingPrompt {
             kind: "command".into(),
             command: None,
@@ -1153,6 +1236,13 @@ mod permission_rule_tests {
             scope_options: Vec::new(),
             folders: Vec::new(),
             hosts: Vec::new(),
+            mcp_tool: Some(McpToolGrant {
+                server: "codegraph".into(),
+                tool: "codegraph_explore".into(),
+                source: "opencode.json".into(),
+                fingerprint: "aaaa".into(),
+            }),
+            secret_folders: Vec::new(),
             url: None,
             session_id: "chat".into(),
             grant_session_id: "chat".into(),
@@ -1163,6 +1253,180 @@ mod permission_rule_tests {
         let mut other_kind = pending;
         other_kind.kind = "web".into();
         assert!(command_rules_for_decision(&other_kind, "deny_always", vec![]).is_empty());
+    }
+
+    fn mcp_grant(tool: &str) -> McpToolGrant {
+        McpToolGrant {
+            server: "codegraph".into(),
+            tool: tool.into(),
+            source: "opencode.json".into(),
+            fingerprint: "aaaa".into(),
+        }
+    }
+
+    #[test]
+    fn a_remembering_allow_keeps_the_mcp_tool_for_the_chat_or_in_the_settings() {
+        use crate::permissions::McpGrantScope;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("pumr.sqlite")).unwrap();
+        db.migrate().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        let state = AppState::new(
+            db,
+            dir.path().to_path_buf(),
+            settings_path.clone(),
+            Settings::default(),
+        );
+        let grant = mcp_grant("codegraph_explore");
+        let scope = |chat: &str| state.permissions.mcp_tool_grant_scope(chat, &grant);
+
+        // A plain Yes and a No remember nothing.
+        for decision in ["allow_once", "deny", "deny_always"] {
+            assert!(!remember_mcp_tool(&state, "chat", &grant, decision).unwrap());
+        }
+        assert_eq!(scope("chat"), None);
+
+        // In this chat: that chat only, and nothing is written to disk.
+        assert!(remember_mcp_tool(&state, "chat", &grant, "allow_session").unwrap());
+        assert_eq!(scope("chat"), Some(McpGrantScope::Chat));
+        assert_eq!(scope("other"), None);
+        assert!(state.settings().permissions.mcp_tool_grants.is_empty());
+        assert!(!settings_path.exists());
+
+        // Always: every chat, saved once and there again after a restart.
+        for _ in 0..2 {
+            assert!(remember_mcp_tool(&state, "chat", &grant, "allow_always").unwrap());
+        }
+        assert_eq!(scope("other"), Some(McpGrantScope::Always));
+        let stored = config::load_settings(&settings_path);
+        assert_eq!(stored.permissions.mcp_tool_grants, vec![grant.clone()]);
+    }
+
+    #[test]
+    fn releasing_a_secret_folder_holds_for_the_chat_or_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("pumr.sqlite")).unwrap();
+        db.migrate().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        let state = AppState::new(
+            db,
+            dir.path().to_path_buf(),
+            settings_path.clone(),
+            Settings::default(),
+        );
+        let folders = vec!["/home/me/secrets/credentials".to_string()];
+        let released = |chat: &str| state.permissions.secret_folders_for(chat);
+
+        // A plain Yes, a No, and a remembering Yes without a folder.
+        for decision in ["allow_once", "deny", "deny_always"] {
+            assert!(!release_secret_folders(&state, "chat", &folders, decision).unwrap());
+        }
+        assert!(!release_secret_folders(&state, "chat", &[], "allow_always").unwrap());
+        assert!(released("chat").is_empty());
+
+        assert!(release_secret_folders(&state, "chat", &folders, "allow_session").unwrap());
+        assert_eq!(released("chat"), vec![PathBuf::from(&folders[0])]);
+        assert!(released("other").is_empty());
+        assert!(!settings_path.exists());
+
+        for _ in 0..2 {
+            assert!(release_secret_folders(&state, "chat", &folders, "allow_always").unwrap());
+        }
+        assert_eq!(released("other"), vec![PathBuf::from(&folders[0])]);
+        assert_eq!(
+            config::load_settings(&settings_path)
+                .permissions
+                .secret_folders,
+            folders
+        );
+    }
+
+    #[test]
+    fn saving_the_settings_can_drop_a_remembered_approval_but_not_add_one() {
+        let mut current = Settings::default();
+        current.permissions.mcp_tool_grants =
+            vec![mcp_grant("codegraph_explore"), mcp_grant("codegraph_node")];
+
+        let mut saved = Settings::default();
+        saved.permissions.mcp_tool_grants =
+            vec![mcp_grant("codegraph_node"), mcp_grant("never_approved")];
+        current.permissions.secret_folders = vec!["/home/me/secrets".into()];
+        saved.permissions.secret_folders = vec!["/home/me/.ssh".into(), "/home/me/secrets".into()];
+        keep_granted(&mut saved, &current);
+        assert_eq!(
+            saved.permissions.mcp_tool_grants,
+            vec![mcp_grant("codegraph_node")]
+        );
+        assert_eq!(saved.permissions.secret_folders, vec!["/home/me/secrets"]);
+    }
+}
+
+/// Stores what a remembering allow on an MCP tool prompt grants: the tool for
+/// this chat and its subagents, or for every chat in the settings. Returns
+/// whether the decision remembers anything.
+fn remember_mcp_tool(
+    state: &AppState,
+    conversation_id: &str,
+    grant: &McpToolGrant,
+    decision: &str,
+) -> Result<bool> {
+    match decision {
+        "allow_session" => {
+            state
+                .permissions
+                .add_session_mcp_tool_grant(conversation_id, grant);
+            Ok(true)
+        }
+        "allow_always" => {
+            let mut settings = state.settings();
+            if !settings.permissions.mcp_tool_grants.contains(grant) {
+                settings.permissions.mcp_tool_grants.push(grant.clone());
+                config::save_settings(&state.settings_path, &settings)?;
+                state.set_settings(settings);
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Stores which folders' sensitive files commands may use from now on: for
+/// this chat and its subagents, or for every chat in the settings. Returns
+/// whether the decision released anything.
+fn release_secret_folders(
+    state: &AppState,
+    conversation_id: &str,
+    folders: &[String],
+    decision: &str,
+) -> Result<bool> {
+    if folders.is_empty() {
+        return Ok(false);
+    }
+    match decision {
+        "allow_session" => {
+            for folder in folders {
+                state
+                    .permissions
+                    .add_session_secret_folder(conversation_id, folder);
+            }
+            Ok(true)
+        }
+        "allow_always" => {
+            let mut settings = state.settings();
+            let before = settings.permissions.secret_folders.len();
+            for folder in folders {
+                if !settings.permissions.secret_folders.contains(folder) {
+                    settings.permissions.secret_folders.push(folder.clone());
+                }
+            }
+            if settings.permissions.secret_folders.len() != before {
+                config::save_settings(&state.settings_path, &settings)?;
+                state.set_settings(settings);
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 
@@ -1177,6 +1441,7 @@ pub fn resolve_permission(
     folders: Option<Vec<String>>,
     prompt_kind: Option<String>,
     hosts: Option<Vec<String>>,
+    secret_folders: Option<Vec<String>>,
 ) -> Result<()> {
     // Never act on a decision that does not match a prompt the backend is
     // actually waiting on. This stops a renderer from persisting an allow rule
@@ -1216,6 +1481,16 @@ pub fn resolve_permission(
             chosen_hosts.push(candidate);
         }
     }
+    // Folders whose sensitive files the prompt offered to release,
+    // intersected like folders.
+    let mut chosen_secret_folders: Vec<String> = Vec::new();
+    for candidate in secret_folders.unwrap_or_default() {
+        if pending.secret_folders.contains(&candidate)
+            && !chosen_secret_folders.contains(&candidate)
+        {
+            chosen_secret_folders.push(candidate);
+        }
+    }
     // A website prompt saves the rule the user edited only while it still
     // covers the requested host (and, to allow, stays narrow); otherwise the
     // backend's proposed host. Command decision metadata is display-only.
@@ -1251,9 +1526,20 @@ pub fn resolve_permission(
         .folder
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    // Whether this decision granted anything reusable (a rule, folder or
-    // website). Queued prompts the grant covers are then auto-resolved, like
-    // opencode's "always" reply approving every pending request it matches.
+    // An MCP tool prompt remembers the tool rather than a command rule; the
+    // permission log names it the same way.
+    let remembers = matches!(decision.as_str(), "allow_session" | "allow_always");
+    let rule = rule.or_else(|| {
+        pending
+            .mcp_tool
+            .as_ref()
+            .filter(|_| remembers)
+            .map(|grant| format!("{} ({})", grant.tool, grant.server))
+    });
+    // Whether this decision granted anything reusable (a rule, folder,
+    // website or MCP tool). Queued prompts the grant covers are then
+    // auto-resolved, like opencode's "always" reply approving every pending
+    // request it matches.
     let mut grants_applied = false;
     if is_web {
         let mut settings = state.settings();
@@ -1394,6 +1680,18 @@ pub fn resolve_permission(
             config::save_settings(&state.settings_path, &settings)?;
             state.set_settings(settings);
         }
+    }
+    if allowed {
+        if let Some(grant) = &pending.mcp_tool {
+            grants_applied |=
+                remember_mcp_tool(&state, &pending.grant_session_id, grant, &decision)?;
+        }
+        grants_applied |= release_secret_folders(
+            &state,
+            &pending.grant_session_id,
+            &chosen_secret_folders,
+            &decision,
+        )?;
     }
     state.broker.resolve(
         &request_id,
@@ -1563,6 +1861,33 @@ pub fn delete_command_rule(
     Ok(settings)
 }
 
+/// Takes back the release of a folder's sensitive files: commands that use
+/// one ask again.
+#[tauri::command]
+pub fn delete_secret_folder(state: State<'_, AppState>, folder: String) -> Result<Settings> {
+    let mut settings = state.settings();
+    settings
+        .permissions
+        .secret_folders
+        .retain(|entry| entry != &folder);
+    config::save_settings(&state.settings_path, &settings)?;
+    state.set_settings(settings.clone());
+    Ok(settings)
+}
+
+/// Stops always allowing an MCP tool: its next call asks again.
+#[tauri::command]
+pub fn delete_mcp_tool_grant(state: State<'_, AppState>, grant: McpToolGrant) -> Result<Settings> {
+    let mut settings = state.settings();
+    settings
+        .permissions
+        .mcp_tool_grants
+        .retain(|entry| entry != &grant);
+    config::save_settings(&state.settings_path, &settings)?;
+    state.set_settings(settings.clone());
+    Ok(settings)
+}
+
 #[tauri::command]
 pub fn get_file_ignore_catalog() -> Vec<crate::permissions::IgnoreCatalogEntry> {
     crate::permissions::ignore_catalog()
@@ -1615,6 +1940,13 @@ pub fn terminal_resize(
     rows: u16,
 ) -> Result<()> {
     state.terminals.resize(&terminal_id, cols, rows)
+}
+
+/// Whether a program runs in the terminal, so that a command sent to it would
+/// not reach the shell.
+#[tauri::command]
+pub fn terminal_busy(state: State<'_, AppState>, terminal_id: String) -> Result<bool> {
+    state.terminals.busy(&terminal_id)
 }
 
 #[tauri::command]
@@ -2535,10 +2867,7 @@ fn collect_project_rules(
     let mut rules: Vec<ProjectRule> = Vec::new();
 
     let mut global_candidates = vec![state.data_dir.join("AGENTS.md")];
-    if let Ok(home) = std::env::var("HOME") {
-        global_candidates.push(PathBuf::from(&home).join(".config/pumr/AGENTS.md"));
-        global_candidates.push(PathBuf::from(&home).join(".pumr/AGENTS.md"));
-    }
+    global_candidates.extend(home_rule_files(|key| std::env::var_os(key)));
     for global in global_candidates {
         if let Ok(content) = std::fs::read_to_string(&global) {
             if !content.trim().is_empty() {
@@ -2584,6 +2913,18 @@ fn collect_project_rules(
     }
 
     Ok(rules)
+}
+
+/// Where a global rule file may sit in the user's home folder. Windows names
+/// that folder in `USERPROFILE` and normally leaves `HOME` unset.
+fn home_rule_files(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let Some(home) = var("HOME").or_else(|| var("USERPROFILE")).map(PathBuf::from) else {
+        return Vec::new();
+    };
+    vec![
+        home.join(".config/pumr/AGENTS.md"),
+        home.join(".pumr/AGENTS.md"),
+    ]
 }
 
 /// The directories between the project root and each changed file, ordered
@@ -2709,6 +3050,19 @@ fn revert_to_message_blocking(
     {
         return Err(AppError::msg("Stop the running turn before reverting."));
     }
+    // A compaction stores its checkpoint for the messages it started from.
+    // With those gone, the checkpoint would cover the prompt that is sent
+    // next and all after it, and the model would never see them.
+    if state
+        .db
+        .session_tree(&message.session_id)?
+        .iter()
+        .any(|id| state.is_registered(&compaction_cancel_key(id)))
+    {
+        return Err(AppError::msg(
+            "Wait for the compaction to finish before reverting.",
+        ));
+    }
     let session = state.db.get_session(&message.session_id)?;
     let mut restored = Vec::new();
     if restore_files {
@@ -2738,6 +3092,7 @@ pub async fn send_message(
     provider: Option<String>,
     attachments: Option<Vec<Attachment>>,
     mentions: Option<Vec<Mention>>,
+    prompt_id: Option<String>,
     resume: Option<bool>,
     request_id: Option<String>,
     channel: Channel<RoutedEvent>,
@@ -2780,6 +3135,7 @@ pub async fn send_message(
         provider,
         attachments,
         mentions,
+        prompt_id,
         resume,
         events,
         cancel,
@@ -2806,6 +3162,7 @@ async fn run_send_message(
     provider: Option<String>,
     attachments: Option<Vec<Attachment>>,
     mentions: Option<Vec<Mention>>,
+    prompt_id: Option<String>,
     resume: Option<bool>,
     events: SwappableSink,
     cancel: tokio_util::sync::CancellationToken,
@@ -2845,6 +3202,7 @@ async fn run_send_message(
     let mut running = RunningTurn::begin(state.db.clone(), &session_id)?;
 
     if !setup.resume {
+        let context = with_called_prompt(context, &setup.settings, prompt_id.as_deref());
         append_user_message(&state, &session_id, &setup, &context)?;
     }
 
@@ -2906,6 +3264,7 @@ async fn run_send_message(
         .unwrap_or(0);
 
     let request = TurnRequest {
+        hooks: crate::hooks::Hooks::for_project(&setup.settings.hooks, &setup.project_root),
         model: model.clone(),
         reasoning_effort: setup.reasoning,
         provider: setup.selected_provider,
@@ -3213,6 +3572,8 @@ async fn assemble_turn_context(
             mcp: None,
             skills: Vec::new(),
             justification: None,
+            vision: false,
+            read_only: false,
             cancel,
             emit: sink.clone(),
         };
@@ -3250,6 +3611,8 @@ async fn assemble_turn_context(
     }
 
     let mut mcp_errors: Vec<String> = Vec::new();
+    // Those of the errors the user did not cause by declining a server.
+    let mut mcp_issues: Vec<String> = Vec::new();
     let mut configs = Vec::new();
     if !mcp_servers.is_empty() {
         let available = crate::discovery::discover_mcp_servers(
@@ -3286,9 +3649,12 @@ async fn assemble_turn_context(
                             crate::broker::PermissionPrompt {
                                 kind: "command".to_string(),
                                 operation: crate::broker::PermissionOperation::McpStart,
-                                cwd: std::env::current_dir()
-                                    .ok()
-                                    .map(|path| path.canonicalize().unwrap_or(path)),
+                                // Where a local server is started.
+                                cwd: Some(
+                                    project_root
+                                        .canonicalize()
+                                        .unwrap_or_else(|_| project_root.to_path_buf()),
+                                ),
                                 project_root: project_root.to_path_buf(),
                                 title: format!("Start MCP server '{}'?", config.name),
                                 detail: format!(
@@ -3306,6 +3672,8 @@ async fn assemble_turn_context(
                                 folders: Vec::new(),
                                 hosts: Vec::new(),
                                 grant_session_id: session_id.to_string(),
+                                mcp_tool: None,
+                                secret_folders: Vec::new(),
                                 justification: None,
                             },
                             &approval_cancel,
@@ -3326,16 +3694,42 @@ async fn assemble_turn_context(
                         ));
                     }
                 }
-                None => mcp_errors.push(format!(
-                    "No MCP server named '{name}' was found in the configured sources."
-                )),
+                None => {
+                    let error = format!(
+                        "No MCP server named '{name}' was found in the configured sources."
+                    );
+                    mcp_issues.push(error.clone());
+                    mcp_errors.push(error);
+                }
             }
         }
     }
+    let emit = |event: StreamEvent| {
+        (sink)(RoutedEvent {
+            session_id: session_id.to_string(),
+            event,
+        })
+    };
     // Reuses the servers of the session's previous turn when they still match,
-    // and stops them when this turn needs none.
-    let mcp_manager = state.mcp.manager(session_id, configs).await;
+    // and stops them when this turn needs none. A server can take its time to
+    // start, so the chat says which one it waits for, and Stop gives up the
+    // wait: dropping the connection stops what it had started.
+    let starting = |server: &str| {
+        emit(StreamEvent::McpStarting {
+            server: server.to_string(),
+        })
+    };
+    let mcp_manager = tokio::select! {
+        biased;
+        _ = approval_cancel.cancelled() => Arc::new(McpManager::empty()),
+        manager = state.mcp.manager(session_id, configs, project_root, &starting) => manager,
+    };
+    mcp_issues.extend(mcp_manager.errors.iter().cloned());
     mcp_errors.extend(mcp_manager.errors.iter().cloned());
+    if !mcp_servers.is_empty() {
+        // The model reads the errors below; the user is told here.
+        emit(StreamEvent::McpReady { issues: mcp_issues });
+    }
     if !mcp_errors.is_empty() {
         context.push_str("\n\n## MCP connection issues\n");
         for error in &mcp_errors {
@@ -3344,6 +3738,34 @@ async fn assemble_turn_context(
     }
 
     (context, mcp_manager)
+}
+
+/// What tells the model how to use a prompt the user called with a slash
+/// command; the prompt's own text follows it.
+const CALLED_PROMPT_NOTE: &str = "The user called this prompt of theirs with a slash command. Follow it for this message. What they wrote after the command says what to apply it to; if they wrote nothing, apply it to the work of this session, or to the uncommitted changes of the project when the session has changed nothing yet.";
+
+/// Adds the prompt of "Your prompts" that a message calls with its slash
+/// command (`/code-review`) to the context its @mentions resolved to. Such a
+/// prompt applies to that one message and is never part of the system prompt.
+fn with_called_prompt(mut context: String, settings: &Settings, prompt_id: Option<&str>) -> String {
+    let called = prompt_id.and_then(|id| {
+        settings
+            .prompts
+            .user_system_prompts
+            .iter()
+            .find(|prompt| prompt.id == id && !prompt.prompt.trim().is_empty())
+    });
+    if let Some(prompt) = called {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str(&format!(
+            "## Prompt: {}\n\n{CALLED_PROMPT_NOTE}\n\n{}",
+            prompt.name.trim(),
+            prompt.prompt.trim()
+        ));
+    }
+    context
 }
 
 /// Persists the user message for a turn and derives a session title from it on
@@ -3383,6 +3805,16 @@ fn append_user_message(
     Ok(())
 }
 
+/// The language the user wants every reply in, when they picked one.
+fn reply_language(settings: &Settings) -> Option<&str> {
+    settings
+        .appearance
+        .reply_language
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
 /// Assembles the system prompt for a turn from the session prompt, global
 /// prompts, the selected mode, reply language, project rules and MCP tools.
 #[allow(clippy::too_many_arguments)]
@@ -3404,7 +3836,6 @@ fn build_system_prompt(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| settings.prompts.default_system_prompt.clone());
 
-    let mut added_user_prompts: Vec<String> = Vec::new();
     if mode.include_global_prompts {
         for (enabled, prompt) in [
             (
@@ -3425,18 +3856,13 @@ fn build_system_prompt(
                 system_prompt.push_str(prompt);
             }
         }
-
-        for prompt in &settings.prompts.user_system_prompts {
-            if prompt.enabled && !prompt.prompt.trim().is_empty() {
-                system_prompt.push_str("\n\n");
-                system_prompt.push_str(&prompt.prompt);
-                added_user_prompts.push(prompt.id.clone());
-            }
-        }
     }
 
+    // The user's own prompts are called per message with a slash command (see
+    // `with_called_prompt`). Only the ones a mode names are part of its prompt.
+    let mut added_user_prompts: Vec<&str> = Vec::new();
     for id in &mode.user_prompt_ids {
-        if added_user_prompts.iter().any(|added| added == id) {
+        if added_user_prompts.contains(&id.as_str()) {
             continue;
         }
         if let Some(prompt) = settings
@@ -3448,7 +3874,7 @@ fn build_system_prompt(
             if !prompt.prompt.trim().is_empty() {
                 system_prompt.push_str("\n\n");
                 system_prompt.push_str(&prompt.prompt);
-                added_user_prompts.push(id.clone());
+                added_user_prompts.push(id);
             }
         }
     }
@@ -3458,13 +3884,7 @@ fn build_system_prompt(
         system_prompt.push_str(&mode.system_prompt);
     }
 
-    if let Some(language) = settings
-        .appearance
-        .reply_language
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(language) = reply_language(settings) {
         system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
     }
 
@@ -3524,6 +3944,12 @@ fn build_system_prompt(
     system_prompt
 }
 
+/// Key under which the manual compaction of `session_id` is registered while
+/// it runs.
+fn compaction_cancel_key(session_id: &str) -> String {
+    format!("compact:{session_id}")
+}
+
 #[tauri::command]
 pub async fn compact_session(
     state: State<'_, AppState>,
@@ -3553,7 +3979,7 @@ pub async fn compact_session(
         .cached_models()
         .and_then(|models| models.into_iter().find(|entry| entry.id == model));
 
-    let registration = state.register_cancel(&format!("compact:{session_id}"));
+    let registration = state.register_cancel(&compaction_cancel_key(&session_id));
     let cancel = registration.token();
     let outcome = agent::compact_now(&agent::Compactor {
         db: &state.db,
@@ -3600,9 +4026,8 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
     let settings = state.settings();
 
     let session = state.db.get_session(&session_id)?;
-    let messages = state.db.list_messages(&session_id)?;
-    let transcript = build_transcript(&messages);
-    if transcript.trim().is_empty() {
+    let (earlier, recent) = handover_source(&state.db, &session_id)?;
+    if handover_transcript(earlier.as_deref(), &recent, usize::MAX).is_empty() {
         return Err(AppError::msg("There is nothing to hand over yet."));
     }
 
@@ -3624,15 +4049,22 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
     let client = state.llm();
     client.keys.require(&model)?;
 
-    let fallback_pricing = state
+    let info = state
         .cached_models()
-        .and_then(|models| models.into_iter().find(|entry| entry.id == model))
-        .map(|entry| {
-            (
-                entry.prompt_price_per_m / 1_000_000.0,
-                entry.completion_price_per_m / 1_000_000.0,
-            )
-        });
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model));
+    // A session is handed over when it has grown long, so whole it is the
+    // request the model rejects.
+    let transcript = handover_transcript(
+        earlier.as_deref(),
+        &recent,
+        handover_budget(info.as_ref().map_or(0, |entry| entry.context_length)),
+    );
+    let fallback_pricing = info.as_ref().map(|entry| {
+        (
+            entry.prompt_price_per_m / 1_000_000.0,
+            entry.completion_price_per_m / 1_000_000.0,
+        )
+    });
 
     let registration = state.register_cancel(&format!("handover:{session_id}"));
     let mut summary = String::new();
@@ -3666,6 +4098,45 @@ pub async fn summarize_session(state: State<'_, AppState>, session_id: String) -
         ));
     }
     Ok(summary)
+}
+
+/// Transcript text a handover carries when the context length of its model is
+/// not known.
+const HANDOVER_DEFAULT_TRANSCRIPT_CHARS: usize = 400_000;
+
+/// Transcript characters a handover may carry. As for a side question, at
+/// about four characters a token this leaves half of the model's window to the
+/// instructions and the briefing.
+fn handover_budget(context_length: i64) -> usize {
+    match usize::try_from(context_length) {
+        Ok(tokens) if tokens > 0 => tokens.saturating_mul(2),
+        _ => HANDOVER_DEFAULT_TRANSCRIPT_CHARS,
+    }
+}
+
+/// What there is to hand over of a session: the summary of its latest
+/// compaction checkpoint, if it has one, and the transcript of the messages
+/// after it. That is where the model's own history of the session starts.
+fn handover_source(db: &Db, session_id: &str) -> Result<(Option<String>, String)> {
+    let checkpoint = db.latest_checkpoint(session_id)?;
+    let after = checkpoint.as_ref().map_or(-1, |entry| entry.upto_seq);
+    let recent = build_transcript(&db.list_messages_after(session_id, after)?);
+    Ok((checkpoint.map(|entry| entry.summary), recent))
+}
+
+/// The transcript a handover is written from, within `max_chars`. The summary
+/// of what was compacted stays whole; of the messages after it that do not fit
+/// next to it, the latest are kept.
+fn handover_transcript(earlier: Option<&str>, recent: &str, max_chars: usize) -> String {
+    let Some(earlier) = earlier.map(str::trim).filter(|text| !text.is_empty()) else {
+        return transcript_tail(recent, max_chars);
+    };
+    let summary = format!("## Summary of the earlier session\n{earlier}");
+    let room = max_chars.saturating_sub(summary.chars().count());
+    if recent.is_empty() || room == 0 {
+        return summary;
+    }
+    format!("{summary}\n\n{}", transcript_tail(recent, room))
 }
 
 fn build_transcript(messages: &[Message]) -> String {
@@ -3728,6 +4199,148 @@ fn truncate(text: &str, max: usize) -> String {
     }
     let head: String = trimmed.chars().take(max).collect();
     format!("{head}… [truncated]")
+}
+
+/// Transcript text a side question carries at most. Only the latest part of a
+/// long session is sent, so asking stays cheap however long the session is.
+const SIDE_QUESTION_MAX_TRANSCRIPT_CHARS: usize = 48_000;
+
+const SIDE_QUESTION_SYSTEM_PROMPT: &str = "You are pumr, a coding assistant. The user asks a quick side question while working in a coding session. It may be about that session or have nothing to do with it. Answer directly and briefly, from the session transcript when one is given and from what you know otherwise. You have no tools here: you cannot read files, run commands or change anything, so never claim that you did, and say so when the transcript does not hold the answer. Your answer is shown next to the chat and is not added to the session, so the agent working there never sees it.";
+
+/// Key under which the side question of `session_id` can be stopped with
+/// `stop_generation`.
+fn side_question_cancel_key(session_id: &str) -> String {
+    format!("side-question:{session_id}")
+}
+
+/// Transcript characters a side question may carry: the cap, or less for a
+/// model whose context would not hold that much. At about four characters a
+/// token this leaves half of the window to the question and the answer.
+fn side_question_budget(context_length: i64) -> usize {
+    match usize::try_from(context_length) {
+        Ok(tokens) if tokens > 0 => SIDE_QUESTION_MAX_TRANSCRIPT_CHARS.min(tokens.saturating_mul(2)),
+        _ => SIDE_QUESTION_MAX_TRANSCRIPT_CHARS,
+    }
+}
+
+/// The end of `transcript` within `max_chars`, starting at a message where one
+/// begins in it, with a note that the beginning is missing.
+fn transcript_tail(transcript: &str, max_chars: usize) -> String {
+    let total = transcript.chars().count();
+    if total <= max_chars {
+        return transcript.to_string();
+    }
+    let start = transcript
+        .char_indices()
+        .nth(total - max_chars)
+        .map_or(0, |(index, _)| index);
+    let tail = &transcript[start..];
+    let tail = tail.find("\n## ").map_or(tail, |index| &tail[index + 1..]);
+    format!("[The beginning of the session is left out.]\n\n{tail}")
+}
+
+/// Answers a side question (`/btw` in the chat box) about the session or
+/// anything else and streams the answer to `channel`. The model gets the end
+/// of the transcript and no tools, and nothing is added to the session, so a
+/// question can be asked while a turn runs. A newer question for the same
+/// session replaces a running one; `stop_generation` with
+/// [`side_question_cancel_key`] stops it.
+#[tauri::command]
+pub async fn ask_side_question(
+    state: State<'_, AppState>,
+    session_id: String,
+    question: String,
+    model: String,
+    channel: Channel<SideAnswerEvent>,
+) -> Result<SideAnswer> {
+    let question = question.trim();
+    if question.is_empty() {
+        return Err(AppError::msg("Type a question after /btw."));
+    }
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err(AppError::msg(
+            "No model configured. Pick a model before asking.",
+        ));
+    }
+    // Registered before anything slow, so Stop reaches it from the start.
+    let registration = state.register_cancel(&side_question_cancel_key(&session_id));
+    let settings = state.settings();
+    let session = state.db.get_session(&session_id)?;
+    let messages = state.db.list_messages(&session_id)?;
+    state.load_catalog().await;
+    let client = state.llm();
+    client.keys.require(&model)?;
+    let info = state
+        .cached_models()
+        .and_then(|models| models.into_iter().find(|entry| entry.id == model));
+
+    let mut system_prompt = SIDE_QUESTION_SYSTEM_PROMPT.to_string();
+    if let Ok(root) = project_root(&state, &session.project_id) {
+        system_prompt.push_str(&format!(
+            "\n\nThe session works in the project folder {}.",
+            root.display()
+        ));
+    }
+    if let Some(language) = reply_language(&settings) {
+        system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
+    }
+    let transcript = transcript_tail(
+        &build_transcript(&messages),
+        side_question_budget(info.as_ref().map_or(0, |entry| entry.context_length)),
+    );
+    let prompt = if transcript.is_empty() {
+        question.to_string()
+    } else {
+        format!("# Session transcript\n\n{transcript}\n\n# Side question\n\n{question}")
+    };
+
+    let mut answer = String::new();
+    let result = client
+        .stream_chat(
+            &model,
+            vec![
+                ChatMessage::text("system", system_prompt),
+                ChatMessage::text("user", prompt),
+            ],
+            None,
+            None,
+            info.as_ref().map(|entry| {
+                (
+                    entry.prompt_price_per_m / 1_000_000.0,
+                    entry.completion_price_per_m / 1_000_000.0,
+                )
+            }),
+            &[],
+            PromptCache::off(),
+            registration.token(),
+            &mut |chunk| {
+                if let ChatChunk::Delta(text) = chunk {
+                    answer.push_str(&text);
+                    let _ = channel.send(SideAnswerEvent::Delta { text });
+                }
+            },
+        )
+        .await;
+    drop(registration);
+    let outcome = result?;
+
+    // The session pays for what is asked in it.
+    state.db.add_session_usage(
+        &session_id,
+        outcome.usage.cost,
+        outcome.usage.prompt_tokens,
+        outcome.usage.completion_tokens,
+        outcome.usage.cached_tokens,
+    )?;
+    let answer = answer.trim().to_string();
+    if answer.is_empty() && !outcome.cancelled {
+        return Err(AppError::msg("The model returned an empty answer."));
+    }
+    Ok(SideAnswer {
+        answer,
+        cancelled: outcome.cancelled,
+    })
 }
 
 /// The OS, app and webview versions for a chat's debug log.
@@ -3843,6 +4456,238 @@ mod tests {
         );
         assert_eq!(clean_commit_message("\"Fix typo\"\n"), "Fix typo");
         assert_eq!(clean_commit_message("  \n "), "");
+    }
+
+    #[test]
+    fn a_called_prompt_reaches_the_model_as_context_of_its_message() {
+        let settings = Settings::default();
+
+        let context = with_called_prompt(String::new(), &settings, Some("code-review"));
+        assert!(context.starts_with("## Prompt: Code Review\n\nThe user called this prompt"));
+        assert!(context.ends_with(config::default_code_review_prompt().trim()));
+
+        let context = with_called_prompt("## File: a.rs".into(), &settings, Some("bugfixer"));
+        assert!(context.starts_with("## File: a.rs\n\n## Prompt: Bugfix\n\n"));
+    }
+
+    #[test]
+    fn a_message_without_a_known_or_written_prompt_keeps_its_context() {
+        let mut settings = Settings::default();
+        settings.prompts.user_system_prompts.push(config::UserSystemPrompt {
+            id: "blank".to_string(),
+            name: "Blank".to_string(),
+            prompt: "  \n".to_string(),
+        });
+        for prompt_id in [None, Some("no-such-prompt"), Some("blank"), Some("")] {
+            assert_eq!(
+                with_called_prompt("ctx".into(), &settings, prompt_id),
+                "ctx",
+                "{prompt_id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn side_question_keeps_a_short_transcript_whole() {
+        let transcript = "## User\nhello\n\n## Assistant\nhi";
+        assert_eq!(transcript_tail(transcript, 1000), transcript);
+        assert_eq!(transcript_tail("", 1000), "");
+    }
+
+    #[test]
+    fn side_question_sends_the_end_of_a_long_transcript() {
+        let transcript = format!(
+            "## User\n{}\n\n## Assistant\nfirst answer\n\n## User\nlatest question",
+            "x".repeat(500)
+        );
+        // Thirty characters reach back into the middle of "first answer".
+        let tail = transcript_tail(&transcript, 30);
+        assert_eq!(
+            tail,
+            "[The beginning of the session is left out.]\n\n## User\nlatest question"
+        );
+    }
+
+    #[test]
+    fn side_question_tail_survives_multibyte_text_without_a_heading() {
+        let tail = transcript_tail(&"ä".repeat(100), 10);
+        assert!(tail.ends_with(&"ä".repeat(10)));
+        assert!(!tail.ends_with(&"ä".repeat(11)));
+    }
+
+    #[test]
+    fn side_question_budget_follows_small_context_windows() {
+        assert_eq!(side_question_budget(0), SIDE_QUESTION_MAX_TRANSCRIPT_CHARS);
+        assert_eq!(side_question_budget(-1), SIDE_QUESTION_MAX_TRANSCRIPT_CHARS);
+        assert_eq!(side_question_budget(8_000), 16_000);
+        assert_eq!(
+            side_question_budget(200_000),
+            SIDE_QUESTION_MAX_TRANSCRIPT_CHARS
+        );
+    }
+
+    #[test]
+    fn a_handover_of_a_long_session_carries_what_fits_the_model() {
+        assert_eq!(handover_budget(0), HANDOVER_DEFAULT_TRANSCRIPT_CHARS);
+        assert_eq!(handover_budget(-1), HANDOVER_DEFAULT_TRANSCRIPT_CHARS);
+        assert_eq!(handover_budget(8_000), 16_000);
+        assert_eq!(handover_budget(200_000), 400_000);
+
+        let short = "## User\nhello\n\n## Assistant\nhi";
+        assert_eq!(handover_transcript(None, short, 1_000), short);
+        assert_eq!(handover_transcript(None, "", 1_000), "");
+
+        // Each message is capped, but a long session has many of them.
+        let turn = format!("## User\n{}\n\n## Assistant\ndone\n\n", "x".repeat(200));
+        let long = format!("{}## User\nlatest request", turn.repeat(500));
+        assert!(long.chars().count() > 100_000);
+        let bounded = handover_transcript(None, &long, 2_000);
+        assert!(bounded.chars().count() < 2_100, "{}", bounded.len());
+        assert!(bounded.starts_with("[The beginning of the session is left out.]\n\n## "));
+        assert!(bounded.ends_with("## User\nlatest request"));
+    }
+
+    #[test]
+    fn a_handover_keeps_the_summary_of_a_compacted_session_whole() {
+        let recent = "## User\nnext step\n\n## Assistant\ndone";
+        assert_eq!(
+            handover_transcript(Some("Goal: ship it.\n"), recent, 1_000),
+            "## Summary of the earlier session\nGoal: ship it.\n\n## User\nnext step\n\n## Assistant\ndone"
+        );
+        assert_eq!(handover_transcript(Some(" \n"), recent, 1_000), recent);
+
+        // The messages after the summary give way, oldest first.
+        let long = format!("## User\n{}\n\n## Assistant\nlatest answer", "x".repeat(5_000));
+        let bounded = handover_transcript(Some("Goal: ship it."), &long, 100);
+        assert_eq!(
+            bounded,
+            "## Summary of the earlier session\nGoal: ship it.\n\n\
+             [The beginning of the session is left out.]\n\n## Assistant\nlatest answer"
+        );
+        // Nothing came after it, or nothing fits next to it.
+        let alone = "## Summary of the earlier session\nGoal: ship it.";
+        assert_eq!(handover_transcript(Some("Goal: ship it."), "", 1_000), alone);
+        assert_eq!(handover_transcript(Some("Goal: ship it."), &long, 10), alone);
+    }
+
+    #[test]
+    fn a_compacted_session_is_handed_over_from_its_checkpoint() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let project = state
+            .db
+            .upsert_project(&temp.path().display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let say = |text: &str| {
+            state
+                .db
+                .append_message(&chat.id, NewMessage::user(text, "", None, &[], &[]))
+                .unwrap();
+        };
+        say("build the importer");
+        say("now add tests");
+        assert_eq!(
+            handover_source(&state.db, &chat.id).unwrap(),
+            (
+                None,
+                "## User\nbuild the importer\n\n## User\nnow add tests".to_string()
+            )
+        );
+
+        // The first prompt is compacted away; the checkpoint itself is a
+        // message too, and not one to hand over.
+        state
+            .db
+            .append_checkpoint(&chat.id, "The importer is built.", 0, "model", (0.0, 0, 0, 0))
+            .unwrap();
+        say("ship it");
+        let (earlier, recent) = handover_source(&state.db, &chat.id).unwrap();
+        assert_eq!(earlier.as_deref(), Some("The importer is built."));
+        assert_eq!(recent, "## User\nnow add tests\n\n## User\nship it");
+    }
+
+    #[test]
+    fn global_rules_are_looked_up_in_the_home_folder_windows_names() {
+        let files = |vars: Vec<(&'static str, &'static str)>| {
+            home_rule_files(move |key| {
+                vars.iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| value.into())
+            })
+        };
+        assert_eq!(
+            files(vec![("HOME", "/home/ada")]),
+            [
+                PathBuf::from("/home/ada/.config/pumr/AGENTS.md"),
+                PathBuf::from("/home/ada/.pumr/AGENTS.md"),
+            ]
+        );
+        // Windows normally sets only this one.
+        let windows = Path::new(r"C:\Users\ada");
+        assert_eq!(
+            files(vec![("USERPROFILE", r"C:\Users\ada")]),
+            [
+                windows.join(".config/pumr/AGENTS.md"),
+                windows.join(".pumr/AGENTS.md"),
+            ]
+        );
+        // As for the MCP and skill folders, `HOME` wins where both are set.
+        assert_eq!(
+            files(vec![("USERPROFILE", "/profile"), ("HOME", "/home/ada")])[1],
+            PathBuf::from("/home/ada/.pumr/AGENTS.md")
+        );
+        assert!(files(vec![]).is_empty());
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_opens_as_binary_and_is_not_saved_over() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("notes.md"), "héllo\n").unwrap();
+        // Latin-1: its é is a lone 0xE9, which no UTF-8 text contains.
+        let latin1 = b"caf\xe9\n";
+        std::fs::write(root.join("legacy.txt"), latin1).unwrap();
+
+        let text = read_project_file(root, "notes.md").unwrap();
+        assert_eq!((text.content.as_str(), text.binary), ("héllo\n", false));
+        let binary = read_project_file(root, "legacy.txt").unwrap();
+        assert_eq!((binary.content.as_str(), binary.binary), ("", true));
+        assert_eq!(binary.path, "legacy.txt");
+
+        // An editor that ignores the mark saves what it was given: nothing.
+        let error = write_project_file(root, "legacy.txt", "").unwrap_err();
+        assert!(error.to_string().contains("not text"), "{error}");
+        assert_eq!(std::fs::read(root.join("legacy.txt")).unwrap(), latin1);
+
+        write_project_file(root, "notes.md", "changed\n").unwrap();
+        assert_eq!(
+            read_project_file(root, "notes.md").unwrap().content,
+            "changed\n"
+        );
+    }
+
+    #[test]
+    fn a_file_that_does_not_exist_yet_opens_empty_and_is_created_on_save() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+
+        let missing = read_project_file(root, "src/new.rs").unwrap();
+        assert_eq!((missing.content.as_str(), missing.binary), ("", false));
+        write_project_file(root, "src/new.rs", "fn main() {}\n").unwrap();
+        assert_eq!(
+            read_project_file(root, "src/new.rs").unwrap().content,
+            "fn main() {}\n"
+        );
+
+        // Whatever else keeps a file from being read is an error, not an
+        // empty file to type into.
+        assert!(read_project_file(root, "src").is_err());
+        assert!(read_project_file(root, "../outside.txt").is_err());
+        assert!(write_project_file(root, "../outside.txt", "x").is_err());
     }
 
     #[test]
@@ -4003,6 +4848,46 @@ mod tests {
         assert!(state.db.list_messages(&chat.id).unwrap().is_empty());
     }
 
+    #[test]
+    fn reverting_is_refused_while_the_chat_is_being_compacted() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let project = state
+            .db
+            .upsert_project(&temp.path().display().to_string())
+            .unwrap();
+        let session = |title: &str| {
+            state
+                .db
+                .create_session(&project.id, title, None, None, None, None, None)
+                .unwrap()
+        };
+        let (chat, other) = (session("chat"), session("other"));
+        let subagent = state
+            .db
+            .create_sub_session(&project.id, &chat.id, "subagent", None, None, None, None)
+            .unwrap();
+        let prompt = state
+            .db
+            .append_message(&chat.id, NewMessage::user("hi", "", None, &[], &[]))
+            .unwrap();
+
+        // The summary being written covers messages the revert would remove:
+        // the chat's own, or those of a subagent below it.
+        for session_id in [&chat.id, &subagent.id] {
+            let compaction = state.register_cancel(&compaction_cancel_key(session_id));
+            let error = revert_to_message_blocking(&state, &prompt.id, false).unwrap_err();
+            assert!(error.to_string().contains("compaction to finish"), "{error}");
+            drop(compaction);
+        }
+        assert_eq!(state.db.list_messages(&chat.id).unwrap().len(), 1);
+
+        // Another chat's compaction does not stand in the way.
+        let _compaction = state.register_cancel(&compaction_cancel_key(&other.id));
+        revert_to_message_blocking(&state, &prompt.id, false).unwrap();
+        assert!(state.db.list_messages(&chat.id).unwrap().is_empty());
+    }
+
     fn changed_paths(state: &AppState, session_id: &str) -> Vec<String> {
         let mut paths: Vec<String> = session_changes_resolved(state, session_id)
             .unwrap()
@@ -4073,5 +4958,148 @@ mod tests {
             ["one.txt", "three.txt", "two.txt"]
         );
         drop(turn);
+    }
+
+    /// Assembles a turn of a new chat whose mode uses `servers` of `mcp_json`,
+    /// all of them approved. Returns the turn's context, the number of MCP
+    /// tools it got and what the chat was told about its MCP servers.
+    #[cfg(unix)]
+    async fn assemble_with_mcp(
+        project_root: &Path,
+        mcp_json: &str,
+        servers: &[&str],
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> (String, usize, Vec<String>) {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        std::fs::write(temp.path().join("mcp.json"), mcp_json).unwrap();
+        let mut settings = Settings::default();
+        settings.integrations.mcp_auto_discovery = false;
+        settings.integrations.mcp_folders = vec![temp.path().display().to_string()];
+        let project = state
+            .db
+            .upsert_project(&project_root.display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let mut mode = config::resolve_mode(&settings, None);
+        mode.mcp_servers = servers.iter().map(|name| name.to_string()).collect();
+        let folders = &settings.integrations.mcp_folders;
+        for config in crate::discovery::discover_mcp_servers(folders, &[], &[], false, &[]) {
+            state.mcp.approve(&chat.id, &config);
+        }
+
+        let told = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink: EventSink = {
+            let told = told.clone();
+            Arc::new(move |routed: RoutedEvent| {
+                let line = match routed.event {
+                    StreamEvent::McpStarting { server } => format!("starting {server}"),
+                    StreamEvent::McpReady { issues } => format!("ready {issues:?}"),
+                    other => format!("{other:?}"),
+                };
+                told.lock().unwrap().push(line);
+            })
+        };
+        let shadow =
+            Arc::new(ShadowRepo::open(&state.data_dir, &project.id, project_root).unwrap());
+        let (context, manager) = assemble_turn_context(
+            &state,
+            &settings,
+            &chat.id,
+            project_root,
+            shadow,
+            &mode,
+            &[],
+            cancel,
+            &sink,
+            Arc::new(FileIgnoreConfig::from_settings(&settings)),
+        )
+        .await;
+        let told = told.lock().unwrap().clone();
+        (context, manager.tools().len(), told)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_mcp_server_that_cannot_start_is_reported_to_the_chat_and_the_model() {
+        let project = tempfile::tempdir().unwrap();
+        let (context, tools, told) = assemble_with_mcp(
+            project.path(),
+            r#"{"mcpServers":{"gone":{"command":"/bin/sh","args":["-c","sleep 0.2; echo 'env: node: No such file or directory' >&2; exit 127"]}}}"#,
+            &["gone", "missing"],
+            Default::default(),
+        )
+        .await;
+        assert_eq!(tools, 0);
+        let [starting, ready] = told.as_slice() else {
+            panic!("{told:?}");
+        };
+        assert_eq!(starting, "starting gone");
+        // Both problems reach the user, each with its reason.
+        assert!(
+            ready.starts_with("ready [\"No MCP server named 'missing'"),
+            "{ready}"
+        );
+        assert!(
+            ready.contains("'gone' stopped during initialize: exit status: 127"),
+            "{ready}"
+        );
+        assert!(
+            ready.contains("env: node: No such file or directory"),
+            "{ready}"
+        );
+        assert!(context.contains("## MCP connection issues\n- No MCP server named 'missing'"));
+        assert!(context.contains("- MCP server 'gone' stopped during initialize"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_ends_the_wait_for_an_mcp_server_and_stops_the_server() {
+        let project = tempfile::tempdir().unwrap();
+        // Never answers. It runs in the project, where it leaves its pid.
+        let pid_file = project.path().join("pid");
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let stop = {
+            let (cancel, pid_file) = (cancel.clone(), pid_file.clone());
+            tokio::spawn(async move {
+                while !pid_file.exists() {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                cancel.cancel();
+            })
+        };
+        let started = std::time::Instant::now();
+        let (context, tools, told) = assemble_with_mcp(
+            project.path(),
+            r#"{"mcpServers":{"silent":{"command":"/bin/sh","args":["-c","echo $$ > pid; exec sleep 30"]}}}"#,
+            &["silent"],
+            cancel,
+        )
+        .await;
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        stop.await.unwrap();
+        assert_eq!(tools, 0);
+        assert_eq!(told, ["starting silent", "ready []"]);
+        assert!(!context.contains("MCP connection issues"), "{context}");
+
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let mut running = true;
+        for _ in 0..200 {
+            // SAFETY: signal 0 only asks whether the process exists.
+            running = unsafe { libc::kill(pid, 0) } == 0;
+            if !running {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(!running, "the server outlived the stopped turn");
     }
 }

@@ -87,19 +87,16 @@ export const DEMO_USER_PROMPTS = [
     id: 'stripe-conventions',
     name: 'Stripe conventions',
     prompt: 'Money is integer cents. Every Stripe POST sends an idempotency key.',
-    enabled: true,
   },
   {
     id: 'strict-reviewer',
     name: 'Strict reviewer',
     prompt: 'Review like a senior engineer: point out risks first, then nits.',
-    enabled: false,
   },
   {
     id: 'changelog',
     name: 'Changelog entry',
     prompt: 'Finish every change with a one-line CHANGELOG entry.',
-    enabled: false,
   },
 ];
 

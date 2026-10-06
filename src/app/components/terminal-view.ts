@@ -7,6 +7,7 @@ import {
   effect,
   inject,
   input,
+  untracked,
 } from '@angular/core';
 import { Channel } from '@tauri-apps/api/core';
 import { TranslocoService } from '@jsverse/transloco';
@@ -22,6 +23,11 @@ import { ThemePreset } from '../core/themes';
 
 const FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+
+/** How long a shell's output has to pause before it counts as its prompt. */
+const PROMPT_PAUSE_MS = 300;
+/** How long a shell that prints nothing gets before commands are sent anyway. */
+const SILENT_SHELL_MS = 2000;
 
 /** ANSI colours readable on dark and on light backgrounds. */
 const DARK_ANSI: ITheme = {
@@ -112,6 +118,11 @@ export class TerminalView {
   private terminalId: string | null = null;
   /** Input typed before the shell was ready. */
   private pendingInput = '';
+  /** Whether the shell has shown its first prompt. */
+  private atPrompt = false;
+  /** Commands from the chat that wait for that prompt. */
+  private waitingCommands: string[] = [];
+  private promptTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
   private resizeObserver?: ResizeObserver;
   private fitFrame = 0;
@@ -135,6 +146,15 @@ export class TerminalView {
           this.terminal?.focus();
         });
       }
+    });
+
+    effect(() => {
+      this.terminals.runRequest();
+      untracked(() => {
+        for (const command of this.terminals.takeCommands(this.tab().key)) {
+          this.run(command);
+        }
+      });
     });
 
     inject(DestroyRef).onDestroy(() => this.dispose());
@@ -202,9 +222,13 @@ export class TerminalView {
         return;
       }
       this.terminalId = id;
+      this.terminals.started(this.tab().key, id);
       if (this.pendingInput) {
         this.send(this.pendingInput);
         this.pendingInput = '';
+      }
+      if (!this.atPrompt && !this.promptTimer) {
+        this.expectPrompt(SILENT_SHELL_MS);
       }
     } catch (error) {
       const message = this.transloco.translate('terminal.failed', { error: String(error) });
@@ -214,15 +238,67 @@ export class TerminalView {
 
   private onEvent(event: TerminalEvent): void {
     if (event.kind === 'output') {
-      this.terminal?.write(event.data);
+      this.terminal?.write(event.data, () => this.shellPrinted());
       return;
     }
     this.terminalId = null;
+    this.waitingCommands = [];
     if (event.code !== 0 && this.terminal) {
       const message = this.transloco.translate('terminal.exited', { code: event.code ?? '?' });
       this.terminal.write(`\r\n\x1b[2m${message}\x1b[0m\r\n`);
     }
     this.terminals.exited(this.tab().key, event.code);
+  }
+
+  /**
+   * Runs a command sent from the chat, once the shell waits at its prompt. It
+   * is pasted, so a shell with bracketed paste takes several lines as one
+   * command instead of running them as they arrive.
+   */
+  private run(command: string): void {
+    if (!this.atPrompt || !this.terminal) {
+      this.waitingCommands.push(command);
+      return;
+    }
+    this.terminal.paste(command);
+    this.send('\r');
+  }
+
+  /**
+   * Looks for the shell's first prompt after it printed something. zsh, fish
+   * and bash 5 turn on bracketed paste when they show it; for other shells a
+   * pause in the output stands in for that. Sent earlier, a command would be
+   * echoed twice or answer a question the shell's profile asks.
+   */
+  private shellPrinted(): void {
+    if (this.atPrompt || this.destroyed) {
+      return;
+    }
+    if (this.terminal?.modes.bracketedPasteMode) {
+      this.reachedPrompt();
+    } else {
+      this.expectPrompt(PROMPT_PAUSE_MS);
+    }
+  }
+
+  private expectPrompt(delay: number): void {
+    if (this.promptTimer) {
+      clearTimeout(this.promptTimer);
+    }
+    this.promptTimer = setTimeout(() => this.reachedPrompt(), delay);
+  }
+
+  private reachedPrompt(): void {
+    if (this.promptTimer) {
+      clearTimeout(this.promptTimer);
+      this.promptTimer = null;
+    }
+    this.atPrompt = true;
+    const commands = this.waitingCommands;
+    this.waitingCommands = [];
+    for (const command of commands) {
+      this.run(command);
+    }
   }
 
   private send(data: string): void {
@@ -303,6 +379,9 @@ export class TerminalView {
     this.destroyed = true;
     cancelAnimationFrame(this.fitFrame);
     this.resizeObserver?.disconnect();
+    if (this.promptTimer) {
+      clearTimeout(this.promptTimer);
+    }
     if (this.terminalId) {
       void api.terminalClose(this.terminalId).catch(() => undefined);
       this.terminalId = null;

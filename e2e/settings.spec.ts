@@ -26,6 +26,60 @@ test.describe('settings', () => {
     await expect(page.getByRole('button', { name: 'Paramètres' })).toBeVisible();
   });
 
+  test('switches the logo and persists it', async ({ app, page }) => {
+    await app.start();
+    const logo = page.getByTestId('app-logo');
+    await expect(logo).toHaveAttribute('src', 'logo-mascot.svg');
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Appearance' }).click();
+    await dialog.getByRole('button', { name: 'Classic face' }).click();
+
+    // The header previews the choice before it is saved, like the theme does.
+    await expect(logo).toHaveAttribute('src', 'logo-classic.svg');
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+
+    const saved = await app.backend.lastCall('save_settings');
+    expect(saved?.args['settings']).toMatchObject({ logo: 'classic' });
+    expect((await app.backend.state()).settings.logo).toBe('classic');
+  });
+
+  test('offers the vector logos and shows the picked one', async ({ app, page }) => {
+    await app.start();
+    const logo = page.getByTestId('app-logo');
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Appearance' }).click();
+    await expect(dialog.getByRole('button', { name: 'Puma, tail up' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Shaded puma' }).click();
+
+    await expect(logo).toHaveAttribute('src', 'logo-shaded.svg');
+    // The file has to be served and has to decode, not just be referenced.
+    await expect
+      .poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
+      .toBeGreaterThan(0);
+  });
+
+  test('starts with the saved logo and drops an unsaved choice', async ({ app, page }) => {
+    const initial = seed();
+    initial.settings.logo = 'classic';
+    await app.start(initial);
+    const logo = page.getByTestId('app-logo');
+    await expect(logo).toHaveAttribute('src', 'logo-classic.svg');
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Appearance' }).click();
+    await dialog.getByRole('button', { name: 'Sitting puma' }).click();
+    await expect(logo).toHaveAttribute('src', 'logo-mascot.svg');
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+
+    await expect(logo).toHaveAttribute('src', 'logo-classic.svg');
+    expect(await app.backend.calls('save_settings')).toEqual([]);
+  });
+
   test('connects a provider with its key and lists its models', async ({ app, page }) => {
     await app.start(seed({ models: [model(), model('anthropic:claude-opus-5', 'Claude Opus 5')] }));
 
@@ -133,6 +187,69 @@ test.describe('settings', () => {
     await expect
       .poll(async () => (await app.backend.lastCall('save_settings'))?.args['settings'])
       .toMatchObject({ handoverModel: null });
+  });
+
+  test('shows the command that summons the window where a shortcut cannot', async ({
+    app,
+    page,
+  }) => {
+    // A Wayland desktop: pumr cannot register a system-wide shortcut there.
+    const command = '/home/ada/Apps/pumr.AppImage --toggle';
+    await app.start(
+      seed({
+        windowControl: { toggleCommand: command, globalShortcut: false, shortcutError: null },
+      }),
+    );
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Window', exact: true }).click();
+
+    await expect(dialog.getByTestId('window-shortcut-unavailable')).toContainText('Wayland');
+    await expect(dialog.getByTestId('window-toggle-command')).toHaveText(command);
+
+    // What the command does when pumr is in front is set without the shortcut.
+    await dialog.getByRole('button', { name: 'Minimize', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    const saved = await app.backend.lastCall('save_settings');
+    expect(saved?.args['settings']).toMatchObject({
+      windowToggleEnabled: false,
+      windowToggleAction: 'minimize',
+    });
+  });
+
+  test('leaves the shortcut alone where it works', async ({ app, page }) => {
+    await app.start();
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Window', exact: true }).click();
+
+    await expect(dialog.getByTestId('window-toggle-command')).toHaveText('/usr/bin/pumr --toggle');
+    await expect(dialog.getByTestId('window-shortcut-unavailable')).toHaveCount(0);
+    await expect(dialog.getByTestId('window-shortcut-error')).toHaveCount(0);
+  });
+
+  test('says why a shortcut that is switched on does nothing', async ({ app, page }) => {
+    // Another application holds the combination, so registering it fails.
+    await app.start(
+      seed({
+        settings: { ...seed().settings, windowToggleEnabled: true },
+        windowControl: {
+          toggleCommand: '/usr/bin/pumr --toggle',
+          globalShortcut: true,
+          shortcutError: 'HotKey already registered',
+        },
+      }),
+    );
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Window', exact: true }).click();
+
+    const hint = dialog.getByTestId('window-shortcut-error');
+    await expect(hint).toContainText('could not be registered');
+    await expect(hint).toContainText('HotKey already registered');
   });
 
   test('closing without saving keeps the stored settings', async ({ app, page }) => {

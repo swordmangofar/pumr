@@ -1,7 +1,9 @@
 use crate::error::Result;
-use crate::models::CommandRule;
+use crate::models::{CommandRule, McpToolGrant};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+mod superseded_prompts;
 
 pub const KEYRING_SERVICE: &str = "pumr";
 
@@ -70,52 +72,90 @@ pub fn default_architecture_prompt() -> String {
 pub fn default_ui_ux_prompt() -> String {
     r#"# UI/UX design
 
-- Start from the user's goal and the existing design language. Match the components, spacing, typography and color tokens already used in the project.
-- Prefer clear hierarchy, generous whitespace and consistent alignment over decoration. Every element should earn its place.
-- Design the full range of states: empty, loading, error, disabled, hover, focus and success. Never ship only the happy path.
-- Make interactions predictable and accessible: keyboard navigation, visible focus, sufficient contrast, correct semantics/ARIA roles and never rely on color alone.
-- Keep copy short, concrete and action-oriented; label controls with what they do.
-- Reuse existing components before introducing new ones. If a new pattern is unavoidable, keep it small, composable and consistent.
-- When a design decision is ambiguous, use the question tool to confirm intent (audience, tone, density, target platform) instead of guessing."#
+Design or change the user interface so that the result looks like it belongs to this product, works in every state a user can reach, and can be judged by the user with their own eyes.
+
+1. Look before you design. Read the screens and components closest to the request and build from what they use: components, layout, spacing, typography, color tokens, icons and wording. Add a new pattern only when nothing existing fits, and keep it small and built on the same design tokens.
+2. Settle the direction before you build. For a new screen or a larger redesign, outline the layout and the main decisions in a few lines and confirm them with the question tool. Ask too when audience, platform, density or tone would change the design and neither the request nor the code settles it. Decide details yourself and say what you chose.
+3. Design every state, not only the filled one: empty, loading, error, disabled, hover, focus and success, plus long text, small windows and each theme the project has. Interfaces break in these states, not in the ideal one.
+4. Keep it usable for everyone: every action reachable by keyboard, focus visible, enough contrast, semantic elements or ARIA roles, and no meaning carried by color alone.
+5. Let hierarchy, alignment and whitespace do the work rather than decoration; every element needs a reason to be there. Keep text short and concrete, name a control after what it does, and handle text the way the project does, translations included.
+6. Check the result. Run the project's build or tests, show the changed screen with the screenshot tool, and ask for the user's verdict when the look matters.
+
+End with what you changed, which states you covered and what you could not check."#
         .to_string()
 }
 
 pub fn default_code_review_prompt() -> String {
     r#"# Code review
 
-Review the requested changes and report findings. Do not modify code unless the user explicitly asks you to fix something.
+Review the change and report what is wrong with it, so that the user can decide what to fix. Leave the code as it is until they have decided.
 
-- Group findings by severity: Critical, High, Medium, Low. For each finding give the exact location (file:line), the concrete impact and an actionable explanation.
-- Critical/High: correctness bugs, security issues, data loss, crashes and broken contracts.
-- Medium: maintainability, performance, missing tests, error handling and unhandled edge cases.
-- Low: naming, style, documentation and minor polish.
-- Be specific. Cite the code and, where useful, a minimal suggested change. Do not pad the review with praise or restate the diff.
-- Confirm every finding before you report it: read the lines it rests on once more, try to refute it, and drop what does not hold up. Say so when you could not confirm one.
+1. Establish what you are reviewing and what it is meant to do. `git status` and `git diff` show uncommitted work and `git show` shows a commit; the request, the session and the commit messages say what the change is for. If you cannot tell which change is meant, ask.
+2. Read around the diff: the callers, types and tests of the changed code. Bugs sit where a change meets code it did not touch.
+3. Check, in this order: wrong behavior (logic, edge cases, error paths, concurrency), security (input handling, authorization, secrets), broken contracts (interfaces, stored data, compatibility), missing or weak tests, performance, and maintainability.
+4. Confirm every finding before you report it: read the lines it rests on once more, try to refute it, and drop what does not hold up. Mark a finding you could not confirm as unconfirmed.
 
-After presenting the findings, ask the user what to do about each issue using the question tool. For every finding offer the options "Fix it", "Skip" and "Explain in more detail" — the user can always type their own answer. Ask about one finding at a time and wait for the answer before moving on. Only start fixing once the user confirms."#
+Rate a finding by what it causes, not by its topic:
+- Critical: data loss, a security hole, a crash, or wrong results in normal use.
+- High: a bug or broken contract that a realistic case will hit.
+- Medium: works today but is fragile, such as an unhandled edge case, missing error handling, untested behavior or a slowdown users will notice.
+- Low: naming, style, documentation and other polish.
+
+Report the verdict first, in a sentence or two, then the findings from most to least severe. Give each one its severity, `file:line`, what goes wrong and when, and the smallest change that fixes it. Leave out praise and retellings of the diff. If you found nothing, say so and name what you checked; a short review is better than an invented finding.
+
+When there are findings, ask what to do with them in one question call: one question per finding, most severe first, with the options "Fix it", "Skip" and "Explain in more detail". Low findings can share a single multiSelect question in which the user ticks the ones to fix. Explain where asked, then ask about those findings again. Fix only what the user chose, and run the project's checks afterwards."#
         .to_string()
 }
 
 pub fn default_documentation_writer_prompt() -> String {
     r#"# Documentation writer
 
-- If the user has not specified exactly what to document (which files, symbols, audience or format), ask with the question tool before writing. Do not guess the scope.
-- Identify the intended audience (end users, contributors or API consumers) and match the level of detail and tone to it.
-- Read the actual code and existing docs first. Document real behavior, never assumptions. Do not invent parameters, return values or side effects.
-- Actively look for edge cases, error conditions, defaults and anything you are unsure about, and ask the user to confirm them with the question tool instead of documenting a guess.
-- Cover purpose, usage examples, parameters, return values, errors, side effects and constraints.
-- Keep documentation close to the code it describes, follow the project's existing documentation style and keep examples runnable."#
+Write documentation that lets its reader get their task done without reading the source. Every statement in it has to be true of the code as it is now.
+
+1. Know the reader and the scope. Decide who reads this (an end user, a contributor, someone calling the API) and what they want to do with it. Take scope, format and location from the request and from the documentation the project already has. Ask with the question tool only when the scope or the reader is still open and the answer would change what you write.
+2. Read the code you document, and its tests, before you write. Describe the behavior you found, with its defaults, limits, errors and side effects. Where reading leaves a point open, run the code to find out. Where the behavior looks unintended, ask the user instead of documenting a guess.
+3. Lead with what the thing is for and how it is used most often, then give the details. Add a short example for anything a reader will copy, and run the examples so you know they work.
+4. Fit the project: the structure, tone, terms and comment style of its existing documentation, placed next to what it describes. Update the text that is already there rather than adding a second one, and correct statements your reading showed to be outdated.
+5. Write plainly: short sentences, present tense, one name per thing, no filler and no sales tone. Leave out what the code and its names already say; a comment explains why, not what.
+
+End with the files you wrote or changed and anything you could not verify."#
         .to_string()
 }
 
-pub fn default_bugfixer_prompt() -> String {
-    r#"# Bugfixer
+pub fn default_bugfix_prompt() -> String {
+    r#"# Bugfix
 
-- Before changing anything, reproduce the bug and gather evidence (stack traces, logs, failing tests, minimal inputs). Do not guess at the cause.
-- If the report is vague or you cannot reproduce it, use the question tool to pinpoint the bug: ask for exact steps, expected vs actual behavior, environment/version, recent changes and any error output. Ask follow-up questions until the reproduction is clear.
-- Once you have a hypothesis, confirm it with the smallest possible check before editing. If you cannot find the bug directly, switch to systematic debugging: bisect the code path, add temporary logging or a failing test, inspect state at each step and narrow down the cause instead of changing code speculatively.
-- Fix the root cause, not the symptom. Keep the change minimal and add a regression test that fails before and passes after the fix.
-- Explain what the bug was, why it happened and why the fix is correct. Call out related code paths that might have the same defect."#
+Find the cause of the bug, fix it with the smallest change that removes that cause, and prove that it is gone. A patch for the symptom, such as a swallowed error or a special case for the reported input, leaves the bug waiting for the next input.
+
+1. Reproduce it before you change anything: a failing test, or a script or command in the scratch folder, that shows the wrong behavior. Collect the evidence there is: stack traces, logs, the input that triggers it. If the report lacks what you need and the code does not tell you, ask with the question tool, in one go, for the exact steps, expected and actual behavior, the version or environment, and any error output.
+2. Find the cause. Trace the failing path back from the symptom to the first point where something is wrong. When it is not obvious, narrow it down instead of trying changes: halve the code path, log the state in between, or find the change that broke it (`git log`, `git bisect`). Check your explanation with the smallest test you can think of before you edit; it has to account for everything you observed.
+3. Fix the cause, in the place where it lies, and nothing else. Where the project has tests, keep the reproduction as a regression test: it fails without the fix and passes with it.
+4. Verify. Run the reproduction again, then the tests around the changed code, and remove the logging and other aids you added.
+5. Look for the same mistake nearby. Fix it where it is clearly the same defect; otherwise name the places.
+
+If you cannot reproduce the bug, say so and say what you tried. A change you could not verify is a guess: present it as one.
+
+End with the cause, why the fix is right, how you verified it and what is still open."#
+        .to_string()
+}
+
+pub fn default_test_writer_prompt() -> String {
+    r#"# Test writer
+
+Write tests that would catch a real defect in the behavior they cover and that stay green when the code is refactored without changing that behavior. The tests are the task: the code under test stays as it is.
+
+1. Learn how this project tests before you write. Read a few existing tests near the code for the framework, the place and naming of tests, their helpers, fixtures and fakes, and the command that runs them, then write yours the same way. Ask before adding a framework, a dependency or the setup for a level the project does not have yet.
+2. Choose the level. Use the one the user named; otherwise the lowest one that can show the behavior:
+   - Unit: the logic of one function, class or component on its own. Most tests belong here.
+   - Integration: parts working together, or code meeting a boundary such as a database, an HTTP API, the file system or the framework. Use the real parts, the project's test setup for what lies outside, and separate data for each test.
+   - End-to-end: a flow a user goes through in the running app. Keep these few, for the paths that must not break. Drive the app as a user does, find elements by role, label or text, and wait for a condition, not for a fixed time.
+3. Decide what to cover from what the code is meant to do: the normal case, the boundaries (empty, one, many, the limits), invalid input and the failure paths. Cover what can break and would matter, not every line. Take expected values from that intent, never from running the code and copying its output, which only confirms its bugs.
+4. Give each test one behavior and name it after that behavior. Assert exact values on what a caller or user can observe. Keep tests independent and deterministic: no real clock, network, randomness or shared state. Replace only what you do not control or what is slow; a test that mocks the code it is about tests nothing.
+5. Run the new tests in a single run, not in watch mode, then the suite they belong to. Make sure each one can fail: a regression test fails without the fix, and for the others check that the assertion would notice a wrong result.
+
+A test that fails because the code is wrong has found a bug: report it and ask with the question tool whether to fix it. Do not weaken, skip or delete a test to get a green run. If code cannot be tested as it is, make the smallest change that makes it testable without changing what it does, and say so.
+
+End with the tests you added and what each covers, the command you ran with its result, and what you left untested and why."#
         .to_string()
 }
 
@@ -160,7 +200,7 @@ pub struct Mode {
     /// Extra system prompt appended when this mode is active.
     #[serde(default)]
     pub system_prompt: String,
-    /// Ids of `user_system_prompts` that this mode pulls in.
+    /// Ids of `user_system_prompts` that are part of this mode's system prompt.
     #[serde(default)]
     pub user_prompt_ids: Vec<String>,
     /// MCP servers to connect automatically while this mode is active.
@@ -169,7 +209,7 @@ pub struct Mode {
     /// Skills whose instructions are loaded automatically while this mode is active.
     #[serde(default)]
     pub skills: Vec<String>,
-    /// Whether the globally enabled built-in and user prompts apply in this mode.
+    /// Whether the globally enabled built-in prompts apply in this mode.
     #[serde(default)]
     pub include_global_prompts: bool,
     /// Whether project rule files (AGENTS.md) are appended in this mode.
@@ -285,15 +325,18 @@ pub fn resolve_mode(settings: &Settings, mode_id: Option<&str>) -> Mode {
         .unwrap_or_else(|| default_modes().into_iter().next().unwrap())
 }
 
+/// One of "Your prompts": called from the chat box with a slash and its name
+/// (`/code-review`) for a single message, or named by a mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSystemPrompt {
     pub id: String,
     pub name: String,
     pub prompt: String,
-    #[serde(default)]
-    pub enabled: bool,
 }
+
+/// Id of the built-in "Bugfix" prompt, which was called "Bugfixer" at first.
+const BUGFIX_PROMPT_ID: &str = "bugfixer";
 
 pub fn default_user_system_prompts() -> Vec<UserSystemPrompt> {
     vec![
@@ -301,25 +344,27 @@ pub fn default_user_system_prompts() -> Vec<UserSystemPrompt> {
             id: "ui-ux-designing".to_string(),
             name: "UI/UX Designing".to_string(),
             prompt: default_ui_ux_prompt(),
-            enabled: false,
         },
         UserSystemPrompt {
             id: "code-review".to_string(),
             name: "Code Review".to_string(),
             prompt: default_code_review_prompt(),
-            enabled: false,
         },
         UserSystemPrompt {
             id: "documentation-writer".to_string(),
             name: "Documentation Writer".to_string(),
             prompt: default_documentation_writer_prompt(),
-            enabled: false,
         },
         UserSystemPrompt {
-            id: "bugfixer".to_string(),
-            name: "Bugfixer".to_string(),
-            prompt: default_bugfixer_prompt(),
-            enabled: false,
+            // The id predates the name; saved settings and modes refer to it.
+            id: BUGFIX_PROMPT_ID.to_string(),
+            name: "Bugfix".to_string(),
+            prompt: default_bugfix_prompt(),
+        },
+        UserSystemPrompt {
+            id: "test-writer".to_string(),
+            name: "Test Writer".to_string(),
+            prompt: default_test_writer_prompt(),
         },
     ]
 }
@@ -372,6 +417,45 @@ pub struct Settings {
     pub interface: InterfaceSettings,
     #[serde(flatten)]
     pub window: WindowSettings,
+    /// Commands of the user's that run at fixed moments of the agent's work
+    /// (see `crate::hooks`).
+    pub hooks: Vec<Hook>,
+}
+
+/// One hook: a command and when it runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Hook {
+    pub id: String,
+    pub enabled: bool,
+    /// When it runs: `beforeTool`, `afterTool` or `turnEnd`.
+    pub event: String,
+    /// The tools it runs for, as names or patterns separated by `|` or
+    /// commas (`edit|write`). Empty runs it for every tool.
+    pub tools: String,
+    /// Patterns for the file a call names (`*.ts`). Empty runs it for every
+    /// call; otherwise only for calls that name a matching file.
+    pub files: String,
+    pub command: String,
+    /// Seconds it may run before it is stopped. 0 means the default.
+    pub timeout_seconds: u64,
+    /// Path of the one project it runs in. Empty runs it in every project.
+    pub project: String,
+}
+
+impl Default for Hook {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enabled: true,
+            event: crate::hooks::AFTER_TOOL.to_string(),
+            tools: String::new(),
+            files: String::new(),
+            command: String::new(),
+            timeout_seconds: 60,
+            project: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -542,6 +626,11 @@ pub struct PermissionSettings {
     pub denied_command_rules: Vec<CommandRule>,
     pub allowed_websites: Vec<String>,
     pub denied_websites: Vec<String>,
+    /// MCP tools that run without a prompt, saved with "always allow".
+    pub mcp_tool_grants: Vec<McpToolGrant>,
+    /// Folders whose sensitive files (keys, tokens, credentials) commands may
+    /// use without a prompt, saved with "always allow".
+    pub secret_folders: Vec<String>,
     /// Default action of the primary allow button per prompt category.
     pub permission_defaults: PermissionDefaults,
     /// Automatic approvals that skip the prompt for recognizable safe work.
@@ -559,6 +648,18 @@ pub struct PermissionSettings {
     pub file_ignore_disabled: Vec<String>,
     pub file_ignore_enabled: Vec<String>,
     pub file_ignore_advanced: bool,
+    /// How far the operating system confines the agent's commands: `off`,
+    /// `files` (writes and key folders) or `filesAndNetwork` (see
+    /// `crate::sandbox`).
+    pub sandbox: String,
+    /// Folders outside the project a confined command may still write to:
+    /// the caches of build tools.
+    pub sandbox_writable_folders: Vec<String>,
+    /// Folders and files a confined command may not read: where keys live.
+    pub sandbox_unreadable_folders: Vec<String>,
+    /// Commands that run outside the sandbox, by how their line begins or as
+    /// a pattern of the whole line.
+    pub sandbox_excluded_commands: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -607,6 +708,8 @@ impl Default for PermissionSettings {
             denied_command_rules: Vec::new(),
             allowed_websites: Vec::new(),
             denied_websites: Vec::new(),
+            mcp_tool_grants: Vec::new(),
+            secret_folders: Vec::new(),
             permission_defaults: PermissionDefaults::default(),
             auto_approve_read_only: true,
             auto_approve_package_scripts: true,
@@ -624,6 +727,10 @@ impl Default for PermissionSettings {
             file_ignore_disabled: Vec::new(),
             file_ignore_enabled: Vec::new(),
             file_ignore_advanced: false,
+            sandbox: "files".to_string(),
+            sandbox_writable_folders: crate::sandbox::default_writable(),
+            sandbox_unreadable_folders: crate::sandbox::default_unreadable(),
+            sandbox_excluded_commands: Vec::new(),
         }
     }
 }
@@ -704,6 +811,9 @@ pub struct AppearanceSettings {
     pub background_opacity: f64,
     pub background_blur: f64,
     pub glass_opacity: f64,
+    /// Id of the logo shown in the app header. The frontend owns the list of
+    /// logos and falls back to its default for an id it does not know.
+    pub logo: String,
 }
 
 impl Default for AppearanceSettings {
@@ -719,6 +829,7 @@ impl Default for AppearanceSettings {
             background_opacity: 1.0,
             background_blur: 0.0,
             glass_opacity: 1.0,
+            logo: "mascot".to_string(),
         }
     }
 }
@@ -922,21 +1033,63 @@ pub fn load_settings(path: &Path) -> Settings {
     settings
 }
 
+/// The `settings_version` this build writes.
+const SETTINGS_VERSION: u32 = 3;
+
 /// One-time settings migrations, keyed by `settings_version`. Returns true when
 /// a migration ran and the file should be rewritten.
 fn migrate_settings(settings: &mut Settings) -> bool {
-    if settings.settings_version >= 1 {
+    if settings.settings_version >= SETTINGS_VERSION {
         return false;
     }
-    // Version 1: opencode-style permission defaults. Normal in-project commands
-    // stop asking (dangerous programs, sensitive files, outside-project paths
-    // and shell substitution still do), and the focused allow button grants the
-    // chat/session scope so one keystroke stops repeat prompts.
-    settings.settings_version = 1;
-    settings.permissions.auto_approve_project_commands = true;
-    settings.permissions.permission_defaults.command = "session".to_string();
-    settings.permissions.permission_defaults.folder = "session".to_string();
+    if settings.settings_version < 1 {
+        // Version 1: opencode-style permission defaults. Normal in-project
+        // commands stop asking (dangerous programs, sensitive files,
+        // outside-project paths and shell substitution still do), and the
+        // focused allow button grants the chat/session scope so one keystroke
+        // stops repeat prompts.
+        settings.permissions.auto_approve_project_commands = true;
+        settings.permissions.permission_defaults.command = "session".to_string();
+        settings.permissions.permission_defaults.folder = "session".to_string();
+    }
+    if settings.settings_version < 2 {
+        rename_bugfix_prompt(settings);
+    }
+    // Version 3 rewrote the built-in prompts of "Your prompts". Every later
+    // version runs this too, so that a text which changes again is followed.
+    refresh_builtin_prompts(settings);
+    settings.settings_version = SETTINGS_VERSION;
     true
+}
+
+/// Version 2: the built-in "Bugfixer" prompt is called "Bugfix", so that its
+/// slash command reads `/bugfix`. Settings files hold the name of every
+/// prompt; a name the user changed is left alone.
+fn rename_bugfix_prompt(settings: &mut Settings) {
+    for prompt in &mut settings.prompts.user_system_prompts {
+        if prompt.id == BUGFIX_PROMPT_ID && prompt.name == "Bugfixer" {
+            prompt.name = "Bugfix".to_string();
+        }
+    }
+}
+
+/// Brings the built-in prompts of "Your prompts" up to date. Settings files
+/// hold the text of every prompt, so a saved text that is still one an earlier
+/// version shipped becomes the current one; a text the user changed is left
+/// alone.
+fn refresh_builtin_prompts(settings: &mut Settings) {
+    for builtin in default_user_system_prompts() {
+        let earlier = superseded_prompts::texts(&builtin.id);
+        for prompt in &mut settings.prompts.user_system_prompts {
+            if prompt.id == builtin.id
+                && earlier
+                    .iter()
+                    .any(|text| text.trim() == prompt.prompt.trim())
+            {
+                prompt.prompt = builtin.prompt.clone();
+            }
+        }
+    }
 }
 
 /// Built-in user prompts are always available. If a settings file predates a
@@ -1168,10 +1321,138 @@ pub fn has_api_key(provider: &str) -> Result<bool> {
     Ok(get_api_key(provider)?.is_some_and(|key| !key.trim().is_empty()))
 }
 
+/// The file name of the database in the data folder.
+const DATABASE: &str = "pumr.sqlite";
+
+/// The folder pumr keeps its database, settings and snapshots in, given the
+/// one the system names for the app. A debug build has a folder of its own
+/// next to it (`….dev`): it carries the identifier of the installed pumr and
+/// runs beside it, and on one database each would mark the other's running
+/// turns as cut off and overwrite the other's settings.
+pub fn data_folder(app_data_dir: std::path::PathBuf) -> std::path::PathBuf {
+    if !cfg!(debug_assertions) {
+        return app_data_dir;
+    }
+    let mut name = app_data_dir
+        .file_name()
+        .unwrap_or_default()
+        .to_os_string();
+    name.push(".dev");
+    let own = app_data_dir.with_file_name(name);
+    if let Err(error) = seed_data_folder(&app_data_dir, &own) {
+        log::warn!("could not copy the installed pumr's data for the debug build: {error}");
+    }
+    own
+}
+
+/// Starts the folder `own` as a copy of `installed`, once: the chats,
+/// settings and snapshots that were shared until the folders were told apart
+/// stay with both. From then on each side keeps its own. A folder that has a
+/// database is left as it is.
+fn seed_data_folder(installed: &Path, own: &Path) -> Result<()> {
+    if own.join(DATABASE).exists() || !installed.join(DATABASE).exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(own)?;
+    for entry in std::fs::read_dir(installed)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        // The database is copied below, in one piece, and the socket is the
+        // running pumr's own.
+        let skipped = name.to_string_lossy().starts_with(DATABASE) || name == "control.sock";
+        if !skipped {
+            copy_tree(&entry.path(), &own.join(&name))?;
+        }
+    }
+    // Last, and under another name first: the database marks the folder as
+    // started, so it only appears once everything else is there. `VACUUM
+    // INTO` writes a consistent copy even while the other pumr is running.
+    let draft = own.join(format!("{DATABASE}.seed"));
+    let _ = std::fs::remove_file(&draft);
+    let source = rusqlite::Connection::open_with_flags(
+        installed.join(DATABASE),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    source.execute("VACUUM INTO ?1", [draft.to_string_lossy()])?;
+    drop(source);
+    std::fs::rename(&draft, own.join(DATABASE))?;
+    Ok(())
+}
+
+/// Copies a file or a folder with all that is in it. Links stay links, and
+/// what is neither a file nor a folder (a socket) is left out.
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    let kind = std::fs::symlink_metadata(from)?.file_type();
+    if kind.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if kind.is_file() {
+        std::fs::copy(from, to)?;
+    } else if kind.is_symlink() {
+        #[cfg(unix)]
+        {
+            let _ = std::fs::remove_file(to);
+            std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_debug_build_starts_its_own_data_folder_from_the_installed_one() {
+        let directory = tempfile::tempdir().unwrap();
+        let installed = directory.path().join("dev.pumr.app");
+        std::fs::create_dir_all(installed.join("shadow/project")).unwrap();
+        std::fs::write(installed.join("settings.json"), "{\"theme\":\"dark\"}").unwrap();
+        std::fs::write(installed.join("shadow/project/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(installed.join("control.sock"), "").unwrap();
+        let database = rusqlite::Connection::open(installed.join(DATABASE)).unwrap();
+        database
+            .execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE chats (name TEXT); INSERT INTO chats VALUES ('first');")
+            .unwrap();
+
+        // The other pumr still has the database open while it is copied.
+        let own = data_folder(installed.clone());
+        assert_eq!(own, directory.path().join("dev.pumr.app.dev"));
+        let chats = |folder: &Path| -> Vec<String> {
+            let database = rusqlite::Connection::open(folder.join(DATABASE)).unwrap();
+            let mut names = database.prepare("SELECT name FROM chats").unwrap();
+            let names = names.query_map([], |row| row.get(0)).unwrap();
+            names.map(|name| name.unwrap()).collect()
+        };
+        assert_eq!(chats(&own), ["first"]);
+        assert_eq!(
+            std::fs::read_to_string(own.join("settings.json")).unwrap(),
+            "{\"theme\":\"dark\"}"
+        );
+        assert!(own.join("shadow/project/HEAD").is_file());
+        assert!(!own.join("control.sock").exists());
+        assert!(!own.join(format!("{DATABASE}.seed")).exists());
+
+        // From then on each keeps its own: nothing is copied a second time.
+        database.execute("INSERT INTO chats VALUES ('second')", []).unwrap();
+        std::fs::write(own.join("settings.json"), "{}").unwrap();
+        assert_eq!(data_folder(installed.clone()), own);
+        assert_eq!(chats(&own), ["first"]);
+        assert_eq!(std::fs::read_to_string(own.join("settings.json")).unwrap(), "{}");
+        assert_eq!(chats(&installed), ["first", "second"]);
+    }
+
+    #[test]
+    fn a_debug_build_without_an_installed_pumr_starts_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let own = data_folder(directory.path().join("dev.pumr.app"));
+        assert_eq!(own, directory.path().join("dev.pumr.app.dev"));
+        assert!(!own.join(DATABASE).exists());
+    }
 
     #[test]
     fn command_rule_migration_through_flattened_settings_preserves_other_fields() {
@@ -1245,7 +1526,7 @@ mod tests {
         settings.permissions.permission_defaults.folder = "once".to_string();
 
         assert!(migrate_settings(&mut settings));
-        assert_eq!(settings.settings_version, 1);
+        assert_eq!(settings.settings_version, SETTINGS_VERSION);
         assert!(settings.permissions.auto_approve_project_commands);
         assert_eq!(settings.permissions.permission_defaults.command, "session");
         assert_eq!(settings.permissions.permission_defaults.folder, "session");
@@ -1261,6 +1542,163 @@ mod tests {
         assert_eq!(settings.permissions.permission_defaults.command, "once");
     }
 
+    fn saved_prompt<'a>(settings: &'a mut Settings, id: &str) -> &'a mut UserSystemPrompt {
+        settings
+            .prompts
+            .user_system_prompts
+            .iter_mut()
+            .find(|prompt| prompt.id == id)
+            .unwrap()
+    }
+
+    fn bugfix_prompt(settings: &mut Settings) -> &mut UserSystemPrompt {
+        saved_prompt(settings, BUGFIX_PROMPT_ID)
+    }
+
+    #[test]
+    fn the_saved_bugfixer_prompt_is_renamed_to_bugfix() {
+        // What a version 1 file holds: the prompt under its first name.
+        let mut settings = Settings::default();
+        settings.settings_version = 1;
+        settings.permissions.auto_approve_project_commands = false;
+        let original = superseded_prompts::texts(BUGFIX_PROMPT_ID)[0];
+        assert!(original.starts_with("# Bugfixer\n"));
+        let prompt = bugfix_prompt(&mut settings);
+        prompt.name = "Bugfixer".to_string();
+        prompt.prompt = original.to_string();
+
+        assert!(migrate_settings(&mut settings));
+        assert_eq!(settings.settings_version, SETTINGS_VERSION);
+        let prompt = bugfix_prompt(&mut settings);
+        assert_eq!(prompt.name, "Bugfix");
+        assert_eq!(prompt.prompt, default_bugfix_prompt());
+        // The earlier migration is not run a second time.
+        assert!(!settings.permissions.auto_approve_project_commands);
+        assert!(!migrate_settings(&mut settings));
+    }
+
+    #[test]
+    fn a_bugfixer_prompt_the_user_changed_keeps_its_name_and_text() {
+        let mut settings = Settings::default();
+        settings.settings_version = 1;
+        let prompt = bugfix_prompt(&mut settings);
+        prompt.name = "Bug hunter".to_string();
+        prompt.prompt = "My own steps.".to_string();
+
+        assert!(migrate_settings(&mut settings));
+        let prompt = bugfix_prompt(&mut settings);
+        assert_eq!(prompt.name, "Bug hunter");
+        assert_eq!(prompt.prompt, "My own steps.");
+    }
+
+    #[test]
+    fn a_builtin_prompt_the_user_never_edited_gets_its_new_text() {
+        let mut earlier_texts = 0;
+        for builtin in default_user_system_prompts() {
+            for earlier in superseded_prompts::texts(&builtin.id) {
+                // What a version 2 file holds: the text an earlier version wrote.
+                let mut settings = Settings::default();
+                settings.settings_version = 2;
+                saved_prompt(&mut settings, &builtin.id).prompt = earlier.to_string();
+
+                assert!(migrate_settings(&mut settings));
+                assert_eq!(settings.settings_version, SETTINGS_VERSION);
+                let prompt = saved_prompt(&mut settings, &builtin.id);
+                assert_eq!(prompt.prompt, builtin.prompt, "{}", builtin.id);
+                assert_eq!(prompt.name, builtin.name);
+                earlier_texts += 1;
+            }
+        }
+        // Two each for the code review and the bugfix prompt.
+        assert_eq!(earlier_texts, 6);
+    }
+
+    #[test]
+    fn a_builtin_prompt_the_user_edited_keeps_its_text() {
+        let earlier = superseded_prompts::texts("code-review")[0];
+        let edited = format!("{earlier}\n- Answer in bullet points.");
+        let mut settings = Settings::default();
+        settings.settings_version = 2;
+        saved_prompt(&mut settings, "code-review").prompt = edited.clone();
+        // A prompt of the user's own is not a built-in one, whatever it says.
+        settings.prompts.user_system_prompts.push(UserSystemPrompt {
+            id: "custom-1".to_string(),
+            name: "My review".to_string(),
+            prompt: earlier.to_string(),
+        });
+
+        assert!(migrate_settings(&mut settings));
+        assert_eq!(saved_prompt(&mut settings, "code-review").prompt, edited);
+        assert_eq!(saved_prompt(&mut settings, "custom-1").prompt, earlier);
+    }
+
+    #[test]
+    fn settings_that_predate_a_builtin_prompt_get_it_after_the_users_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut stored = Settings::default();
+        stored.settings_version = SETTINGS_VERSION;
+        stored
+            .prompts
+            .user_system_prompts
+            .retain(|prompt| prompt.id != "test-writer");
+        stored.prompts.user_system_prompts.push(UserSystemPrompt {
+            id: "custom-1".to_string(),
+            name: "Release notes".to_string(),
+            prompt: "Write the release notes.".to_string(),
+        });
+        save_settings(&path, &stored).unwrap();
+
+        let settings = load_settings(&path);
+        let prompts = &settings.prompts.user_system_prompts;
+        let ids: Vec<&str> = prompts.iter().map(|prompt| prompt.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "ui-ux-designing",
+                "code-review",
+                "documentation-writer",
+                BUGFIX_PROMPT_ID,
+                "custom-1",
+                "test-writer"
+            ]
+        );
+        assert_eq!(prompts[4].prompt, "Write the release notes.");
+        assert_eq!(prompts[5].name, "Test Writer");
+        assert_eq!(prompts[5].prompt, default_test_writer_prompt());
+    }
+
+    /// Settings files hold the text of every prompt, so a text that changes
+    /// reaches existing installations only when the text it had is listed in
+    /// `superseded_prompts` and `SETTINGS_VERSION` is raised. A digest here
+    /// changes together with those two, or alone while the text it replaces
+    /// was never released.
+    #[test]
+    fn a_builtin_prompt_text_changes_only_with_its_earlier_text_on_record() {
+        use sha2::{Digest, Sha256};
+        let digests = [
+            ("ui-ux-designing", "1130280e1720bf09"),
+            ("code-review", "8756d7b173b255e8"),
+            ("documentation-writer", "5cf1df045f201e33"),
+            (BUGFIX_PROMPT_ID, "a9f91d3ffba29277"),
+            ("test-writer", "276b6f5852dc99f1"),
+        ];
+        let prompts = default_user_system_prompts();
+        assert_eq!(prompts.len(), digests.len());
+        for (prompt, (id, digest)) in prompts.iter().zip(digests) {
+            assert_eq!(prompt.id, id);
+            assert!(prompt.prompt.starts_with("# "), "{id} has no heading");
+            let text = prompt.prompt.as_str();
+            assert!(!superseded_prompts::texts(id).contains(&text), "{id}");
+            let actual = format!("{:x}", Sha256::digest(text.as_bytes()));
+            assert_eq!(
+                &actual[..16],
+                digest,
+                "the text of the built-in prompt \"{id}\" changed: see the comment on this test"
+            );
+        }
+    }
+
     #[test]
     fn a_broken_settings_file_is_backed_up_and_left_alone() {
         let dir = tempfile::tempdir().unwrap();
@@ -1269,10 +1707,7 @@ mod tests {
         std::fs::write(&path, broken).unwrap();
 
         let settings = load_settings(&path);
-        assert_eq!(
-            settings.settings_version,
-            Settings::default().settings_version.max(1)
-        );
+        assert_eq!(settings.settings_version, SETTINGS_VERSION);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
         let backups: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -1331,7 +1766,7 @@ mod tests {
         std::fs::write(&path, serde_json::to_string_pretty(&stored).unwrap()).unwrap();
 
         let settings = load_settings(&path);
-        assert_eq!(settings.settings_version, 1);
+        assert_eq!(settings.settings_version, SETTINGS_VERSION);
         assert!(settings.permissions.auto_approve_project_commands);
         assert_eq!(settings.permissions.permission_defaults.command, "session");
         assert_eq!(settings.permissions.permission_defaults.folder, "session");
@@ -1339,7 +1774,7 @@ mod tests {
         // The migrated file was persisted, so reloading does not migrate again.
         let reloaded: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(reloaded["settingsVersion"], json!(1));
+        assert_eq!(reloaded["settingsVersion"], json!(SETTINGS_VERSION));
 
         std::fs::remove_dir_all(&dir).ok();
     }

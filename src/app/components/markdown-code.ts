@@ -11,6 +11,7 @@ import { MarkdownLive } from '../core/markdown';
 import { MonacoService } from '../core/monaco.service';
 import { ThemeService } from '../core/theme.service';
 import { CopyButton } from './copy-button';
+import { RunButton } from './run-button';
 import { StreamText } from './stream-text';
 
 interface Highlight {
@@ -19,19 +20,47 @@ interface Highlight {
   html: string;
 }
 
-/** A fenced code block, syntax-highlighted by Monaco once it is complete. */
+/**
+ * Fence names of commands for a shell. `console` and `shell-session` are left
+ * out: they show a prompt and output next to the command.
+ */
+const SHELL_FENCES = new Set([
+  'bash',
+  'sh',
+  'shell',
+  'zsh',
+  'fish',
+  'cmd',
+  'bat',
+  'powershell',
+  'pwsh',
+  'ps1',
+]);
+
+/**
+ * A fenced code block, syntax-highlighted by Monaco once it is complete. A
+ * block of shell commands can be run in the terminal dock from here.
+ */
 @Component({
   selector: 'app-markdown-code',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CopyButton, StreamText],
+  imports: [CopyButton, RunButton, StreamText],
   host: { class: 'block overflow-hidden rounded-xl border border-white/10 bg-ink/60' },
   template: `
     <div class="flex items-center justify-between gap-2 border-b border-white/5 py-1 pr-1.5 pl-3">
       <span class="truncate font-mono text-[11px] text-mist/40">{{ lang() }}</span>
-      <app-copy-button
-        [text]="text()"
-        buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
-      />
+      <div class="flex shrink-0 items-center gap-1">
+        @if (runnable()) {
+          <app-run-button
+            [command]="text()"
+            buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+          />
+        }
+        <app-copy-button
+          [text]="text()"
+          buttonClass="h-6 w-6 border-white/10 bg-white/5 text-mist/40 hover:border-accent/40 hover:bg-accent/15 hover:text-accent"
+        />
+      </div>
     </div>
     <pre
       class="overflow-x-auto px-4 py-3 font-mono text-[13px] leading-relaxed text-mist"
@@ -47,6 +76,12 @@ export class MarkdownCode {
   private readonly theme = inject(ThemeService);
   private readonly highlight = signal<Highlight | null>(null);
   private request = 0;
+
+  /** Whether the block is a finished command for a shell. */
+  protected readonly runnable = computed(
+    () =>
+      !this.live() && SHELL_FENCES.has(this.lang().toLowerCase()) && this.text().trim() !== '',
+  );
 
   /**
    * Monaco's markup for exactly the text shown. It is bound as plain HTML, so

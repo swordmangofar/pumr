@@ -1,7 +1,7 @@
 use crate::model_match::{self, ModelMatch};
 use crate::models::{
-    EventSink, ModelInfo, PermissionAuditEntry, PermissionDecision, QuestionAnswer, QuestionItem,
-    RoutedEvent, StreamEvent,
+    EventSink, McpToolGrant, ModelInfo, PermissionAuditEntry, PermissionDecision, QuestionAnswer,
+    QuestionItem, RoutedEvent, StreamEvent,
 };
 use crate::permissions::{CommandRisk, CommandScopeOption, CommandSegment, LivePermissions};
 use std::collections::HashMap;
@@ -22,6 +22,9 @@ pub enum PermissionOperation {
     Fetch,
     McpTool,
     McpStart,
+    /// Running a command outside the sandbox. No rule or grant answers this
+    /// prompt in the user's place.
+    Unsandboxed,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,11 @@ pub struct PermissionPrompt {
     /// The conversation (root session) an "allow in this chat" grant belongs to.
     /// Distinct from the routing `session_id`, which may be a subagent.
     pub grant_session_id: String,
+    /// What a "don't ask again" on an MCP tool prompt remembers: the tool and
+    /// its exact server. `None` for every other prompt.
+    pub mcp_tool: Option<McpToolGrant>,
+    /// Folders whose sensitive files the user can release from this prompt.
+    pub secret_folders: Vec<String>,
     /// The assistant's own one-sentence explanation of why it needs this,
     /// taken from the tool call's `reason` argument. Untrusted model text:
     /// shown as the assistant's claim, never used for the decision.
@@ -100,6 +108,8 @@ struct PendingPermission {
     scope_options: Vec<CommandScopeOption>,
     folders: Vec<String>,
     hosts: Vec<String>,
+    mcp_tool: Option<McpToolGrant>,
+    secret_folders: Vec<String>,
     session_id: String,
     grant_session_id: String,
     project_root: PathBuf,
@@ -123,6 +133,10 @@ pub struct PendingPrompt {
     pub folders: Vec<String>,
     /// Websites the backend proposed for allowing from a command prompt.
     pub hosts: Vec<String>,
+    /// The MCP tool the prompt asked about, which a remembering allow saves.
+    pub mcp_tool: Option<McpToolGrant>,
+    /// Folders with sensitive files the backend proposed for release.
+    pub secret_folders: Vec<String>,
     /// The URL a website prompt asked about, so an edited website rule can be
     /// checked against the host it must still cover.
     pub url: Option<String>,
@@ -182,6 +196,7 @@ struct PendingSnapshot {
     cwd: Option<PathBuf>,
     path: Option<String>,
     url: Option<String>,
+    mcp_tool: Option<McpToolGrant>,
     project_root: PathBuf,
     grant_session_id: String,
 }
@@ -194,6 +209,14 @@ impl PendingSnapshot {
     /// pending request it covers.
     fn evaluate(&self, permissions: &LivePermissions) -> Option<bool> {
         match self.kind.as_str() {
+            // A call of an MCP tool the user has just allowed for the chat or
+            // for good. Nothing denies an MCP tool, so it never auto-denies.
+            "command" if self.operation == PermissionOperation::McpTool => {
+                let grant = self.mcp_tool.as_ref()?;
+                permissions
+                    .mcp_tool_grant_scope(&self.grant_session_id, grant)
+                    .map(|_| true)
+            }
             // Only real shell commands can be re-evaluated; MCP prompts carry a
             // JSON preview, not a command line.
             "command" if self.operation == PermissionOperation::Execute => {
@@ -318,6 +341,8 @@ impl PermissionBroker {
                 scope_options: entry.scope_options.clone(),
                 folders: entry.folders.clone(),
                 hosts: entry.hosts.clone(),
+                mcp_tool: entry.mcp_tool.clone(),
+                secret_folders: entry.secret_folders.clone(),
                 url: entry.signature.url.clone(),
                 session_id: entry.session_id.clone(),
                 grant_session_id: entry.grant_session_id.clone(),
@@ -379,6 +404,7 @@ impl PermissionBroker {
                     cwd: entry.signature.cwd.clone(),
                     path: entry.signature.path.clone(),
                     url: entry.signature.url.clone(),
+                    mcp_tool: entry.mcp_tool.clone(),
                     project_root: entry.project_root.clone(),
                     grant_session_id: entry.grant_session_id.clone(),
                 })
@@ -456,6 +482,8 @@ impl PermissionBroker {
                         scope_options: prompt.scope_options.clone(),
                         folders: prompt.folders.clone(),
                         hosts: prompt.hosts.clone(),
+                        mcp_tool: prompt.mcp_tool.clone(),
+                        secret_folders: prompt.secret_folders.clone(),
                         justification: prompt.justification.clone(),
                     };
                     inner.next_seq += 1;
@@ -474,6 +502,8 @@ impl PermissionBroker {
                             scope_options: prompt.scope_options.clone(),
                             folders: prompt.folders.clone(),
                             hosts: prompt.hosts.clone(),
+                            mcp_tool: prompt.mcp_tool.clone(),
+                            secret_folders: prompt.secret_folders.clone(),
                             session_id: session_id.to_string(),
                             grant_session_id: prompt.grant_session_id.clone(),
                             project_root: prompt.project_root.clone(),
@@ -910,6 +940,8 @@ mod tests {
             folders: Vec::new(),
             hosts: Vec::new(),
             grant_session_id: "chat".to_string(),
+            mcp_tool: None,
+            secret_folders: Vec::new(),
             justification: None,
         }
     }
@@ -1119,6 +1151,8 @@ mod tests {
             folders: Vec::new(),
             hosts: Vec::new(),
             grant_session_id: grant_session_id.to_string(),
+            mcp_tool: None,
+            secret_folders: Vec::new(),
             justification: None,
         }
     }
@@ -1241,6 +1275,75 @@ mod tests {
         assert_eq!(broker.auto_resolve("chat", &permissions).len(), 1);
         assert!(future.await.allowed);
         let _ = root;
+    }
+
+    #[tokio::test]
+    async fn a_remembered_mcp_tool_resolves_its_queued_calls_only() {
+        let grant = |tool: &str| McpToolGrant {
+            server: "codegraph".to_string(),
+            tool: tool.to_string(),
+            source: "opencode.json".to_string(),
+            fingerprint: "aaaa".to_string(),
+        };
+        let call = |tool: &str, query: &str| {
+            let mut prompt = command_prompt();
+            prompt.operation = PermissionOperation::McpTool;
+            prompt.command = Some(format!(r#"{{"tool":"{tool}","query":"{query}"}}"#));
+            prompt.mcp_tool = Some(grant(tool));
+            prompt
+        };
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let emit: EventSink = {
+            let events = events.clone();
+            Arc::new(move |event| events.lock().unwrap().push(event))
+        };
+        // Two calls of one tool with other arguments, and a call of another.
+        let first = broker.ask(call("explore", "a"), &cancel, "chat", &emit);
+        let second = broker.ask(call("explore", "b"), &cancel, "chat", &emit);
+        let other = broker.ask(call("node", "a"), &cancel, "chat", &emit);
+        tokio::pin!(first, second, other);
+        assert!(futures_util::poll!(first.as_mut()).is_pending());
+        assert!(futures_util::poll!(second.as_mut()).is_pending());
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
+
+        // The prompt tells the renderer which tool it would remember, and
+        // keeps it for the decision.
+        let announced: Vec<(String, Option<McpToolGrant>)> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match &event.event {
+                StreamEvent::PermissionRequest {
+                    request_id,
+                    mcp_tool,
+                    ..
+                } => Some((request_id.clone(), mcp_tool.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(announced.len(), 3);
+        assert_eq!(announced[0].1, Some(grant("explore")));
+        assert_eq!(
+            broker.pending_prompt(&announced[0].0).unwrap().mcp_tool,
+            Some(grant("explore"))
+        );
+
+        // Nothing remembered yet: every call waits for the user.
+        let permissions = live_permissions(Vec::new());
+        assert!(broker.auto_resolve("chat", &permissions).is_empty());
+
+        // "Don't ask again in this chat" for the tool covers its other queued
+        // call, whatever the arguments, and leaves the other tool to the user.
+        permissions.add_session_mcp_tool_grant("chat", &grant("explore"));
+        assert!(broker.auto_resolve("other-chat", &permissions).is_empty());
+        assert_eq!(broker.auto_resolve("chat", &permissions).len(), 2);
+        let decision = first.await;
+        assert!(decision.allowed);
+        assert_eq!(decision.decided_by, "grant");
+        assert!(second.await.allowed);
+        assert!(futures_util::poll!(other.as_mut()).is_pending());
     }
 
     #[tokio::test]

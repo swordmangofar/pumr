@@ -62,13 +62,13 @@ function startOfDay(timestamp: number): number {
             type="button"
             class="min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm font-medium transition-colors"
             [class]="
-              workspace.leftTab() === 'projects'
+              workspace.leftTab() === 'sessions'
                 ? 'bg-white/10 text-white shadow-sm'
                 : 'text-mist/50 hover:text-mist'
             "
-            (click)="workspace.setLeftTab('projects')"
+            (click)="workspace.setLeftTab('sessions')"
           >
-            {{ 'sidebar.projects' | transloco }}
+            {{ 'sidebar.sessions' | transloco }}
           </button>
           <button
             type="button"
@@ -273,7 +273,7 @@ function startOfDay(timestamp: number): number {
 
       @if (workspace.leftTab() === 'git') {
         <app-git-sidebar class="min-h-0 flex-1" />
-      } @else if (workspace.leftTab() === 'projects') {
+      } @else if (workspace.leftTab() === 'sessions') {
         <div class="flex items-center justify-between gap-2 px-4 py-3">
           <div class="flex gap-0.5 rounded-lg bg-white/5 p-0.5">
             <button
@@ -477,8 +477,9 @@ function startOfDay(timestamp: number): number {
                   </button>
                   <button
                     type="button"
-                    class="flex h-6 shrink-0 items-center gap-1 rounded-full border border-accent/40 bg-accent/15 px-2 text-xs font-semibold text-accent transition-colors hover:border-accent/70 hover:bg-accent/25"
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent/40 bg-accent/15 text-accent transition-colors hover:border-accent/70 hover:bg-accent/25"
                     [title]="'sidebar.newSession' | transloco"
+                    [attr.aria-label]="'sidebar.newSession' | transloco"
                     (click)="newSession(project.id)"
                   >
                     <svg
@@ -491,7 +492,6 @@ function startOfDay(timestamp: number): number {
                     >
                       <path d="M8 3.5v9M3.5 8h9" />
                     </svg>
-                    <span>{{ 'sidebar.new' | transloco }}</span>
                   </button>
                 </div>
 
@@ -625,7 +625,6 @@ export class Sidebar {
   private readonly expanded = signal<Set<string> | null>(null);
   private readonly expandedSubAgents = signal<Set<string>>(new Set());
   private readonly focusedSessionId = signal<string | null>(null);
-  private readonly now = signal(Date.now());
   protected readonly sortOpen = signal(false);
   protected readonly sortOptions = PROJECT_SORTS.map((id) => ({ id, label: SORT_LABELS[id] }));
   protected readonly cloneOpen = signal(false);
@@ -678,7 +677,8 @@ export class Sidebar {
   });
 
   protected historyLabel(dayStart: number): string {
-    const today = startOfDay(this.now());
+    // Read on every render: the app stays open over midnight.
+    const today = startOfDay(Date.now());
     const diff = Math.round((today - dayStart) / DAY_MS);
     if (diff <= 0) {
       return this.transloco.translate('sidebar.today');
@@ -880,7 +880,7 @@ export class Sidebar {
   }
 
   protected onKeydown(event: KeyboardEvent): void {
-    if (this.workspace.focusedPanel() !== 'left' || this.workspace.leftTab() !== 'projects') {
+    if (this.workspace.focusedPanel() !== 'left' || this.workspace.leftTab() !== 'sessions') {
       return;
     }
     if (

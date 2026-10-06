@@ -10,6 +10,60 @@ export interface MentionQuery {
   term: string;
 }
 
+/** A pill as a saved draft holds it: a mention, or the text of a pasted block. */
+export type SavedPill = { mention: Mention } | { block: string };
+
+/**
+ * A pill in a saved draft is its JSON between two code points that Unicode
+ * keeps free for a program's own use, so no typed or pasted text holds them.
+ * Tokens like `@file:path` would not do: a path may contain spaces, and a
+ * pill's label is not always its value.
+ */
+const PILL_START = '\ufdd0';
+const PILL_END = '\ufdd1';
+const SAVED_PILL_RE = /\ufdd0([^\ufdd0\ufdd1]*)\ufdd1/g;
+
+/**
+ * Removes the blank lines before a message and the whitespace after it. The
+ * indentation of its first line stays: pasted code needs it.
+ */
+export function trimEdges(text: string): string {
+  return text.replace(/^(?:[ \t]*\n)+/, '').trimEnd();
+}
+
+/** Text as it leaves the editor: a browser's non-breaking spaces are spaces. */
+function plain(text: string): string {
+  return text.replace(/\u00a0/g, ' ').replace(/[\ufdd0\ufdd1]/g, '');
+}
+
+function savePill(pill: SavedPill): string {
+  return PILL_START + JSON.stringify(pill) + PILL_END;
+}
+
+function readPill(json: string): SavedPill | null {
+  try {
+    const value: unknown = JSON.parse(json);
+    if (typeof value !== 'object' || value === null) {
+      return null;
+    }
+    const { mention, block } = value as { mention?: Partial<Mention> | null; block?: unknown };
+    if (typeof block === 'string') {
+      return { block };
+    }
+    if (
+      mention &&
+      typeof mention.kind === 'string' &&
+      typeof mention.value === 'string' &&
+      typeof mention.label === 'string'
+    ) {
+      return { mention: { kind: mention.kind, value: mention.value, label: mention.label } };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * DOM building blocks for the composer's contenteditable editor: pills, text
  * blocks, caret insertion and serialization. Kept out of the component so the
@@ -18,13 +72,55 @@ export interface MentionQuery {
  */
 @Injectable()
 export class ComposerEditorService {
-  serialize(editor: HTMLElement, textBlocks: TextBlock[]): { content: string; mentions: Mention[] } {
+  /**
+   * Reads the editor three ways. `content` is the message: text exactly as it
+   * was typed or pasted, indentation and blank lines included, with a pasted
+   * block in place of its pill and one space where a mention pill stood.
+   * `mentions` are those pills, and `saved` is what `restore` needs to bring
+   * the same editor back, pills included.
+   */
+  serialize(
+    editor: HTMLElement,
+    textBlocks: TextBlock[],
+  ): { content: string; mentions: Mention[]; saved: string } {
     const mentions: Mention[] = [];
-    let text = '';
+    let content = '';
+    let saved = '';
+    // A pill stands between `content` and whatever comes next.
+    let gap = false;
+    // `content` ends in text of the editor itself, not in the text of a block.
+    let typed = false;
+    // A pill is set off by one space. The space it was inserted with, or one
+    // typed beside it, is that space; every other space stays as typed, and a
+    // pill at the start or the end of a line leaves nothing behind.
+    const openGap = (): void => {
+      if (!gap && typed && (content.endsWith(' ') || content.endsWith('\t'))) {
+        content = content.slice(0, -1);
+      }
+      gap = true;
+    };
+    const add = (chunk: string, fromEditor: boolean): void => {
+      const text = gap && fromEditor ? chunk.replace(/^[ \t]/, '') : chunk;
+      if (text === '') {
+        return;
+      }
+      if (gap) {
+        const lineEdge = content === '' || content.endsWith('\n') || text.startsWith('\n');
+        content += lineEdge ? text : ` ${text}`;
+        gap = false;
+      } else {
+        content += text;
+      }
+      typed = fromEditor;
+    };
+    const type = (chunk: string): void => {
+      add(chunk, true);
+      saved += chunk;
+    };
     const walk = (node: Node): void => {
       node.childNodes.forEach((child) => {
         if (child.nodeType === Node.TEXT_NODE) {
-          text += child.textContent ?? '';
+          type(plain(child.textContent ?? ''));
           return;
         }
         if (!(child instanceof HTMLElement)) {
@@ -37,35 +133,65 @@ export class ComposerEditorService {
           if (kind && !mentions.some((entry) => entry.kind === kind && entry.value === value)) {
             mentions.push({ kind, value, label });
           }
-          text += ' ';
+          openGap();
+          if (kind) {
+            saved += savePill({ mention: { kind, value, label } });
+          }
           return;
         }
         if (child.dataset['textBlock']) {
           const id = child.dataset['textBlockId'] ?? '';
           const block = textBlocks.find((entry) => entry.id === id);
           if (block) {
-            text += ` ${block.text} `;
+            const text = plain(block.text);
+            openGap();
+            add(text, false);
+            openGap();
+            saved += savePill({ block: text });
           }
           return;
         }
         if (child.tagName === 'BR') {
-          text += '\n';
+          type('\n');
           return;
         }
         walk(child);
         if (child.tagName === 'DIV' || child.tagName === 'P') {
-          text += '\n';
+          type('\n');
         }
       });
     };
     walk(editor);
-    const content = text
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]{2,}/g, ' ')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    return { content, mentions };
+    return { content: trimEdges(content), mentions, saved: trimEdges(saved) };
+  }
+
+  /**
+   * Fills the editor from what `serialize` saved of it: the text as it was
+   * typed and every pill where it stood, built by `createPill`. A draft saved
+   * before pills were kept is plain text and comes back as that.
+   */
+  restore(editor: HTMLElement, saved: string, createPill: (pill: SavedPill) => HTMLElement): void {
+    const nodes: Node[] = [];
+    let end = 0;
+    for (const match of saved.matchAll(SAVED_PILL_RE)) {
+      const pill = readPill(match[1]);
+      if (!pill) {
+        continue;
+      }
+      if (match.index > end) {
+        nodes.push(document.createTextNode(saved.slice(end, match.index)));
+      }
+      nodes.push(createPill(pill));
+      end = match.index + match[0].length;
+    }
+    if (end < saved.length) {
+      nodes.push(document.createTextNode(saved.slice(end)));
+    } else if (nodes.length > 0) {
+      // The space a pill is inserted with: the caret needs text to stand in.
+      nodes.push(document.createTextNode(' '));
+    }
+    editor.textContent = '';
+    editor.append(...nodes);
   }
 
   detectQuery(): MentionQuery | null {
@@ -339,11 +465,17 @@ export class ComposerEditorService {
     onDone();
   }
 
+  /**
+   * Removes a pill together with the space it was inserted with, also once
+   * text was typed behind that space: nothing collapses two spaces later on.
+   */
   removePill(pill: HTMLElement, onDone: () => void): void {
     const next = pill.nextSibling;
     pill.remove();
-    if (next && next.nodeType === Node.TEXT_NODE && next.textContent === ' ') {
+    if (next instanceof Text && next.data === ' ') {
       next.remove();
+    } else if (next instanceof Text && next.data.startsWith(' ')) {
+      next.deleteData(0, 1);
     }
     onDone();
   }

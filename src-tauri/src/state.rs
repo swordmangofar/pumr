@@ -91,6 +91,9 @@ impl AppState {
             settings.permissions.denied_websites.clone(),
             auto_approve(&settings),
         ));
+        permissions.set_mcp_tool_grants(settings.permissions.mcp_tool_grants.clone());
+        permissions.set_secret_folders(settings.permissions.secret_folders.clone());
+        permissions.set_sandbox(sandbox(&settings));
         let db = Arc::new(db);
         let broker = Arc::new(PermissionBroker::new());
         let audit_db = db.clone();
@@ -143,6 +146,11 @@ impl AppState {
             settings.permissions.denied_websites.clone(),
             auto_approve(&settings),
         );
+        self.permissions
+            .set_mcp_tool_grants(settings.permissions.mcp_tool_grants.clone());
+        self.permissions
+            .set_secret_folders(settings.permissions.secret_folders.clone());
+        self.permissions.set_sandbox(sandbox(&settings));
         *self.settings.lock().unwrap() = settings;
     }
 
@@ -270,13 +278,31 @@ impl AppState {
     /// Stops the turn behind `session_id`. A message sent from a subagent's
     /// tab runs as that session's own turn; a subagent spawned by its parent
     /// runs inside the parent's turn. So the session's own turn is stopped
-    /// when it has one, otherwise the nearest running ancestor's.
+    /// when it has one, otherwise the nearest running ancestor's while the
+    /// subagent still works for it.
     pub fn stop_session(&self, session_id: &str) {
         match self.running_turn_for(session_id) {
-            Some(key) => self.cancel(&key),
+            Some(key) if key == session_id || self.works_for_its_parent(session_id) => {
+                self.cancel(&key)
+            }
             // Nothing is running; still answer anything left waiting on the user.
-            None => self.cancel(session_id),
+            _ => self.cancel(session_id),
         }
+    }
+
+    /// Whether a subagent session has yet to report back to the turn that
+    /// spawned it. One that has is on its own: Stop pressed in its tab just
+    /// after a turn of its own ended must not reach the chat above it, whose
+    /// turn it is no longer part of.
+    fn works_for_its_parent(&self, session_id: &str) -> bool {
+        self.db
+            .get_session(session_id)
+            .is_ok_and(|session| session.agent_status.as_deref() == Some("running"))
+    }
+
+    /// Whether the operation registered under `key` is still running.
+    pub fn is_registered(&self, key: &str) -> bool {
+        self.cancels.is_registered(key)
     }
 
     /// The key of the turn that drives `session_id`: the session's own, else
@@ -559,6 +585,16 @@ impl SendLedger {
     }
 }
 
+fn sandbox(settings: &Settings) -> crate::sandbox::Config {
+    let permissions = &settings.permissions;
+    crate::sandbox::Config {
+        mode: crate::sandbox::Mode::from_setting(&permissions.sandbox),
+        writable: permissions.sandbox_writable_folders.clone(),
+        unreadable: permissions.sandbox_unreadable_folders.clone(),
+        excluded: permissions.sandbox_excluded_commands.clone(),
+    }
+}
+
 fn auto_approve(settings: &Settings) -> AutoApproveConfig {
     AutoApproveConfig {
         read_only: settings.permissions.auto_approve_read_only,
@@ -763,6 +799,8 @@ mod tests {
             scope_options: Vec::new(),
             folders: Vec::new(),
             hosts: Vec::new(),
+            mcp_tool: None,
+            secret_folders: Vec::new(),
             justification: None,
             grant_session_id: grant_session_id.to_string(),
         }
@@ -814,6 +852,35 @@ mod tests {
         drop(parent_turn);
         assert_eq!(state.running_turn_for(&nested.id), None);
         assert_eq!(state.running_turn_for(&chat.id), None);
+    }
+
+    #[test]
+    fn stop_from_a_subagent_that_reported_back_leaves_the_chats_turn_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let project = state
+            .db
+            .upsert_project(&temp.path().display().to_string())
+            .unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let subagent = state
+            .db
+            .create_sub_session(&project.id, &chat.id, "subagent", None, None, None, None)
+            .unwrap();
+        let (sink, _) = capture();
+        let chat_turn = state.register_turn(&chat.id, SwappableSink::new(sink.clone()));
+
+        // The subagent reported back. A message sent from its tab then ran as
+        // a turn of its own, which has just ended when Stop is pressed there.
+        state.db.set_agent_status(&subagent.id, "done").unwrap();
+        drop(state.register_turn(&subagent.id, SwappableSink::new(sink)));
+        state.stop_session(&subagent.id);
+        assert!(!chat_turn.token().is_cancelled());
+        // The chat's turn still counts as running above it, as for a revert.
+        assert_eq!(state.running_turn_for(&subagent.id), Some(chat.id.clone()));
     }
 
     #[tokio::test]

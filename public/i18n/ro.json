@@ -6,16 +6,18 @@
     "toggleSidebar": "Comută bara laterală",
     "toggleRightPanel": "Comută panoul din dreapta",
     "toggleTerminal": "Afișează/ascunde terminalul",
+    "keepAwake": "Menține treaz cât timp lucrează agenții",
+    "keepAwakeOn": "Computerul rămâne treaz cât timp lucrează agenții. Dă clic pentru a dezactiva.",
+    "keepAwakeOff": "Computerul poate adormi cât timp lucrează agenții. Dă clic pentru a-l menține treaz.",
     "refresh": "Reîmprospătează",
     "notTauri": "pumr trebuie să ruleze în Tauri. Pornește-l cu: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Proiecte",
+    "sessions": "Sesiuni",
     "workspace": "Spațiul de lucru",
     "git": "Git",
     "addProject": "Adaugă proiect",
     "newSession": "Sesiune nouă",
-    "new": "Nou",
     "noProjects": "Niciun proiect încă. Adaugă un folder pentru a începe.",
     "noSessions": "Nicio sesiune",
     "removeProject": "Elimină proiectul",
@@ -36,8 +38,6 @@
     "yesterday": "Ieri"
   },
   "workspace": {
-    "title": "Spațiul de lucru",
-    "noSession": "Deschideți o sesiune pentru a căuta fișierele acesteia.",
     "empty": "Nu s-au găsit fișiere.",
     "libraryRoot": "rădăcina bibliotecii",
     "noOpenFiles": "Nu există fișiere deschise. Selectați un fișier din arbore.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Ștergeți eticheta {{ tag }}?",
     "stashes": "Stash-uri",
     "stashCreate": "Pune deoparte modificările",
+    "stash": "Pune deoparte",
+    "stashMessage": "Mesaj (opțional)",
+    "stashIncludeUntracked": "Include fișierele neurmărite",
     "stashApply": "Aplică",
     "stashPop": "Recuperează",
     "stashDropConfirm": "Eliminați {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Folosește versiunea primită (theirs)",
       "markResolved": "Marchează ca rezolvat",
       "fileHint": "Acest fișier are conflicte. Păstrează o parte sau editează fișierul și marchează-l ca rezolvat.",
+      "markersLeftIn": "Fișiere cu conflicte care conțin încă marcaje de conflict (<<<<<<< sau >>>>>>>): {{ count }}. Le marchezi totuși ca rezolvate?",
       "markersLeft": "Fișierul conține încă marcaje de conflict (<<<<<<< sau >>>>>>>). Îl marchezi totuși ca rezolvat?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Folder destinație",
     "cloneChoose": "Alege…",
     "createBranch": "Creează ramură",
+    "branch": "Ramură",
     "branchName": "Numele ramurii",
     "createBranchAt": "Creează ramură la: {{branch}}",
     "checkoutAfterCreate": "Comută după creare",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Conectează un furnizor de modele în Setări pentru a începe conversația.",
+    "noDefaultModel": "Încă nu există un model implicit. Deschide Setările, alege un model la „Model implicit”, în secțiunea „Furnizori de modele”, și apasă „Salvează”.",
     "openSettings": "Deschide setările",
     "error": "Eroare",
     "retry": "Reîncearcă",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} pentru a trimite · {{ newLine }} pentru linie nouă",
     "hintStreaming": "{{ send }} pentru a adăuga în coadă · {{ stop }} pentru a opri",
     "hintRecall": "{{ recall }} pentru ultimul prompt",
+    "hintCommands": "/ pentru comenzi",
     "handover": "Predare",
     "handovering": "Se rezumă…",
     "handoverHint": "Rezumă această sesiune și continuă într-una nouă",
@@ -328,6 +335,13 @@
     "compacting": "Se compactează contextul",
     "compacted": "Context compactat",
     "compactedHint": "De aici înainte modelul lucrează cu acest rezumat în locul mesajelor de mai sus.",
+    "mcpStarting": "Se pornește serverul MCP {{ name }}",
+    "mcpIssues": "Unele servere MCP nu au putut fi folosite pentru acest mesaj:",
+    "sideQuestion": "Întrebare secundară",
+    "sideQuestionHint": "Pune o întrebare rapidă despre această sesiune sau despre orice altceva. Răspunsul nu este adăugat la sesiune.",
+    "sideQuestionPrivate": "Nu se adaugă la sesiune",
+    "sideQuestionAnswering": "Răspunde…",
+    "sideQuestionStopped": "Oprit",
     "interrupted": "Acest chat a fost întrerupt înainte ca agentul să termine: pumr a fost închis sau computerul a intrat în starea de repaus. Îl puteți continua de unde s-a oprit.",
     "limitReached": "Întrerupt după apelurile instrumentului {{ count }} fără un răspuns final. Limita împiedică un agent blocat să facă buclă pentru totdeauna. Continuați să îi oferiți un buget proaspăt sau activați continuarea automată.",
     "continue": "Continua",
@@ -456,7 +470,8 @@
         "cascade": "Refuzat împreună cu altă cerere",
         "stopped": "Oprit",
         "timeout": "Timp expirat",
-        "cancelled": "Anulat"
+        "cancelled": "Anulat",
+        "hook": "Hook-ul tău"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Nicio potrivire. Continuă să tastezi sau apasă Escape.",
     "mentionFetch": "Preia {{ url }}",
     "removeMention": "Elimină referința",
+    "commandPrompt": "Aplică promptul tău „{{ name }}” la ce scrii după el",
+    "commandEffort": "Stabilește cât de mult raționează modelul",
+    "commandMode": "Schimbă modul acestei sesiuni",
+    "commandModel": "Schimbă modelul acestei sesiuni",
+    "commandProvider": "Alege furnizorul care oferă modelul",
+    "commandRevert": "Revine la ultimul tău prompt: tot ce a urmat este eliminat, iar fișierele pot fi restaurate",
+    "commandRevertNone": "Nu există încă niciun prompt la care să revii",
+    "commandRevertRunning": "Oprește mai întâi agentul",
+    "commandNoEffort": "Acest model nu are un nivel de raționament de setat.",
+    "commandNoProvider": "Doar modelele OpenRouter pot fi direcționate către un furnizor.",
     "textBlockWords": "{{ count }} cuvinte",
     "textBlockRemove": "Elimină textul lipit",
     "textBlockTitle": "Text lipit",
@@ -634,7 +659,7 @@
     "alwaysOn": "Mereu activ",
     "editInSettings": "Editează în setări",
     "yourPrompts": "Prompturile tale",
-    "yourPromptsHint": "Prompturile activate sunt adăugate la system prompturile active. Editează-le sau resetează cele integrate la textul original.",
+    "yourPromptsHint": "Apelează un prompt din caseta de chat cu o bară oblică și numele lui, de exemplu /code-review. Se aplică atunci doar acelui mesaj. Editează-le sau readu-le pe cele încorporate la textul original.",
     "addPrompt": "Nou",
     "customPrompt": "Prompt personalizat",
     "promptName": "Numele promptului",
@@ -718,6 +743,8 @@
       "providers": "Furnizori",
       "agent": "Configurare agent",
       "agentRules": "Listă albă și neagră a agentului",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "General",
       "chat": "Chat",
       "appearance": "Aspect",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP Server",
       "workspace": "Spațiu de lucru"
+    },
+    "sandbox": {
+      "title": "Sandbox pentru comenzi",
+      "hint": "Sistemul de operare îngrădește fiecare comandă pe care o rulează agentul și tot ce pornește acea comandă. Este un al doilea strat în spatele regulilor de permisiune, pentru o comandă pe care acestea o evaluează greșit. O comandă oprită de sandbox poate cere să ruleze în afara lui; ești întrebat de fiecare dată.",
+      "unavailable": "Acest sistem nu are un sandbox pe care pumr să îl poată folosi, deci comenzile rulează neîngrădite. Este nevoie de macOS sau de Linux 5.19 sau mai nou, cu Landlock.",
+      "networkUnavailable": "Închiderea rețelei este posibilă doar pe macOS.",
+      "modes": {
+        "off": "Dezactivat",
+        "files": "Fișiere",
+        "filesAndNetwork": "Fișiere și rețea"
+      },
+      "modeHints": {
+        "off": "Comenzile rulează ca utilizatorul tău, limitate doar de regulile de permisiune.",
+        "files": "Comenzile scriu doar în proiect, în folderele tale suplimentare, în folderele temporare și în folderele enumerate mai jos. Nu pot citi folderele care conțin chei.",
+        "filesAndNetwork": "La fel, iar comenzile ajung doar la acest computer, cu excepția comenzilor ale căror gazde le-ai permis. Instalarea pachetelor cere atunci să ruleze în afara sandboxului."
+      },
+      "writable": "Foldere în care comenzile mai pot scrie",
+      "writableHint": "Cache-urile instrumentelor de build. Fără ele, un build eșuează la prima descărcare. O cale începe cu / sau ~.",
+      "unreadable": "Foldere pe care comenzile nu le pot citi",
+      "unreadableHint": "Unde se află cheile și tokenurile. git, ssh și instrumentele cloud își păstrează folderele cu care lucrează, iar un folder pe care l-ai permis pentru comenzi rămâne deschis.",
+      "excluded": "Comenzi care rulează în afara sandboxului",
+      "excludedHint": "Pentru instrumente care vin cu propriul sandbox și eșuează în cel de aici, cum ar fi testele de browser. O intrare indică felul în care începe linia de comandă; cu * este un tipar pentru întreaga linie.",
+      "addCommand": "Adaugă comandă",
+      "noCommands": "Nicio comandă adăugată încă."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Un hook este o comandă a ta pe care pumr o rulează într-un moment fix din munca agentului. Modelul nu decide dacă hook-ul rulează, așa că nu îl poate uita. Hook-urile rulează așa cum le-ai scris, fără cereri de permisiune și în afara sandboxului.",
+      "protocol": "Un hook primește detaliile ca JSON la intrarea standard (tool_name, tool_input, tool_response) și fișierul indicat de un apel ca $PUMR_FILE. Codul de ieșire 0 lasă agentul să continue. Codul de ieșire 2 îi predă agentului ce a afișat hook-ul și, înaintea unui apel de instrument, refuză apelul.",
+      "add": "Adaugă hook",
+      "empty": "Niciun hook adăugat încă.",
+      "remove": "Elimină hook-ul",
+      "event": "Când rulează hook-ul",
+      "events": {
+        "beforeTool": "Înaintea unui apel de instrument",
+        "afterTool": "După un apel de instrument",
+        "turnEnd": "Când agentul vrea să termine"
+      },
+      "tools": "Instrumente",
+      "toolsPlaceholder": "Toate instrumentele sau nume precum edit|write",
+      "files": "Fișiere",
+      "filesPlaceholder": "Toate fișierele sau tipare precum *.ts",
+      "command": "Comandă",
+      "timeout": "Oprește după (secunde)",
+      "project": "Proiect",
+      "allProjects": "Toate proiectele"
     },
     "providers": {
       "title": "Furnizori de modele",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Schimbă aceasta doar dacă folosești un proxy sau un gateway compatibil.",
     "defaultModel": "Model implicit",
     "defaultModelHint": "Folosit pentru sesiuni noi.",
+    "defaultModelSetupTitle": "Alege un model implicit",
+    "defaultModelSetup": "Furnizorul tău este conectat. Sesiunile noi pornesc cu modelul implicit: alege-l la „Model implicit”, mai jos pe această pagină, și apasă „Salvează”. Poți schimba în continuare modelul în fiecare conversație.",
+    "defaultModelSetupAction": "Mergi la modelul implicit",
     "handoverModel": "Model de predare",
     "handoverModelPlaceholder": "Folosește modelul sesiunii curente",
     "handoverModelHint": "Modelul folosit pentru a rezuma o sesiune la predare. Lasă gol pentru a folosi modelul sesiunii curente.",
@@ -998,6 +1074,14 @@
       "mist": "Text estompat",
       "white": "Text"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Afișat în antetul aplicației și ca pictogramă a aplicației cât timp pumr rulează.",
+      "mascot": "Pumă șezând",
+      "classic": "Chip clasic",
+      "shaded": "Pumă umbrită",
+      "tailup": "Pumă cu coada ridicată"
+    },
     "background": {
       "title": "Fundalul aplicației",
       "hint": "Alegeți un fundal încorporat sau folosiți propria imagine. Se așează în spatele panourilor de sticlă și urmărește tema ta.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Linie nouă",
       "chatStop": "Oprește răspunsul",
       "chatRecallPrompt": "Readu ultimul prompt",
+      "chatToggleMode": "Comută între planificare și programare",
+      "chatToggleModeHint": "Revine la modul în care era sesiunea înainte de planificare.",
       "gitToggleStage": "Adaugă în stage sau scoate din stage fișierele selectate",
       "gitDiscardFiles": "Renunță la fișierele selectate",
       "gitSelectAllFiles": "Selectează toate fișierele",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimizează",
       "fillScreen": "Umple ecranul",
       "fillScreenHint": "Fereastra apelată umple monitorul activ în loc să păstreze dimensiunea anterioară.",
+      "shortcutError": "Comanda rapidă la nivel de sistem nu a putut fi înregistrată, așa că nu aduce pumr în față. Probabil o altă aplicație folosește deja această combinație de taste: alege alta și salvează din nou.",
+      "waylandHint": "Pe Wayland, aplicațiile nu pot înregistra comenzi rapide la nivel de sistem, așa că această comandă rapidă nu funcționează fiabil aici. În schimb, asociază linia de comandă de mai jos cu o tastă în setările de tastatură ale desktopului tău.",
+      "command": "Linie de comandă",
+      "commandHint": "Face același lucru ca și comanda rapidă: aduce pumr în față sau îl ascunde ori îl minimizează când este în față. Asociaz-o cu o tastă în setările de tastatură ale desktopului tău.",
+      "commandActions": "Pentru o singură acțiune, încheie linia de comandă cu una dintre aceste opțiuni:",
       "zoom": "Scalare afișare",
       "zoomHint": "Scalează întreaga interfață. Scurtătură: Ctrl/⌘ + + pentru mărire, Ctrl/⌘ + - pentru micșorare, Ctrl/⌘ + 0 pentru resetare.",
       "zoomReset": "Resetează"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Permite comanda",
     "denyCommand": "Blochează comanda",
     "noDeniedCommandRules": "Nicio comandă blocată.",
+    "mcpToolGrants": "Instrumente MCP permise",
+    "mcpToolGrantsHint": "Instrumente ale serverelor MCP care rulează fără a întreba. O intrare este valabilă pentru un instrument al unui server, indiferent de argumente, și nu se mai aplică atunci când configurația acelui server se schimbă. Folosește \"permite mereu\" într-o cerere de permisiune pentru a crea una.",
+    "noMcpToolGrants": "Niciun instrument MCP permis mereu încă.",
+    "secretFolders": "Foldere cu fișiere sensibile permise",
+    "secretFoldersHint": "Comenzile pot folosi fără a întreba fișierele sensibile (chei, tokenuri, date de autentificare) aflate direct în aceste foldere. Subfolderele nu sunt incluse. Folosește \"permite mereu\" într-o cerere de permisiune pentru a crea una.",
+    "noSecretFolders": "Niciun folder cu fișiere sensibile permise încă.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + subcomandă",
@@ -1276,7 +1373,8 @@
       "file": "Fișier",
       "web": "Site web",
       "websearch": "Căutare web",
-      "folder": "Folder"
+      "folder": "Folder",
+      "hook": "Hook"
     },
     "allowAlways": "Permite mereu",
     "siteRuleLabel": "Regulă de site (domeniu sau glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Adaugă site-ul web și subdomeniile sale la site-urile web permise.",
       "option": "Site web + subdomenii"
     },
+    "secretScope": {
+      "title": "Fișiere sensibile",
+      "hint": "Comenzile vor putea apoi folosi fără a întreba cheile, tokenurile și fișierele cu date de autentificare aflate direct în acest folder. Subfolderele nu sunt incluse.",
+      "option": "Fișiere sensibile din acest folder",
+      "chip": "fișiere sensibile din {{ folder }}"
+    },
     "allowChat": "Permite în acest chat",
     "option": {
       "yes": "Da",
@@ -1315,6 +1419,7 @@
     "customize": "Personalizează",
     "justification": "De ce",
     "keyboardHint": "Apasă 1–{{ count }} sau folosește ↑ ↓ și Enter · Esc refuză",
+    "mcpToolHint": "Fără a mai întreba, rulează fiecare apel al acestui instrument pe acest server, indiferent de argumente.",
     "url": {
       "queryWarning": "Această adresă transportă multe date în șirul de interogare. Asigură-te că nu conține nimic privat înainte de a o permite."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Permite doar această cerere.",
       "allowSession": "Reținut în toate chaturile până la repornirea aplicației.",
       "allowChat": "Regulile de comenzi sunt reținute pentru acest chat și subagenții săi; folderele și site-urile web până la repornirea aplicației.",
+      "allowChatMcp": "Reținut pentru acest chat și subagenții săi: fiecare apel al acestui instrument pe acest server, indiferent de argumente.",
       "allowAlways": "Salvat în setări și se aplică tuturor chaturilor."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Terminal nou",
     "close": "Închide terminalul",
     "hide": "Ascunde terminalul",
+    "run": "Rulează în terminal",
     "noProject": "Deschide o sesiune pentru a folosi terminalul.",
     "exited": "Procesul s-a încheiat cu codul {{ code }}",
     "failed": "Terminalul nu a putut fi pornit: {{ error }}"

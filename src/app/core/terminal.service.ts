@@ -16,6 +16,8 @@ export interface TerminalTab {
   title: string | null;
   /** Exit code once the shell has ended with an error. */
   exitCode: number | null;
+  /** The backend's id of the shell while it runs. */
+  terminalId: string | null;
 }
 
 interface PersistedTerminal {
@@ -37,6 +39,9 @@ export class TerminalService {
   private readonly openState = signal(false);
   private readonly heightState = signal(TERMINAL_DEFAULT_HEIGHT);
   private readonly focusState = signal(0);
+  private readonly runState = signal(0);
+  /** Commands waiting for their terminal's view to take them, by tab key. */
+  private readonly commands = new Map<string, string[]>();
   private nextKey = 0;
 
   readonly tabs = this.tabsState.asReadonly();
@@ -44,6 +49,8 @@ export class TerminalService {
   readonly height = this.heightState.asReadonly();
   /** Bumped whenever the shown terminal should take keyboard focus. */
   readonly focusRequest = this.focusState.asReadonly();
+  /** Bumped whenever a terminal has a command to take (see `takeCommands`). */
+  readonly runRequest = this.runState.asReadonly();
   readonly projectTabs = computed(() => {
     const projectId = this.workspace.activeProject()?.id;
     return projectId ? this.tabsState().filter((tab) => tab.projectId === projectId) : [];
@@ -91,10 +98,13 @@ export class TerminalService {
   }
 
   setOpen(open: boolean): void {
+    const wasOpen = this.openState();
     this.openState.set(open);
     this.persist();
     if (open) {
       this.requestFocus();
+    } else if (wasOpen) {
+      this.focusChat();
     }
   }
 
@@ -103,17 +113,49 @@ export class TerminalService {
     this.persist();
   }
 
-  /** Adds a terminal for `projectId` and shows it. */
-  create(projectId: string): void {
+  /** Adds a terminal for `projectId`, shows it and returns its key. */
+  create(projectId: string): string {
     const number =
       Math.max(0, ...this.tabsState().filter((tab) => tab.projectId === projectId).map((tab) => tab.number)) + 1;
     const key = `terminal-${++this.nextKey}`;
     this.tabsState.update((tabs) => [
       ...tabs,
-      { key, projectId, number, title: null, exitCode: null },
+      { key, projectId, number, title: null, exitCode: null, terminalId: null },
     ]);
     this.activeByProject.update((active) => ({ ...active, [projectId]: key }));
     this.requestFocus();
+    return key;
+  }
+
+  /**
+   * Runs `command` in a terminal of the active project and shows the dock.
+   * The terminal on show takes it when its shell waits at the prompt. A
+   * program running there would swallow the input, so the command then gets
+   * a terminal of its own, as it does when the shell has ended.
+   */
+  async run(command: string): Promise<void> {
+    const project = this.workspace.activeProject();
+    const line = command.trim();
+    if (!project || !line) {
+      return;
+    }
+    const shown = this.projectTabs().find((tab) => tab.key === this.activeKey());
+    const free = shown ? await this.atPrompt(shown) : false;
+    // The terminal may have been closed while the backend was asked.
+    const key =
+      shown && free && this.tabsState().some((tab) => tab.key === shown.key)
+        ? shown.key
+        : this.create(project.id);
+    this.commands.set(key, [...(this.commands.get(key) ?? []), line]);
+    this.runState.update((nonce) => nonce + 1);
+    this.setOpen(true);
+  }
+
+  /** Hands the commands waiting for the terminal `key` to its view. */
+  takeCommands(key: string): string[] {
+    const commands = this.commands.get(key) ?? [];
+    this.commands.delete(key);
+    return commands;
   }
 
   /** Adds a terminal for the active project, opening the dock if needed. */
@@ -145,6 +187,7 @@ export class TerminalService {
       return;
     }
     const { projectId } = tabs[index];
+    this.commands.delete(key);
     const projectTabs = tabs.filter((tab) => tab.projectId === projectId);
     const position = projectTabs.findIndex((tab) => tab.key === key);
     const siblings = projectTabs.filter((tab) => tab.key !== key);
@@ -176,6 +219,11 @@ export class TerminalService {
     this.updateTab(key, { title: title.trim() || null });
   }
 
+  /** Notes the backend id of the shell the terminal `key` started. */
+  started(key: string, terminalId: string): void {
+    this.updateTab(key, { terminalId });
+  }
+
   /**
    * Handles a shell that ended. One that exited cleanly (e.g. after `exit`)
    * closes its tab; one that failed stays open so its output can be read.
@@ -185,11 +233,43 @@ export class TerminalService {
       this.close(key);
       return;
     }
-    this.updateTab(key, { exitCode: code ?? -1 });
+    this.updateTab(key, { exitCode: code ?? -1, terminalId: null });
   }
 
   requestFocus(): void {
     this.focusState.update((nonce) => nonce + 1);
+  }
+
+  /**
+   * Puts the caret in the composer once the dock is hidden, so a prompt can
+   * be typed straight away. A dialog keeps its focus.
+   */
+  private focusChat(): void {
+    if (this.workspace.debugOpen() || document.querySelector('[role="dialog"]')) {
+      return;
+    }
+    if (this.workspace.focusedPanel()) {
+      this.workspace.setFocusedPanel('center');
+    }
+    this.workspace.requestComposerFocus();
+  }
+
+  /**
+   * Whether the shell of `tab` can take a command. One that is still starting
+   * can: its view holds the command until the prompt is there.
+   */
+  private async atPrompt(tab: TerminalTab): Promise<boolean> {
+    if (tab.exitCode !== null) {
+      return false;
+    }
+    if (!tab.terminalId) {
+      return true;
+    }
+    try {
+      return !(await api.terminalBusy(tab.terminalId));
+    } catch {
+      return false;
+    }
   }
 
   private updateTab(key: string, patch: Partial<TerminalTab>): void {

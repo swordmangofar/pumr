@@ -67,6 +67,33 @@ test.describe('chat', () => {
     await expect(main.locator('strong', { hasText: 'pnpm verify' })).toBeVisible();
   });
 
+  test('streams text in without its fade under reduced motion', async ({ app, page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const composer = await openSession(page, app.start, {
+      replies: [
+        {
+          steps: [{ kind: 'text', text: 'Reading the project files one by one.' }, { kind: 'hang' }],
+        },
+      ],
+    });
+
+    await composer.click();
+    await page.keyboard.type('Run the long job');
+    await page.keyboard.press('Enter');
+
+    const main = page.getByRole('main');
+    await expect(main).toContainText('Reading the project files one by one.');
+    // The turn is still running, so the text that arrived last is still in its chunks.
+    const chunk = main.locator('.stream-chunk').last();
+    await expect(chunk).toHaveCSS('animation-name', 'none');
+
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await expect(chunk).toHaveCSS('animation-name', 'stream-in');
+
+    await page.getByRole('button', { name: 'Stop' }).click();
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+  });
+
   test('shows a collapse chevron on the thinking box', async ({ app, page }) => {
     const composer = await openSession(page, app.start, {
       replies: [

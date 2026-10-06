@@ -95,11 +95,6 @@ export function enabledGlobalPrompts(settings: Settings): string[] {
       prompts.push(prompt);
     }
   }
-  for (const prompt of settings.userSystemPrompts) {
-    if (prompt.enabled && prompt.prompt.trim()) {
-      prompts.push(prompt.prompt);
-    }
-  }
   return prompts;
 }
 

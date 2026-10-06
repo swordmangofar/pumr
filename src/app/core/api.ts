@@ -28,6 +28,7 @@ import {
   McpCandidate,
   McpInstallRequest,
   McpServerRef,
+  McpToolGrant,
   Message,
   Mode,
   ModelInfo,
@@ -44,6 +45,8 @@ import {
   SensitiveFinding,
   Session,
   Settings,
+  SideAnswer,
+  SideAnswerEvent,
   ProviderStatus,
   SkillCandidate,
   SkillMarketplace,
@@ -53,6 +56,8 @@ import {
   SystemInfo,
   TerminalEvent,
   UpdateSessionArgs,
+  SandboxSupport,
+  WindowControl,
   WorkspaceEntry,
   WorkspaceFile,
 } from './models';
@@ -61,6 +66,11 @@ export const OPENROUTER_PROVIDER = 'openrouter';
 
 /** Cancel key of the debug log's anonymization request (see `find_sensitive_data`). */
 export const ANONYMIZE_CANCEL_KEY = 'debug-log:anonymize';
+
+/** Cancel key of a session's side question (see `ask_side_question`). */
+export function sideQuestionCancelKey(sessionId: string): string {
+  return `side-question:${sessionId}`;
+}
 
 /**
  * Id of the provider that serves `modelId`. Direct providers prefix their
@@ -107,6 +117,9 @@ export const api = {
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
   suspendWindowShortcut: (suspended: boolean) =>
     invoke<void>('suspend_window_shortcut', { suspended }),
+  getWindowControl: () => invoke<WindowControl>('get_window_control'),
+  getSandboxSupport: () => invoke<SandboxSupport>('get_sandbox_support'),
+  isSoftwareRendered: () => invoke<boolean>('is_software_rendered'),
   setInterfaceZoom: (zoom: number) => invoke<void>('set_interface_zoom', { zoom }),
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
@@ -157,6 +170,7 @@ export const api = {
     commandRules: CommandRule[] | null = null,
     folders: string[] | null = null,
     hosts: string[] | null = null,
+    secretFolders: string[] | null = null,
   ) =>
     invoke<void>('resolve_permission', {
       requestId,
@@ -167,6 +181,7 @@ export const api = {
       commandRules,
       folders,
       hosts,
+      ...(secretFolders ? { secretFolders } : {}),
     }),
   listPermissionAudit: (conversationId: string | null, limit: number | null = null) =>
     invoke<PermissionAuditEntry[]>('list_permission_audit', { conversationId, limit }),
@@ -185,6 +200,10 @@ export const api = {
     invoke<Settings>('add_website_rule', { rule, allow }),
   deleteWebsiteRule: (rule: string, allow: boolean) =>
     invoke<Settings>('delete_website_rule', { rule, allow }),
+  deleteMcpToolGrant: (grant: McpToolGrant) =>
+    invoke<Settings>('delete_mcp_tool_grant', { grant }),
+  deleteSecretFolder: (folder: string) =>
+    invoke<Settings>('delete_secret_folder', { folder }),
   getFileIgnoreCatalog: () => invoke<IgnoreCatalogEntry[]>('get_file_ignore_catalog'),
   listProcesses: () => invoke<ProcessInfo[]>('list_processes'),
   stopProcess: (processId: string) => invoke<void>('stop_process', { processId }),
@@ -194,6 +213,7 @@ export const api = {
     invoke<void>('terminal_write', { terminalId, data }),
   terminalResize: (terminalId: string, cols: number, rows: number) =>
     invoke<void>('terminal_resize', { terminalId, cols, rows }),
+  terminalBusy: (terminalId: string) => invoke<boolean>('terminal_busy', { terminalId }),
   terminalClose: (terminalId: string) => invoke<void>('terminal_close', { terminalId }),
   terminalCloseAll: () => invoke<void>('terminal_close_all'),
   getGitInfo: (projectId: string) => invoke<GitInfo>('get_git_info', { projectId }),
@@ -392,6 +412,13 @@ export const api = {
     invoke<RevertResult>('revert_to_message', { messageId, restoreFiles }),
   summarizeSession: (sessionId: string) => invoke<string>('summarize_session', { sessionId }),
   compactSession: (sessionId: string) => invoke<CompactResult>('compact_session', { sessionId }),
+  /** Cancel a running call with `stopGeneration(sideQuestionCancelKey(sessionId))`. */
+  askSideQuestion: (
+    sessionId: string,
+    question: string,
+    model: string,
+    channel: Channel<SideAnswerEvent>,
+  ) => invoke<SideAnswer>('ask_side_question', { sessionId, question, model, channel }),
   getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
   /** Cancel a running call with `stopGeneration(ANONYMIZE_CANCEL_KEY)`. */
   findSensitiveData: (model: string, text: string) =>

@@ -44,12 +44,20 @@ toml = "1.1.6"
 keepawake = "0.6.1"
 portable-pty = "0.9"
 base64 = "0.22"
+sha2 = "0.10"
+# Text of a PDF for the read tool.
+pdf-extract = "0.12"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6.3", features = ["apple-native"] }
+# Swaps the Dock icon at runtime. Same versions and features as Tauri's own
+# use of them, so they add nothing to the build.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6.3", features = ["windows-native"] }
@@ -58,6 +66,7 @@ keyring = { version = "3.6.3", features = ["windows-native"] }
 keyring = { version = "3.6.3", features = ["sync-secret-service", "crypto-rust"] }
 gtk = "0.18"
 gdkx11 = "0.18"
+gdkwayland-sys = "0.18"
 x11-dl = "2.21"
 webkit2gtk-sys = "2.0"
 

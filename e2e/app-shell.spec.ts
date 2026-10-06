@@ -1,10 +1,10 @@
-import { chatMessage, expect, project, seed, session, test } from './support/fixtures';
+import { MODEL_ID, chatMessage, expect, project, seed, session, test } from './support/fixtures';
 
 test.describe('app shell', () => {
   test('boots into the empty workspace inside Tauri', async ({ app, page }) => {
     await app.start();
 
-    await expect(page.getByRole('banner').getByText('pumr', { exact: true })).toBeVisible();
+    await expect(page.getByRole('banner').getByTestId('app-logo')).toBeVisible();
     // The "must run inside Tauri" warning only shows in a plain browser.
     await expect(page.getByText('pumr must run inside Tauri')).toHaveCount(0);
     await expect(page.getByText('No projects yet. Add a folder to get started.')).toBeVisible();
@@ -41,6 +41,53 @@ test.describe('app shell', () => {
         ),
       );
     expect(heights).toEqual(['100%', '100%', '100%']);
+  });
+
+  test('shows the pointer over whatever can be clicked', async ({ app, page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(seed({ projects: [project()], sessions: [session()] }));
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+
+    // Tailwind 4 leaves buttons with the arrow cursor, so the stylesheet gives
+    // every control the pointer unless it is disabled.
+    const buttons = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('button'))
+        .filter((button) => button.offsetParent !== null)
+        .map((button) => ({
+          disabled: button.disabled,
+          cursor: getComputedStyle(button).cursor,
+        })),
+    );
+    const enabled = buttons.filter((button) => !button.disabled);
+    expect(enabled.length).toBeGreaterThan(10);
+    expect([...new Set(enabled.map((button) => button.cursor))]).toEqual(['pointer']);
+    // Send has nothing to send yet.
+    const disabled = buttons.filter((button) => button.disabled);
+    expect(disabled.length).toBeGreaterThan(0);
+    expect(disabled.filter((button) => button.cursor === 'pointer')).toEqual([]);
+  });
+
+  test('toggles keep awake from the header', async ({ app, page }) => {
+    await app.start();
+
+    const toggle = page.getByRole('button', { name: 'Keep awake while agents work' });
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(toggle).toHaveAttribute('title', /may go to sleep/);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(toggle).toHaveAttribute('title', /stays awake/);
+    // Saved at once rather than with the settings dialog: saving is what
+    // makes the backend hold the machine awake.
+    const saved = await app.backend.lastCall('save_settings');
+    expect(saved?.args['settings']).toMatchObject({ keepAwake: true });
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect((await app.backend.state()).settings.keepAwake).toBe(false);
   });
 
   test('restores open tabs and the active session after a restart', async ({ app, page }) => {
@@ -111,5 +158,61 @@ test.describe('app shell', () => {
     const call = await app.backend.lastCall('set_api_key');
     expect(call?.args).toEqual({ provider: 'openrouter', key: 'sk-or-v1-e2e-placeholder' });
     await expect(keyInput).toHaveValue('');
+  });
+
+  test('explains how to set a default model once the first provider is connected', async ({
+    app,
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        apiKeys: [],
+        settings: { ...seed().settings, defaultModel: null },
+        projects: [project()],
+        sessions: [session({ model: null })],
+      }),
+    );
+
+    // Without a provider there is nothing to choose from yet.
+    const hint = page.getByTestId('no-default-model');
+    await expect(hint).toHaveCount(0);
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    const dialog = page.getByRole('dialog');
+    const setup = dialog.getByTestId('default-model-setup');
+    await expect(setup).toHaveCount(0);
+
+    const keyInput = dialog.locator('[data-provider-key="openrouter"]');
+    await keyInput.fill('sk-or-v1-e2e-placeholder');
+    await keyInput.press('Enter');
+    await expect(setup).toContainText('Choose a default model');
+    await expect(setup).toContainText('pick one under “Default model” further down this page');
+
+    // Closing the settings without choosing leaves the explanation in the chat.
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    await expect(hint).toContainText('No default model yet.');
+    await hint.getByRole('button', { name: 'Open settings' }).click();
+    const field = dialog.getByRole('button', { name: 'Default model', exact: true });
+    await expect(field).toBeFocused();
+    await expect(field).toBeInViewport();
+    await expect(field).toContainText('Select a model');
+
+    await field.click();
+    await dialog
+      .locator('app-model-menu')
+      .getByRole('button', { name: /Claude Sonnet 5/ })
+      .first()
+      .click();
+    await expect(field).toContainText('Claude Sonnet 5');
+    // Nothing is saved yet, so the explanation stays until Save.
+    await expect(setup).toBeVisible();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(setup).toHaveCount(0);
+    await expect(hint).toHaveCount(0);
+    const saved = await app.backend.lastCall('save_settings');
+    expect(saved?.args['settings']).toMatchObject({ defaultModel: MODEL_ID });
   });
 });

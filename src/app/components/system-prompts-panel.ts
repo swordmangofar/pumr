@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { Settings, UserSystemPrompt } from '../core/models';
+import { promptCommands } from '../core/prompt-commands';
 import { SettingsService } from '../core/settings.service';
 import { Toggle } from './toggle';
 
@@ -100,19 +101,21 @@ import { TypedInput } from './typed-input';
           @for (prompt of userPrompts(); track prompt.id) {
             <div class="glass-inset rounded-xl">
               <div class="flex items-center gap-2.5 px-3 py-2">
-                <app-toggle
-                  size="sm"
-                  [checked]="prompt.enabled"
-                  (toggled)="toggleUser(prompt)"
-                />
                 <button
                   type="button"
-                  class="min-w-0 flex-1 truncate text-left text-sm"
-                  [class]="prompt.enabled ? 'text-white' : 'text-mist/50'"
+                  class="min-w-0 flex-1 truncate text-left text-sm text-white"
                   (click)="toggleExpanded(prompt.id)"
                 >
                   {{ prompt.name }}
                 </button>
+                @if (commands().get(prompt.id); as command) {
+                  <span
+                    class="max-w-[50%] shrink-0 truncate rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 font-mono text-[11px] text-accent"
+                    data-testid="prompt-command"
+                  >
+                    /{{ command }}
+                  </span>
+                }
                 @if (isBuiltin(prompt)) {
                   <span
                     class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-mist/40"
@@ -199,6 +202,10 @@ export class SystemPromptsPanel {
   protected readonly userPrompts = computed(
     () => this.settings.settings()?.userSystemPrompts ?? [],
   );
+  /** What is typed after a slash in the chat box to call each prompt, by prompt id. */
+  protected readonly commands = computed(
+    () => new Map(promptCommands(this.userPrompts()).map(({ prompt, name }) => [prompt.id, name])),
+  );
 
   protected expanded(id: string): boolean {
     return this.expandedIds().includes(id);
@@ -231,10 +238,6 @@ export class SystemPromptsPanel {
       [prompt.enabledKey]: !this.builtinEnabled(prompt),
     } as Partial<Settings>;
     await this.settings.patch(patch);
-  }
-
-  protected async toggleUser(prompt: UserSystemPrompt): Promise<void> {
-    await this.updateUser(prompt.id, { enabled: !prompt.enabled });
   }
 
   protected async renamePrompt(prompt: UserSystemPrompt, name: string): Promise<void> {
@@ -274,7 +277,6 @@ export class SystemPromptsPanel {
       id,
       name: this.transloco.translate('right.customPrompt'),
       prompt: '',
-      enabled: true,
     };
     await this.settings.patch({ userSystemPrompts: [...this.userPrompts(), prompt] });
     this.toggleExpanded(id);

@@ -6,16 +6,18 @@
     "toggleSidebar": "Perjungti šoninę juostą",
     "toggleRightPanel": "Perjungti dešinįjį skydelį",
     "toggleTerminal": "Rodyti/slėpti terminalą",
+    "keepAwake": "Neleisti užmigti, kol dirba agentai",
+    "keepAwakeOn": "Kompiuteris neužmiega, kol dirba agentai. Spustelėkite, kad išjungtumėte.",
+    "keepAwakeOff": "Kompiuteris gali užmigti, kol dirba agentai. Spustelėkite, kad jis neužmigtų.",
     "refresh": "Atnaujinti",
     "notTauri": "pumr turi veikti Tauri aplinkoje. Paleiskite jį su: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projektai",
+    "sessions": "Sesijos",
     "workspace": "Darbo sritis",
     "git": "Git",
     "addProject": "Pridėti projektą",
     "newSession": "Nauja sesija",
-    "new": "Naujas",
     "noProjects": "Projektų dar nėra. Pridėkite aplanką, kad pradėtumėte.",
     "noSessions": "Nėra sesijų",
     "removeProject": "Pašalinti projektą",
@@ -36,8 +38,6 @@
     "yesterday": "vakar"
   },
   "workspace": {
-    "title": "Darbo sritis",
-    "noSession": "Atidarykite sesiją, kad naršytumėte jos failus.",
     "empty": "Failų nerasta.",
     "libraryRoot": "bibliotekos šaknis",
     "noOpenFiles": "Nėra atidarytų failų. Pasirinkite failą medyje.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Ištrinti žymą {{ tag }}?",
     "stashes": "Saugyklos",
     "stashCreate": "Atidėti pakeitimus",
+    "stash": "Atidėti",
+    "stashMessage": "Žinutė (neprivaloma)",
+    "stashIncludeUntracked": "Įtraukti nesekamus failus",
     "stashApply": "Taikyti",
     "stashPop": "Išimti",
     "stashDropConfirm": "Atsisakyti {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Naudoti gaunamą (theirs)",
       "markResolved": "Pažymėti kaip išspręstą",
       "fileHint": "Šiame faile yra konfliktų. Palikite vieną pusę arba redaguokite failą ir pažymėkite jį kaip išspręstą.",
+      "markersLeftIn": "Failai su konfliktais, kuriuose vis dar yra konflikto žymių (<<<<<<< arba >>>>>>>): {{ count }}. Vis tiek pažymėti juos kaip išspręstus?",
       "markersLeft": "Faile vis dar yra konflikto žymių (<<<<<<< arba >>>>>>>). Vis tiek pažymėti kaip išspręstą?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Paskirties aplankas",
     "cloneChoose": "Pasirinkti…",
     "createBranch": "Sukurti šaką",
+    "branch": "Šaka",
     "branchName": "Šakos pavadinimas",
     "createBranchAt": "Sukurti šaką nuo: {{branch}}",
     "checkoutAfterCreate": "Perjungti po sukūrimo",
@@ -298,6 +303,7 @@
     "tokens": "Tokenai",
     "cache": "Talpykla",
     "noKey": "Prijunkite modelių tiekėją nustatymuose, kad galėtumėte pradėti pokalbį.",
+    "noDefaultModel": "Numatytasis modelis dar nepasirinktas. Atidarykite nustatymus, skiltyje „Modelių tiekėjai“ ties „Numatytasis modelis“ pasirinkite modelį ir spustelėkite „Išsaugoti“.",
     "openSettings": "Atidaryti nustatymus",
     "error": "Klaida",
     "retry": "Bandyti dar kartą",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} – siųsti · {{ newLine }} – nauja eilutė",
     "hintStreaming": "{{ send }} – į eilę · {{ stop }} – stabdyti",
     "hintRecall": "{{ recall }} – paskutinė užklausa",
+    "hintCommands": "/ komandoms",
     "handover": "Perdavimas",
     "handovering": "Apibendrinama…",
     "handoverHint": "Apibendrinkite šią sesiją ir tęskite naujoje",
@@ -328,6 +335,13 @@
     "compacting": "Kontekstas suspaudžiamas",
     "compacted": "Kontekstas suspaustas",
     "compactedHint": "Nuo čia modelis dirba su šia santrauka, o ne su aukščiau esančiais pranešimais.",
+    "mcpStarting": "Paleidžiamas MCP serveris {{ name }}",
+    "mcpIssues": "Kai kurių MCP serverių šiam pranešimui panaudoti nepavyko:",
+    "sideQuestion": "Šalutinis klausimas",
+    "sideQuestionHint": "Užduokite trumpą klausimą apie šią sesiją ar bet ką kita. Atsakymas į sesiją neįtraukiamas.",
+    "sideQuestionPrivate": "Į sesiją neįtraukiama",
+    "sideQuestionAnswering": "Atsako…",
+    "sideQuestionStopped": "Sustabdyta",
     "interrupted": "Šis pokalbis buvo nutrauktas agentui nebaigus darbo: pumr buvo uždaryta arba kompiuteris perėjo į miego režimą. Galite jį tęsti nuo tos vietos, kur jis sustojo.",
     "limitReached": "Pristabdyta po {{ count }} įrankio skambučių be galutinio atsakymo. Limitas neleidžia užstrigusiam agentui nuolat veikti. Toliau suteikite jam naują biudžetą arba įjunkite automatinį tęsti.",
     "continue": "Tęsti",
@@ -456,7 +470,8 @@
         "cascade": "Atmesta kartu su kita užklausa",
         "stopped": "Sustabdyta",
         "timeout": "Baigėsi laikas",
-        "cancelled": "Atšaukta"
+        "cancelled": "Atšaukta",
+        "hook": "Jūsų hook'as"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Atitikmenų nėra. Tęskite rašyti arba paspauskite Escape.",
     "mentionFetch": "Nuskaityti {{ url }}",
     "removeMention": "Pašalinti nuorodą",
+    "commandPrompt": "Pritaiko jūsų užklausą „{{ name }}“ tam, ką parašote po jos",
+    "commandEffort": "Nustatykite, kiek modelis samprotauja",
+    "commandMode": "Pakeiskite šios sesijos režimą",
+    "commandModel": "Pakeiskite šios sesijos modelį",
+    "commandProvider": "Pasirinkite tiekėją, kuris teikia modelį",
+    "commandRevert": "Grįžta prie paskutinės jūsų užklausos: viskas po jos pašalinama, o failus galima atkurti",
+    "commandRevertNone": "Dar nėra užklausos, prie kurios būtų galima grįžti",
+    "commandRevertRunning": "Pirmiausia sustabdykite agentą",
+    "commandNoEffort": "Šis modelis neturi nustatomo samprotavimo lygio.",
+    "commandNoProvider": "Į tiekėją galima nukreipti tik OpenRouter modelius.",
     "textBlockWords": "{{ count }} žodžiai",
     "textBlockRemove": "Pašalinti įklijuotą tekstą",
     "textBlockTitle": "Įklijuotas tekstas",
@@ -634,7 +659,7 @@
     "alwaysOn": "Visada įjungta",
     "editInSettings": "Redaguoti nustatymuose",
     "yourPrompts": "Jūsų užklausos",
-    "yourPromptsHint": "Įjungtos užklausos pridedamos prie aktyvių sistemos užklausų. Redaguokite jas arba atkurkite įtaisytąsias į pradinį tekstą.",
+    "yourPromptsHint": "Iškvieskite užklausą pokalbio lauke pasviruoju brūkšniu ir jos pavadinimu, pavyzdžiui, /code-review. Tada ji taikoma tik tam pranešimui. Redaguokite jas arba atkurkite pradinį integruotųjų tekstą.",
     "addPrompt": "Nauja",
     "customPrompt": "Pasirinktinė užklausa",
     "promptName": "Užklausos pavadinimas",
@@ -718,6 +743,8 @@
       "providers": "Tiekėjai",
       "agent": "Agento konfigūracija",
       "agentRules": "Agento leidžiamų ir draudžiamų sąrašas",
+      "sandbox": "Smėliadėžė",
+      "hooks": "Hooks",
       "general": "Bendra",
       "chat": "Pokalbis",
       "appearance": "Išvaizda",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP serveris",
       "workspace": "Darbo sritis"
+    },
+    "sandbox": {
+      "title": "Komandų smėliadėžė",
+      "hint": "Operacinė sistema apriboja kiekvieną agento vykdomą komandą ir viską, ką ta komanda paleidžia. Tai antras sluoksnis už leidimų taisyklių, skirtas komandai, kurią jos įvertina klaidingai. Smėliadėžės sustabdyta komanda gali paprašyti leisti ją vykdyti už smėliadėžės ribų; jūsų klausiama kiekvieną kartą.",
+      "unavailable": "Šioje sistemoje nėra smėliadėžės, kurią pumr galėtų naudoti, todėl komandos vykdomos be apribojimų. Reikia macOS arba Linux 5.19 ar naujesnės versijos su Landlock.",
+      "networkUnavailable": "Uždaryti tinklą galima tik macOS sistemoje.",
+      "modes": {
+        "off": "Išjungta",
+        "files": "Failai",
+        "filesAndNetwork": "Failai ir tinklas"
+      },
+      "modeHints": {
+        "off": "Komandos vykdomos jūsų naudotojo teisėmis, jas riboja tik leidimų taisyklės.",
+        "files": "Komandos rašo tik į projektą, jūsų papildomus aplankus, laikinuosius aplankus ir toliau išvardytus aplankus. Jos negali skaityti aplankų, kuriuose laikomi raktai.",
+        "filesAndNetwork": "Tas pats, ir komandos pasiekia tik šį kompiuterį, išskyrus komandas, kurių host'us leidote. Paketų diegimas tada prašo leisti vykdyti už smėliadėžės ribų."
+      },
+      "writable": "Aplankai, į kuriuos komandos taip pat gali rašyti",
+      "writableHint": "Kūrimo įrankių talpyklos. Be jų kūrimas nepavyksta per pirmąjį atsisiuntimą. Kelias prasideda simboliu / arba ~.",
+      "unreadable": "Aplankai, kurių komandos negali skaityti",
+      "unreadableHint": "Vietos, kuriose laikomi raktai ir prieigos raktai. git, ssh ir debesies įrankiai pasilieka aplankus, su kuriais dirba, o aplankas, kurį leidote komandoms, lieka atviras.",
+      "excluded": "Komandos, vykdomos už smėliadėžės ribų",
+      "excludedHint": "Įrankiams, kurie turi savo smėliadėžę ir šioje neveikia, pavyzdžiui, naršyklės testams. Įrašas nurodo, kaip prasideda komandos eilutė; su * tai visos eilutės šablonas.",
+      "addCommand": "Pridėti komandą",
+      "noCommands": "Dar nepridėta jokių komandų."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Hook'as – tai jūsų komanda, kurią pumr paleidžia nustatytu agento darbo momentu. Modelis nesprendžia, ar ji bus paleista, todėl negali jos pamiršti. Hook'ai vykdomi taip, kaip juos parašėte, be leidimų prašymų ir už smėliadėžės ribų.",
+      "protocol": "Hook'as gauna detales kaip JSON per standartinę įvestį (tool_name, tool_input, tool_response), o iškvietime nurodytą failą – kaip $PUMR_FILE. Išėjimo kodas 0 leidžia agentui tęsti. Išėjimo kodas 2 perduoda agentui tai, ką hook'as išvedė, o prieš įrankio iškvietimą tą iškvietimą atmeta.",
+      "add": "Pridėti hook'ą",
+      "empty": "Dar nepridėta jokių hook'ų.",
+      "remove": "Pašalinti hook'ą",
+      "event": "Kada hook'as paleidžiamas",
+      "events": {
+        "beforeTool": "Prieš įrankio iškvietimą",
+        "afterTool": "Po įrankio iškvietimo",
+        "turnEnd": "Kai agentas nori baigti"
+      },
+      "tools": "Įrankiai",
+      "toolsPlaceholder": "Kiekvienas įrankis arba pavadinimai, pvz., edit|write",
+      "files": "Failai",
+      "filesPlaceholder": "Kiekvienas failas arba šablonai, pvz., *.ts",
+      "command": "Komanda",
+      "timeout": "Stabdyti po (sekundžių)",
+      "project": "Projektas",
+      "allProjects": "Visi projektai"
     },
     "providers": {
       "title": "Modelių tiekėjai",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Keiskite tik jei naudojate tarpinį serverį ar suderinamą tinklų sietuvą.",
     "defaultModel": "Numatytasis modelis",
     "defaultModelHint": "Naudojamas naujoms sesijoms.",
+    "defaultModelSetupTitle": "Pasirinkite numatytąjį modelį",
+    "defaultModelSetup": "Jūsų tiekėjas prijungtas. Naujos sesijos pradedamos su numatytuoju modeliu: pasirinkite jį ties „Numatytasis modelis“ žemiau šiame puslapyje ir spustelėkite „Išsaugoti“. Kiekviename pokalbyje modelį vis tiek galite pakeisti.",
+    "defaultModelSetupAction": "Eiti prie numatytojo modelio",
     "handoverModel": "Perdavimo modelis",
     "handoverModelPlaceholder": "Naudoti dabartinės sesijos modelį",
     "handoverModelHint": "Modelis, naudojamas sesijai apibendrinti perduodant. Palikite tuščią, kad būtų naudojamas dabartinės sesijos modelis.",
@@ -998,6 +1074,14 @@
       "mist": "Prislopintas tekstas",
       "white": "Tekstas"
     },
+    "logo": {
+      "title": "Logotipas",
+      "hint": "Rodomas programos antraštėje ir kaip programos piktograma, kol pumr veikia.",
+      "mascot": "Sėdinti puma",
+      "classic": "Klasikinis veidas",
+      "shaded": "Šešėliuota puma",
+      "tailup": "Puma pakelta uodega"
+    },
     "background": {
       "title": "Programos fonas",
       "hint": "Pasirinkite integruotą foną arba naudokite savo vaizdą. Jis yra už stiklo plokščių ir atitinka jūsų temą.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Nauja eilutė",
       "chatStop": "Stabdyti atsakymą",
       "chatRecallPrompt": "Grąžinti paskutinę užklausą",
+      "chatToggleMode": "Perjungti tarp planavimo ir programavimo",
+      "chatToggleModeHint": "Grįžta į režimą, kuriame sesija buvo prieš planavimą.",
       "gitToggleStage": "Paruošti pažymėtus failus arba atšaukti jų paruošimą",
       "gitDiscardFiles": "Atmesti pažymėtus failus",
       "gitSelectAllFiles": "Pažymėti visus failus",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Sumažinti",
       "fillScreen": "Užpildyti ekraną",
       "fillScreenHint": "Iškviesas langas užpildo aktyvų monitorių, o ne išsaugo ankstesnį dydį.",
+      "shortcutError": "Visos sistemos sparčiojo klavišo užregistruoti nepavyko, todėl jis neiškviečia „pumr“. Tikriausiai šį klavišų derinį jau naudoja kita programa: pasirinkite kitą ir išsaugokite dar kartą.",
+      "waylandHint": "„Wayland“ aplinkoje programos negali registruoti visos sistemos sparčiųjų klavišų, todėl šis spartusis klavišas čia veikia nepatikimai. Vietoj to priskirkite toliau pateiktą komandą klavišui savo darbalaukio klaviatūros nustatymuose.",
+      "command": "Sparčiojo klavišo komanda",
+      "commandHint": "Daro tą patį, ką ir spartusis klavišas: iškviečia pumr arba jį paslepia ar sumažina, kai jis yra priekyje. Priskirkite ją klavišui savo darbalaukio klaviatūros nustatymuose.",
+      "commandActions": "Vienam veiksmui komandą užbaikite vienu iš šių parametrų:",
       "zoom": "Rodymo mastelis",
       "zoomHint": "Keičia visos sąsajos mastelį. Spartusis klavišas: Ctrl/⌘ + + norėdami priartinti, Ctrl/⌘ + - nutolinti, Ctrl/⌘ + 0 atkurti.",
       "zoomReset": "Atkurti"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Leisti komandą",
     "denyCommand": "Blokuoti komandą",
     "noDeniedCommandRules": "Nėra blokuotų komandų.",
+    "mcpToolGrants": "Leidžiami MCP įrankiai",
+    "mcpToolGrantsHint": "MCP serverių įrankiai, kurie vykdomi neklausiant. Įrašas galioja vienam vieno serverio įrankiui, kad ir kokie būtų argumentai, ir nustoja galioti, kai pasikeičia to serverio konfigūracija. Leidimo prašyme naudokite „leisti visada“, kad sukurtumėte vieną.",
+    "noMcpToolGrants": "Visada leidžiamų MCP įrankių dar nėra.",
+    "secretFolders": "Aplankai su leidžiamais neskelbtinais failais",
+    "secretFoldersHint": "Komandos gali neklausdamos naudoti neskelbtinus failus (raktus, prieigos raktus, prisijungimo duomenis), esančius tiesiogiai šiuose aplankuose. Poaplankiai neįtraukiami. Leidimo prašyme naudokite „leisti visada“, kad sukurtumėte vieną.",
+    "noSecretFolders": "Aplankų su leidžiamais neskelbtinais failais dar nėra.",
     "scope": {
       "program": "Programa",
       "subcommand": "Programa + subkomanda",
@@ -1276,7 +1373,8 @@
       "file": "Failas",
       "web": "Svetainė",
       "websearch": "Paieška internete",
-      "folder": "Aplankas"
+      "folder": "Aplankas",
+      "hook": "Hook"
     },
     "allowAlways": "Leisti visada",
     "siteRuleLabel": "Svetainės taisyklė (domenas arba glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Prideda svetainę ir jos subdomenus prie leidžiamų svetainių.",
       "option": "Svetainė + subdomenai"
     },
+    "secretScope": {
+      "title": "Neskelbtini failai",
+      "hint": "Tada komandos galės neklausdamos naudoti raktus, prieigos raktus ir prisijungimo duomenų failus, esančius tiesiogiai šiame aplanke. Poaplankiai neįtraukiami.",
+      "option": "Neskelbtini failai šiame aplanke",
+      "chip": "neskelbtini failai aplanke {{ folder }}"
+    },
     "allowChat": "Leisti šiame pokalbyje",
     "option": {
       "yes": "Taip",
@@ -1315,6 +1419,7 @@
     "customize": "Tinkinti",
     "justification": "Kodėl",
     "keyboardHint": "Spauskite 1–{{ count }} arba naudokite ↑ ↓ ir Enter · Esc atmeta",
+    "mcpToolHint": "Nebeklausti galioja kiekvienam šio įrankio iškvietimui šiame serveryje, kad ir kokie būtų argumentai.",
     "url": {
       "queryWarning": "Šis adresas užklausos eilutėje neša daug duomenų. Prieš leisdami įsitikinkite, kad jame nėra nieko privataus."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Leisti tik šią užklausą.",
       "allowSession": "Įsimenama visuose pokalbiuose, kol programa bus paleista iš naujo.",
       "allowChat": "Komandų taisyklės įsimenamos šiam pokalbiui ir jo subagentams; aplankai ir svetainės – iki programos paleidimo iš naujo.",
+      "allowChatMcp": "Įsimenama šiam pokalbiui ir jo subagentams: kiekvienas šio įrankio iškvietimas šiame serveryje, kad ir kokie būtų argumentai.",
       "allowAlways": "Išsaugoma nustatymuose ir galioja visiems pokalbiams."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Naujas terminalas",
     "close": "Uždaryti terminalą",
     "hide": "Slėpti terminalą",
+    "run": "Vykdyti terminale",
     "noProject": "Atidarykite seansą, kad galėtumėte naudoti terminalą.",
     "exited": "Procesas baigėsi kodu {{ code }}",
     "failed": "Nepavyko paleisti terminalo: {{ error }}"

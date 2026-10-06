@@ -152,8 +152,26 @@ struct RegistryPackage {
     identifier: Option<String>,
     #[serde(default, rename = "runtimeHint")]
     runtime_hint: Option<String>,
+    #[serde(
+        default,
+        rename = "packageArguments",
+        deserialize_with = "deserialize_null_default"
+    )]
+    package_arguments: Vec<RegistryArgument>,
     #[serde(default, rename = "environmentVariables")]
     environment_variables: Vec<RegistryEnvVar>,
+}
+
+/// An argument the author declares for the package: a positional one is its
+/// `value`, a named one its `name` (`--port`) followed by its value.
+#[derive(Debug, Default, Deserialize)]
+struct RegistryArgument {
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,43 +301,51 @@ fn map_server(entry: RegistryEntry) -> MarketplaceServer {
     }
 }
 
+/// The program a package is started with: the runtime its author names, or
+/// else the runner of the registry the package lives in, as most entries name
+/// none: npm with `npx`, PyPI with `uvx`, an OCI image with `docker`. `None`
+/// for a registry pumr knows no runner for: better no command than one that
+/// cannot work.
+fn package_runtime<'a>(hint: Option<&'a str>, registry_type: Option<&str>) -> Option<&'a str> {
+    let hint = hint.map(str::trim).filter(|hint| !hint.is_empty());
+    match (hint, registry_type) {
+        (Some(hint), _) => Some(hint),
+        (None, Some("npm")) => Some("npx"),
+        (None, Some("pypi")) => Some("uvx"),
+        (None, Some("oci")) => Some("docker"),
+        (None, _) => None,
+    }
+}
+
 /// Turns a registry package into a launch command. We only build commands we can
-/// run without a global install, and we never add a `-y`/force flag the user
-/// hasn't seen.
+/// run without a global install, and the user reviews the whole line, `-y`
+/// included, before anything is installed. Nothing is added after the package
+/// but the arguments its author declared.
 fn package_command(package: &RegistryPackage) -> (Option<String>, Vec<String>) {
     let Some(identifier) = package.identifier.clone() else {
         return (None, Vec::new());
     };
-    let runtime = package
-        .runtime_hint
-        .clone()
-        .unwrap_or_else(|| package.registry_type.clone().unwrap_or_default());
-    match runtime.as_str() {
-        "npx" => (
-            Some("npx".to_string()),
-            vec!["-y".to_string(), identifier, "mcp".to_string()],
-        ),
-        "uvx" => (Some("uvx".to_string()), vec![identifier]),
-        "docker" => (
-            Some("docker".to_string()),
-            vec![
-                "run".to_string(),
-                "-i".to_string(),
-                "--rm".to_string(),
-                identifier,
-            ],
-        ),
-        // Unknown runtime: surface the command the author asked for, verbatim.
-        _ => (
-            Some(
-                package
-                    .runtime_hint
-                    .clone()
-                    .unwrap_or_else(|| "npx".to_string()),
-            ),
-            vec![identifier],
-        ),
+    let Some(runtime) = package_runtime(
+        package.runtime_hint.as_deref(),
+        package.registry_type.as_deref(),
+    ) else {
+        return (None, Vec::new());
+    };
+    let mut args = match runtime {
+        "npx" => vec!["-y".to_string()],
+        "docker" => vec!["run".to_string(), "-i".to_string(), "--rm".to_string()],
+        // `uvx` takes the package as it is; an unknown runtime is surfaced
+        // as the author asked for it, verbatim.
+        _ => Vec::new(),
+    };
+    args.push(identifier);
+    for argument in &package.package_arguments {
+        if argument.kind.as_deref() == Some("named") {
+            args.extend(argument.name.clone());
+        }
+        args.extend(argument.value.clone());
     }
+    (Some(runtime.to_string()), args)
 }
 
 // ---------------------------------------------------------------------------
@@ -500,10 +526,14 @@ fn directory_package_command(package: &DirectoryPackage) -> (Option<String>, Vec
     let Some(identifier) = package.identifier.clone() else {
         return (None, Vec::new());
     };
-    let runtime = package
-        .runtime_hint
-        .clone()
-        .unwrap_or_else(|| package.registry_type.clone().unwrap_or_default());
+    // Without a runtime of its own the entry used to be run with the name of
+    // its registry (`pypi <package>`), which is no program.
+    let Some(runtime) = package_runtime(
+        package.runtime_hint.as_deref(),
+        package.registry_type.as_deref(),
+    ) else {
+        return (None, Vec::new());
+    };
     let extra: Vec<String> = package
         .package_arguments
         .iter()
@@ -511,7 +541,7 @@ fn directory_package_command(package: &DirectoryPackage) -> (Option<String>, Vec
         .collect();
     let mut args = vec![identifier];
     args.extend(extra);
-    match runtime.as_str() {
+    match runtime {
         "npx" => {
             args.insert(0, "-y".to_string());
             (Some("npx".to_string()), args)
@@ -522,7 +552,7 @@ fn directory_package_command(package: &DirectoryPackage) -> (Option<String>, Vec
             docker.extend(args);
             (Some("docker".to_string()), docker)
         }
-        _ => (Some(runtime), args),
+        _ => (Some(runtime.to_string()), args),
     }
 }
 
@@ -866,7 +896,9 @@ fn read_manifest(root: &Path, url: Option<String>, source: &str) -> Result<Skill
 }
 
 /// Rejects a single path component (directory/file name) that could escape the
-/// intended directory: empty, `.`/`..`, separators or absolute paths.
+/// intended directory: empty, `.`/`..`, separators or absolute paths. A colon
+/// is refused everywhere, because on Windows `C:` is a drive that is not
+/// absolute, and joining it replaces the directory it is joined to.
 fn safe_component(value: &str) -> Result<&str> {
     let trimmed = value.trim();
     if trimmed.is_empty()
@@ -874,6 +906,7 @@ fn safe_component(value: &str) -> Result<&str> {
         || trimmed == ".."
         || trimmed.contains('/')
         || trimmed.contains('\\')
+        || trimmed.contains(':')
         || Path::new(trimmed).is_absolute()
     {
         return Err(AppError::msg(format!(
@@ -1407,14 +1440,32 @@ impl MarketplaceService {
         Ok(())
     }
 
-    /// Clones or fast-forwards a marketplace checkout. Uses git, matching how
-    /// Claude Code distributes marketplaces.
+    /// Clones a marketplace or brings its checkout up to date. Uses git,
+    /// matching how Claude Code distributes marketplaces.
+    ///
+    /// The checkout is shallow, so an update cannot be a fast-forward: the
+    /// tip a depth-1 fetch brings has no parents, the old tip is never its
+    /// ancestor, and `pull --ff-only` refused every real update. The checkout
+    /// is pumr's own cache and nobody's work, so it is moved to whatever the
+    /// marketplace's default branch holds now, a rewritten history included.
     async fn clone_or_update(&self, url: &str, dir: &Path) -> Result<()> {
         let output = if dir.is_dir() {
+            let fetched = tokio::process::Command::new("git")
+                .args(["-C"])
+                .arg(dir)
+                // `HEAD` rather than the branch that was cloned: the default
+                // branch may have been renamed since.
+                .args(["fetch", "--depth", "1", "origin", "HEAD"])
+                .output()
+                .await?;
+            if !fetched.status.success() {
+                let stderr = String::from_utf8_lossy(&fetched.stderr);
+                return Err(AppError::msg(format!("git failed: {}", stderr.trim())));
+            }
             tokio::process::Command::new("git")
                 .args(["-C"])
                 .arg(dir)
-                .args(["pull", "--ff-only", "--depth", "1"])
+                .args(["reset", "--hard", "FETCH_HEAD"])
                 .output()
                 .await?
         } else {
@@ -1446,9 +1497,13 @@ fn find_skill_dir(plugin_dir: &Path, name: &str) -> Option<PathBuf> {
 /// Pulls the `description` from a skill's YAML frontmatter, for listings.
 fn skill_description(skill_dir: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(skill_dir.join("SKILL.md")).ok()?;
-    for line in raw.lines().take(30) {
+    let lines: Vec<&str> = crate::discovery::without_bom(&raw).lines().collect();
+    for (index, line) in lines.iter().enumerate().take(30) {
         if let Some(rest) = line.trim().strip_prefix("description:") {
-            let value = rest.trim().trim_matches('"').trim_matches('\'').trim();
+            // A block scalar (`description: >-`) has its text on the lines below.
+            let indent = line.len() - line.trim_start().len();
+            let value = crate::discovery::frontmatter_value(rest, indent, &lines[index + 1..]);
+            let value = value.trim();
             if !value.is_empty() {
                 return Some(value.to_string());
             }
@@ -1627,6 +1682,7 @@ mod tests {
                     registry_type: Some("npm".to_string()),
                     identifier: Some("@acme/files".to_string()),
                     runtime_hint: Some("npx".to_string()),
+                    package_arguments: Vec::new(),
                     environment_variables: vec![RegistryEnvVar {
                         name: Some("ACME_TOKEN".to_string()),
                         is_required: Some(true),
@@ -1639,9 +1695,185 @@ mod tests {
         };
         let server = map_server(entry);
         assert_eq!(server.command.as_deref(), Some("npx"));
-        assert_eq!(server.args, vec!["-y", "@acme/files", "mcp"]);
+        // Nothing follows the package that its author did not declare.
+        assert_eq!(server.args, vec!["-y", "@acme/files"]);
         assert_eq!(server.env.len(), 1);
         assert!(server.env[0].required && server.env[0].secret);
+    }
+
+    #[test]
+    fn a_registry_package_runs_with_the_runner_of_its_registry() {
+        // Entries as the registry returns them: most name no runtime.
+        let command = |package: serde_json::Value| {
+            let package: RegistryPackage = serde_json::from_value(package).unwrap();
+            let (command, args) = package_command(&package);
+            (command, args.join(" "))
+        };
+        let run = |runner: &str, args: &str| (Some(runner.to_string()), args.to_string());
+        assert_eq!(
+            command(serde_json::json!({
+                "registryType": "npm", "identifier": "pretrip-mcp", "version": "1.0.1",
+                "transport": { "type": "stdio" }
+            })),
+            run("npx", "-y pretrip-mcp")
+        );
+        assert_eq!(
+            command(serde_json::json!({
+                "registryType": "pypi", "identifier": "bourdon", "runtimeHint": null,
+                "packageArguments": [{ "value": "serve", "type": "positional" }]
+            })),
+            run("uvx", "bourdon serve")
+        );
+        assert_eq!(
+            command(serde_json::json!({
+                "registryType": "oci", "identifier": "ghcr.io/acme/server:0.1.0",
+                "packageArguments": [
+                    { "type": "positional", "value": "serve" },
+                    { "type": "named", "name": "--transport", "value": "stdio" },
+                    { "type": "named", "name": "--quiet" },
+                    { "type": "positional", "valueHint": "directory" }
+                ]
+            })),
+            run(
+                "docker",
+                "run -i --rm ghcr.io/acme/server:0.1.0 serve --transport stdio --quiet"
+            )
+        );
+        // The author's own runtime wins, known or not.
+        assert_eq!(
+            command(serde_json::json!({
+                "registryType": "pypi", "identifier": "contextburn", "runtimeHint": "uvx",
+                "packageArguments": [{ "value": "mcp", "type": "positional" }]
+            })),
+            run("uvx", "contextburn mcp")
+        );
+        assert_eq!(
+            command(serde_json::json!({
+                "registryType": "nuget", "identifier": "Acme.Mcp", "runtimeHint": "dnx",
+                "packageArguments": null
+            })),
+            run("dnx", "Acme.Mcp")
+        );
+        // No runtime and a registry without a runner: no command is made up.
+        assert_eq!(
+            command(serde_json::json!({
+                "registryType": "mcpb", "identifier": "https://example.com/a.mcpb"
+            })),
+            (None, String::new())
+        );
+    }
+
+    /// Runs git in a test repository, with an identity of its own.
+    fn git(repository: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn updating_a_marketplace_follows_new_and_rewritten_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let upstream = temp.path().join("upstream");
+        fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "-q"]);
+        let commit = |arguments: &[&str]| {
+            git(&upstream, &["add", "-A"]);
+            git(&upstream, &[&["commit", "-q"][..], arguments].concat());
+        };
+        fs::write(upstream.join("skill.md"), "one").unwrap();
+        commit(&["-m", "one"]);
+
+        // Only a `file://` URL makes a shallow clone of a local repository.
+        let url = reqwest::Url::from_file_path(&upstream).unwrap().to_string();
+        let service =
+            MarketplaceService::new(reqwest::Client::new(), temp.path().join("marketplaces"));
+        fs::create_dir_all(&service.cache_dir).unwrap();
+        let checkout = service.checkout_dir(&url);
+        let read = |file: &str| fs::read_to_string(checkout.join(file)).unwrap();
+        service.clone_or_update(&url, &checkout).await.unwrap();
+        assert_eq!(read("skill.md"), "one");
+        // Nothing new: the only update that used to work.
+        service.clone_or_update(&url, &checkout).await.unwrap();
+
+        // A new commit, which a shallow checkout cannot fast-forward to.
+        fs::write(upstream.join("skill.md"), "two").unwrap();
+        commit(&["-m", "two"]);
+        service.clone_or_update(&url, &checkout).await.unwrap();
+        assert_eq!(read("skill.md"), "two");
+        assert_eq!(head_commit(&checkout), head_commit(&upstream));
+
+        // A rewritten history under a renamed default branch, with a file
+        // gone; whatever was changed in the cache gives way.
+        fs::remove_file(upstream.join("skill.md")).unwrap();
+        fs::write(upstream.join("other.md"), "three").unwrap();
+        commit(&["--amend", "-m", "rewritten"]);
+        git(&upstream, &["branch", "-m", "trunk"]);
+        fs::write(checkout.join("skill.md"), "edited in the cache").unwrap();
+        service.clone_or_update(&url, &checkout).await.unwrap();
+        assert!(!checkout.join("skill.md").exists());
+        assert_eq!(read("other.md"), "three");
+        assert_eq!(head_commit(&checkout), head_commit(&upstream));
+    }
+
+    #[test]
+    fn a_skill_is_described_by_a_block_scalar_and_behind_a_byte_order_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let describe = |content: &str| {
+            fs::write(dir.path().join("SKILL.md"), content).unwrap();
+            skill_description(dir.path())
+        };
+        assert_eq!(
+            describe(
+                "---\nname: pdf\ndescription: >-\n  Fill in PDF forms.\n\n  Use it for: invoices.\nlicense: MIT\n---\n"
+            )
+            .as_deref(),
+            Some("Fill in PDF forms. Use it for: invoices.")
+        );
+        // The literal kind is one line too, here with a mark and CRLF.
+        assert_eq!(
+            describe("\u{feff}---\r\ndescription: |\r\n  Review code\r\n  at once.\r\n---\r\n")
+                .as_deref(),
+            Some("Review code at once.")
+        );
+        // Under an indented key the text ends at the key's own depth.
+        assert_eq!(
+            describe("---\nmetadata:\n  description: >\n    Nested text\n  author: me\n---\n")
+                .as_deref(),
+            Some("Nested text")
+        );
+        // A block without text is no description, where it used to be `>-`.
+        assert_eq!(describe("---\ndescription: >-\nname: pdf\n---\n"), None);
+
+        // What opens no block reads as before.
+        assert_eq!(
+            describe("---\ndescription: \"Review: code\"\n---\n").as_deref(),
+            Some("Review: code")
+        );
+        assert_eq!(
+            describe("\u{feff}description: 'Jira'\n").as_deref(),
+            Some("Jira")
+        );
+    }
+
+    #[test]
+    fn a_path_component_cannot_name_a_drive() {
+        assert_eq!(safe_component(" review ").unwrap(), "review");
+        let unsafe_names = [
+            "", ".", "..", "a/b", "a\\b", "/etc", "C:", "C:skills", "a:b",
+        ];
+        for name in unsafe_names {
+            assert!(safe_component(name).is_err(), "{name:?}");
+        }
     }
 
     #[test]
@@ -1734,6 +1966,31 @@ mod tests {
         let (command, args) = directory_package_command(&npm);
         assert_eq!(command.as_deref(), Some("npx"));
         assert_eq!(args, vec!["-y", "@acme/files"]);
+
+        // Most entries name no runtime: their registry says how they run,
+        // where its name used to be taken for the program (`pypi <package>`).
+        let command = |package: serde_json::Value| {
+            let package: DirectoryPackage = serde_json::from_value(package).unwrap();
+            let (command, args) = directory_package_command(&package);
+            (command, args.join(" "))
+        };
+        let run = |runner: &str, args: &str| (Some(runner.to_string()), args.to_string());
+        assert_eq!(
+            command(serde_json::json!({ "registryType": "npm", "identifier": "ucn" })),
+            run("npx", "-y ucn")
+        );
+        assert_eq!(
+            command(serde_json::json!({ "registryType": "pypi", "identifier": "adeu" })),
+            run("uvx", "adeu")
+        );
+        assert_eq!(
+            command(serde_json::json!({ "registryType": "oci", "identifier": "acme/mcp:1" })),
+            run("docker", "run -i --rm acme/mcp:1")
+        );
+        assert_eq!(
+            command(serde_json::json!({ "registryType": "nuget", "identifier": "Acme.Mcp" })),
+            (None, String::new())
+        );
     }
 
     #[test]

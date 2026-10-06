@@ -6,16 +6,18 @@
     "toggleSidebar": "Växla sidofält",
     "toggleRightPanel": "Växla höger panel",
     "toggleTerminal": "Visa/dölj terminal",
+    "keepAwake": "Håll vaken medan agenter arbetar",
+    "keepAwakeOn": "Datorn hålls vaken medan agenter arbetar. Klicka för att stänga av.",
+    "keepAwakeOff": "Datorn kan somna medan agenter arbetar. Klicka för att hålla den vaken.",
     "refresh": "Uppdatera",
     "notTauri": "pumr måste köras inuti Tauri. Starta det med: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekt",
+    "sessions": "Sessioner",
     "workspace": "Arbetsyta",
     "git": "Git",
     "addProject": "Lägg till projekt",
     "newSession": "Ny session",
-    "new": "Ny",
     "noProjects": "Inga projekt ännu. Lägg till en mapp för att komma igång.",
     "noSessions": "Inga sessioner",
     "removeProject": "Ta bort projekt",
@@ -36,8 +38,6 @@
     "yesterday": "I går"
   },
   "workspace": {
-    "title": "Arbetsyta",
-    "noSession": "Öppna en session för att bläddra i dess filer.",
     "empty": "Inga filer hittades.",
     "libraryRoot": "biblioteksrot",
     "noOpenFiles": "Inga öppna filer. Välj en fil i trädet.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Ta bort taggen {{ tag }}?",
     "stashes": "Stashar",
     "stashCreate": "Stasha ändringar",
+    "stash": "Stasha",
+    "stashMessage": "Meddelande (valfritt)",
+    "stashIncludeUntracked": "Inkludera ospårade filer",
     "stashApply": "Tillämpa",
     "stashPop": "Hämta",
     "stashDropConfirm": "Släng {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Använd inkommande (theirs)",
       "markResolved": "Markera som löst",
       "fileHint": "Den här filen har konflikter. Behåll en sida, eller redigera filen och markera den som löst.",
+      "markersLeftIn": "Filer med konflikter som fortfarande innehåller konfliktmarkörer (<<<<<<< eller >>>>>>>): {{ count }}. Markera dem som lösta ändå?",
       "markersLeft": "Filen innehåller fortfarande konfliktmarkörer (<<<<<<< eller >>>>>>>). Markera den som löst ändå?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Målmapp",
     "cloneChoose": "Välj…",
     "createBranch": "Skapa gren",
+    "branch": "Gren",
     "branchName": "Grennamn",
     "createBranchAt": "Skapa gren vid: {{branch}}",
     "checkoutAfterCreate": "Byt efter skapande",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Anslut en modellleverantör i Inställningar för att börja chatta.",
+    "noDefaultModel": "Ingen standardmodell har valts ännu. Öppna Inställningar, välj en modell under ”Standardmodell” i ”Modellleverantörer” och klicka på ”Spara”.",
     "openSettings": "Öppna inställningar",
     "error": "Fel",
     "retry": "Försök igen",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} för att skicka · {{ newLine }} för en ny rad",
     "hintStreaming": "{{ send }} för att köa · {{ stop }} för att stoppa",
     "hintRecall": "{{ recall }} för den senaste prompten",
+    "hintCommands": "/ för kommandon",
     "handover": "Överlämning",
     "handovering": "Sammanfattar…",
     "handoverHint": "Sammanfatta denna session och fortsätt i en ny",
@@ -328,6 +335,13 @@
     "compacting": "Kompakterar kontext",
     "compacted": "Kontext kompakterad",
     "compactedHint": "Härifrån arbetar modellen utifrån den här sammanfattningen i stället för meddelandena ovan.",
+    "mcpStarting": "Startar MCP-servern {{ name }}",
+    "mcpIssues": "Vissa MCP-servrar kunde inte användas för det här meddelandet:",
+    "sideQuestion": "Sidofråga",
+    "sideQuestionHint": "Ställ en snabb fråga om den här sessionen eller om något annat. Svaret läggs inte till i sessionen.",
+    "sideQuestionPrivate": "Läggs inte till i sessionen",
+    "sideQuestionAnswering": "Svarar…",
+    "sideQuestionStopped": "Stoppad",
     "interrupted": "Den här chatten avbröts innan agenten var klar: pumr stängdes eller datorn gick i viloläge. Du kan fortsätta där den stannade.",
     "limitReached": "Pausad efter {{ count }} verktygsanrop utan ett slutgiltigt svar. Gränsen förhindrar att en agent som har fastnat i loop för alltid. Fortsätt att ge den en ny budget eller aktivera automatisk fortsättning.",
     "continue": "Fortsätta",
@@ -456,7 +470,8 @@
         "cascade": "Nekad tillsammans med en annan förfrågan",
         "stopped": "Stoppad",
         "timeout": "Tidsgränsen nådd",
-        "cancelled": "Avbruten"
+        "cancelled": "Avbruten",
+        "hook": "Din hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Inga träffar. Fortsätt skriva eller tryck Escape.",
     "mentionFetch": "Hämta {{ url }}",
     "removeMention": "Ta bort referens",
+    "commandPrompt": "Tillämpar din prompt ”{{ name }}” på det du skriver efter den",
+    "commandEffort": "Ställ in hur mycket modellen resonerar",
+    "commandMode": "Byt läge för den här sessionen",
+    "commandModel": "Byt modell för den här sessionen",
+    "commandProvider": "Välj den leverantör som levererar modellen",
+    "commandRevert": "Går tillbaka till din senaste prompt: allt efter den tas bort och filerna kan återställas",
+    "commandRevertNone": "Det finns ännu ingen prompt att gå tillbaka till",
+    "commandRevertRunning": "Stoppa agenten först",
+    "commandNoEffort": "Den här modellen har ingen resonemangsnivå att ställa in.",
+    "commandNoProvider": "Bara OpenRouter-modeller kan styras till en leverantör.",
     "textBlockWords": "{{ count }} ord",
     "textBlockRemove": "Ta bort klistrad text",
     "textBlockTitle": "Klistrad text",
@@ -634,7 +659,7 @@
     "alwaysOn": "Alltid på",
     "editInSettings": "Redigera i inställningar",
     "yourPrompts": "Dina prompts",
-    "yourPromptsHint": "Aktiverade prompts läggs till i de aktiva systemprompts. Redigera dem eller återställ inbyggda till deras ursprungliga text.",
+    "yourPromptsHint": "Anropa en prompt från chattrutan med ett snedstreck och dess namn, till exempel /code-review. Den gäller då bara för det meddelandet. Redigera dem eller återställ de inbyggda till originaltexten.",
     "addPrompt": "Ny",
     "customPrompt": "Anpassad prompt",
     "promptName": "Promptnamn",
@@ -718,6 +743,8 @@
       "providers": "Leverantörer",
       "agent": "Agentkonfiguration",
       "agentRules": "Agentens vit- och svartlista",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "Allmänt",
       "chat": "Chatt",
       "appearance": "Utseende",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP-server",
       "workspace": "Arbetsyta"
+    },
+    "sandbox": {
+      "title": "Sandbox för kommandon",
+      "hint": "Operativsystemet begränsar varje kommando som agenten kör, och allt som det kommandot startar. Det är ett andra lager bakom behörighetsreglerna, för ett kommando som reglerna bedömer fel. Ett kommando som sandboxen stoppar kan be om att få köras utanför den; du tillfrågas varje gång.",
+      "unavailable": "Det här systemet har ingen sandbox som pumr kan använda, så kommandon körs obegränsat. Det krävs macOS, eller Linux 5.19 eller nyare med Landlock.",
+      "networkUnavailable": "Att stänga nätverket går bara på macOS.",
+      "modes": {
+        "off": "Av",
+        "files": "Filer",
+        "filesAndNetwork": "Filer och nätverk"
+      },
+      "modeHints": {
+        "off": "Kommandon körs som din användare och hålls bara tillbaka av behörighetsreglerna.",
+        "files": "Kommandon skriver bara till projektet, dina extra mappar, temporära mappar och mapparna som anges nedan. De kan inte läsa mapparna som innehåller nycklar.",
+        "filesAndNetwork": "Samma sak, och kommandon når bara den här datorn, utom kommandon vars värdar du har tillåtit. Paketinstallation ber då om att få köras utanför sandboxen."
+      },
+      "writable": "Mappar som kommandon också får skriva till",
+      "writableHint": "Byggverktygens cachar. Utan dem misslyckas ett bygge vid sin första nedladdning. En sökväg börjar med / eller ~.",
+      "unreadable": "Mappar som kommandon inte kan läsa",
+      "unreadableHint": "Där nycklar och token finns. git, ssh och molnverktygen behåller mapparna de arbetar med, och en mapp som du har frisläppt för kommandon förblir öppen.",
+      "excluded": "Kommandon som körs utanför sandboxen",
+      "excludedHint": "För verktyg som har en egen sandbox och misslyckas i den här, till exempel webbläsartester. En post anger hur kommandoraden börjar; med * är den ett mönster för hela raden.",
+      "addCommand": "Lägg till kommando",
+      "noCommands": "Inga kommandon tillagda ännu."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "En hook är ett eget kommando som pumr kör vid en bestämd tidpunkt i agentens arbete. Modellen avgör inte om hooken körs och kan därför inte glömma den. Hooks körs som du skrev dem, utan behörighetsfrågor och utanför sandboxen.",
+      "protocol": "En hook får detaljerna som JSON på standard in (tool_name, tool_input, tool_response) och filen som ett anrop pekar ut som $PUMR_FILE. Slutkod 0 låter agenten fortsätta. Slutkod 2 lämnar det hooken skrev ut till agenten och, före ett verktygsanrop, nekar anropet.",
+      "add": "Lägg till hook",
+      "empty": "Inga hooks tillagda ännu.",
+      "remove": "Ta bort hook",
+      "event": "När hooken körs",
+      "events": {
+        "beforeTool": "Före ett verktygsanrop",
+        "afterTool": "Efter ett verktygsanrop",
+        "turnEnd": "När agenten vill avsluta"
+      },
+      "tools": "Verktyg",
+      "toolsPlaceholder": "Alla verktyg, eller namn som edit|write",
+      "files": "Filer",
+      "filesPlaceholder": "Alla filer, eller mönster som *.ts",
+      "command": "Kommando",
+      "timeout": "Stoppa efter (sekunder)",
+      "project": "Projekt",
+      "allProjects": "Alla projekt"
     },
     "providers": {
       "title": "Modellleverantörer",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Ändra bara detta om du använder en proxy eller en kompatibel gateway.",
     "defaultModel": "Standardmodell",
     "defaultModelHint": "Används för nya sessioner.",
+    "defaultModelSetupTitle": "Välj en standardmodell",
+    "defaultModelSetup": "Din leverantör är ansluten. Nya sessioner startar med standardmodellen: välj den under ”Standardmodell” längre ned på den här sidan och klicka på ”Spara”. Du kan fortfarande byta modell i varje chatt.",
+    "defaultModelSetupAction": "Gå till standardmodell",
     "handoverModel": "Överlämningsmodell",
     "handoverModelPlaceholder": "Använd den aktuella sessionens modell",
     "handoverModelHint": "Modell som används för att sammanfatta en session vid överlämning. Lämna tomt för att använda den aktuella sessionens modell.",
@@ -998,6 +1074,14 @@
       "mist": "Dämpad text",
       "white": "Text"
     },
+    "logo": {
+      "title": "Logotyp",
+      "hint": "Visas i appens sidhuvud och som appikon medan pumr körs.",
+      "mascot": "Sittande puma",
+      "classic": "Klassiskt ansikte",
+      "shaded": "Skuggad puma",
+      "tailup": "Puma med lyft svans"
+    },
     "background": {
       "title": "App bakgrund",
       "hint": "Välj en inbyggd bakgrund eller använd din egen bild. Den sitter bakom glaspanelerna och följer ditt tema.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Ny rad",
       "chatStop": "Stoppa svaret",
       "chatRecallPrompt": "Hämta senaste prompten",
+      "chatToggleMode": "Växla mellan planering och kodning",
+      "chatToggleModeHint": "Går tillbaka till läget som sessionen var i före planeringen.",
       "gitToggleStage": "Stagea eller avstagea markerade filer",
       "gitDiscardFiles": "Kasta markerade filer",
       "gitSelectAllFiles": "Markera alla filer",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimera",
       "fillScreen": "Fyll skärmen",
       "fillScreenHint": "Det framkallade fönstret fyller den aktiva skärmen i stället för att behålla sin tidigare storlek.",
+      "shortcutError": "Den systemomfattande genvägen kunde inte registreras, så den tar inte fram pumr. Ett annat program använder troligen den här tangentkombinationen: välj en annan och spara igen.",
+      "waylandHint": "I Wayland kan program inte registrera systemomfattande genvägar, så den här genvägen fungerar inte tillförlitligt här. Koppla i stället kommandot nedan till en tangent i skrivbordets tangentbordsinställningar.",
+      "command": "Kommando för genvägen",
+      "commandHint": "Gör samma sak som genvägen: framkallar pumr, eller döljer eller minimerar det när det är i förgrunden. Koppla det till en tangent i skrivbordets tangentbordsinställningar.",
+      "commandActions": "För en enda åtgärd avslutar du i stället kommandot med något av dessa:",
       "zoom": "Visningsskala",
       "zoomHint": "Skalar hela gränssnittet. Genväg: Ctrl/⌘ + + för att zooma in, Ctrl/⌘ + - för att zooma ut, Ctrl/⌘ + 0 för att återställa.",
       "zoomReset": "Återställ"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Tillåt kommando",
     "denyCommand": "Blockera kommando",
     "noDeniedCommandRules": "Inga blockerade kommandon.",
+    "mcpToolGrants": "Tillåtna MCP-verktyg",
+    "mcpToolGrantsHint": "Verktyg från MCP-servrar som körs utan att fråga. En post gäller ett verktyg på en server, oavsett argument, och slutar gälla när serverns konfiguration ändras. Använd \"tillåt alltid\" i en behörighetsfråga för att skapa en.",
+    "noMcpToolGrants": "Inga alltid-tillåtna MCP-verktyg ännu.",
+    "secretFolders": "Mappar med frisläppta känsliga filer",
+    "secretFoldersHint": "Kommandon får använda de känsliga filerna (nycklar, token, inloggningsuppgifter) direkt i de här mapparna utan att fråga. Undermappar ingår inte. Använd \"tillåt alltid\" i en behörighetsfråga för att skapa en.",
+    "noSecretFolders": "Inga mappar med frisläppta känsliga filer ännu.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + underkommando",
@@ -1276,7 +1373,8 @@
       "file": "Fil",
       "web": "Webbplats",
       "websearch": "Webbsökning",
-      "folder": "Mapp"
+      "folder": "Mapp",
+      "hook": "Hook"
     },
     "allowAlways": "Tillåt alltid",
     "siteRuleLabel": "Webbplatsregel (domän eller glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Lägger till webbplatsen och dess underdomäner bland de tillåtna webbplatserna.",
       "option": "Webbplats + underdomäner"
     },
+    "secretScope": {
+      "title": "Känsliga filer",
+      "hint": "Kommandon får sedan använda nycklar, token och filer med inloggningsuppgifter direkt i den här mappen utan att fråga. Undermappar ingår inte.",
+      "option": "Känsliga filer i den här mappen",
+      "chip": "känsliga filer i {{ folder }}"
+    },
     "allowChat": "Tillåt i denna chatt",
     "option": {
       "yes": "Ja",
@@ -1315,6 +1419,7 @@
     "customize": "Anpassa",
     "justification": "Varför",
     "keyboardHint": "Tryck 1–{{ count }} eller använd ↑ ↓ och Enter · Esc nekar",
+    "mcpToolHint": "Att inte fråga igen gäller varje anrop av det här verktyget på den här servern, oavsett argument.",
     "url": {
       "queryWarning": "Den här adressen innehåller mycket data i sin frågesträng. Kontrollera att den inte innehåller något privat innan du tillåter den."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Tillåt bara den här förfrågan.",
       "allowSession": "Kommer ihåg i alla chattar tills appen startas om.",
       "allowChat": "Kommandoregler kommer ihåg för den här chatten och dess underagenter; mappar och webbplatser tills appen startas om.",
+      "allowChatMcp": "Sparas för den här chatten och dess underagenter: varje anrop av det här verktyget på den här servern, oavsett argument.",
       "allowAlways": "Sparas i dina inställningar och gäller alla chattar."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Ny terminal",
     "close": "Stäng terminal",
     "hide": "Dölj terminal",
+    "run": "Kör i terminal",
     "noProject": "Öppna en session för att använda terminalen.",
     "exited": "Processen avslutades med kod {{ code }}",
     "failed": "Det gick inte att starta terminalen: {{ error }}"

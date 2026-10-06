@@ -122,10 +122,18 @@ export function seed(patch: Partial<FakeSeed> = {}): FakeSeed {
     sessions: [],
     messages: [],
     models: [model()],
+    endpoints: [],
     files: {},
     repo: false,
     pickFolder: null,
     confirm: true,
+    windowControl: {
+      toggleCommand: '/usr/bin/pumr --toggle',
+      globalShortcut: true,
+      shortcutError: null,
+    },
+    sandboxSupport: { files: true, network: true },
+    softwareRendering: false,
     replies: [],
     chunkDelayMs: 5,
     ...patch,
@@ -182,10 +190,31 @@ export class Backend {
     });
   }
 
+  /** What native confirm dialogs answer from now on. */
+  setConfirm(answer: boolean): Promise<void> {
+    return this.page.evaluate((value) => {
+      (window as unknown as { __pumrFake: FakeHandle }).__pumrFake.confirm = value;
+    }, answer);
+  }
+
+  /** Answers the next confirm dialogs in this order, whatever `setConfirm` says. */
+  answerNext(...answers: boolean[]): Promise<void> {
+    return this.page.evaluate((values) => {
+      (window as unknown as { __pumrFake: FakeHandle }).__pumrFake.answers.push(...values);
+    }, answers);
+  }
+
   setPickFolder(path: string | null): Promise<void> {
     return this.page.evaluate((value) => {
       (window as unknown as { __pumrFake: FakeHandle }).__pumrFake.pickFolder = value;
     }, path);
+  }
+
+  /** Lets a program run in these terminals, by backend id (`terminal-1`). */
+  setBusyTerminals(...ids: string[]): Promise<void> {
+    return this.page.evaluate((values) => {
+      (window as unknown as { __pumrFake: FakeHandle }).__pumrFake.busyTerminals = values;
+    }, ids);
   }
 }
 

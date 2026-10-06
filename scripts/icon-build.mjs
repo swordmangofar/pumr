@@ -9,18 +9,46 @@
  *
  *   node scripts/icon.mjs        # refresh the SVG sources first
  *   node scripts/icon-build.mjs  # rasterise + bundle
+ *
+ * Bundles the default mark. `--mark classic` bundles another one instead.
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
-import { fitTransform, headGrid, markBounds, palette, macOsDevSvg } from './icon.mjs';
+import {
+  DEFAULT_MARK,
+  boundsOf,
+  fitTransform,
+  marks,
+  palette,
+  macOsDevSvg,
+  vectorLogos,
+  vectorMacOsSvg,
+} from './icon.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const markArg = process.argv.indexOf('--mark');
+const markId = markArg === -1 ? DEFAULT_MARK : process.argv[markArg + 1];
+const grid = marks[markId];
+
+if (!grid) {
+  console.error(`unknown mark "${markId}", expected one of: ${Object.keys(marks).join(', ')}`);
+  process.exit(1);
+}
 
 /* ------------------------------------------------------------------- png -- */
 
@@ -87,14 +115,14 @@ const NAVY = rgb(palette.navy);
  * keeps the pixels hard-edged at small sizes.
  */
 function renderMark(size, box) {
-  const { k, tx, ty } = fitTransform(size, box);
+  const { k, tx, ty } = fitTransform(grid, size, box);
   const rgba = new Uint8Array(size * size * 4);
 
   for (let py = 0; py < size; py += 1) {
     for (let px = 0; px < size; px += 1) {
       const gx = Math.floor((px - tx) / k);
       const gy = Math.floor((py - ty) / k);
-      const cell = headGrid[gy]?.[gx];
+      const cell = grid[gy]?.[gx];
       const i = (py * size + px) * 4;
 
       const colour = cell === '#' ? ACCENT : cell === 'o' ? NAVY : null;
@@ -121,10 +149,10 @@ const PLATE_MARK = 0.68; // mark as a fraction of the plate
 const PLATE_EXPONENT = 5; // superellipse |x/a|^5 + |y/a|^5 = 1
 const SUBSAMPLES = 4;
 
-function renderPlate(size) {
+function renderPlate(size, mark = grid) {
   const plate = size * PLATE_RATIO;
   const half = plate / 2;
-  const { k, tx, ty } = fitTransform(size, plate * PLATE_MARK);
+  const { k, tx, ty } = fitTransform(mark, size, plate * PLATE_MARK);
   const rgba = new Uint8Array(size * size * 4);
   const step = 1 / SUBSAMPLES;
 
@@ -133,7 +161,7 @@ function renderPlate(size) {
       const i = (py * size + px) * 4;
       const gx = Math.floor((px - tx) / k);
       const gy = Math.floor((py - ty) / k);
-      const cell = headGrid[gy]?.[gx];
+      const cell = mark[gy]?.[gx];
 
       if (cell === '#' || cell === 'o') {
         const colour = cell === '#' ? ACCENT : NAVY;
@@ -326,7 +354,7 @@ function buildDevIcons() {
   const out = resolve(root, 'src-tauri/icons/dev');
   const dir = mkdtempSync(join(tmpdir(), 'pumr-dev-icon-'));
   const source = join(dir, 'dev.svg');
-  writeFileSync(source, macOsDevSvg(1024));
+  writeFileSync(source, macOsDevSvg(grid, 1024));
 
   const tauri = resolve(root, 'node_modules/.bin/tauri');
   execFileSync(tauri, ['icon', source, '-o', out], { cwd: root, stdio: 'inherit' });
@@ -340,11 +368,47 @@ function buildDevIcons() {
   console.log('wrote src-tauri/icons/dev (DEV badge)');
 }
 
+/**
+ * A plate for every logo, whichever one is bundled. src-tauri/src/app_icon.rs
+ * embeds these so the running app can show the logo picked in the settings:
+ * 1024px for the macOS Dock, 256px for the window icon elsewhere.
+ *
+ * The pixel marks go through our point-sampled renderer. The vector logos
+ * have curves and gradients, so the Tauri CLI (resvg) rasterises those.
+ */
+function buildLogoIcons() {
+  const out = resolve(root, 'src-tauri/icons/logos');
+  mkdirSync(out, { recursive: true });
+
+  for (const [id, mark] of Object.entries(marks)) {
+    writeFileSync(resolve(out, `${id}.png`), renderPlate(1024, mark));
+    writeFileSync(resolve(out, `${id}-256.png`), renderPlate(256, mark));
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'pumr-logo-'));
+  const tauri = resolve(root, 'node_modules/.bin/tauri');
+
+  for (const [id, logo] of Object.entries(vectorLogos)) {
+    const source = join(dir, `${id}.svg`);
+    writeFileSync(source, vectorMacOsSvg(logo, 1024));
+    execFileSync(tauri, ['icon', source, '-o', dir, '--png', '1024,256'], { cwd: root });
+    copyFileSync(join(dir, '1024x1024.png'), resolve(out, `${id}.png`));
+    copyFileSync(join(dir, '256x256.png'), resolve(out, `${id}-256.png`));
+  }
+
+  rmSync(dir, { recursive: true, force: true });
+  console.log(
+    `wrote src-tauri/icons/logos (${[...Object.keys(marks), ...Object.keys(vectorLogos)].join(', ')})`,
+  );
+}
+
 mkdirSync(resolve(root, 'src-tauri/icons'), { recursive: true });
 buildFavicon();
 buildPlatformIcons();
 buildDesktopIcons();
 buildDevIcons();
+buildLogoIcons();
 touchContext();
 
-console.log(`mark bounds ${markBounds.width}x${markBounds.height} (grid units)`);
+const bounds = boundsOf(grid);
+console.log(`bundled the ${markId} mark, ${bounds.width}x${bounds.height} grid units`);

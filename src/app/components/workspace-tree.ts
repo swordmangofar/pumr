@@ -11,7 +11,7 @@ import { FileChange, WorkspaceEntry } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
 import { WorkspaceEditorService } from '../core/workspace-editor.service';
 import { FileIcon } from './file-icon';
-import { ProjectIcon } from './project-icon';
+import { ProjectSelect } from './project-select';
 
 interface TreeNode {
   name: string;
@@ -71,33 +71,11 @@ function sortTree(nodes: TreeNode[]): void {
 @Component({
   selector: 'app-workspace-tree',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, FileIcon, ProjectIcon],
+  imports: [TranslocoPipe, FileIcon, ProjectSelect],
   template: `
     <div class="flex h-full flex-col">
-      <div class="flex items-center gap-2 px-3 py-2.5">
-        @if (project(); as active) {
-          <app-project-icon [project]="active" [size]="22" />
-        } @else {
-          <svg
-            viewBox="0 0 16 16"
-            class="h-4 w-4 shrink-0 text-accent/70"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.3"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path
-              d="M1.75 4.25A1.25 1.25 0 0 1 3 3h3l1.25 1.5H13a1.25 1.25 0 0 1 1.25 1.25v6A1.25 1.25 0 0 1 13 13H3a1.25 1.25 0 0 1-1.25-1.25Z"
-            />
-          </svg>
-        }
-        <span class="shrink-0 truncate text-[13px] font-semibold text-mist">{{
-          project()?.name ?? ('workspace.title' | transloco)
-        }}</span>
-        @if (project(); as active) {
-          <span class="min-w-0 flex-1 truncate text-[11px] text-mist/30">{{ active.path }}</span>
-        }
+      <div class="flex items-center gap-1 px-1.5 py-2">
+        <app-project-select class="min-w-0 flex-1" />
         <button
           type="button"
           class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-mist/50 transition-colors hover:bg-white/10 hover:text-accent"
@@ -122,7 +100,7 @@ function sortTree(nodes: TreeNode[]): void {
       <div class="min-h-0 flex-1 overflow-y-auto pl-1 pb-4">
         @if (!project()) {
           <p class="px-3 py-4 text-sm leading-relaxed text-mist/40">
-            {{ 'workspace.noSession' | transloco }}
+            {{ 'sidebar.noProjects' | transloco }}
           </p>
         } @else {
           @for (row of rows(); track row.node.path) {
@@ -228,10 +206,11 @@ export class WorkspaceTree {
   private readonly editor = inject(WorkspaceEditorService);
   private readonly expanded = signal<Set<string>>(new Set());
 
-  protected readonly project = this.workspace.activeProject;
+  protected readonly project = this.workspace.browseProject;
   protected readonly tree = computed(() => buildTree(this.entries()));
   protected readonly changes = computed(() => {
-    const session = this.workspace.activeSession();
+    const project = this.project();
+    const session = project ? this.workspace.sessionIn(project.id) : null;
     const map = new Map<string, FileChange>();
     if (session) {
       for (const change of this.workspace.changesFor(session.id)) {

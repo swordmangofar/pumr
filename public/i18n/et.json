@@ -6,16 +6,18 @@
     "toggleSidebar": "Kuva/peida külgriba",
     "toggleRightPanel": "Kuva/peida parem paneel",
     "toggleTerminal": "Näita/peida terminal",
+    "keepAwake": "Hoia ärkvel, kuni agendid töötavad",
+    "keepAwakeOn": "Arvuti püsib ärkvel, kuni agendid töötavad. Klõpsa väljalülitamiseks.",
+    "keepAwakeOff": "Arvuti võib magama minna, kui agendid töötavad. Klõpsa, et hoida see ärkvel.",
     "refresh": "Värskenda",
     "notTauri": "pumr peab töötama Tauri sees. Käivitage see käsuga: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projektid",
+    "sessions": "Seansid",
     "workspace": "Tööruum",
     "git": "Git",
     "addProject": "Lisa projekt",
     "newSession": "Uus seanss",
-    "new": "Uus",
     "noProjects": "Projekte veel pole. Alustamiseks lisage kaust.",
     "noSessions": "Seansse pole",
     "removeProject": "Eemalda projekt",
@@ -36,8 +38,6 @@
     "yesterday": "eile"
   },
   "workspace": {
-    "title": "Tööruum",
-    "noSession": "Avage seanss, et selle faile sirvida.",
     "empty": "Faile ei leitud.",
     "libraryRoot": "raamatukogu juur",
     "noOpenFiles": "Avatud faile pole. Valige puust fail.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Kustuta silt {{ tag }}?",
     "stashes": "Stashid",
     "stashCreate": "Tõsta muudatused kõrvale",
+    "stash": "Tõsta kõrvale",
+    "stashMessage": "Sõnum (valikuline)",
+    "stashIncludeUntracked": "Kaasa jälgimata failid",
     "stashApply": "Rakenda",
     "stashPop": "Võta välja",
     "stashDropConfirm": "Kas loobuda {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Kasuta sissetulevat (theirs)",
       "markResolved": "Märgi lahendatuks",
       "fileHint": "Selles failis on konfliktid. Jäta alles üks pool või muuda faili ja märgi see lahendatuks.",
+      "markersLeftIn": "Konfliktiga faile, mis sisaldavad endiselt konfliktimärke (<<<<<<< või >>>>>>>): {{ count }}. Kas märkida need ikkagi lahendatuks?",
       "markersLeft": "Fail sisaldab endiselt konfliktimärke (<<<<<<< või >>>>>>>). Kas märkida see ikkagi lahendatuks?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Sihtkaust",
     "cloneChoose": "Vali…",
     "createBranch": "Loo haru",
+    "branch": "Haru",
     "branchName": "Haru nimi",
     "createBranchAt": "Loo haru kohast: {{branch}}",
     "checkoutAfterCreate": "Vaheta pärast loomist",
@@ -298,6 +303,7 @@
     "tokens": "Tokenid",
     "cache": "Vahemälu",
     "noKey": "Vestluse alustamiseks ühendage seadetes mudelipakkuja.",
+    "noDefaultModel": "Vaikemudelit pole veel valitud. Avage seaded, valige jaotises „Mudelipakkujad“ välja „Vaikemudel“ alt mudel ja klõpsake „Salvesta“.",
     "openSettings": "Ava seaded",
     "error": "Viga",
     "retry": "Proovi uuesti",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} saatmiseks · {{ newLine }} uue rea jaoks",
     "hintStreaming": "{{ send }} järjekorda lisamiseks · {{ stop }} peatamiseks",
     "hintRecall": "{{ recall }} viimase viiba jaoks",
+    "hintCommands": "/ käskude jaoks",
     "handover": "Üleandmine",
     "handovering": "Kokkuvõtte koostamine…",
     "handoverHint": "Võtke see seanss kokku ja jätkake uues",
@@ -328,6 +335,13 @@
     "compacting": "Konteksti kompakteeritakse",
     "compacted": "Kontekst kompakteeritud",
     "compactedHint": "Siit alates töötab mudel selle kokkuvõtte, mitte ülalolevate sõnumite põhjal.",
+    "mcpStarting": "MCP-serveri {{ name }} käivitamine",
+    "mcpIssues": "Mõnda MCP-serverit ei saanud selle sõnumi jaoks kasutada:",
+    "sideQuestion": "Kõrvalküsimus",
+    "sideQuestionHint": "Esitage kiire küsimus selle seansi või millegi muu kohta. Vastust seansile ei lisata.",
+    "sideQuestionPrivate": "Seansile ei lisata",
+    "sideQuestionAnswering": "Vastab…",
+    "sideQuestionStopped": "Peatatud",
     "interrupted": "See vestlus katkes enne, kui agent lõpetas: pumr suleti või arvuti läks unerežiimi. Saate seda jätkata sealt, kus see pooleli jäi.",
     "limitReached": "Peatatud pärast {{ count }} tööriistakõnet ilma lõpliku vastuseta. Limiit takistab kinnijäänud agenti igavesti loopimast. Jätkake sellele uue eelarve andmist või lülitage sisse automaatne jätkamine.",
     "continue": "Jätka",
@@ -456,7 +470,8 @@
         "cascade": "Keelatud koos teise taotlusega",
         "stopped": "Peatatud",
         "timeout": "Aeg sai läbi",
-        "cancelled": "Tühistatud"
+        "cancelled": "Tühistatud",
+        "hook": "Sinu hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Vasteid pole. Jätkake tippimist või vajutage Escape.",
     "mentionFetch": "Too {{ url }}",
     "removeMention": "Eemalda viide",
+    "commandPrompt": "Rakendab teie viipa „{{ name }}“ sellele, mida selle järele kirjutate",
+    "commandEffort": "Määrake, kui palju mudel arutleb",
+    "commandMode": "Vahetage selle seansi režiimi",
+    "commandModel": "Vahetage selle seansi mudelit",
+    "commandProvider": "Valige pakkuja, kes mudelit pakub",
+    "commandRevert": "Läheb tagasi teie viimase viiba juurde: kõik sellele järgnenu eemaldatakse ja failid saab taastada",
+    "commandRevertNone": "Veel pole viipa, mille juurde tagasi minna",
+    "commandRevertRunning": "Peatage enne agent",
+    "commandNoEffort": "Sellel mudelil pole arutlemise taset, mida määrata.",
+    "commandNoProvider": "Pakkuja juurde saab suunata ainult OpenRouteri mudeleid.",
     "textBlockWords": "{{ count }} sõna",
     "textBlockRemove": "Eemalda kleepitud tekst",
     "textBlockTitle": "Kleepitud tekst",
@@ -634,7 +659,7 @@
     "alwaysOn": "Alati sees",
     "editInSettings": "Redigeeri seadetes",
     "yourPrompts": "Teie viibad",
-    "yourPromptsHint": "Lubatud viibad lisatakse aktiivsetele süsteemiviipadele. Redigeerige neid või taastage sisseehitatud viibad algse teksti.",
+    "yourPromptsHint": "Kutsuge viip vestluskastist kaldkriipsu ja selle nimega, näiteks /code-review. See kehtib siis ainult selle sõnumi kohta. Muutke neid või lähtestage sisseehitatud viibad algtekstile.",
     "addPrompt": "Uus",
     "customPrompt": "Kohandatud viip",
     "promptName": "Viiba nimi",
@@ -718,6 +743,8 @@
       "providers": "Pakkujad",
       "agent": "Agendi konfiguratsioon",
       "agentRules": "Agendi lubatud ja keelatud nimekiri",
+      "sandbox": "Liivakast",
+      "hooks": "Hookid",
       "general": "Üldine",
       "chat": "Vestlus",
       "appearance": "Välimus",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP-server",
       "workspace": "Tööruum"
+    },
+    "sandbox": {
+      "title": "Käskude liivakast",
+      "hint": "Operatsioonisüsteem piirab iga käsku, mille agent käivitab, ja kõike, mida see käsk käivitab. See on teine kiht õiguste reeglite taga käsu jaoks, mida need valesti hindavad. Käsk, mille liivakast peatab, võib taotleda käivitamist väljaspool seda; teilt küsitakse iga kord.",
+      "unavailable": "Selles süsteemis pole liivakasti, mida pumr saaks kasutada, seega töötavad käsud piiranguteta. Vaja on macOS-i või Linux 5.19 või uuemat koos Landlockiga.",
+      "networkUnavailable": "Võrgu sulgemine on võimalik ainult macOS-is.",
+      "modes": {
+        "off": "Väljas",
+        "files": "Failid",
+        "filesAndNetwork": "Failid ja võrk"
+      },
+      "modeHints": {
+        "off": "Käsud töötavad teie kasutajana ja neid hoiavad tagasi ainult õiguste reeglid.",
+        "files": "Käsud kirjutavad ainult projekti, teie lisakaustadesse, ajutistesse kaustadesse ja allpool loetletud kaustadesse. Võtmeid sisaldavaid kaustu ei saa käsud lugeda.",
+        "filesAndNetwork": "Sama, ja käsud saavad ühendust ainult selle arvutiga, välja arvatud käsud, mille hostid olete lubanud. Pakettide paigaldamine taotleb siis käivitamist väljaspool liivakasti."
+      },
+      "writable": "Kaustad, kuhu käsud võivad samuti kirjutada",
+      "writableHint": "Ehitustööriistade vahemälud. Ilma nendeta ebaõnnestub ehitus esimesel allalaadimisel. Tee algab märgiga / või ~.",
+      "unreadable": "Kaustad, mida käsud ei saa lugeda",
+      "unreadableHint": "Kohad, kus asuvad võtmed ja tokenid. git, ssh ja pilvetööriistad saavad endiselt kasutada kaustu, millega nad töötavad, ja kaust, mille olete käskudele lubanud, jääb avatuks.",
+      "excluded": "Käsud, mis töötavad väljaspool liivakasti",
+      "excludedHint": "Tööriistadele, mis toovad kaasa oma liivakasti ja ebaõnnestuvad selle liivakasti sees, näiteks brauseritestidele. Kirje nimetab, kuidas käsurida algab; märgiga * on see kogu rea muster.",
+      "addCommand": "Lisa käsk",
+      "noCommands": "Käske pole veel lisatud."
+    },
+    "hooks": {
+      "title": "Hookid",
+      "hint": "Hook on teie enda käsk, mille pumr käivitab agendi töö kindlal hetkel. Mudel ei otsusta, kas see käivitub, seega ei saa ta seda unustada. Hookid töötavad nii, nagu te need kirjutasite, ilma õiguste küsimusteta ja väljaspool liivakasti.",
+      "protocol": "Hook saab üksikasjad JSON-ina standardsisendist (tool_name, tool_input, tool_response) ja kutses nimetatud faili kui $PUMR_FILE. Väljumiskood 0 laseb agendil jätkata. Väljumiskood 2 annab hooki väljastatu agendile ja lükkab enne tööriistakutset kutse tagasi.",
+      "add": "Lisa hook",
+      "empty": "Ühtegi hooki pole veel lisatud.",
+      "remove": "Eemalda hook",
+      "event": "Millal hook käivitub",
+      "events": {
+        "beforeTool": "Enne tööriistakutset",
+        "afterTool": "Pärast tööriistakutset",
+        "turnEnd": "Kui agent tahab lõpetada"
+      },
+      "tools": "Tööriistad",
+      "toolsPlaceholder": "Kõik tööriistad või nimed, näiteks edit|write",
+      "files": "Failid",
+      "filesPlaceholder": "Kõik failid või mustrid, näiteks *.ts",
+      "command": "Käsk",
+      "timeout": "Peata pärast (sekundit)",
+      "project": "Projekt",
+      "allProjects": "Kõik projektid"
     },
     "providers": {
       "title": "Mudelipakkujad",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Muutke ainult siis, kui kasutate puhverserverit või ühilduvat lüüsi.",
     "defaultModel": "Vaikemudel",
     "defaultModelHint": "Kasutatakse uute seansside jaoks.",
+    "defaultModelSetupTitle": "Valige vaikemudel",
+    "defaultModelSetup": "Teie pakkuja on ühendatud. Uued seansid algavad vaikemudeliga: valige see allpool sellel lehel välja „Vaikemudel“ alt ja klõpsake „Salvesta“. Igas vestluses saate mudelit endiselt vahetada.",
+    "defaultModelSetupAction": "Mine vaikemudeli juurde",
     "handoverModel": "Üleandmise mudel",
     "handoverModelPlaceholder": "Kasuta praeguse seansi mudelit",
     "handoverModelHint": "Mudel, mida kasutatakse seansi kokkuvõtmiseks üleandmisel. Jätke tühjaks, et kasutada praeguse seansi mudelit.",
@@ -998,6 +1074,14 @@
       "mist": "Tuhmunud tekst",
       "white": "Tekst"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Kuvatakse rakenduse päises ja rakenduse ikoonina, kuni pumr töötab.",
+      "mascot": "Istuv puuma",
+      "classic": "Klassikaline nägu",
+      "shaded": "Varjutatud puuma",
+      "tailup": "Tõstetud sabaga puuma"
+    },
     "background": {
       "title": "Rakenduse taust",
       "hint": "Valige sisseehitatud taust või kasutage oma pilti. See istub klaaspaneelide taga ja järgib teie teemat.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Uus rida",
       "chatStop": "Peata vastus",
       "chatRecallPrompt": "Too tagasi viimane viip",
+      "chatToggleMode": "Lülitu planeerimise ja programmeerimise vahel",
+      "chatToggleModeHint": "Läheb tagasi režiimi, milles seanss oli enne planeerimist.",
       "gitToggleStage": "Valmista või eemalda valmistamisest valitud failid",
       "gitDiscardFiles": "Hülga valitud failid",
       "gitSelectAllFiles": "Vali kõik failid",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimeeri",
       "fillScreen": "Täida ekraan",
       "fillScreenHint": "Esile kutsutud aken täidab aktiivse monitori, säilitamata varasemat suurust.",
+      "shortcutError": "Süsteemiülest kiirklahvi ei õnnestunud registreerida, seega ei too see pumri esile. Tõenäoliselt kasutab seda klahvikombinatsiooni mõni teine rakendus: vali teine ja salvesta uuesti.",
+      "waylandHint": "Waylandis ei saa rakendused süsteemiüleseid kiirklahve registreerida, seega ei tööta see kiirklahv siin usaldusväärselt. Seo selle asemel allolev käsk klahviga oma töölaua klaviatuuriseadetes.",
+      "command": "Kiirklahvi käsk",
+      "commandHint": "Teeb sama mis kiirklahv: toob pumri esile või peidab või minimeerib selle, kui see on ees. Seo see klahviga oma töölaua klaviatuuriseadetes.",
+      "commandActions": "Üksiku toimingu jaoks lõpeta käsk hoopis ühega neist:",
       "zoom": "Kuvamise skaala",
       "zoomHint": "Muudab kogu liidese suurust. Otsetee: Ctrl/⌘ + + suurendamiseks, Ctrl/⌘ + - vähendamiseks, Ctrl/⌘ + 0 lähtestamiseks.",
       "zoomReset": "Lähtesta"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Luba käsk",
     "denyCommand": "Blokeeri käsk",
     "noDeniedCommandRules": "Blokeeritud käske pole.",
+    "mcpToolGrants": "Lubatud MCP tööriistad",
+    "mcpToolGrantsHint": "MCP-serverite tööriistad, mis käivituvad küsimata. Kirje kehtib ühe serveri ühe tööriista kohta, olenemata argumentidest, ja lakkab kehtimast, kui selle serveri seadistus muutub. Kasutage õiguste küsimuses „luba alati“, et üks luua.",
+    "noMcpToolGrants": "Alati lubatud MCP tööriistu veel pole.",
+    "secretFolders": "Kaustad, mille tundlikud failid on lubatud",
+    "secretFoldersHint": "Käsud võivad kasutada otse nendes kaustades olevaid tundlikke faile (võtmeid, tokeneid, mandaate) küsimata. Alamkaustad ei kuulu siia alla. Kasutage õiguste küsimuses „luba alati“, et üks luua.",
+    "noSecretFolders": "Kaustu, mille tundlikud failid on lubatud, veel pole.",
     "scope": {
       "program": "Programm",
       "subcommand": "Programm + alamkäsk",
@@ -1276,7 +1373,8 @@
       "file": "Fail",
       "web": "Veebisait",
       "websearch": "Veebiotsing",
-      "folder": "Kaust"
+      "folder": "Kaust",
+      "hook": "Hook"
     },
     "allowAlways": "Luba alati",
     "siteRuleLabel": "Veebisaidi reegel (domeen või glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Lisab veebisaidi ja selle alamdomeenid lubatud veebisaitide hulka.",
       "option": "Veebisait + alamdomeenid"
     },
+    "secretScope": {
+      "title": "Tundlikud failid",
+      "hint": "Käsud võivad seejärel kasutada otse selles kaustas olevaid võtmeid, tokeneid ja mandaadifaile küsimata. Alamkaustad ei kuulu siia alla.",
+      "option": "Selle kausta tundlikud failid",
+      "chip": "tundlikud failid kaustas {{ folder }}"
+    },
     "allowChat": "Luba selles vestluses",
     "option": {
       "yes": "Jah",
@@ -1315,6 +1419,7 @@
     "customize": "Kohanda",
     "justification": "Miks",
     "keyboardHint": "Vajuta 1–{{ count }} või kasuta ↑ ↓ ja Enterit · Esc keelab",
+    "mcpToolHint": "Enam mitte küsimine kehtib selle tööriista iga kutse kohta selles serveris, olenemata argumentidest.",
     "url": {
       "queryWarning": "See aadress kannab päringustringis palju andmeid. Enne lubamist veendu, et see ei sisalda midagi privaatset."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Luba ainult see taotlus.",
       "allowSession": "Jäetakse meelde kõigis vestlustes kuni rakenduse taaskäivitamiseni.",
       "allowChat": "Käsureegleid mäletatakse selles vestluses ja selle alamagentides; kaustu ja veebisaite kuni rakenduse taaskäivitamiseni.",
+      "allowChatMcp": "Jäetakse meelde selle vestluse ja selle alamagentide jaoks: selle tööriista iga kutse selles serveris, olenemata argumentidest.",
       "allowAlways": "Salvestatakse seadetesse ja kehtib kõigis vestlustes."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Uus terminal",
     "close": "Sulge terminal",
     "hide": "Peida terminal",
+    "run": "Käivita terminalis",
     "noProject": "Terminali kasutamiseks ava seanss.",
     "exited": "Protsess lõppes koodiga {{ code }}",
     "failed": "Terminali ei õnnestunud käivitada: {{ error }}"

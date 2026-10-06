@@ -14,6 +14,7 @@ import { WorkspaceService } from '../core/workspace.service';
 import { GitService } from '../core/git.service';
 import { GitBranchMenu } from './git-branch-menu';
 import { GitNameDialog, GitNameDialogResult } from './git-name-dialog';
+import { ProjectSelect } from './project-select';
 import { TypedInput } from './typed-input';
 
 const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
@@ -21,13 +22,14 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
 @Component({
   selector: 'app-git-sidebar',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe, GitBranchMenu, GitNameDialog],
+  imports: [TypedInput, TranslocoPipe, GitBranchMenu, GitNameDialog, ProjectSelect],
   host: {
     '(document:keydown.escape)': 'onEscape()',
   },
   template: `
     <div class="flex h-full flex-col">
-      <div class="shrink-0 space-y-1 px-2 pt-3">
+      <app-project-select class="mx-1.5 mt-2 shrink-0" />
+      <div class="shrink-0 space-y-1 px-2 pt-2">
         <button
           type="button"
           class="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-[13px] font-medium transition-colors"
@@ -84,7 +86,7 @@ const EMPTY_COLLAPSED: ReadonlySet<string> = new Set<string>();
 
       @if (!project()) {
         <p class="px-3 py-4 text-sm leading-relaxed text-mist/40">
-          {{ 'workspace.noSession' | transloco }}
+          {{ 'sidebar.noProjects' | transloco }}
         </p>
       } @else if (!status()?.isRepo) {
         <p class="px-3 py-4 text-sm leading-relaxed text-mist/40">
@@ -707,7 +709,7 @@ export class GitSidebar {
   private readonly git = inject(GitService);
   private readonly transloco = inject(TranslocoService);
 
-  protected readonly project = this.workspace.activeProject;
+  protected readonly project = this.workspace.browseProject;
   private readonly gitState = this.git.scope(() => this.project()?.id ?? null);
   protected readonly status = this.gitState.status;
   protected readonly refs = this.gitState.refs;

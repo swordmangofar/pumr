@@ -1,17 +1,27 @@
 import { DOCUMENT } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api, isTauri } from '../../core/api';
 import { displayHotkey, defaultWindowToggleHotkey, formatHotkey } from '../../core/hotkeys';
-import { WindowToggleAction } from '../../core/models';
+import { WindowControl, WindowToggleAction } from '../../core/models';
 import { ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from '../../core/zoom';
+import { CopyButton } from '../copy-button';
 import { TypedInput } from '../typed-input';
 import { SettingsDraftService } from './settings-draft.service';
 
 @Component({
   selector: 'app-window-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TypedInput, TranslocoPipe],
+  imports: [CopyButton, TypedInput, TranslocoPipe],
   template: `
     <section>
       <h3 class="text-sm font-semibold text-white">{{ 'settings.window.title' | transloco }}</h3>
@@ -54,10 +64,29 @@ import { SettingsDraftService } from './settings-draft.service';
       </button>
     </section>
 
-    @if (draft.draft().windowToggleEnabled) {
-      <section class="mt-8">
+    @if (control()?.globalShortcut === false) {
+      <p
+        class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-xs leading-relaxed text-amber-200"
+        data-testid="window-shortcut-unavailable"
+      >
+        {{ 'settings.window.waylandHint' | transloco }}
+      </p>
+    }
+
+    @if (shortcutError(); as reason) {
+      <p
+        class="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-xs leading-relaxed text-amber-200"
+        data-testid="window-shortcut-error"
+      >
+        {{ 'settings.window.shortcutError' | transloco }}
+        <span class="mt-1 block font-mono break-words text-amber-200/70">{{ reason }}</span>
+      </p>
+    }
+
+    <section class="mt-8">
+      @if (draft.draft().windowToggleEnabled) {
         <div
-          class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
+          class="mb-3 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/10 px-4 py-3"
         >
           <div class="min-w-0">
             <p class="text-sm font-medium text-white">
@@ -95,55 +124,81 @@ import { SettingsDraftService } from './settings-draft.service';
             </button>
           </div>
         </div>
+      }
 
-        <div class="mt-3 rounded-xl border border-white/10 p-4">
+      <div class="rounded-xl border border-white/10 p-4">
+        <p class="text-sm font-medium text-white">
+          {{ 'settings.window.behaviour' | transloco }}
+        </p>
+        <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.window.behaviourHint' | transloco }}
+        </p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          @for (option of actions; track option.value) {
+            <button
+              type="button"
+              class="rounded-xl border px-4 py-2 text-sm transition-colors"
+              [class]="
+                draft.draft().windowToggleAction === option.value
+                  ? 'border-accent/70 bg-accent/10 text-accent'
+                  : 'border-white/10 text-mist/60 hover:bg-white/5 hover:text-mist'
+              "
+              (click)="draft.patch('windowToggleAction', option.value)"
+            >
+              {{ option.label | transloco }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="mt-3 flex items-center justify-between gap-4">
+        <div>
           <p class="text-sm font-medium text-white">
-            {{ 'settings.window.behaviour' | transloco }}
+            {{ 'settings.window.fillScreen' | transloco }}
           </p>
           <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
-            {{ 'settings.window.behaviourHint' | transloco }}
+            {{ 'settings.window.fillScreenHint' | transloco }}
           </p>
-          <div class="mt-3 flex flex-wrap gap-2">
-            @for (option of actions; track option.value) {
-              <button
-                type="button"
-                class="rounded-xl border px-4 py-2 text-sm transition-colors"
-                [class]="
-                  draft.draft().windowToggleAction === option.value
-                    ? 'border-accent/70 bg-accent/10 text-accent'
-                    : 'border-white/10 text-mist/60 hover:bg-white/5 hover:text-mist'
-                "
-                (click)="draft.patch('windowToggleAction', option.value)"
-              >
-                {{ option.label | transloco }}
-              </button>
-            }
-          </div>
         </div>
+        <button
+          type="button"
+          class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+          [class]="draft.draft().windowToggleMaximize ? 'bg-accent' : 'bg-white/15'"
+          (click)="draft.patch('windowToggleMaximize', !draft.draft().windowToggleMaximize)"
+        >
+          <span
+            class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
+            [class]="draft.draft().windowToggleMaximize ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'"
+          ></span>
+        </button>
+      </div>
+    </section>
 
-        <div class="mt-3 flex items-center justify-between gap-4">
-          <div>
-            <p class="text-sm font-medium text-white">
-              {{ 'settings.window.fillScreen' | transloco }}
-            </p>
-            <p class="mt-0.5 text-xs leading-relaxed text-mist/30">
-              {{ 'settings.window.fillScreenHint' | transloco }}
-            </p>
-          </div>
-          <button
-            type="button"
-            class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
-            [class]="draft.draft().windowToggleMaximize ? 'bg-accent' : 'bg-white/15'"
-            (click)="draft.patch('windowToggleMaximize', !draft.draft().windowToggleMaximize)"
+    @if (control(); as info) {
+      <section class="mt-8">
+        <h3 class="text-sm font-semibold text-white">
+          {{ 'settings.window.command' | transloco }}
+        </h3>
+        <p class="mt-1 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.window.commandHint' | transloco }}
+        </p>
+        <div class="mt-3 flex items-center gap-3 rounded-xl border border-white/10 px-4 py-3">
+          <code
+            class="min-w-0 flex-1 font-mono text-xs break-all text-mist select-all"
+            data-testid="window-toggle-command"
+            >{{ info.toggleCommand }}</code
           >
-            <span
-              class="absolute top-0.5 h-5 w-5 rounded-full transition-all"
-              [class]="
-                draft.draft().windowToggleMaximize ? 'left-5.5 bg-ink' : 'left-0.5 bg-white'
-              "
-            ></span>
-          </button>
+          <app-copy-button [text]="info.toggleCommand" />
         </div>
+        <p class="mt-3 flex flex-wrap items-center gap-2 text-xs leading-relaxed text-mist/30">
+          {{ 'settings.window.commandActions' | transloco }}
+          @for (flag of actionFlags; track flag) {
+            <code
+              class="rounded-md border border-white/10 px-1.5 py-0.5 font-mono whitespace-nowrap text-mist/70"
+              >{{ flag }}</code
+            >
+          }
+        </p>
       </section>
     }
 
@@ -188,6 +243,17 @@ import { SettingsDraftService } from './settings-draft.service';
 export class WindowSettings {
   protected readonly draft = inject(SettingsDraftService);
   protected readonly recording = signal(false);
+  /** How this desktop summons the window; unknown until the backend answers. */
+  protected readonly control = signal<WindowControl | null>(null);
+  /**
+   * Why the shortcut that is switched on does nothing, as of the last save.
+   * Without it a key another app holds would look like a saved, working one.
+   */
+  protected readonly shortcutError = computed(() =>
+    this.draft.draft().windowToggleEnabled ? (this.control()?.shortcutError ?? null) : null,
+  );
+  /** What the toggle command takes in place of `--toggle`. */
+  protected readonly actionFlags = ['--open', '--minimize', '--hide'];
   protected readonly defaultHotkey = defaultWindowToggleHotkey();
   protected readonly defaultZoom = ZOOM_DEFAULT;
   protected readonly zoomMin = ZOOM_MIN;
@@ -206,6 +272,21 @@ export class WindowSettings {
       document.removeEventListener('keydown', handler, true);
       this.stop();
     });
+    this.loadControl();
+    // Saving registers the shortcut anew, so whether that worked is only
+    // known afterwards.
+    effect(() => {
+      if (this.draft.saved()) {
+        untracked(() => this.loadControl());
+      }
+    });
+  }
+
+  private loadControl(): void {
+    void api
+      .getWindowControl()
+      .then((control) => this.control.set(control))
+      .catch(() => undefined);
   }
 
   protected hotkeyLabel(): string {

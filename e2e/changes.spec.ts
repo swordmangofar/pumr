@@ -103,3 +103,94 @@ test.describe('changes of a running turn', () => {
     await expect(view).toContainText('notes.txt');
   });
 });
+
+test.describe('the project of the workspace and git tabs', () => {
+  const projectIds = (calls: { args: Record<string, unknown> }[]) =>
+    calls.map((call) => call.args['projectId']);
+
+  async function startWithTwoProjects(page: Page, app: PumrApp): Promise<void> {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1', 'session-2']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        projects: [
+          project(),
+          project({ id: 'project-2', name: 'other-app', path: '/Users/e2e/code/other-app' }),
+        ],
+        sessions: [
+          session(),
+          session({ id: 'session-2', projectId: 'project-2', title: 'Other session' }),
+        ],
+        files: { 'README.md': '# demo\n', 'notes.txt': 'alpha\n' },
+        repo: true,
+      }),
+    );
+  }
+
+  test('is picked in the workspace tab and leaves the open session alone', async ({
+    app,
+    page,
+  }) => {
+    await startWithTwoProjects(page, app);
+    await leftTab(page, 'Workspace').click();
+    const picker = page.locator('app-workspace-tree app-project-select');
+    // Until the user picks one, it is the project of the session the app started on.
+    await expect(picker.getByRole('button', { name: /demo-app/ })).toBeVisible();
+    expect(projectIds(await app.backend.calls('list_workspace_entries'))).not.toContain(
+      'project-2',
+    );
+
+    await picker.getByRole('button', { name: /demo-app/ }).click();
+    await picker.getByRole('menuitemradio', { name: /other-app/ }).click();
+
+    await expect(picker.getByRole('button', { name: /other-app/ })).toBeVisible();
+    await expect(picker.getByRole('menu')).toHaveCount(0);
+    await expect
+      .poll(async () => projectIds(await app.backend.calls('list_workspace_entries')))
+      .toContain('project-2');
+    // The chat on screen is still the one of the first project.
+    await expect(page.getByRole('banner')).toContainText('demo-app');
+    await expect(page.getByRole('banner')).not.toContainText('other-app');
+
+    await page.locator('app-workspace-tree').getByRole('button', { name: 'notes.txt' }).click();
+
+    await expect(page.locator('app-workspace-editor')).toContainText('alpha');
+    expect((await app.backend.lastCall('read_workspace_file'))?.args).toEqual({
+      projectId: 'project-2',
+      path: 'notes.txt',
+    });
+  });
+
+  test('does not follow the open session, is shared with the git tab and survives a reload', async ({
+    app,
+    page,
+  }) => {
+    await startWithTwoProjects(page, app);
+    await leftTab(page, 'Git').click();
+    const picker = page.locator('app-git-sidebar app-project-select');
+    await expect(picker.getByRole('button', { name: /demo-app/ })).toBeVisible();
+
+    await page.getByRole('banner').getByText('Other session').click();
+
+    await expect(page.getByRole('banner')).toContainText('other-app');
+    await expect(picker.getByRole('button', { name: /demo-app/ })).toBeVisible();
+    expect(projectIds(await app.backend.calls('get_git_status'))).not.toContain('project-2');
+
+    await picker.getByRole('button', { name: /demo-app/ }).click();
+    await picker.getByRole('menuitemradio', { name: /other-app/ }).click();
+
+    await expect
+      .poll(async () => projectIds(await app.backend.calls('get_git_status')))
+      .toContain('project-2');
+
+    await leftTab(page, 'Workspace').click();
+    const treePicker = page.locator('app-workspace-tree app-project-select');
+    await expect(treePicker.getByRole('button', { name: /other-app/ })).toBeVisible();
+
+    await page.reload();
+
+    await expect(treePicker.getByRole('button', { name: /other-app/ })).toBeVisible();
+  });
+});

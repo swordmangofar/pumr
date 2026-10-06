@@ -1,14 +1,17 @@
 mod agent;
+mod app_icon;
 mod appimage;
 mod broker;
 mod commands;
 mod config;
+mod control;
 mod db;
 mod debug_log;
 mod discovery;
 mod environment;
 mod error;
 mod git;
+mod hooks;
 mod marketplace;
 mod mcp;
 mod mentions;
@@ -18,7 +21,9 @@ mod permissions;
 mod power;
 mod processes;
 mod providers;
+mod read_formats;
 mod rendering;
+mod sandbox;
 mod screenshot;
 mod shell_env;
 mod shell_lex;
@@ -31,11 +36,23 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    // `pumr --toggle` and its siblings end here when pumr is already running.
+    // So does an ordinary start, which brings up that pumr's window: a second
+    // one would open the same database, mark the turns running in the first
+    // as cut off, and overwrite its settings.
+    if control::handed_over(&context.config().identifier) {
+        return;
+    }
+    let control = control::bind(&context.config().identifier);
+    // Another start claimed the channel in the meantime, so that one is pumr.
+    if control.is_none() && control::handed_over(&context.config().identifier) {
+        return;
+    }
     #[cfg(target_os = "linux")]
     window::init_x11_threads();
-    let context = tauri::generate_context!();
     appimage::isolate_gstreamer_registry(&context.config().identifier);
-    shell_env::adopt_login_shell_path();
+    shell_env::adopt_login_shell_environment();
     let startup = rendering::prepare(&context.config().identifier);
 
     tauri::Builder::default()
@@ -52,7 +69,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .setup(|app| {
+        .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -61,7 +78,7 @@ pub fn run() {
                 )?;
             }
 
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = config::data_folder(app.path().app_data_dir()?);
             std::fs::create_dir_all(&data_dir)?;
             config::init_dev_store(&data_dir);
             let db = db::Db::open(&data_dir.join("pumr.sqlite"))?;
@@ -85,13 +102,24 @@ pub fn run() {
             // Each chat gets a scratch folder here (see `LivePermissions`);
             // ones whose chat is gone are cleared on start.
             if let Ok(cache_dir) = app.path().app_cache_dir() {
-                state.permissions.set_scratch_root(cache_dir.join("scratch"));
+                // A debug build knows only its own chats (see
+                // `config::data_folder`) and would clear the folders of the
+                // installed pumr's, so it keeps its folders apart as well.
+                let scratch = if cfg!(debug_assertions) {
+                    "scratch.dev"
+                } else {
+                    "scratch"
+                };
+                state.permissions.set_scratch_root(cache_dir.join(scratch));
                 let db = state.db.clone();
                 state
                     .permissions
                     .prune_scratch_dirs(|id| db.get_session(id).is_ok());
             }
             app.manage(state);
+            if let Some(control) = control {
+                control.serve(app.handle().clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -100,6 +128,9 @@ pub fn run() {
             commands::get_default_modes,
             commands::save_settings,
             commands::suspend_window_shortcut,
+            commands::get_window_control,
+            commands::get_sandbox_support,
+            commands::is_software_rendered,
             commands::set_interface_zoom,
             commands::set_api_key,
             commands::delete_api_key,
@@ -137,6 +168,8 @@ pub fn run() {
             commands::get_file_ignore_catalog,
             commands::add_website_rule,
             commands::delete_website_rule,
+            commands::delete_mcp_tool_grant,
+            commands::delete_secret_folder,
             commands::discover_mcp_sources,
             commands::discover_skills,
             commands::search_mcp_marketplace,
@@ -158,6 +191,7 @@ pub fn run() {
             commands::terminal_open,
             commands::terminal_write,
             commands::terminal_resize,
+            commands::terminal_busy,
             commands::terminal_close,
             commands::terminal_close_all,
             commands::get_git_info,
@@ -218,6 +252,7 @@ pub fn run() {
             commands::get_project_rules,
             commands::revert_to_message,
             commands::summarize_session,
+            commands::ask_side_question,
             commands::compact_session,
             commands::get_system_info,
             commands::find_sensitive_data,
@@ -226,10 +261,27 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while running tauri application")
-        .run(move |_app, event| {
-            // Quitting before the start has settled is not a failed start.
-            if let tauri::RunEvent::Exit = event {
-                startup.settled();
+        .run(move |app, event| match event {
+            // Tauri puts the DEV badge icon in the Dock right before this, so
+            // a logo picked in the settings has to follow it.
+            tauri::RunEvent::Ready => {
+                let logo = app.state::<state::AppState>().settings().appearance.logo;
+                app_icon::apply(app, &logo);
             }
+            tauri::RunEvent::Exit => {
+                // Quitting before the start has settled is not a failed start.
+                startup.settled();
+                // A restart, as after an update, starts the next pumr from
+                // here, which must find nobody to hand its start over to.
+                control::release();
+                // Nothing could show or stop them once pumr is gone: the
+                // commands still running in the background and the MCP
+                // servers end with it. A start that failed has no state yet.
+                if let Some(state) = app.try_state::<state::AppState>() {
+                    state.processes.stop_all();
+                    state.mcp.shutdown();
+                }
+            }
+            _ => {}
         });
 }

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="pumr-title">
+  <title id="pumr-title">pumr</title>
+  <g transform="translate(7.56 -23.65) scale(2.05)">
+  <defs>
+    <linearGradient id="puma-amber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbbf24" />
+      <stop offset="1" stop-color="#f08c00" />
+    </linearGradient>
+    <mask id="puma" maskUnits="userSpaceOnUse" x="-40" y="-40" width="312" height="336">
+      <path d="M152 66C152 56 154 48 158 42Q160 28 167 20 Q174 24 178 32Q181 25 190 19 Q196 24 199 32C205 33 210 37 213 42C216 47 222 50 224 55C226 58 226 61 224 63C223 65 223 67 224 70C225 75 222 81 216 83C210 85 205 86 203 91C202 102 203 118 205 131C207 144 207 166 206 186C205 206 205 226 206 240C207 244 214 244 214 248 C214 251 212 252 209 252L188 252 C185 252 183 250 183 247L183 202 C183 192 176 190 173 198L162 246 C161 250 159 252 155 252L116 252 C94 252 78 240 76 216C74 188 86 160 106 138C122 120 140 102 148 78C150 74 152 70 152 66Z" fill="#fff" />
+      <path d="M100 241C72 249 36 246 30 218C25 195 47 180 45 156C44 142 35 134 25 137" fill="none" stroke="#fff" stroke-width="17" stroke-linecap="round" />
+    </mask>
+  </defs>
+  <g mask="url(#puma)">
+    <rect x="-40" y="14" width="312" height="240" fill="url(#puma-amber)" />
+  </g>
+  </g>
+</svg>

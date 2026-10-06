@@ -4,6 +4,7 @@ import { api } from '../../core/api';
 import {
   CommandRule,
   IgnoreCatalogEntry,
+  McpToolGrant,
   PermissionDefaultAction,
   PermissionDefaults,
 } from '../../core/models';
@@ -365,6 +366,70 @@ import { TypedInput } from '../typed-input';
         >
           {{ 'settings.denyCommand' | transloco }}
         </button>
+      </div>
+    </section>
+
+    <section class="mt-8" data-testid="mcp-tool-grants">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.mcpToolGrants' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.mcpToolGrantsHint' | transloco }}</p>
+      <div class="space-y-1.5">
+        @for (grant of mcpToolGrants(); track grant.fingerprint + grant.tool) {
+          <div
+            class="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-ink/40 px-4 py-2"
+            data-testid="mcp-tool-grant"
+          >
+            <div class="flex min-w-0 items-center gap-2">
+              <code class="truncate font-mono text-sm text-emerald-300">{{ grant.tool }}</code>
+              <span
+                class="shrink-0 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-mist/40"
+              >
+                {{ grant.server }}
+              </span>
+              <span class="truncate text-xs text-mist/30" [attr.title]="grant.source">{{
+                grant.source
+              }}</span>
+            </div>
+            <button
+              type="button"
+              class="text-mist/40 transition-colors hover:text-rose-400"
+              (click)="deleteMcpToolGrant(grant)"
+            >
+              ✕
+            </button>
+          </div>
+        } @empty {
+          <p class="text-sm text-mist/30">{{ 'settings.noMcpToolGrants' | transloco }}</p>
+        }
+      </div>
+    </section>
+
+    <section class="mt-8" data-testid="secret-folders">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.secretFolders' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.secretFoldersHint' | transloco }}</p>
+      <div class="space-y-1.5">
+        @for (folder of secretFolders(); track folder) {
+          <div
+            class="flex items-center justify-between gap-3 rounded-xl border border-rose-500/20 bg-ink/40 px-4 py-2"
+            data-testid="secret-folder"
+          >
+            <code class="truncate font-mono text-sm text-rose-300" [attr.title]="folder">{{
+              folder
+            }}</code>
+            <button
+              type="button"
+              class="text-mist/40 transition-colors hover:text-rose-400"
+              (click)="deleteSecretFolder(folder)"
+            >
+              ✕
+            </button>
+          </div>
+        } @empty {
+          <p class="text-sm text-mist/30">{{ 'settings.noSecretFolders' | transloco }}</p>
+        }
       </div>
     </section>
 
@@ -777,6 +842,12 @@ export class AgentRulesSettings {
   protected readonly deniedCommandRules = computed(
     () => this.settingsService.settings()?.deniedCommandRules ?? [],
   );
+  protected readonly mcpToolGrants = computed(
+    () => this.settingsService.settings()?.mcpToolGrants ?? [],
+  );
+  protected readonly secretFolders = computed(
+    () => this.settingsService.settings()?.secretFolders ?? [],
+  );
   protected readonly newWebsite = signal('');
   protected readonly allowedWebsites = computed(
     () => this.settingsService.settings()?.allowedWebsites ?? [],
@@ -827,6 +898,14 @@ export class AgentRulesSettings {
 
   protected async deleteRule(rule: CommandRule, allow: boolean): Promise<void> {
     await this.settingsService.deleteCommandRule(rule, allow);
+  }
+
+  protected async deleteMcpToolGrant(grant: McpToolGrant): Promise<void> {
+    await this.settingsService.deleteMcpToolGrant(grant);
+  }
+
+  protected async deleteSecretFolder(folder: string): Promise<void> {
+    await this.settingsService.deleteSecretFolder(folder);
   }
 
   protected async addWebsite(allow: boolean): Promise<void> {

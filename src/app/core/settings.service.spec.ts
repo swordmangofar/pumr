@@ -1,8 +1,11 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { TranslocoService } from '@jsverse/transloco';
 import { api } from './api';
 import { BackgroundService } from './background.service';
-import { DefaultSystemPrompts, Mode, Settings } from './models';
+import { LogoService } from './logo.service';
+import { DefaultSystemPrompts, Mode, ModelInfo, Settings } from './models';
+import { ModelsService } from './models.service';
 import { ProvidersService } from './providers.service';
 import { FALLBACK_SETTINGS } from './settings-defaults';
 import { SettingsService } from './settings.service';
@@ -24,8 +27,12 @@ describe('SettingsService', () => {
     applyGlassOpacity: ReturnType<typeof vi.fn>;
   };
   let background: { apply: ReturnType<typeof vi.fn> };
+  let logo: { apply: ReturnType<typeof vi.fn> };
   let zoom: { apply: ReturnType<typeof vi.fn> };
-  let providers: { load: ReturnType<typeof vi.fn> };
+  let providers: {
+    load: ReturnType<typeof vi.fn>;
+    anyConnected: ReturnType<typeof signal<boolean>>;
+  };
 
   beforeEach(() => {
     setActiveLang = vi.fn();
@@ -37,13 +44,15 @@ describe('SettingsService', () => {
       applyGlassOpacity: vi.fn(),
     };
     background = { apply: vi.fn() };
+    logo = { apply: vi.fn() };
     zoom = { apply: vi.fn() };
-    providers = { load: vi.fn().mockResolvedValue(undefined) };
+    providers = { load: vi.fn().mockResolvedValue(undefined), anyConnected: signal(false) };
     TestBed.configureTestingModule({
       providers: [
         { provide: TranslocoService, useValue: { setActiveLang } },
         { provide: ThemeService, useValue: theme },
         { provide: BackgroundService, useValue: background },
+        { provide: LogoService, useValue: logo },
         { provide: ZoomService, useValue: zoom },
         { provide: ProvidersService, useValue: providers },
       ],
@@ -63,7 +72,7 @@ describe('SettingsService', () => {
       securitySystemPrompt: 'security',
       testingSystemPrompt: 'testing',
       architectureSystemPrompt: 'architecture',
-      userSystemPrompts: [{ id: 'u', name: 'User', prompt: 'p', enabled: true }],
+      userSystemPrompts: [{ id: 'u', name: 'User', prompt: 'p' }],
     };
     const modes = [{ id: 'coding' }] as Mode[];
 
@@ -73,6 +82,7 @@ describe('SettingsService', () => {
         language: 'de',
         highContrast: true,
         glassOpacity: 0.4,
+        logo: 'classic',
         zoom: 1.25,
       });
       vi.spyOn(api, 'getSettings').mockResolvedValue(loaded);
@@ -89,6 +99,7 @@ describe('SettingsService', () => {
       expect(theme.applyContrast).toHaveBeenCalledWith(true);
       expect(theme.applyGlassOpacity).toHaveBeenCalledWith(0.4);
       expect(background.apply).toHaveBeenCalledWith(loaded);
+      expect(logo.apply).toHaveBeenCalledWith('classic');
       expect(zoom.apply).toHaveBeenCalledWith(1.25);
       expect(setActiveLang).toHaveBeenCalledWith('de');
       expect(service.originalSystemPrompts()).toEqual(defaults);
@@ -172,6 +183,22 @@ describe('SettingsService', () => {
     const saved = settings({ providers: { ollama: { baseUrl: '', enabled: true } } });
     service.adopt(saved);
     expect(service.settings()).toBe(saved);
+  });
+
+  it('asks for a default model once a connected provider offers models', () => {
+    const models = TestBed.inject(ModelsService);
+    expect(service.needsDefaultModel()).toBe(false);
+
+    service.adopt(settings({ defaultModel: null }));
+    expect(service.needsDefaultModel()).toBe(false);
+    providers.anyConnected.set(true);
+    // A provider that lists no models leaves nothing to choose from.
+    expect(service.needsDefaultModel()).toBe(false);
+    models.models.set([{ id: 'openai:gpt-5' } as ModelInfo]);
+    expect(service.needsDefaultModel()).toBe(true);
+
+    service.adopt(settings({ defaultModel: 'openai:gpt-5' }));
+    expect(service.needsDefaultModel()).toBe(false);
   });
 
   it('replaces the settings with the result of rule changes', async () => {

@@ -6,16 +6,18 @@
     "toggleSidebar": "Slå sidebjælke til/fra",
     "toggleRightPanel": "Slå højre panel til/fra",
     "toggleTerminal": "Vis/skjul terminal",
+    "keepAwake": "Hold vågen, mens agenter arbejder",
+    "keepAwakeOn": "Computeren holdes vågen, mens agenter arbejder. Klik for at slå fra.",
+    "keepAwakeOff": "Computeren kan gå i dvale, mens agenter arbejder. Klik for at holde den vågen.",
     "refresh": "Opdater",
     "notTauri": "pumr skal køre inde i Tauri. Start det med: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekter",
+    "sessions": "Sessioner",
     "workspace": "Arbejdsplads",
     "git": "Git",
     "addProject": "Tilføj projekt",
     "newSession": "Ny session",
-    "new": "Ny",
     "noProjects": "Ingen projekter endnu. Tilføj en mappe for at komme i gang.",
     "noSessions": "Ingen sessioner",
     "removeProject": "Fjern projekt",
@@ -36,8 +38,6 @@
     "yesterday": "I går"
   },
   "workspace": {
-    "title": "Arbejdsplads",
-    "noSession": "Åbn en session for at gennemse dens filer.",
     "empty": "Ingen filer fundet.",
     "libraryRoot": "biblioteksrod",
     "noOpenFiles": "Ingen åbne filer. Vælg en fil i træet.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Slet tag {{ tag }}?",
     "stashes": "Stashes",
     "stashCreate": "Stash ændringer",
+    "stash": "Stash",
+    "stashMessage": "Besked (valgfrit)",
+    "stashIncludeUntracked": "Medtag ikke-sporede filer",
     "stashApply": "Anvend",
     "stashPop": "Tag frem",
     "stashDropConfirm": "Drop {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Brug indkommende (theirs)",
       "markResolved": "Markér som løst",
       "fileHint": "Denne fil har konflikter. Behold den ene side, eller redigér filen og markér den som løst.",
+      "markersLeftIn": "Filer med konflikter, der stadig indeholder konfliktmarkører (<<<<<<< eller >>>>>>>): {{ count }}. Markér dem som løst alligevel?",
       "markersLeft": "Filen indeholder stadig konfliktmarkører (<<<<<<< eller >>>>>>>). Markér den som løst alligevel?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Destinationsmappe",
     "cloneChoose": "Vælg…",
     "createBranch": "Opret gren",
+    "branch": "Gren",
     "branchName": "Grennavn",
     "createBranchAt": "Opret gren ved: {{branch}}",
     "checkoutAfterCreate": "Skift efter oprettelse",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Forbind en modeludbyder i Indstillinger for at begynde at chatte.",
+    "noDefaultModel": "Der er endnu ikke valgt en standardmodel. Åbn Indstillinger, vælg en model under “Standardmodel” i “Modeludbydere”, og tryk på “Gem”.",
     "openSettings": "Åbn indstillinger",
     "error": "Fejl",
     "retry": "Prøv igen",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} for at sende · {{ newLine }} for en ny linje",
     "hintStreaming": "{{ send }} for at sætte i kø · {{ stop }} for at stoppe",
     "hintRecall": "{{ recall }} for den seneste prompt",
+    "hintCommands": "/ for kommandoer",
     "handover": "Overdragelse",
     "handovering": "Opsummerer…",
     "handoverHint": "Opsummer denne session, og fortsæt i en ny",
@@ -328,6 +335,13 @@
     "compacting": "Komprimerer kontekst",
     "compacted": "Kontekst komprimeret",
     "compactedHint": "Herfra arbejder modellen ud fra dette resumé i stedet for beskederne ovenfor.",
+    "mcpStarting": "Starter MCP-server {{ name }}",
+    "mcpIssues": "Nogle MCP-servere kunne ikke bruges til denne besked:",
+    "sideQuestion": "Sidespørgsmål",
+    "sideQuestionHint": "Stil et hurtigt spørgsmål om denne session eller noget helt andet. Svaret føjes ikke til sessionen.",
+    "sideQuestionPrivate": "Føjes ikke til sessionen",
+    "sideQuestionAnswering": "Svarer…",
+    "sideQuestionStopped": "Stoppet",
     "interrupted": "Denne chat blev afbrudt, før agenten var færdig: pumr blev lukket, eller computeren gik i dvale. Du kan fortsætte den, hvor den stoppede.",
     "limitReached": "Pause efter {{ count }} værktøjsopkald uden et endeligt svar. Grænsen forhindrer en fast agent i at sløjfe for evigt. Fortsæt med at give det et nyt budget, eller slå automatisk fortsæt til.",
     "continue": "Fortsætte",
@@ -456,7 +470,8 @@
         "cascade": "Afvist sammen med en anden anmodning",
         "stopped": "Stoppet",
         "timeout": "Tidsgrænse nået",
-        "cancelled": "Annulleret"
+        "cancelled": "Annulleret",
+        "hook": "Dit hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Ingen match. Fortsæt med at skrive, eller tryk Escape.",
     "mentionFetch": "Hent {{ url }}",
     "removeMention": "Fjern reference",
+    "commandPrompt": "Anvender din prompt “{{ name }}” på det, du skriver efter den",
+    "commandEffort": "Vælg, hvor meget modellen ræsonnerer",
+    "commandMode": "Skift tilstand for denne session",
+    "commandModel": "Skift model for denne session",
+    "commandProvider": "Vælg den udbyder, der leverer modellen",
+    "commandRevert": "Går tilbage til din seneste prompt: alt efter den fjernes, og filerne kan gendannes",
+    "commandRevertNone": "Der er endnu ingen prompt at gå tilbage til",
+    "commandRevertRunning": "Stop agenten først",
+    "commandNoEffort": "Denne model har intet ræsonnementsniveau at indstille.",
+    "commandNoProvider": "Kun OpenRouter-modeller kan sendes til en bestemt udbyder.",
     "textBlockWords": "{{ count }} ord",
     "textBlockRemove": "Fjern indsat tekst",
     "textBlockTitle": "Indsat tekst",
@@ -634,7 +659,7 @@
     "alwaysOn": "Altid slået til",
     "editInSettings": "Rediger i indstillinger",
     "yourPrompts": "Dine prompts",
-    "yourPromptsHint": "Aktiverede prompts føjes til de aktive systemprompts. Rediger dem, eller nulstil indbyggede til deres oprindelige tekst.",
+    "yourPromptsHint": "Kald en prompt fra chatfeltet med en skråstreg og dens navn, f.eks. /code-review. Den gælder så kun for den besked. Rediger dem, eller nulstil de indbyggede til deres oprindelige tekst.",
     "addPrompt": "Ny",
     "customPrompt": "Brugerdefineret prompt",
     "promptName": "Promptnavn",
@@ -718,6 +743,8 @@
       "providers": "Udbydere",
       "agent": "Agentkonfiguration",
       "agentRules": "Agent whitelist og blacklist",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "Generelt",
       "chat": "Chat",
       "appearance": "Udseende",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP-server",
       "workspace": "Arbejdsområde"
+    },
+    "sandbox": {
+      "title": "Sandbox til kommandoer",
+      "hint": "Operativsystemet begrænser hver kommando, agenten kører, og alt, hvad den kommando starter. Det er et andet lag bag tilladelsesreglerne, til en kommando, som de fejlvurderer. En kommando, som sandboxen stopper, kan bede om at køre uden for den; du bliver spurgt hver gang.",
+      "unavailable": "Dette system har ingen sandbox, som pumr kan bruge, så kommandoer kører ubegrænset. Det kræver macOS eller Linux 5.19 eller nyere med Landlock.",
+      "networkUnavailable": "Netværket kan kun lukkes på macOS.",
+      "modes": {
+        "off": "Fra",
+        "files": "Filer",
+        "filesAndNetwork": "Filer og netværk"
+      },
+      "modeHints": {
+        "off": "Kommandoer kører som din bruger og holdes kun tilbage af tilladelsesreglerne.",
+        "files": "Kommandoer skriver kun til projektet, dine ekstra mapper, midlertidige mapper og mapperne nedenfor. De kan ikke læse de mapper, der indeholder nøgler.",
+        "filesAndNetwork": "Det samme, og kommandoer kan kun nå denne computer, undtagen kommandoer, hvis værter du har tilladt. Installation af pakker beder så om at køre uden for sandboxen."
+      },
+      "writable": "Mapper, kommandoer også må skrive til",
+      "writableHint": "Build-værktøjernes caches. Uden dem fejler et build ved den første download. En sti begynder med / eller ~.",
+      "unreadable": "Mapper, kommandoer ikke kan læse",
+      "unreadableHint": "Der, hvor nøgler og tokens ligger. git, ssh og cloud-værktøjerne beholder de mapper, de arbejder med, og en mappe, du har frigivet til kommandoer, forbliver åben.",
+      "excluded": "Kommandoer, der kører uden for sandboxen",
+      "excludedHint": "Til værktøjer, der har deres egen sandbox med og fejler inde i denne, såsom browsertests. En post angiver, hvordan kommandolinjen begynder; med * er den et mønster for hele linjen.",
+      "addCommand": "Tilføj kommando",
+      "noCommands": "Ingen kommandoer tilføjet endnu."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Et hook er din egen kommando, som pumr kører på et fast tidspunkt i agentens arbejde. Modellen bestemmer ikke, om det kører, så den kan ikke glemme det. Hooks kører, som du har skrevet dem, uden tilladelsesprompter og uden for sandboxen.",
+      "protocol": "Et hook får detaljerne som JSON på standardinput (tool_name, tool_input, tool_response) og den fil, et kald nævner, som $PUMR_FILE. Afslutningskode 0 lader agenten fortsætte. Afslutningskode 2 giver det, hooket udskrev, videre til agenten, og før et værktøjskald afvises kaldet.",
+      "add": "Tilføj hook",
+      "empty": "Ingen hooks tilføjet endnu.",
+      "remove": "Fjern hook",
+      "event": "Hvornår hooket kører",
+      "events": {
+        "beforeTool": "Før et værktøjskald",
+        "afterTool": "Efter et værktøjskald",
+        "turnEnd": "Når agenten vil afslutte"
+      },
+      "tools": "Værktøjer",
+      "toolsPlaceholder": "Alle værktøjer eller navne som edit|write",
+      "files": "Filer",
+      "filesPlaceholder": "Alle filer eller mønstre som *.ts",
+      "command": "Kommando",
+      "timeout": "Stop efter (sekunder)",
+      "project": "Projekt",
+      "allProjects": "Alle projekter"
     },
     "providers": {
       "title": "Modeludbydere",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Ændr kun dette, hvis du bruger en proxy eller en kompatibel gateway.",
     "defaultModel": "Standardmodel",
     "defaultModelHint": "Bruges til nye sessioner.",
+    "defaultModelSetupTitle": "Vælg en standardmodel",
+    "defaultModelSetup": "Din udbyder er forbundet. Nye sessioner starter med standardmodellen: vælg en under “Standardmodel” længere nede på denne side, og tryk på “Gem”. Du kan stadig skifte model i hver chat.",
+    "defaultModelSetupAction": "Gå til standardmodel",
     "handoverModel": "Overdragelsesmodel",
     "handoverModelPlaceholder": "Brug den aktuelle sessions model",
     "handoverModelHint": "Model, der bruges til at opsummere en session ved overdragelse. Lad stå tom for at bruge den aktuelle sessions model.",
@@ -998,6 +1074,14 @@
       "mist": "Dæmpet tekst",
       "white": "Tekst"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Vises i appens sidehoved og som appikon, mens pumr kører.",
+      "mascot": "Siddende puma",
+      "classic": "Klassisk ansigt",
+      "shaded": "Skygget puma",
+      "tailup": "Puma med løftet hale"
+    },
     "background": {
       "title": "App baggrund",
       "hint": "Vælg en indbygget baggrund eller brug dit eget billede. Den sidder bag glaspanelerne og følger dit tema.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Ny linje",
       "chatStop": "Stop svaret",
       "chatRecallPrompt": "Hent seneste prompt",
+      "chatToggleMode": "Skift mellem planlægning og kodning",
+      "chatToggleModeHint": "Går tilbage til den tilstand, sessionen var i før planlægningen.",
       "gitToggleStage": "Stage eller unstage valgte filer",
       "gitDiscardFiles": "Kassér valgte filer",
       "gitSelectAllFiles": "Vælg alle filer",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimér",
       "fillScreen": "Udfyld skærmen",
       "fillScreenHint": "Det fremkaldte vindue udfylder den aktive skærm i stedet for at beholde sin tidligere størrelse.",
+      "shortcutError": "Den systemdækkende genvej kunne ikke registreres, så den kalder ikke pumr frem. Et andet program bruger sandsynligvis denne tastekombination: vælg en anden, og gem igen.",
+      "waylandHint": "På Wayland kan programmer ikke registrere systemdækkende genveje, så denne genvej virker ikke pålideligt her. Bind i stedet kommandoen nedenfor til en tast i skrivebordets tastaturindstillinger.",
+      "command": "Genvejskommando",
+      "commandHint": "Gør det samme som genvejen: fremkalder pumr eller skjuler eller minimerer det, når det er i forgrunden. Bind den til en tast i skrivebordets tastaturindstillinger.",
+      "commandActions": "Til en enkelt handling skal kommandoen i stedet slutte med en af disse:",
       "zoom": "Skalering af visning",
       "zoomHint": "Skalerer hele grænsefladen. Genvej: Ctrl/⌘ + + for at zoome ind, Ctrl/⌘ + - for at zoome ud, Ctrl/⌘ + 0 for at nulstille.",
       "zoomReset": "Nulstil"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Tillad kommando",
     "denyCommand": "Blokér kommando",
     "noDeniedCommandRules": "Ingen blokerede kommandoer.",
+    "mcpToolGrants": "Tilladte MCP-værktøjer",
+    "mcpToolGrantsHint": "Værktøjer fra MCP-servere, som kører uden at spørge. En post gælder ét værktøj på én server, uanset argumenterne, og holder op med at gælde, når serverens konfiguration ændres. Brug \"tillad altid\" i en tilladelsesprompt for at oprette en.",
+    "noMcpToolGrants": "Ingen altid-tilladte MCP-værktøjer endnu.",
+    "secretFolders": "Mapper med frigivne følsomme filer",
+    "secretFoldersHint": "Kommandoer må bruge de følsomme filer (nøgler, tokens, adgangsoplysninger) direkte i disse mapper uden at spørge. Undermapper er ikke omfattet. Brug \"tillad altid\" i en tilladelsesprompt for at oprette en.",
+    "noSecretFolders": "Ingen mapper med frigivne følsomme filer endnu.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + underkommando",
@@ -1276,7 +1373,8 @@
       "file": "Fil",
       "web": "Websted",
       "websearch": "Websøgning",
-      "folder": "Mappe"
+      "folder": "Mappe",
+      "hook": "Hook"
     },
     "allowAlways": "Tillad altid",
     "siteRuleLabel": "Websiteregel (domæne eller glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Føjer webstedet og dets underdomæner til de tilladte websteder.",
       "option": "Websted + underdomæner"
     },
+    "secretScope": {
+      "title": "Følsomme filer",
+      "hint": "Kommandoer må derefter bruge nøgler, tokens og filer med adgangsoplysninger direkte i denne mappe uden at spørge. Undermapper er ikke omfattet.",
+      "option": "Følsomme filer i denne mappe",
+      "chip": "følsomme filer i {{ folder }}"
+    },
     "allowChat": "Tillad i denne chat",
     "option": {
       "yes": "Ja",
@@ -1315,6 +1419,7 @@
     "customize": "Tilpas",
     "justification": "Hvorfor",
     "keyboardHint": "Tryk 1–{{ count }} eller brug ↑ ↓ og Enter · Esc afviser",
+    "mcpToolHint": "Ikke at spørge igen gælder hvert kald af dette værktøj på denne server, uanset argumenterne.",
     "url": {
       "queryWarning": "Denne adresse indeholder mange data i sin forespørgselsstreng. Sørg for, at den ikke indeholder noget privat, før du tillader den."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Tillad kun denne anmodning.",
       "allowSession": "Huskes i alle chats, indtil appen genstartes.",
       "allowChat": "Kommandoregler huskes for denne chat og dens underagenter; mapper og websteder indtil appen genstartes.",
+      "allowChatMcp": "Huskes for denne chat og dens underagenter: hvert kald af dette værktøj på denne server, uanset argumenterne.",
       "allowAlways": "Gemmes i dine indstillinger og gælder for alle chats."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Ny terminal",
     "close": "Luk terminal",
     "hide": "Skjul terminal",
+    "run": "Kør i terminal",
     "noProject": "Åbn en session for at bruge terminalen.",
     "exited": "Processen afsluttede med kode {{ code }}",
     "failed": "Terminalen kunne ikke startes: {{ error }}"

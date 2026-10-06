@@ -6,16 +6,18 @@
     "toggleSidebar": "Oldalsáv be- és kikapcsolása",
     "toggleRightPanel": "Jobb panel be- és kikapcsolása",
     "toggleTerminal": "Terminál megjelenítése/elrejtése",
+    "keepAwake": "Ébren tartás, amíg az ügynökök dolgoznak",
+    "keepAwakeOn": "A számítógép ébren marad, amíg az ügynökök dolgoznak. Kattints a kikapcsoláshoz.",
+    "keepAwakeOff": "A számítógép alvó állapotba léphet, miközben az ügynökök dolgoznak. Kattints az ébren tartáshoz.",
     "refresh": "Frissítés",
     "notTauri": "A pumr-nak Tauri alatt kell futnia. Indítsa el ezzel: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projektek",
+    "sessions": "Munkamenetek",
     "workspace": "Munkaterület",
     "git": "Git",
     "addProject": "Projekt hozzáadása",
     "newSession": "Új munkamenet",
-    "new": "Új",
     "noProjects": "Még nincsenek projektek. Adjon hozzá egy mappát a kezdéshez.",
     "noSessions": "Nincsenek munkamenetek",
     "removeProject": "Projekt eltávolítása",
@@ -36,8 +38,6 @@
     "yesterday": "Tegnap"
   },
   "workspace": {
-    "title": "Munkaterület",
-    "noSession": "Nyisson meg egy munkamenetet a fájlok böngészéséhez.",
     "empty": "Nem található fájl.",
     "libraryRoot": "könyvtár gyökér",
     "noOpenFiles": "Nincsenek megnyitott fájlok. Válasszon ki egy fájlt a fában.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Törli a(z) {{ tag }} címkét?",
     "stashes": "Elrejtések",
     "stashCreate": "Változások elrejtése",
+    "stash": "Elrejtés",
+    "stashMessage": "Üzenet (opcionális)",
+    "stashIncludeUntracked": "Nem követett fájlok belefoglalása",
     "stashApply": "Alkalmaz",
     "stashPop": "Elővétel",
     "stashDropConfirm": "Eldobja: {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Bejövő használata (theirs)",
       "markResolved": "Megjelölés megoldottként",
       "fileHint": "Ebben a fájlban ütközések vannak. Tartsd meg az egyik oldalt, vagy szerkeszd a fájlt, és jelöld meg megoldottként.",
+      "markersLeftIn": "Ütköző fájlok, amelyek még ütközésjelölőket tartalmaznak (<<<<<<< vagy >>>>>>>): {{ count }}. Mégis megjelölöd őket megoldottként?",
       "markersLeft": "A fájl még ütközésjelölőket tartalmaz (<<<<<<< vagy >>>>>>>). Mégis megjelölöd megoldottként?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Célmappa",
     "cloneChoose": "Kiválasztás…",
     "createBranch": "Ág létrehozása",
+    "branch": "Ág",
     "branchName": "Ág neve",
     "createBranchAt": "Ág létrehozása innen: {{branch}}",
     "checkoutAfterCreate": "Váltás létrehozás után",
@@ -298,6 +303,7 @@
     "tokens": "Tokenek",
     "cache": "Gyorsítótár",
     "noKey": "Csatlakoztasson egy modellszolgáltatót a Beállításokban a csevegés megkezdéséhez.",
+    "noDefaultModel": "Még nincs alapértelmezett modell. Nyissa meg a Beállításokat, a „Modellszolgáltatók” részben válasszon modellt az „Alapértelmezett modell” alatt, majd kattintson a „Mentés” gombra.",
     "openSettings": "Beállítások megnyitása",
     "error": "Hiba",
     "retry": "Újrapróbálás",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} a küldéshez · {{ newLine }} új sorhoz",
     "hintStreaming": "{{ send }} a sorba állításhoz · {{ stop }} a leállításhoz",
     "hintRecall": "{{ recall }} az utolsó prompthoz",
+    "hintCommands": "/ a parancsokhoz",
     "handover": "Átadás",
     "handovering": "Összegzés…",
     "handoverHint": "Összegzi ezt a munkamenetet, és folytatja egy újban",
@@ -328,6 +335,13 @@
     "compacting": "Kontextus tömörítése folyamatban",
     "compacted": "Kontextus tömörítve",
     "compactedHint": "Innentől a modell ebből az összegzésből dolgozik a fenti üzenetek helyett.",
+    "mcpStarting": "A(z) {{ name }} MCP-szerver indítása",
+    "mcpIssues": "Néhány MCP-szervert nem lehetett használni ehhez az üzenethez:",
+    "sideQuestion": "Mellékes kérdés",
+    "sideQuestionHint": "Gyors kérdést tehet fel erről a munkamenetről vagy bármi másról. A válasz nem kerül be a munkamenetbe.",
+    "sideQuestionPrivate": "Nem kerül be a munkamenetbe",
+    "sideQuestionAnswering": "Válaszol…",
+    "sideQuestionStopped": "Leállítva",
     "interrupted": "Ez a csevegés megszakadt, mielőtt az ügynök befejezte volna: a pumr bezárult, vagy a számítógép alvó állapotba lépett. Onnan folytathatja, ahol abbamaradt.",
     "limitReached": "Szüneteltetve {{ count }} eszközhívás után, végső válasz nélkül. A limit megakadályozza, hogy egy elakadt ügynök örökre hurkoljon. Továbbra is adjon új költségkeretet, vagy kapcsolja be az automatikus folytatást.",
     "continue": "Folytatás",
@@ -456,7 +470,8 @@
         "cascade": "Egy másik kéréssel együtt elutasítva",
         "stopped": "Leállítva",
         "timeout": "Időtúllépés",
-        "cancelled": "Megszakítva"
+        "cancelled": "Megszakítva",
+        "hook": "Saját hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Nincs találat. Folytassa a gépelést, vagy nyomja meg az Escape billentyűt.",
     "mentionFetch": "{{ url }} letöltése",
     "removeMention": "Hivatkozás eltávolítása",
+    "commandPrompt": "A(z) „{{ name }}” promptját alkalmazza arra, amit utána ír",
+    "commandEffort": "Állítsa be, mennyit érveljen a modell",
+    "commandMode": "A munkamenet módjának váltása",
+    "commandModel": "A munkamenet modelljének váltása",
+    "commandProvider": "Válassza ki a modellt kiszolgáló szolgáltatót",
+    "commandRevert": "Visszalép az utolsó promptjához: az utána következők törlődnek, a fájlok visszaállíthatók",
+    "commandRevertNone": "Még nincs prompt, amelyhez vissza lehetne lépni",
+    "commandRevertRunning": "Előbb állítsa le az ügynököt",
+    "commandNoEffort": "Ennél a modellnél nincs beállítható érvelési szint.",
+    "commandNoProvider": "Csak az OpenRouter-modellek irányíthatók szolgáltatóhoz.",
     "textBlockWords": "{{ count }} szó",
     "textBlockRemove": "Beillesztett szöveg eltávolítása",
     "textBlockTitle": "Beillesztett szöveg",
@@ -634,7 +659,7 @@
     "alwaysOn": "Mindig be",
     "editInSettings": "Szerkesztés a beállításokban",
     "yourPrompts": "Az Ön promptjai",
-    "yourPromptsHint": "Az engedélyezett promptok az aktív rendszerpromptokhoz fűződnek. Szerkessze őket, vagy állítsa vissza a beépítetteket az eredeti szövegre.",
+    "yourPromptsHint": "A promptot a csevegőmezőből perjellel és a nevével hívhatja meg, például /code-review. Ekkor csak arra az üzenetre vonatkozik. Szerkessze őket, vagy állítsa vissza a beépítetteket az eredeti szövegre.",
     "addPrompt": "Új",
     "customPrompt": "Egyéni prompt",
     "promptName": "Prompt neve",
@@ -718,6 +743,8 @@
       "providers": "Szolgáltatók",
       "agent": "Ügynök konfigurációja",
       "agentRules": "Ügynök whitelist és blacklist",
+      "sandbox": "Homokozó",
+      "hooks": "Hookok",
       "general": "Általános",
       "chat": "Csevegés",
       "appearance": "Megjelenés",
@@ -727,6 +754,52 @@
       "skills": "Készségek",
       "mcp": "MCP szerver",
       "workspace": "Munkaterület"
+    },
+    "sandbox": {
+      "title": "Homokozó a parancsokhoz",
+      "hint": "Az operációs rendszer korlátok közé zár minden parancsot, amelyet az ügynök futtat, és mindent, amit az a parancs elindít. Ez egy második réteg az engedélyszabályok mögött, olyan parancsra, amelyet azok tévesen ítélnek meg. A homokozó által megállított parancs kérheti, hogy azon kívül fusson; erről minden alkalommal kérdést kap.",
+      "unavailable": "Ezen a rendszeren nincs olyan homokozó, amelyet a pumr használni tudna, ezért a parancsok korlátozás nélkül futnak. Ehhez macOS, vagy Linux 5.19 vagy újabb kell Landlockkal.",
+      "networkUnavailable": "A hálózat lezárása csak macOS-en lehetséges.",
+      "modes": {
+        "off": "Ki",
+        "files": "Fájlok",
+        "filesAndNetwork": "Fájlok és hálózat"
+      },
+      "modeHints": {
+        "off": "A parancsok az Ön felhasználójaként futnak, és csak az engedélyszabályok tartják vissza őket.",
+        "files": "A parancsok csak a projektbe, az Ön további mappáiba, az ideiglenes mappákba és az alább felsorolt mappákba írnak. A kulcsokat tároló mappákat nem olvashatják.",
+        "filesAndNetwork": "Ugyanez, és a parancsok csak ezt a számítógépet érik el, kivéve azokat, amelyek gazdagépeit engedélyezte. A csomagok telepítése ilyenkor azt kéri, hogy a homokozón kívül futhasson."
+      },
+      "writable": "Mappák, amelyekbe a parancsok szintén írhatnak",
+      "writableHint": "A build eszközök gyorsítótárai. Nélkülük a build az első letöltésnél meghiúsul. Az útvonal / vagy ~ karakterrel kezdődik.",
+      "unreadable": "Mappák, amelyeket a parancsok nem olvashatnak",
+      "unreadableHint": "Ahol a kulcsok és a tokenek találhatók. A git, az ssh és a felhőeszközök megtartják azokat a mappákat, amelyekkel dolgoznak, és az a mappa, amelyet a parancsok számára engedélyezett, nyitva marad.",
+      "excluded": "A homokozón kívül futó parancsok",
+      "excludedHint": "Olyan eszközökhöz, amelyek saját homokozót hoznak magukkal, és ebben meghiúsulnak, például a böngészős tesztekhez. Egy bejegyzés azt adja meg, hogyan kezdődik a parancssor; * karakterrel az egész sorra vonatkozó minta.",
+      "addCommand": "Parancs hozzáadása",
+      "noCommands": "Még nincsenek hozzáadott parancsok."
+    },
+    "hooks": {
+      "title": "Hookok",
+      "hint": "A hook az Ön egyik parancsa, amelyet a pumr az ügynök munkájának egy rögzített pontján futtat. Nem a modell dönti el, hogy lefut-e, ezért el sem felejtheti. A hookok úgy futnak, ahogyan megírta őket, engedélykérés nélkül és a homokozón kívül.",
+      "protocol": "A hook a részleteket JSON-ként kapja meg a szabványos bemeneten (tool_name, tool_input, tool_response), a hívásban megnevezett fájlt pedig $PUMR_FILE néven. A 0 kilépési kód továbbengedi az ügynököt. A 2 kilépési kód átadja az ügynöknek, amit a hook kiírt, és eszközhívás előtt elutasítja a hívást.",
+      "add": "Hook hozzáadása",
+      "empty": "Még nincsenek hozzáadott hookok.",
+      "remove": "Hook eltávolítása",
+      "event": "Mikor fut a hook",
+      "events": {
+        "beforeTool": "Eszközhívás előtt",
+        "afterTool": "Eszközhívás után",
+        "turnEnd": "Amikor az ügynök végezni akar"
+      },
+      "tools": "Eszközök",
+      "toolsPlaceholder": "Minden eszköz, vagy nevek, például edit|write",
+      "files": "Fájlok",
+      "filesPlaceholder": "Minden fájl, vagy minták, például *.ts",
+      "command": "Parancs",
+      "timeout": "Leállítás ennyi után (másodperc)",
+      "project": "Projekt",
+      "allProjects": "Minden projekt"
     },
     "providers": {
       "title": "Modellszolgáltatók",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Csak akkor módosítsa, ha proxyt vagy kompatibilis átjárót használ.",
     "defaultModel": "Alapértelmezett modell",
     "defaultModelHint": "Az új munkamenetekhez használatos.",
+    "defaultModelSetupTitle": "Válasszon alapértelmezett modellt",
+    "defaultModelSetup": "A szolgáltató csatlakoztatva van. Az új munkamenetek az alapértelmezett modellel indulnak: válassza ki lejjebb ezen az oldalon, az „Alapértelmezett modell” alatt, majd kattintson a „Mentés” gombra. A modellt minden csevegésben továbbra is megváltoztathatja.",
+    "defaultModelSetupAction": "Ugrás az alapértelmezett modellhez",
     "handoverModel": "Átadási modell",
     "handoverModelPlaceholder": "Az aktuális munkamenet modelljének használata",
     "handoverModelHint": "A munkamenet összegzéséhez használt modell átadáskor. Hagyja üresen az aktuális munkamenet modelljének használatához.",
@@ -998,6 +1074,14 @@
       "mist": "Halvány szöveg",
       "white": "Szöveg"
     },
+    "logo": {
+      "title": "Logó",
+      "hint": "Az alkalmazás fejlécében és az alkalmazás ikonjaként jelenik meg, amíg a pumr fut.",
+      "mascot": "Ülő puma",
+      "classic": "Klasszikus arc",
+      "shaded": "Árnyékolt puma",
+      "tailup": "Puma felemelt farokkal"
+    },
     "background": {
       "title": "App háttér",
       "hint": "Válasszon beépített hátteret, vagy használja saját képét. Az üvegtáblák mögött helyezkedik el, és követi az Ön témáját.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Új sor",
       "chatStop": "Válasz leállítása",
       "chatRecallPrompt": "Utolsó prompt visszahívása",
+      "chatToggleMode": "Váltás tervezés és kódolás között",
+      "chatToggleModeHint": "Visszatér abba a módba, amelyben a munkamenet a tervezés előtt volt.",
       "gitToggleStage": "Kijelölt fájlok előkészítése vagy előkészítésének visszavonása",
       "gitDiscardFiles": "Kijelölt fájlok elvetése",
       "gitSelectAllFiles": "Összes fájl kijelölése",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Kis méret",
       "fillScreen": "Képernyő kitöltése",
       "fillScreenHint": "Az előhívott ablak kitölti az aktív monitort a korábbi méret megtartása helyett.",
+      "shortcutError": "A rendszerszintű gyorsbillentyűt nem sikerült regisztrálni, ezért nem hívja elő a pumr-t. Ezt a billentyűkombinációt valószínűleg egy másik alkalmazás használja: válassz másikat, és ments újra.",
+      "waylandHint": "Waylanden az alkalmazások nem regisztrálhatnak rendszerszintű gyorsbillentyűket, ezért ez a gyorsbillentyű itt nem működik megbízhatóan. Ehelyett rendeld az alábbi parancsot egy billentyűhöz az asztali környezeted billentyűzetbeállításaiban.",
+      "command": "Parancs a gyorsbillentyűhöz",
+      "commandHint": "Ugyanazt teszi, mint a gyorsbillentyű: előhozza a pumr-t, vagy elrejti, illetve kis méretre teszi, ha előtérben van. Rendeld egy billentyűhöz az asztali környezeted billentyűzetbeállításaiban.",
+      "commandActions": "Egyetlen művelethez a parancs végére ezek egyikét írd helyette:",
       "zoom": "Megjelenítés méretezése",
       "zoomHint": "A teljes felületet méretezi. Gyorsbillentyű: Ctrl/⌘ + + nagyításhoz, Ctrl/⌘ + - kicsinyítéshez, Ctrl/⌘ + 0 visszaállításhoz.",
       "zoomReset": "Visszaállítás"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Parancs engedélyezése",
     "denyCommand": "Parancs blokkolása",
     "noDeniedCommandRules": "Nincsenek blokkolt parancsok.",
+    "mcpToolGrants": "Engedélyezett MCP-eszközök",
+    "mcpToolGrantsHint": "MCP-szerverek eszközei, amelyek kérdés nélkül futnak. Egy bejegyzés egy szerver egy eszközére érvényes, az argumentumoktól függetlenül, és érvényét veszti, ha a szerver konfigurációja megváltozik. Hozzon létre egyet a „mindig engedélyez” lehetőséggel az engedélykérésben.",
+    "noMcpToolGrants": "Még nincsenek mindig engedélyezett MCP-eszközök.",
+    "secretFolders": "Mappák engedélyezett érzékeny fájlokkal",
+    "secretFoldersHint": "A parancsok kérdés nélkül használhatják a közvetlenül ezekben a mappákban lévő érzékeny fájlokat (kulcsokat, tokeneket, hitelesítő adatokat). Az almappák nem tartoznak bele. Hozzon létre egyet a „mindig engedélyez” lehetőséggel az engedélykérésben.",
+    "noSecretFolders": "Még nincsenek mappák engedélyezett érzékeny fájlokkal.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + alparancs",
@@ -1276,7 +1373,8 @@
       "file": "Fájl",
       "web": "Webhely",
       "websearch": "Webes keresés",
-      "folder": "Mappa"
+      "folder": "Mappa",
+      "hook": "Hook"
     },
     "allowAlways": "Mindig engedélyez",
     "siteRuleLabel": "Webhely szabálya (domain vagy glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Hozzáadja a webhelyet és aldomainjeit az engedélyezett webhelyekhez.",
       "option": "Webhely + aldomainek"
     },
+    "secretScope": {
+      "title": "Érzékeny fájlok",
+      "hint": "A parancsok ezután kérdés nélkül használhatják a közvetlenül ebben a mappában lévő kulcsokat, tokeneket és hitelesítőadat-fájlokat. Az almappák nem tartoznak bele.",
+      "option": "Érzékeny fájlok ebben a mappában",
+      "chip": "érzékeny fájlok itt: {{ folder }}"
+    },
     "allowChat": "Engedélyezés ebben a csevegésben",
     "option": {
       "yes": "Igen",
@@ -1315,6 +1419,7 @@
     "customize": "Testreszabás",
     "justification": "Miért",
     "keyboardHint": "Nyomd meg az 1–{{ count }} gombot, vagy használd a ↑ ↓ és Enter billentyűket · Esc elutasít",
+    "mcpToolHint": "Ha nem kérdez újra, az ennek az eszköznek minden hívására érvényes ezen a szerveren, az argumentumoktól függetlenül.",
     "url": {
       "queryWarning": "Ez a cím sok adatot hordoz a lekérdezési karakterláncában. Engedélyezés előtt győződj meg róla, hogy nincs benne semmi személyes."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Csak ennek a kérésnek az engedélyezése.",
       "allowSession": "Minden csevegésben megmarad az alkalmazás újraindításáig.",
       "allowChat": "A parancsszabályok ebben a csevegésben és alügynökeinél maradnak meg; a mappák és webhelyek az alkalmazás újraindításáig.",
+      "allowChatMcp": "Ebben a csevegésben és alügynökeinél marad meg: ennek az eszköznek minden hívása ezen a szerveren, az argumentumoktól függetlenül.",
       "allowAlways": "A beállításokba kerül, és minden csevegésre vonatkozik."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Új terminál",
     "close": "Terminál bezárása",
     "hide": "Terminál elrejtése",
+    "run": "Futtatás a terminálban",
     "noProject": "Nyisson meg egy munkamenetet a terminál használatához.",
     "exited": "A folyamat {{ code }} kóddal kilépett",
     "failed": "A terminál nem indítható el: {{ error }}"

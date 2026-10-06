@@ -755,11 +755,13 @@ fn assistant_blocks(message: &ChatMessage, replay_thinking: bool, ids: &mut Tool
                         blocks.push(block);
                     }
                 }
+                // The API rejects a text block of nothing but whitespace, which
+                // Claude does write (a blank line before a tool call).
                 Some("text")
                     if block
                         .get("text")
                         .and_then(Value::as_str)
-                        .is_some_and(|text| !text.is_empty()) =>
+                        .is_some_and(|text| !text.trim().is_empty()) =>
                 {
                     blocks.push(block.clone());
                 }
@@ -1008,7 +1010,8 @@ impl StreamState {
         for (index, block) in self.blocks {
             match block.kind.as_str() {
                 "text" => {
-                    if !block.text.is_empty() {
+                    // Whitespace alone is not kept: replayed, it is rejected.
+                    if !block.text.trim().is_empty() {
                         content.push(json!({ "type": "text", "text": block.text }));
                     }
                 }
@@ -1594,6 +1597,70 @@ mod tests {
         ];
         let (state, _) = collect(&events);
         assert!(state.finish(true).provider_content.is_none());
+    }
+
+    #[test]
+    fn a_text_block_of_whitespace_is_neither_kept_nor_replayed() {
+        // What Claude writes before a tool call: a text block of blank lines.
+        let blank = |index: u64| {
+            [
+                json!({ "type": "content_block_start", "index": index,
+                        "content_block": { "type": "text", "text": "" } }),
+                json!({ "type": "content_block_delta", "index": index,
+                        "delta": { "type": "text_delta", "text": "\n\n" } }),
+            ]
+        };
+        let tool_use = json!({ "type": "content_block_start", "index": 1, "content_block": {
+            "type": "tool_use", "id": "toolu_1", "name": "ls", "input": {} } });
+        let events = [blank(0).as_slice(), &[tool_use]].concat();
+        let (state, _) = collect(&events);
+        let content = state.finish(false).provider_content.unwrap();
+        assert_eq!(
+            content,
+            json!([{ "type": "tool_use", "id": "toolu_1", "name": "ls", "input": {} }])
+        );
+        // A turn of nothing else keeps no content, rather than an empty list.
+        let (state, _) = collect(&blank(0));
+        assert!(state.finish(false).provider_content.is_none());
+
+        // A chat stored before blank blocks were dropped replays without them.
+        let mut message = ChatMessage::assistant_tool_calls(
+            "\n\n".to_string(),
+            json!([{ "id": "toolu_1", "type": "function",
+                     "function": { "name": "ls", "arguments": "{}" } }]),
+        );
+        message.provider_content = Some(json!([
+            { "type": "thinking", "thinking": "plan", "signature": "sig" },
+            { "type": "text", "text": "\n\n" },
+            { "type": "tool_use", "id": "toolu_1", "name": "ls", "input": {} }
+        ]));
+        let blocks = assistant_blocks(&message, true, &mut ToolIds::default());
+        let kinds: Vec<&str> = blocks
+            .iter()
+            .map(|block| block["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["thinking", "tool_use"]);
+
+        // With nothing but the blank block and reasoning there is no turn left:
+        // no assistant message with an empty content list is sent.
+        let mut blank_turn = ChatMessage::text("assistant", " \n");
+        blank_turn.provider_content = Some(json!([
+            { "type": "thinking", "thinking": "plan", "signature": "sig" },
+            { "type": "text", "text": " \n" }
+        ]));
+        let messages = vec![
+            ChatMessage::text("user", "Hi"),
+            blank_turn,
+            ChatMessage::text("user", "Again"),
+        ];
+        let (_, turns) = convert_messages(&messages, true);
+        assert_eq!(
+            turns,
+            vec![json!({ "role": "user", "content": [
+                { "type": "text", "text": "Hi" },
+                { "type": "text", "text": "Again" }
+            ] })]
+        );
     }
 
     #[test]

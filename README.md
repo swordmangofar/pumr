@@ -59,6 +59,9 @@ sessions in SQLite. No project files leave the machine except the requests you a
 
 - A real tool loop in Rust: `read`, `write`, `edit`, `glob`, `grep`, `ls`, `bash`,
   `bash_output`, `webfetch`, `websearch`, `screenshot`, plus MCP tools.
+- `read` also opens what is not plain text: a picture (png, jpg, gif, webp), which a
+  model with vision then sees, the text of a PDF by page range, and a Jupyter notebook
+  as its cells with what they printed. Any other binary file is named instead of read.
 - The loop checks the agent's work as it goes: an edit answers with the lines around
   the change, a long build or test run can be waited for instead of run twice, and an
   agent that wants to finish with code it never ran anything against is asked once to
@@ -73,10 +76,44 @@ sessions in SQLite. No project files leave the machine except the requests you a
   especially outside the project. Inline code (`bash -c`, `node -e`), package
   downloads (`npx`) and hosts that `curl`, `git` or `ssh` contact always ask; network
   commands follow the same website allow/deny list as the web tools.
+- MCP tools run inside their server, outside these checks, so every call asks. "Don't
+  ask again" remembers one tool of one server, whatever its arguments, for the chat or
+  always. A server whose configuration changed asks again, and the settings list what
+  is always allowed.
 - Strict, Balanced and Autonomous presets pick what runs without asking, and the
   debugger's Permissions view records every decision and why it was made.
 - Tools are sandboxed to the active project and the extra folders you allow.
+- Behind the rules, the operating system confines every command and whatever it starts
+  (`sandbox-exec` on macOS, Landlock on Linux 5.19 and newer; Windows has no equivalent).
+  A command writes only to the project, your extra folders, temp folders and the caches of
+  build tools, and cannot read the folders that hold keys (`~/.ssh`, `~/.aws`, …); git, ssh
+  and the cloud tools keep the ones they work with. So a `make test` whose script deletes
+  files outside the project is stopped even though the rules let it run. On macOS a second
+  mode also closes the network, except for this machine and for commands whose hosts you
+  allowed. A command the sandbox stops can ask to run outside it, which asks you every
+  time, and Settings → Sandbox lists the folders and the commands that run outside it
+  (tools with a sandbox of their own, such as browser tests, fail inside this one).
+- Hooks are commands of yours that pumr runs at fixed moments, whatever the model
+  remembers: before a tool call (to refuse it), after one (to format the edited file or
+  report on it) and when the agent wants to finish (to send it back to work once). A hook
+  reads the call as JSON on standard input, with the field names Claude Code uses, and
+  answers with its exit code: 0 goes on, 2 hands what it printed to the agent. For
+  example `prettier --write "$PUMR_FILE"` after every `edit|write` of `*.ts`, or
+  `pnpm lint >&2 || exit 2` at the end of a turn. Hooks live in pumr's settings, for all
+  projects or one, never in the repository, and cost no tokens unless one speaks.
+- Commands run with the variables your shell profile exports, also when pumr was opened
+  from the Dock or a launcher, so a skill that reads `$MY_CREDENTIALS/token` finds it as
+  it does in your terminal.
+- A command that uses a key, token or credential file asks every time, and no command
+  rule changes that. What can be remembered is the folder: "don't ask again" releases the
+  sensitive files directly in it for commands, for the chat or always, and the settings
+  list the folders to take one back.
 - Long-running commands move to the background and can be stopped from the header.
+- A command you have to run yourself, because it needs `sudo` or a password or you denied
+  it to the agent, comes as a code block of its own. Every block of shell commands in the
+  chat has a Run button next to Copy: it runs the block in the terminal dock, in the
+  terminal on show while that waits at its prompt, and in a new one while a program runs
+  there.
 
 </td>
 <td width="42%" valign="top">
@@ -95,6 +132,12 @@ sessions in SQLite. No project files leave the machine except the requests you a
 - Changed files show `+additions -deletions` and open a Monaco diff (inline or side-by-side).
 - `@` mentions in the composer add files, directories, websites, skills or MCP tools
   as structured context for the next message.
+- Typing `/` in the composer lists its commands. `/btw` asks a quick side question about
+  the session or anything else, also while the agent works; the answer appears below the
+  chat box and never becomes part of the session. `/model`, `/mode`, `/effort` and
+  `/provider` list their choices, picked with the arrow keys or by typing a few letters. `/revert`
+  goes back to your last prompt after a confirmation. Each of your prompts is a command
+  too: `/code-review src/auth` sends the Code Review prompt along with what follows it.
 - `AGENTS.md` files (global, project, nested) are merged into the system prompt, and the
   right panel shows which rules apply and where they came from.
 
@@ -106,15 +149,21 @@ sessions in SQLite. No project files leave the machine except the requests you a
 
 - Edit the base system prompt in Settings (with a reset to default) and switch the built-in
   Security, Testing and Software architecture prompts on or off.
-- Write your own prompts in the right panel: name them, edit them and choose which ones are
-  appended to every session.
+- Write your own prompts in the right panel: name them, edit them and call them from the
+  composer with a slash and their name. `/code-review` applies the built-in Code Review
+  prompt to that one message; they are no longer part of every session's system prompt.
+- Five prompts are built in, to call, edit or reset: UI/UX Designing, Code Review,
+  Documentation Writer, Bugfix and Test Writer. `/test-writer` writes unit, integration or
+  end-to-end tests, at the level you name or else the lowest one that shows the behavior.
 - Modes decide what the agent sees. Each mode has its own system prompt and picks which of
   your prompts, MCP servers and skills it loads, whether the activated global prompts and
   project rules (`AGENTS.md`) apply, and whether it may only plan instead of editing files.
 - Built-in modes: Coding (everything activated), Planning (plans with you, cannot write or
   edit files), Verification (runs the build and tests and reports PASS/FAIL/BLOCKED without
   changing code) and Nacked (base prompt only, for speed). Edit or reset them, or add your own.
-- Pick a mode per session in the composer; new sessions start in the default mode. The
+- Pick a mode per session in the composer or with `/mode`; new sessions start in the default
+  mode. `⌘⇧P` (`Ctrl+Shift+P` on Linux and Windows, configurable) switches between Planning
+  and the mode the session was in before. The
   debugger shows how the system prompt was put together: base, global prompts and mode prompt.
 
 ### Providers and models
@@ -153,7 +202,10 @@ sessions in SQLite. No project files leave the machine except the requests you a
 ![MCP settings listing servers detected in Claude Code, Cursor and Codex configs, each with its own switch](docs/features/integrations.png)
 
 - Skills auto-discovery from standard locations (`~/.claude/skills`, `~/.config/opencode/skill`,
-  `~/.agents/skills`, …) plus custom folders.
+  `~/.agents/skills`, …), from the `skills` folder of plugins opencode loads from a local
+  path, plus custom folders. A collection may group its skills in folders
+  of their own. Loading a skill gives the agent its `SKILL.md` and names the files next to
+  it, which the agent reads when the instructions call for them, without a prompt.
 - MCP server discovery and connection (local `stdio` and remote streamable HTTP), with
   configs parsed from Claude, Cursor, Windsurf, VS Code, Codex, opencode, Gemini CLI and more.
 - Skill marketplaces and the official MCP registry, treated as untrusted input: pumr
@@ -168,6 +220,19 @@ sessions in SQLite. No project files leave the machine except the requests you a
 - 14 built-in themes (dark and light) plus a custom palette, glass panels, background
   images and notification sounds.
 - Fully localised UI, available in 24 languages.
+- Summon the window to the screen you are working on with a system-wide shortcut, or
+  from the command line.
+
+#### Summoning the window from the command line
+
+`pumr --toggle` does what the window shortcut does: it brings a running pumr to the
+front, or hides or minimizes it when it is the window in use, and starts pumr when it is
+not running. `--open`, `--minimize` and `--hide` do one of these only.
+
+Wayland desktops (COSMIC, GNOME, KDE Plasma, Sway, Hyprland) do not let apps grab keys
+system-wide, so pumr's own shortcut does not work there. Add a custom shortcut
+in the desktop's keyboard settings that runs the command instead. Settings → Window in
+pumr shows the command for your install, such as the path of the AppImage, ready to copy.
 
 ## How it works
 
@@ -242,13 +307,17 @@ src-tauri/src/           Rust core
   providers/chat_completions  shared Chat Completions streaming and retries
   agent.rs               multi-iteration tool loop
   tools.rs               read/write/edit/glob/grep/ls/bash with permission gates
+  read_formats.rs        what read makes of pictures, PDFs and notebooks
   permissions.rs         command glob rules, danger list, path and sensitivity checks
+  sandbox.rs             the OS sandbox around commands: Seatbelt profile, Landlock rules
+  hooks.rs               the user's commands before and after tool calls and at turn end
   git.rs                 shadow git repo: snapshots, diffs, restore, branch info
   processes.rs           background process registry
   broker.rs              permission request/response plumbing
   db.rs                  SQLite schema and queries (projects, sessions, messages, costs)
   config.rs              settings.json + OS keychain
   commands.rs            Tauri IPC surface
+  control.rs             `pumr --toggle` and friends: hands window actions to the running pumr
 
 src-tauri/appimage/      AppImage build for CI: linuxdeploy GTK and GStreamer plugins (native
                          Wayland, no bundled libwayland), the GStreamer plugins bundled for

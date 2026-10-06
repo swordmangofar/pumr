@@ -469,7 +469,7 @@ export class GitBranchMenu {
   }
 
   private inProject<T>(action: (projectId: string) => Promise<T>): Promise<T | undefined> {
-    const projectId = this.workspace.activeProject()?.id;
+    const projectId = this.workspace.browseProject()?.id;
     return projectId ? action(projectId) : Promise.resolve(undefined);
   }
 

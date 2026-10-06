@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { WritableSignal, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Message } from '../core/models';
 import { SettingsService } from '../core/settings.service';
@@ -155,12 +155,14 @@ describe('ChatView timeline', () => {
   let fixture: ComponentFixture<ChatView>;
   let messages: ReturnType<typeof signal<Message[]>>;
   let continueSession: ReturnType<typeof vi.fn>;
+  let revertToMessage: ReturnType<typeof vi.fn>;
   let error: ReturnType<typeof signal<string | null>>;
 
   beforeEach(() => {
     messages = signal<Message[]>([]);
     error = signal<string | null>(null);
     continueSession = vi.fn().mockResolvedValue(undefined);
+    revertToMessage = vi.fn().mockResolvedValue(null);
     TestBed.configureTestingModule({
       providers: [
         {
@@ -175,6 +177,8 @@ describe('ChatView timeline', () => {
             isStreaming: () => false,
             errorFor: () => error(),
             continueSession,
+            revertToMessage,
+            requestComposerFocus: vi.fn(),
           },
         },
         { provide: SettingsService, useValue: {} },
@@ -291,5 +295,20 @@ describe('ChatView timeline', () => {
     fixture.detectChanges();
     (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.retry')!.click();
     expect(continueSession).toHaveBeenCalledWith('session-1');
+  });
+
+  it('reverts once when the revert is confirmed with a double click', async () => {
+    const target = message({ id: 'u', role: 'user', content: 'read both' });
+    const view = fixture.componentInstance as unknown as {
+      revertTarget: WritableSignal<Message | null>;
+      confirmRevert: (target: Message) => Promise<void>;
+    };
+    view.revertTarget.set(target);
+
+    await Promise.all([view.confirmRevert(target), view.confirmRevert(target)]);
+
+    expect(revertToMessage).toHaveBeenCalledTimes(1);
+    expect(revertToMessage).toHaveBeenCalledWith('u', true);
+    expect(view.revertTarget()).toBeNull();
   });
 });

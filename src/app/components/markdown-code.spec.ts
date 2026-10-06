@@ -5,10 +5,17 @@ import { MonacoService } from '../core/monaco.service';
 import { ThemeService } from '../core/theme.service';
 import { CopyButton } from './copy-button';
 import { MarkdownCode } from './markdown-code';
+import { RunButton } from './run-button';
 
 @Component({ selector: 'app-copy-button', standalone: true, template: '' })
 class StubCopyButton {
   readonly text = input<string>('');
+  readonly buttonClass = input<string>('');
+}
+
+@Component({ selector: 'app-run-button', standalone: true, template: '' })
+class StubRunButton {
+  readonly command = input<string>('');
   readonly buttonClass = input<string>('');
 }
 
@@ -39,8 +46,8 @@ describe('MarkdownCode', () => {
       ],
     });
     TestBed.overrideComponent(MarkdownCode, {
-      remove: { imports: [CopyButton] },
-      add: { imports: [StubCopyButton] },
+      remove: { imports: [CopyButton, RunButton] },
+      add: { imports: [StubCopyButton, StubRunButton] },
     });
     fixture = TestBed.createComponent(MarkdownCode);
   });
@@ -125,6 +132,34 @@ describe('MarkdownCode', () => {
     expect(pending).toHaveLength(2);
     // The previous colors stay until the new ones arrive.
     expect(code().querySelector('.mtk5')).not.toBeNull();
+  });
+
+  it('offers to run a finished block of shell commands', () => {
+    const runButton = () => (fixture.nativeElement as HTMLElement).querySelector('app-run-button');
+
+    for (const lang of ['bash', 'sh', 'zsh', 'Shell', 'powershell', 'cmd']) {
+      render('git push', lang);
+      expect(runButton(), lang).not.toBeNull();
+    }
+    // Other languages, a transcript with its output, and an empty block.
+    for (const [text, lang] of [
+      ['git push', 'ts'],
+      ['git push', ''],
+      ['$ git push\nEverything up-to-date', 'console'],
+      ['  \n', 'bash'],
+    ]) {
+      render(text, lang);
+      expect(runButton(), lang).toBeNull();
+    }
+  });
+
+  it('does not offer to run a command that is still being written', () => {
+    const element = render('git push -u ori', 'bash', 'caret');
+    expect(element.querySelector('app-run-button')).toBeNull();
+
+    render('git push -u origin main', 'bash', null);
+    expect(element.querySelector('app-run-button')).not.toBeNull();
+    expect(element.querySelector('app-copy-button')).not.toBeNull();
   });
 
   it('still sanitizes the colorized markup', async () => {

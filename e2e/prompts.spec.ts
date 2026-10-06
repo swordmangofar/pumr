@@ -154,6 +154,143 @@ test.describe('agent prompts', () => {
     ]);
   });
 
+  test('answers a question from the keyboard and returns to the composer', async ({
+    app,
+    page,
+  }) => {
+    await sendWithReply(
+      page,
+      app,
+      {
+        steps: [
+          {
+            kind: 'question',
+            question: {
+              header: 'Package manager',
+              question: 'Which package manager should I use?',
+              multiSelect: false,
+              options: [
+                { label: 'npm', description: null, recommended: false },
+                { label: 'pnpm', description: 'Matches the lockfile', recommended: true },
+              ],
+            },
+          },
+          { kind: 'text', text: 'Using pnpm.' },
+        ],
+      },
+      'Set up the project',
+    );
+
+    // The question takes the keyboard from the composer the prompt was sent from.
+    await expect(page.getByRole('button', { name: 'npm', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: /pnpm/ })).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    await expect(page.getByRole('button', { name: 'Submit' })).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('main')).toContainText('Using pnpm.');
+    expect((await app.backend.lastCall('resolve_question'))?.args['answers']).toEqual([
+      expect.objectContaining({ selected: ['pnpm'] }),
+    ]);
+    await expect(page.getByRole('textbox', { name: /Describe your task/ })).toBeFocused();
+  });
+
+  test('a question takes the keyboard from the session list', async ({ app, page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        projects: [project()],
+        sessions: [session()],
+        replies: [
+          {
+            steps: [
+              {
+                kind: 'question',
+                question: {
+                  header: 'Package manager',
+                  question: 'Which package manager should I use?',
+                  multiSelect: false,
+                  options: [
+                    { label: 'npm', description: null, recommended: false },
+                    { label: 'pnpm', description: null, recommended: false },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    // The session list holds the arrow keys and Enter once it was clicked.
+    await page.locator('app-sidebar').getByText('Existing session').click();
+    await page.getByRole('textbox', { name: /Describe your task/ }).focus();
+    await page.keyboard.type('Set up the project');
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('button', { name: 'npm', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'pnpm', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  test('shows which answer has the keyboard after sending with the mouse', async ({
+    app,
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        projects: [project()],
+        sessions: [session()],
+        replies: [
+          {
+            steps: [
+              {
+                kind: 'question',
+                question: {
+                  header: 'Package manager',
+                  question: 'Which package manager should I use?',
+                  multiSelect: false,
+                  options: [
+                    { label: 'npm', description: null, recommended: false },
+                    { label: 'pnpm', description: null, recommended: false },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await page.getByRole('textbox', { name: /Describe your task/ }).click();
+    await page.keyboard.type('Set up the project');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    // A button focused from script after a click gets no focus ring of its
+    // own, so the panel draws one.
+    const first = page.getByRole('button', { name: 'npm', exact: true });
+    await expect(first).toBeFocused();
+    await expect(first).toHaveCSS('outline-style', 'solid');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('button', { name: 'pnpm', exact: true })).toHaveCSS(
+      'outline-style',
+      'solid',
+    );
+    await expect(first).toHaveCSS('outline-style', 'none');
+  });
+
   test('picks the model of a subagent from the suggested ones', async ({ app, page }) => {
     await page.addInitScript(() => {
       localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));

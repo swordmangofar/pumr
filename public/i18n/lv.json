@@ -6,16 +6,18 @@
     "toggleSidebar": "Pārslēgt sānjoslu",
     "toggleRightPanel": "Pārslēgt labo paneli",
     "toggleTerminal": "Rādīt/slēpt termināli",
+    "keepAwake": "Saglabāt nomodā, kamēr aģenti strādā",
+    "keepAwakeOn": "Dators paliek nomodā, kamēr aģenti strādā. Noklikšķiniet, lai izslēgtu.",
+    "keepAwakeOff": "Dators var aizmigt, kamēr aģenti strādā. Noklikšķiniet, lai saglabātu to nomodā.",
     "refresh": "Atsvaidzināt",
     "notTauri": "pumr ir jāpalaiž Tauri vidē. Palaidiet to ar: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekti",
+    "sessions": "Sesijas",
     "workspace": "Darbvieta",
     "git": "Git",
     "addProject": "Pievienot projektu",
     "newSession": "Jauna sesija",
-    "new": "Jauns",
     "noProjects": "Vēl nav projektu. Pievienojiet mapi, lai sāktu.",
     "noSessions": "Nav sesiju",
     "removeProject": "Noņemt projektu",
@@ -36,8 +38,6 @@
     "yesterday": "vakar"
   },
   "workspace": {
-    "title": "Darbvieta",
-    "noSession": "Atveriet sesiju, lai pārlūkotu tās failus.",
     "empty": "Nav atrasts neviens fails.",
     "libraryRoot": "bibliotēkas sakne",
     "noOpenFiles": "Nav atvērtu failu. Kokā atlasiet failu.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Dzēst tagu {{ tag }}?",
     "stashes": "Stashes",
     "stashCreate": "Atlikt izmaiņas",
+    "stash": "Atlikt",
+    "stashMessage": "Ziņojums (neobligāts)",
+    "stashIncludeUntracked": "Iekļaut neizsekotos failus",
     "stashApply": "Pielietot",
     "stashPop": "Izņemt",
     "stashDropConfirm": "Atmest {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Izmantot ienākošo (theirs)",
       "markResolved": "Atzīmēt kā atrisinātu",
       "fileHint": "Šajā failā ir konflikti. Paturiet vienu pusi vai rediģējiet failu un atzīmējiet to kā atrisinātu.",
+      "markersLeftIn": "Faili ar konfliktiem, kuros joprojām ir konflikta marķieri (<<<<<<< vai >>>>>>>): {{ count }}. Tomēr atzīmēt tos kā atrisinātus?",
       "markersLeft": "Failā joprojām ir konflikta marķieri (<<<<<<< vai >>>>>>>). Tomēr atzīmēt kā atrisinātu?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Mērķa mape",
     "cloneChoose": "Izvēlēties…",
     "createBranch": "Izveidot zaru",
+    "branch": "Zars",
     "branchName": "Zara nosaukums",
     "createBranchAt": "Izveidot zaru pie: {{branch}}",
     "checkoutAfterCreate": "Pārslēgties pēc izveides",
@@ -298,6 +303,7 @@
     "tokens": "Tokeni",
     "cache": "Kešatmiņa",
     "noKey": "Pievienojiet modeļu pakalpojumu sniedzēju iestatījumos, lai sāktu tērzēšanu.",
+    "noDefaultModel": "Noklusējuma modelis vēl nav izvēlēts. Atveriet iestatījumus, sadaļā “Modeļu pakalpojumu sniedzēji” pie “Noklusējuma modelis” izvēlieties modeli un nospiediet “Saglabāt”.",
     "openSettings": "Atvērt iestatījumus",
     "error": "Kļūda",
     "retry": "Mēģināt vēlreiz",
@@ -318,6 +324,7 @@
     "hint": "{{ send }}, lai nosūtītu · {{ newLine }} jaunai rindai",
     "hintStreaming": "{{ send }}, lai pievienotu rindai · {{ stop }}, lai apturētu",
     "hintRecall": "{{ recall }} pēdējai uzvednei",
+    "hintCommands": "/ komandām",
     "handover": "Nodošana",
     "handovering": "Apkopo…",
     "handoverHint": "Apkopot šo sesiju un turpināt jaunā",
@@ -328,6 +335,13 @@
     "compacting": "Konteksts tiek saspiests",
     "compacted": "Konteksts saspiests",
     "compactedHint": "No šejienes modelis strādā ar šo kopsavilkumu, nevis ar iepriekš redzamajiem ziņojumiem.",
+    "mcpStarting": "Tiek startēts MCP serveris {{ name }}",
+    "mcpIssues": "Dažus MCP serverus šim ziņojumam neizdevās izmantot:",
+    "sideQuestion": "Blakus jautājums",
+    "sideQuestionHint": "Uzdot ātru jautājumu par šo sesiju vai jebko citu. Atbilde sesijai netiek pievienota.",
+    "sideQuestionPrivate": "Netiek pievienots sesijai",
+    "sideQuestionAnswering": "Atbild…",
+    "sideQuestionStopped": "Apturēts",
     "interrupted": "Šī tērzēšana tika pārtraukta, pirms aģents pabeidza darbu: pumr tika aizvērts vai dators pārgāja miega režīmā. Varat to turpināt no vietas, kur tā apstājās.",
     "limitReached": "Apturēts pēc {{ count }} rīka izsaukšanas bez galīgās atbildes. Ierobežojums neļauj iestrēgušam aģentam pastāvīgi darboties. Turpiniet piešķirt tai jaunu budžetu vai ieslēdziet automātisko turpināšanu.",
     "continue": "Turpināt",
@@ -456,7 +470,8 @@
         "cascade": "Noraidīts kopā ar citu pieprasījumu",
         "stopped": "Apturēts",
         "timeout": "Iestājās noildze",
-        "cancelled": "Atcelts"
+        "cancelled": "Atcelts",
+        "hook": "Jūsu hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Nav atbilstību. Turpiniet rakstīt vai nospiediet Escape.",
     "mentionFetch": "Ielādēt {{ url }}",
     "removeMention": "Noņemt atsauci",
+    "commandPrompt": "Piemēro jūsu uzvedni “{{ name }}” tam, ko rakstāt pēc tās",
+    "commandEffort": "Iestatiet, cik daudz modelis spriež",
+    "commandMode": "Mainiet šīs sesijas režīmu",
+    "commandModel": "Mainiet šīs sesijas modeli",
+    "commandProvider": "Izvēlieties nodrošinātāju, kas nodrošina modeli",
+    "commandRevert": "Atgriežas pie jūsu pēdējās uzvednes: viss pēc tās tiek noņemts, un failus var atjaunot",
+    "commandRevertNone": "Vēl nav uzvednes, pie kuras atgriezties",
+    "commandRevertRunning": "Vispirms apturiet aģentu",
+    "commandNoEffort": "Šim modelim nav iestatāma spriešanas līmeņa.",
+    "commandNoProvider": "Pie nodrošinātāja var novirzīt tikai OpenRouter modeļus.",
     "textBlockWords": "{{ count }} vārdi",
     "textBlockRemove": "Noņemt ielīmēto tekstu",
     "textBlockTitle": "Ielīmēts teksts",
@@ -634,7 +659,7 @@
     "alwaysOn": "Vienmēr ieslēgts",
     "editInSettings": "Rediģēt iestatījumos",
     "yourPrompts": "Jūsu uzvednes",
-    "yourPromptsHint": "Iespējotās uzvednes tiek pievienotas aktīvajām sistēmas uzvednēm. Rediģējiet tās vai atiestatiet iebūvētās uz sākotnējo tekstu.",
+    "yourPromptsHint": "Izsauciet uzvedni tērzēšanas laukā ar slīpsvītru un tās nosaukumu, piemēram, /code-review. Tad tā attiecas tikai uz šo ziņojumu. Rediģējiet tās vai atjaunojiet iebūvēto sākotnējo tekstu.",
     "addPrompt": "Jauns",
     "customPrompt": "Pielāgota uzvedne",
     "promptName": "Uzvednes nosaukums",
@@ -718,6 +743,8 @@
       "providers": "Pakalpojumu sniedzēji",
       "agent": "Agenta konfigurācija",
       "agentRules": "Agenta atļauto un aizliegto saraksts",
+      "sandbox": "Smilškaste",
+      "hooks": "Hooks",
       "general": "Vispārīgi",
       "chat": "Tērzēšana",
       "appearance": "Izskats",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP serveris",
       "workspace": "Darbvieta"
+    },
+    "sandbox": {
+      "title": "Komandu smilškaste",
+      "hint": "Operētājsistēma ierobežo katru komandu, ko aģents palaiž, un visu, ko šī komanda startē. Tas ir otrs slānis aiz atļauju noteikumiem – komandai, kuru tie novērtē nepareizi. Komanda, kuru smilškaste aptur, var lūgt darboties ārpus tās; jums tiek jautāts katru reizi.",
+      "unavailable": "Šajā sistēmā nav smilškastes, ko pumr varētu izmantot, tāpēc komandas darbojas bez ierobežojumiem. Nepieciešama macOS vai Linux 5.19 vai jaunāka versija ar Landlock.",
+      "networkUnavailable": "Tīklu var slēgt tikai operētājsistēmā macOS.",
+      "modes": {
+        "off": "Izslēgta",
+        "files": "Faili",
+        "filesAndNetwork": "Faili un tīkls"
+      },
+      "modeHints": {
+        "off": "Komandas darbojas ar jūsu lietotāja tiesībām, un tās ierobežo tikai atļauju noteikumi.",
+        "files": "Komandas raksta tikai projektā, jūsu papildu mapēs, pagaidu mapēs un zemāk norādītajās mapēs. Tās nevar lasīt mapes, kurās glabājas atslēgas.",
+        "filesAndNetwork": "Tas pats, un komandas sasniedz tikai šo datoru, izņemot komandas, kuru host'us atļāvāt. Pakotņu instalēšana tad lūdz darboties ārpus smilškastes."
+      },
+      "writable": "Mapes, kurās komandas arī drīkst rakstīt",
+      "writableHint": "Būvēšanas rīku kešatmiņas. Bez tām būvēšana neizdodas pirmajā lejupielādē. Ceļš sākas ar / vai ~.",
+      "unreadable": "Mapes, kuras komandas nevar lasīt",
+      "unreadableHint": "Vietas, kur glabājas atslēgas un pilnvaras. git, ssh un mākoņa rīki patur mapes, ar kurām strādā, un mape, ko atļāvāt komandām, paliek atvērta.",
+      "excluded": "Komandas, kas darbojas ārpus smilškastes",
+      "excludedHint": "Rīkiem, kuriem ir sava smilškaste un kuri šajā nedarbojas, piemēram, pārlūka testiem. Ieraksts norāda, kā sākas komandrinda; ar * tas ir visas rindas šablons.",
+      "addCommand": "Pievienot komandu",
+      "noCommands": "Vēl nav pievienota neviena komanda."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Hook ir jūsu komanda, ko pumr palaiž noteiktā aģenta darba brīdī. Modelis neizlemj, vai tā tiek palaista, tāpēc nevar to aizmirst. Hook'i tiek palaisti tā, kā tos uzrakstījāt, bez atļauju pieprasījumiem un ārpus smilškastes.",
+      "protocol": "Hook saņem detaļas kā JSON standarta ievadē (tool_name, tool_input, tool_response) un izsaukumā norādīto failu – kā $PUMR_FILE. Izejas kods 0 ļauj aģentam turpināt. Izejas kods 2 nodod aģentam hook'a izvadi un pirms rīka izsaukuma šo izsaukumu noraida.",
+      "add": "Pievienot hook'u",
+      "empty": "Vēl nav pievienots neviens hook.",
+      "remove": "Noņemt hook'u",
+      "event": "Kad hook tiek palaists",
+      "events": {
+        "beforeTool": "Pirms rīka izsaukuma",
+        "afterTool": "Pēc rīka izsaukuma",
+        "turnEnd": "Kad aģents vēlas pabeigt"
+      },
+      "tools": "Rīki",
+      "toolsPlaceholder": "Katrs rīks vai nosaukumi, piemēram, edit|write",
+      "files": "Faili",
+      "filesPlaceholder": "Katrs fails vai šabloni, piemēram, *.ts",
+      "command": "Komanda",
+      "timeout": "Apturēt pēc (sekundēm)",
+      "project": "Projekts",
+      "allProjects": "Visi projekti"
     },
     "providers": {
       "title": "Modeļu pakalpojumu sniedzēji",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Mainiet tikai tad, ja izmantojat starpniekserveri vai saderīgu vārteju.",
     "defaultModel": "Noklusējuma modelis",
     "defaultModelHint": "Tiek izmantots jaunām sesijām.",
+    "defaultModelSetupTitle": "Izvēlieties noklusējuma modeli",
+    "defaultModelSetup": "Jūsu pakalpojumu sniedzējs ir pievienots. Jaunas sesijas sākas ar noklusējuma modeli: izvēlieties to pie “Noklusējuma modelis” zemāk šajā lapā un nospiediet “Saglabāt”. Katrā tērzēšanā modeli joprojām varat nomainīt.",
+    "defaultModelSetupAction": "Pāriet uz noklusējuma modeli",
     "handoverModel": "Nodošanas modelis",
     "handoverModelPlaceholder": "Izmantot pašreizējās sesijas modeli",
     "handoverModelHint": "Modelis, ko izmanto sesijas apkopošanai nodošanas laikā. Atstājiet tukšu, lai izmantotu pašreizējās sesijas modeli.",
@@ -998,6 +1074,14 @@
       "mist": "Blāvs teksts",
       "white": "Teksts"
     },
+    "logo": {
+      "title": "Logotips",
+      "hint": "Redzams lietotnes galvenē un kā lietotnes ikona, kamēr pumr darbojas.",
+      "mascot": "Sēdoša puma",
+      "classic": "Klasiskā seja",
+      "shaded": "Ēnota puma",
+      "tailup": "Puma ar paceltu asti"
+    },
     "background": {
       "title": "Lietotnes fons",
       "hint": "Izvēlieties iebūvētu fonu vai izmantojiet savu attēlu. Tas atrodas aiz stikla paneļiem un atbilst jūsu tēmai.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Jauna rinda",
       "chatStop": "Apturēt atbildi",
       "chatRecallPrompt": "Atsaukt pēdējo uzvedni",
+      "chatToggleMode": "Pārslēgties starp plānošanu un programmēšanu",
+      "chatToggleModeHint": "Atgriežas režīmā, kurā sesija bija pirms plānošanas.",
       "gitToggleStage": "Sagatavot vai atsaukt atlasīto failu sagatavošanu",
       "gitDiscardFiles": "Atmest atlasītos failus",
       "gitSelectAllFiles": "Atlasīt visus failus",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimizēt",
       "fillScreen": "Aizpildīt ekrānu",
       "fillScreenHint": "Izsauktais logs aizpilda aktīvo monitoru, nevis saglabā iepriekšējo izmēru.",
+      "shortcutError": "Sistēmas mēroga īsinājumtaustiņu neizdevās reģistrēt, tāpēc tas neizsauc pumr. Visticamāk, šo taustiņu kombināciju jau izmanto cita programma: izvēlieties citu un saglabājiet vēlreiz.",
+      "waylandHint": "Vidē Wayland programmas nevar reģistrēt sistēmas mēroga īsinājumtaustiņus, tāpēc šis īsinājumtaustiņš šeit nedarbojas uzticami. Tā vietā piesaistiet zemāk redzamo komandu taustiņam savas darbvirsmas tastatūras iestatījumos.",
+      "command": "Īsinājumtaustiņa komanda",
+      "commandHint": "Dara to pašu, ko īsinājumtaustiņš: izsauc pumr vai to paslēpj vai minimizē, kad tas ir priekšplānā. Piesaistiet to taustiņam savas darbvirsmas tastatūras iestatījumos.",
+      "commandActions": "Vienai darbībai komandas beigās norādiet kādu no šiem parametriem:",
       "zoom": "Attēlojuma mērogošana",
       "zoomHint": "Mērogo visu saskarni. Īsinieki: Ctrl/⌘ + + tuvināšanai, Ctrl/⌘ + - tālināšanai, Ctrl/⌘ + 0 atiestatīšanai.",
       "zoomReset": "Atiestatīt"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Atļaut komandu",
     "denyCommand": "Bloķēt komandu",
     "noDeniedCommandRules": "Nav bloķētu komandu.",
+    "mcpToolGrants": "Atļautie MCP rīki",
+    "mcpToolGrantsHint": "MCP serveru rīki, kas tiek palaisti bez jautāšanas. Ieraksts attiecas uz vienu rīku vienā serverī neatkarīgi no argumentiem un vairs nav spēkā, kad mainās šī servera konfigurācija. Izmantojiet „atļaut vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
+    "noMcpToolGrants": "Vēl nav vienmēr atļautu MCP rīku.",
+    "secretFolders": "Mapes ar atļautiem sensitīviem failiem",
+    "secretFoldersHint": "Komandas drīkst bez jautāšanas izmantot sensitīvos failus (atslēgas, pilnvaras, akreditācijas datus), kas atrodas tieši šajās mapēs. Apakšmapes nav iekļautas. Izmantojiet „atļaut vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
+    "noSecretFolders": "Vēl nav mapju ar atļautiem sensitīviem failiem.",
     "scope": {
       "program": "Programma",
       "subcommand": "Programma + apakškomanda",
@@ -1276,7 +1373,8 @@
       "file": "Fails",
       "web": "Tīmekļa vietne",
       "websearch": "Tīmekļa meklēšana",
-      "folder": "Mape"
+      "folder": "Mape",
+      "hook": "Hook"
     },
     "allowAlways": "Atļaut vienmēr",
     "siteRuleLabel": "Vietnes noteikums (domēns vai glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Pievieno tīmekļa vietni un tās apakšdomēnus atļautajām tīmekļa vietnēm.",
       "option": "Tīmekļa vietne + apakšdomēni"
     },
+    "secretScope": {
+      "title": "Sensitīvi faili",
+      "hint": "Pēc tam komandas drīkst bez jautāšanas izmantot atslēgas, pilnvaras un akreditācijas datu failus, kas atrodas tieši šajā mapē. Apakšmapes nav iekļautas.",
+      "option": "Sensitīvie faili šajā mapē",
+      "chip": "sensitīvie faili mapē {{ folder }}"
+    },
     "allowChat": "Atļaut šajā tērzēšanā",
     "option": {
       "yes": "Jā",
@@ -1315,6 +1419,7 @@
     "customize": "Pielāgot",
     "justification": "Kāpēc",
     "keyboardHint": "Nospiediet 1–{{ count }} vai izmantojiet ↑ ↓ un Enter · Esc noraida",
+    "mcpToolHint": "Vairs nejautāt attiecas uz katru šī rīka izsaukumu šajā serverī neatkarīgi no argumentiem.",
     "url": {
       "queryWarning": "Šī adrese vaicājuma virknē nes daudz datu. Pirms atļaušanas pārliecinieties, ka tajā nav nekā privāta."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Atļaut tikai šo pieprasījumu.",
       "allowSession": "Tiek atcerēts visās tērzēšanās līdz lietotnes restartēšanai.",
       "allowChat": "Komandu noteikumi tiek atcerēti šai tērzēšanai un tās apakšaģentiem; mapes un tīmekļa vietnes līdz lietotnes restartēšanai.",
+      "allowChatMcp": "Tiek atcerēts šai tērzēšanai un tās apakšaģentiem: katrs šī rīka izsaukums šajā serverī neatkarīgi no argumentiem.",
       "allowAlways": "Tiek saglabāts iestatījumos un attiecas uz visām tērzēšanām."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Jauns terminālis",
     "close": "Aizvērt termināli",
     "hide": "Slēpt termināli",
+    "run": "Palaist terminālī",
     "noProject": "Atveriet sesiju, lai izmantotu termināli.",
     "exited": "Process beidzās ar kodu {{ code }}",
     "failed": "Neizdevās palaist termināli: {{ error }}"

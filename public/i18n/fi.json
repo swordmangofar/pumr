@@ -6,16 +6,18 @@
     "toggleSidebar": "Näytä/piilota sivupalkki",
     "toggleRightPanel": "Näytä/piilota oikea paneeli",
     "toggleTerminal": "Näytä/piilota pääte",
+    "keepAwake": "Pidä hereillä, kun agentit työskentelevät",
+    "keepAwakeOn": "Tietokone pysyy hereillä, kun agentit työskentelevät. Poista käytöstä napsauttamalla.",
+    "keepAwakeOff": "Tietokone voi nukahtaa, kun agentit työskentelevät. Pidä se hereillä napsauttamalla.",
     "refresh": "Päivitä",
     "notTauri": "pumr on suoritettava Taurin sisällä. Käynnistä se komennolla: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projektit",
+    "sessions": "Istunnot",
     "workspace": "Työtila",
     "git": "Git",
     "addProject": "Lisää projekti",
     "newSession": "Uusi istunto",
-    "new": "Uusi",
     "noProjects": "Ei vielä projekteja. Lisää kansio aloittaaksesi.",
     "noSessions": "Ei istuntoja",
     "removeProject": "Poista projekti",
@@ -36,8 +38,6 @@
     "yesterday": "Eilen"
   },
   "workspace": {
-    "title": "Työtila",
-    "noSession": "Avaa istunto ja selaa sen tiedostoja.",
     "empty": "Tiedostoja ei löytynyt.",
     "libraryRoot": "kirjaston juuri",
     "noOpenFiles": "Ei avoimia tiedostoja. Valitse tiedosto puusta.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Poistetaanko tagi {{ tag }}?",
     "stashes": "Stashit",
     "stashCreate": "Säilö muutokset",
+    "stash": "Säilö",
+    "stashMessage": "Viesti (valinnainen)",
+    "stashIncludeUntracked": "Sisällytä seuraamattomat tiedostot",
     "stashApply": "Käytä",
     "stashPop": "Ota käyttöön",
     "stashDropConfirm": "Poistetaanko {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Käytä saapuvaa (theirs)",
       "markResolved": "Merkitse ratkaistuksi",
       "fileHint": "Tässä tiedostossa on ristiriitoja. Säilytä toinen puoli tai muokkaa tiedostoa ja merkitse se ratkaistuksi.",
+      "markersLeftIn": "Ristiriitaisia tiedostoja, joissa on yhä ristiriitamerkintöjä (<<<<<<< tai >>>>>>>): {{ count }}. Merkitäänkö ne silti ratkaistuiksi?",
       "markersLeft": "Tiedostossa on yhä ristiriitamerkintöjä (<<<<<<< tai >>>>>>>). Merkitäänkö se silti ratkaistuksi?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Kohdekansio",
     "cloneChoose": "Valitse…",
     "createBranch": "Luo haara",
+    "branch": "Haara",
     "branchName": "Haaran nimi",
     "createBranchAt": "Luo haara kohteesta: {{branch}}",
     "checkoutAfterCreate": "Vaihda luonnin jälkeen",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Välimuisti",
     "noKey": "Yhdistä mallien tarjoaja asetuksissa aloittaaksesi keskustelun.",
+    "noDefaultModel": "Oletusmallia ei ole vielä valittu. Avaa asetukset, valitse malli kohdasta ”Oletusmalli” osiossa ”Mallien tarjoajat” ja paina ”Tallenna”.",
     "openSettings": "Avaa asetukset",
     "error": "Virhe",
     "retry": "Yritä uudelleen",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} lähettää · {{ newLine }} uusi rivi",
     "hintStreaming": "{{ send }} lisää jonoon · {{ stop }} pysäyttää",
     "hintRecall": "{{ recall }} viimeisin kehote",
+    "hintCommands": "/ komennoille",
     "handover": "Siirto",
     "handovering": "Tiivistetään…",
     "handoverHint": "Tiivistä tämä istunto ja jatka uudessa",
@@ -328,6 +335,13 @@
     "compacting": "Tiivistetään kontekstia",
     "compacted": "Konteksti tiivistetty",
     "compactedHint": "Tästä eteenpäin malli käyttää tätä tiivistelmää yllä olevien viestien sijaan.",
+    "mcpStarting": "Käynnistetään MCP-palvelinta {{ name }}",
+    "mcpIssues": "Joitakin MCP-palvelimia ei voitu käyttää tässä viestissä:",
+    "sideQuestion": "Sivukysymys",
+    "sideQuestionHint": "Kysy nopea kysymys tästä istunnosta tai mistä tahansa muusta. Vastausta ei lisätä istuntoon.",
+    "sideQuestionPrivate": "Ei lisätä istuntoon",
+    "sideQuestionAnswering": "Vastaa…",
+    "sideQuestionStopped": "Pysäytetty",
     "interrupted": "Tämä keskustelu keskeytyi ennen kuin agentti sai työnsä valmiiksi: pumr suljettiin tai tietokone siirtyi lepotilaan. Voit jatkaa sitä siitä, mihin se jäi.",
     "limitReached": "Keskeytetty {{ count }} työkalukutsujen jälkeen ilman lopullista vastausta. Rajoitus estää juuttunutta agenttia kiertämästä ikuisesti. Anna sille uusi budjetti tai ota automaattinen jatkaminen käyttöön.",
     "continue": "Jatkaa",
@@ -456,7 +470,8 @@
         "cascade": "Estetty toisen pyynnön mukana",
         "stopped": "Pysäytetty",
         "timeout": "Aikakatkaisu",
-        "cancelled": "Peruttu"
+        "cancelled": "Peruttu",
+        "hook": "Oma hookisi"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Ei osumia. Jatka kirjoittamista tai paina Escape.",
     "mentionFetch": "Nouda {{ url }}",
     "removeMention": "Poista viittaus",
+    "commandPrompt": "Soveltaa kehotettasi ”{{ name }}” siihen, mitä kirjoitat sen perään",
+    "commandEffort": "Aseta, kuinka paljon malli päättelee",
+    "commandMode": "Vaihda tämän istunnon tila",
+    "commandModel": "Vaihda tämän istunnon malli",
+    "commandProvider": "Valitse tarjoaja, joka tarjoaa mallin",
+    "commandRevert": "Palaa viimeisimpään kehotteeseesi: sen jälkeinen sisältö poistetaan ja tiedostot voi palauttaa",
+    "commandRevertNone": "Vielä ei ole kehotetta, johon palata",
+    "commandRevertRunning": "Pysäytä ensin agentti",
+    "commandNoEffort": "Tällä mallilla ei ole asetettavaa päättelytasoa.",
+    "commandNoProvider": "Vain OpenRouter-mallit voidaan ohjata tietylle tarjoajalle.",
     "textBlockWords": "{{ count }} sanaa",
     "textBlockRemove": "Poista liitetty teksti",
     "textBlockTitle": "Liitetty teksti",
@@ -634,7 +659,7 @@
     "alwaysOn": "Aina päällä",
     "editInSettings": "Muokkaa asetuksissa",
     "yourPrompts": "Omat kehotteesi",
-    "yourPromptsHint": "Käytössä olevat kehotteet lisätään aktiivisiin järjestelmäkehotteisiin. Muokkaa niitä tai palauta sisäänrakennetut alkuperäiseen tekstiinsä.",
+    "yourPromptsHint": "Kutsu kehote keskustelukentästä kauttaviivalla ja sen nimellä, esimerkiksi /code-review. Se koskee silloin vain kyseistä viestiä. Muokkaa niitä tai palauta sisäänrakennetut alkuperäiseen tekstiin.",
     "addPrompt": "Uusi",
     "customPrompt": "Mukautettu kehote",
     "promptName": "Kehotteen nimi",
@@ -718,6 +743,8 @@
       "providers": "Tarjoajat",
       "agent": "Agenttiasetukset",
       "agentRules": "Agentin valko- ja mustalista",
+      "sandbox": "Hiekkalaatikko",
+      "hooks": "Hookit",
       "general": "Yleiset",
       "chat": "Keskustelu",
       "appearance": "Ulkoasu",
@@ -727,6 +754,52 @@
       "skills": "Skillit",
       "mcp": "MCP-palvelin",
       "workspace": "Työtila"
+    },
+    "sandbox": {
+      "title": "Komentojen hiekkalaatikko",
+      "hint": "Käyttöjärjestelmä rajoittaa jokaista agentin suorittamaa komentoa ja kaikkea, minkä se komento käynnistää. Se on toinen kerros lupasääntöjen takana sellaista komentoa varten, jonka ne arvioivat väärin. Hiekkalaatikon pysäyttämä komento voi pyytää suoritusta sen ulkopuolella; sinulta kysytään joka kerta.",
+      "unavailable": "Tässä järjestelmässä ei ole hiekkalaatikkoa, jota pumr voisi käyttää, joten komennot suoritetaan rajoituksetta. Tarvitaan macOS tai Linux 5.19 tai uudempi, jossa on Landlock.",
+      "networkUnavailable": "Verkon sulkeminen on mahdollista vain macOSissa.",
+      "modes": {
+        "off": "Pois",
+        "files": "Tiedostot",
+        "filesAndNetwork": "Tiedostot ja verkko"
+      },
+      "modeHints": {
+        "off": "Komennot suoritetaan käyttäjänäsi, ja niitä rajoittavat vain lupasäännöt.",
+        "files": "Komennot kirjoittavat vain projektiin, lisäkansioihisi, väliaikaiskansioihin ja alla lueteltuihin kansioihin. Ne eivät voi lukea kansioita, joissa on avaimia.",
+        "filesAndNetwork": "Sama, ja komennot saavat yhteyden vain tähän tietokoneeseen, paitsi komennot, joiden isännät olet sallinut. Pakettien asentaminen pyytää silloin suoritusta hiekkalaatikon ulkopuolella."
+      },
+      "writable": "Kansiot, joihin komennot saavat myös kirjoittaa",
+      "writableHint": "Käännöstyökalujen välimuistit. Ilman niitä käännös epäonnistuu ensimmäisessä latauksessaan. Polku alkaa merkillä / tai ~.",
+      "unreadable": "Kansiot, joita komennot eivät voi lukea",
+      "unreadableHint": "Paikat, joissa avaimet ja tokenit sijaitsevat. git, ssh ja pilvityökalut saavat pitää kansiot, joiden kanssa ne työskentelevät, ja komennoille vapauttamasi kansio pysyy avoimena.",
+      "excluded": "Komennot, jotka suoritetaan hiekkalaatikon ulkopuolella",
+      "excludedHint": "Työkaluille, jotka tuovat oman hiekkalaatikkonsa ja epäonnistuvat tämän sisällä, kuten selaintesteille. Merkintä kertoo, miten komentorivi alkaa; merkillä * se on koko rivin kuvio.",
+      "addCommand": "Lisää komento",
+      "noCommands": "Komentoja ei ole vielä lisätty."
+    },
+    "hooks": {
+      "title": "Hookit",
+      "hint": "Hook on oma komentosi, jonka pumr suorittaa määrätyllä hetkellä agentin työssä. Malli ei päätä, suoritetaanko se, joten malli ei voi unohtaa sitä. Hookit suoritetaan sellaisina kuin kirjoitit ne, ilman lupakyselyjä ja hiekkalaatikon ulkopuolella.",
+      "protocol": "Hook saa tiedot JSON-muodossa vakiosyötteessä (tool_name, tool_input, tool_response) ja kutsun nimeämän tiedoston nimellä $PUMR_FILE. Paluukoodi 0 antaa agentin jatkaa. Paluukoodi 2 välittää hookin tulosteen agentille ja ennen työkalukutsua estää kutsun.",
+      "add": "Lisää hook",
+      "empty": "Hookeja ei ole vielä lisätty.",
+      "remove": "Poista hook",
+      "event": "Milloin hook suoritetaan",
+      "events": {
+        "beforeTool": "Ennen työkalukutsua",
+        "afterTool": "Työkalukutsun jälkeen",
+        "turnEnd": "Kun agentti haluaa lopettaa"
+      },
+      "tools": "Työkalut",
+      "toolsPlaceholder": "Kaikki työkalut tai nimiä, kuten edit|write",
+      "files": "Tiedostot",
+      "filesPlaceholder": "Kaikki tiedostot tai kuvioita, kuten *.ts",
+      "command": "Komento",
+      "timeout": "Pysäytä, kun kulunut (sekuntia)",
+      "project": "Projekti",
+      "allProjects": "Kaikki projektit"
     },
     "providers": {
       "title": "Mallien tarjoajat",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Muuta tätä vain, jos käytät välityspalvelinta tai yhteensopivaa yhdyskäytävää.",
     "defaultModel": "Oletusmalli",
     "defaultModelHint": "Käytetään uusissa istunnoissa.",
+    "defaultModelSetupTitle": "Valitse oletusmalli",
+    "defaultModelSetup": "Tarjoajasi on yhdistetty. Uudet istunnot alkavat oletusmallilla: valitse se kohdasta ”Oletusmalli” alempana tällä sivulla ja paina ”Tallenna”. Voit silti vaihtaa mallia jokaisessa keskustelussa.",
+    "defaultModelSetupAction": "Siirry oletusmalliin",
     "handoverModel": "Siirtomalli",
     "handoverModelPlaceholder": "Käytä nykyisen istunnon mallia",
     "handoverModelHint": "Malli, jota käytetään istunnon tiivistämiseen siirron yhteydessä. Jätä tyhjäksi käyttääksesi nykyisen istunnon mallia.",
@@ -998,6 +1074,14 @@
       "mist": "Himmeä teksti",
       "white": "Teksti"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Näkyy sovelluksen yläpalkissa ja sovelluksen kuvakkeena, kun pumr on käynnissä.",
+      "mascot": "Istuva puuma",
+      "classic": "Klassiset kasvot",
+      "shaded": "Varjostettu puuma",
+      "tailup": "Puuma häntä pystyssä"
+    },
     "background": {
       "title": "Sovelluksen tausta",
       "hint": "Valitse sisäänrakennettu tausta tai käytä omaa kuvaasi. Se istuu lasipaneelien takana ja seuraa teemaasi.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Uusi rivi",
       "chatStop": "Pysäytä vastaus",
       "chatRecallPrompt": "Palauta viimeisin kehote",
+      "chatToggleMode": "Vaihda suunnittelun ja koodauksen välillä",
+      "chatToggleModeHint": "Palaa tilaan, jossa istunto oli ennen suunnittelua.",
       "gitToggleStage": "Valmistele tai poista valmistelusta valitut tiedostot",
       "gitDiscardFiles": "Hylkää valitut tiedostot",
       "gitSelectAllFiles": "Valitse kaikki tiedostot",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Pienennä",
       "fillScreen": "Täytä näyttö",
       "fillScreenHint": "Kutsuttu ikkuna täyttää aktiivisen näytön säilyttämättä aiempaa kokoa.",
+      "shortcutError": "Järjestelmänlaajuista pikanäppäintä ei voitu rekisteröidä, joten se ei kutsu pumria esiin. Jokin toinen sovellus käyttää todennäköisesti tätä näppäinyhdistelmää: valitse toinen ja tallenna uudelleen.",
+      "waylandHint": "Waylandissa sovellukset eivät voi rekisteröidä järjestelmänlaajuisia pikanäppäimiä, joten tämä pikanäppäin ei toimi täällä luotettavasti. Sido sen sijaan alla oleva komento näppäimeen työpöytäsi näppäimistöasetuksissa.",
+      "command": "Pikanäppäimen komento",
+      "commandHint": "Tekee saman kuin pikanäppäin: tuo pumr-ikkunan esiin tai piilottaa tai pienentää sen, kun se on edessä. Sido se näppäimeen työpöytäsi näppäimistöasetuksissa.",
+      "commandActions": "Yksittäistä toimintoa varten päätä komento sen sijaan johonkin näistä:",
       "zoom": "Näytön skaalaus",
       "zoomHint": "Skaalaa koko käyttöliittymän. Pikakuvake: Ctrl/⌘ + + suurentaa, Ctrl/⌘ + - pienentää, Ctrl/⌘ + 0 palauttaa.",
       "zoomReset": "Palauta"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Salli komento",
     "denyCommand": "Estä komento",
     "noDeniedCommandRules": "Ei estettyjä komentoja.",
+    "mcpToolGrants": "Sallitut MCP-työkalut",
+    "mcpToolGrantsHint": "MCP-palvelimien työkalut, jotka suoritetaan kysymättä. Merkintä koskee yhden palvelimen yhtä työkalua argumenteista riippumatta ja lakkaa olemasta voimassa, kun palvelimen määritys muuttuu. Luo sellainen käyttämällä \"salli aina\" -vaihtoehtoa lupakyselyssä.",
+    "noMcpToolGrants": "Ei vielä aina sallittuja MCP-työkaluja.",
+    "secretFolders": "Kansiot, joiden arkaluonteiset tiedostot on vapautettu",
+    "secretFoldersHint": "Komennot saavat käyttää suoraan näissä kansioissa olevia arkaluonteisia tiedostoja (avaimia, tokeneita, tunnistetietoja) kysymättä. Alikansiot eivät kuulu mukaan. Luo sellainen käyttämällä \"salli aina\" -vaihtoehtoa lupakyselyssä.",
+    "noSecretFolders": "Ei vielä kansioita, joiden arkaluonteiset tiedostot on vapautettu.",
     "scope": {
       "program": "Ohjelma",
       "subcommand": "Ohjelma + alikomento",
@@ -1276,7 +1373,8 @@
       "file": "Tiedosto",
       "web": "Verkkosivusto",
       "websearch": "Verkkohaku",
-      "folder": "Kansio"
+      "folder": "Kansio",
+      "hook": "Hook"
     },
     "allowAlways": "Salli aina",
     "siteRuleLabel": "Verkkosivustosääntö (verkkotunnus tai glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Lisää verkkosivuston ja sen aliverkkotunnukset sallittuihin verkkosivustoihin.",
       "option": "Verkkosivusto + aliverkkotunnukset"
     },
+    "secretScope": {
+      "title": "Arkaluonteiset tiedostot",
+      "hint": "Komennot saavat sen jälkeen käyttää suoraan tässä kansiossa olevia avaimia, tokeneita ja tunnistetietotiedostoja kysymättä. Alikansiot eivät kuulu mukaan.",
+      "option": "Tämän kansion arkaluonteiset tiedostot",
+      "chip": "arkaluonteiset tiedostot kansiossa {{ folder }}"
+    },
     "allowChat": "Salli tässä keskustelussa",
     "option": {
       "yes": "Kyllä",
@@ -1315,6 +1419,7 @@
     "customize": "Mukauta",
     "justification": "Miksi",
     "keyboardHint": "Paina 1–{{ count }} tai käytä ↑ ↓ ja Enter · Esc hylkää",
+    "mcpToolHint": "Kun ei kysytä uudelleen, se koskee tämän työkalun jokaista kutsua tällä palvelimella argumenteista riippumatta.",
     "url": {
       "queryWarning": "Tämä osoite sisältää paljon tietoa kyselymerkkijonossaan. Varmista ennen sallimista, ettei se sisällä mitään yksityistä."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Salli vain tämä pyyntö.",
       "allowSession": "Muistetaan kaikissa keskusteluissa, kunnes sovellus käynnistetään uudelleen.",
       "allowChat": "Komentosäännöt muistetaan tässä keskustelussa ja sen aliagenteissa; kansiot ja verkkosivustot sovelluksen uudelleenkäynnistykseen asti.",
+      "allowChatMcp": "Muistetaan tässä keskustelussa ja sen aliagenteissa: tämän työkalun jokainen kutsu tällä palvelimella argumenteista riippumatta.",
       "allowAlways": "Tallennetaan asetuksiin ja koskee kaikkia keskusteluja."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Uusi pääte",
     "close": "Sulje pääte",
     "hide": "Piilota pääte",
+    "run": "Suorita päätteessä",
     "noProject": "Avaa istunto käyttääksesi päätettä.",
     "exited": "Prosessi päättyi koodilla {{ code }}",
     "failed": "Päätettä ei voitu käynnistää: {{ error }}"

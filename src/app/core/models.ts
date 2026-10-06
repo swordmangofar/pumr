@@ -2,6 +2,19 @@ import { CustomTheme } from './themes';
 
 export type WindowToggleAction = 'hide' | 'minimize';
 
+/** How the window can be summoned on this desktop. */
+export interface WindowControl {
+  /** Command line that toggles the window, to bind to a key in the desktop's keyboard settings. */
+  toggleCommand: string;
+  /** `false` on Wayland, where apps cannot register system-wide shortcuts. */
+  globalShortcut: boolean;
+  /**
+   * Why the system-wide shortcut could not be registered the last time it was
+   * applied, such as a key another app holds; `null` when it works.
+   */
+  shortcutError: string | null;
+}
+
 export interface Project {
   id: string;
   path: string;
@@ -73,8 +86,11 @@ export interface WorkspaceEntry {
 
 export interface WorkspaceFile {
   path: string;
+  /** Empty for a `binary` file. */
   content: string;
   language: string;
+  /** The file exists but is not UTF-8 text, so it can neither be shown nor saved. */
+  binary: boolean;
 }
 
 export interface McpToolInfo {
@@ -265,11 +281,14 @@ export interface SpendStats {
   bySession: SessionSpend[];
 }
 
+/**
+ * One of "Your prompts": called from the chat box with a slash and its name
+ * (`/code-review`) for a single message, or named by a mode.
+ */
 export interface UserSystemPrompt {
   id: string;
   name: string;
   prompt: string;
-  enabled: boolean;
 }
 
 export interface Mode {
@@ -328,6 +347,10 @@ export interface Settings {
   deniedCommandRules: CommandRule[];
   allowedWebsites: string[];
   deniedWebsites: string[];
+  /** MCP tools that run without a prompt, saved with "always allow". */
+  mcpToolGrants: McpToolGrant[];
+  /** Folders whose sensitive files commands may use without a prompt. */
+  secretFolders: string[];
   permissionDefaults: PermissionDefaults;
   autoApproveReadOnly: boolean;
   autoApprovePackageScripts: boolean;
@@ -380,6 +403,42 @@ export interface Settings {
   backgroundOpacity: number;
   backgroundBlur: number;
   glassOpacity: number;
+  /** Id of the logo in the app header, see `LOGOS`. */
+  logo: string;
+  /** How far the operating system confines the agent's commands. */
+  sandbox: SandboxMode;
+  /** Folders outside the project a confined command may still write to. */
+  sandboxWritableFolders: string[];
+  /** Folders and files a confined command may not read. */
+  sandboxUnreadableFolders: string[];
+  /** Commands that run outside the sandbox. */
+  sandboxExcludedCommands: string[];
+  /** Commands of the user's that run at fixed moments of the agent's work. */
+  hooks: Hook[];
+}
+
+export type SandboxMode = 'off' | 'files' | 'filesAndNetwork';
+
+/** What the sandbox can do on this machine (`get_sandbox_support`). */
+export interface SandboxSupport {
+  files: boolean;
+  network: boolean;
+}
+
+export type HookEvent = 'beforeTool' | 'afterTool' | 'turnEnd';
+
+export interface Hook {
+  id: string;
+  enabled: boolean;
+  event: HookEvent;
+  /** Tool names or patterns separated by `|`; empty runs it for every tool. */
+  tools: string;
+  /** Patterns for the file a call names; empty runs it for every call. */
+  files: string;
+  command: string;
+  timeoutSeconds: number;
+  /** Path of the one project it runs in; empty runs it in every project. */
+  project: string;
 }
 
 export type PermissionDefaultAction = 'once' | 'session';
@@ -829,6 +888,16 @@ export interface CommandScopeOption {
   rule: CommandRule;
 }
 
+/** A remembered approval for one tool of one MCP server, with any arguments. */
+export interface McpToolGrant {
+  server: string;
+  tool: string;
+  /** The config file that defines the server. */
+  source: string;
+  /** Digest of the server's configuration; a changed server asks again. */
+  fingerprint: string;
+}
+
 export type PermissionRequestEvent = Extract<StreamEvent, { kind: 'permissionRequest' }>;
 
 /** One recorded permission decision, for the debug view's permission log. */
@@ -918,6 +987,10 @@ export type StreamEvent =
   | { kind: 'compacted'; message: Message }
   /** pumr told the agent something; `message` records it. */
   | { kind: 'note'; message: Message }
+  /** An MCP server the turn uses is being started or connected to. */
+  | { kind: 'mcpStarting'; server: string }
+  /** The turn's MCP servers are settled; `issues` names those it has to do without, and why. */
+  | { kind: 'mcpReady'; issues: string[] }
   | { kind: 'toolStart'; callId: string; name: string; summary: string; arguments: string }
   | { kind: 'toolDelta'; callId: string; text: string }
   | {
@@ -947,6 +1020,10 @@ export type StreamEvent =
       folders: string[];
       /** Websites a command contacts that the user can allow. */
       hosts: string[];
+      /** The MCP tool a "don't ask again" choice would remember. */
+      mcpTool?: McpToolGrant | null;
+      /** Folders whose sensitive files the user can release for commands. */
+      secretFolders?: string[];
       /** The assistant's one-sentence explanation of why it asks. */
       justification: string | null;
     }
@@ -979,6 +1056,15 @@ export interface CompactResult {
   message: Message;
   /** Estimated tokens of the messages the model is sent from now on. */
   usedTokens: number;
+}
+
+/** Streamed while a side question (`/btw`) is being answered. */
+export type SideAnswerEvent = { kind: 'delta'; text: string };
+
+export interface SideAnswer {
+  answer: string;
+  /** Stopped before the model finished; `answer` is what had arrived. */
+  cancelled: boolean;
 }
 
 export interface PendingPermission extends PermissionRequestEvent {
@@ -1033,5 +1119,7 @@ export interface SendMessageArgs {
   provider?: string | null;
   attachments?: MessageAttachment[];
   mentions?: Mention[];
+  /** Id of the prompt of "Your prompts" that the message calls with a slash command. */
+  promptId?: string | null;
   resume?: boolean;
 }

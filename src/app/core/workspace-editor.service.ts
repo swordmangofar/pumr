@@ -99,7 +99,7 @@ export class WorkspaceEditorService {
     this.openFilesState.update((state) => ({ ...state, [projectId]: files }));
     const key = this.editorKey(projectId, path);
     const pending = this.editorContentState()[key];
-    if (pending && this.editorDirtyState()[key]) {
+    if (pending && !pending.binary && this.editorDirtyState()[key]) {
       void api.writeWorkspaceFile(projectId, path, pending.content).catch(() => undefined);
     }
     this.clearAutoSave(projectId, path);
@@ -154,10 +154,14 @@ export class WorkspaceEditorService {
     }
   }
 
+  /**
+   * Takes an edit and saves it shortly after. A file that is not text was
+   * read as empty: it is never changed, so that nothing is written over it.
+   */
   updateContent(projectId: string, path: string, content: string): void {
     const key = this.editorKey(projectId, path);
     const file = this.editorContentState()[key];
-    if (!file || file.content === content) {
+    if (!file || file.binary || file.content === content) {
       return;
     }
     this.editorContentState.update((state) => ({ ...state, [key]: { ...file, content } }));
@@ -172,7 +176,7 @@ export class WorkspaceEditorService {
   async save(projectId: string, path: string): Promise<void> {
     const key = this.editorKey(projectId, path);
     const file = this.editorContentState()[key];
-    if (!file) {
+    if (!file || file.binary) {
       return;
     }
     const saved = file.content;

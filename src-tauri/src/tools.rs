@@ -11,6 +11,8 @@ use crate::permissions::{
     self, CommandDecision, FileIgnoreConfig, LivePermissions, WebsiteDecision,
 };
 use crate::processes::{kill_tree, OutputBuffer, ProcessRegistry, RunningProcess};
+use crate::read_formats::{self, Format};
+use crate::sandbox;
 use globset::Glob;
 use ignore::WalkBuilder;
 use regex::{Regex, RegexBuilder};
@@ -55,6 +57,12 @@ pub struct ToolRuntime {
     pub skills: Vec<SkillEntry>,
     /// The call's `reason` argument, shown in any permission prompt it raises.
     pub justification: Option<String>,
+    /// Whether the model that made the call takes pictures: `read` hands it
+    /// an image file only then.
+    pub vision: bool,
+    /// The call is made in a mode that changes no files: planning, read-only,
+    /// a subagent that explores or checks.
+    pub read_only: bool,
     pub cancel: CancellationToken,
     pub emit: EventSink,
 }
@@ -135,6 +143,15 @@ impl ToolOutcome {
             changes: Vec::new(),
             attachments: Vec::new(),
         }
+    }
+
+    /// A call one of the user's hooks refused before it ran, with what the
+    /// hook said. The user set the hook up, so the agent is not to work
+    /// around it.
+    pub(crate) fn refused_by_hook(reason: &str) -> Self {
+        Self::denied_with_reason(format!(
+            "A hook the user set up refused this call:\n{reason}\n\nDo not try to get around it; change the call or ask the user."
+        ))
     }
 
     fn denied_with_reason(reason: impl Into<String>) -> Self {
@@ -417,13 +434,14 @@ fn base_tool_schemas() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "read",
-                "description": "Read a file from the filesystem. Returns line-numbered content. Read a file before you change it. For a large file, find the place with grep first and read only that part with offset and limit.",
+                "description": "Read a file from the filesystem. Returns line-numbered content. Read a file before you change it. For a large file, find the place with grep first and read only that part with offset and limit. Also reads a picture (png, jpg, gif, webp), which you then see, a PDF as text and a Jupyter notebook as its cells.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": { "type": "string", "description": "File path, relative to the project root or absolute" },
                         "offset": { "type": "integer", "description": "1-based line number to start reading from" },
-                        "limit": { "type": "integer", "description": "Maximum number of lines to read (default 2000)" }
+                        "limit": { "type": "integer", "description": "Maximum number of lines to read (default 2000)" },
+                        "pages": { "type": "string", "description": "PDF only: the pages to read, e.g. \"3\" or \"1-5\" (default: the first 10)" }
                     },
                     "required": ["path"]
                 }
@@ -832,46 +850,10 @@ async fn load_skill(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         ));
     };
 
-    let directory = Path::new(&entry.path);
-    let skill_file = directory.join("SKILL.md");
-    let mut files: Vec<PathBuf> = Vec::new();
-    if skill_file.is_file() {
-        files.push(skill_file.clone());
+    match crate::discovery::skill_instructions(&name, Path::new(&entry.path)) {
+        Some(instructions) => ToolOutcome::ok(instructions),
+        None => ToolOutcome::error(format!("Skill '{name}' has no readable instructions.")),
     }
-    if let Ok(entries) = std::fs::read_dir(directory) {
-        for file in entries.flatten() {
-            let path = file.path();
-            if path.is_file()
-                && path.extension().map(|ext| ext == "md").unwrap_or(false)
-                && path != skill_file
-            {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files.truncate(20);
-
-    let mut body = String::new();
-    for file in &files {
-        if let Ok(content) = std::fs::read_to_string(file) {
-            if let Some(file_name) = file.file_name() {
-                body.push_str(&format!(
-                    "\n### {}\n{}\n",
-                    file_name.to_string_lossy(),
-                    content.trim()
-                ));
-            }
-        }
-    }
-    if body.trim().is_empty() {
-        return ToolOutcome::error(format!("Skill '{name}' has no readable instructions."));
-    }
-    ToolOutcome::ok(format!(
-        "<skill name=\"{name}\" path=\"{}\">\n{}\n</skill>\n\nFollow the skill instructions above when they apply to the user's request.",
-        entry.path,
-        body.trim()
-    ))
 }
 
 async fn search_mcp_tools(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -940,9 +922,33 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
         }
     }
     let arguments = &arguments;
-    // MCP tools run server-side and bypass the built-in command gate, so require
-    // an explicit user decision before every invocation.
     let preview = serde_json::json!({ "tool": name, "arguments": arguments }).to_string();
+    // MCP tools run server-side and bypass the built-in command gate, so every
+    // call needs the user's decision: one made for this call, or one they
+    // asked to be remembered for this tool of this exact server.
+    let grant = manager.tool_grant(name);
+    // In a mode that changes no files, a tool that does not say it only reads
+    // could change them on its server's side. An approval the user gave it
+    // for other work does not cover that, and none is remembered from here.
+    let unvouched = runtime.read_only && !manager.reads_only(name);
+    let grant = grant.filter(|_| !unvouched);
+    let remembered = grant.as_ref().and_then(|grant| {
+        runtime
+            .permissions
+            .mcp_tool_grant_scope(&runtime.conversation_id, grant)
+    });
+    if let Some(scope) = remembered {
+        let reason = match scope {
+            crate::permissions::McpGrantScope::Always => {
+                "remembered approval: MCP tool always allowed"
+            }
+            crate::permissions::McpGrantScope::Chat => {
+                "remembered approval: MCP tool allowed in this chat"
+            }
+        };
+        audit_unprompted(runtime, "command", &preview, true, reason.to_string());
+        return run_mcp_tool(runtime, &manager, name, arguments).await;
+    }
     let decision = runtime
         .broker
         .ask(
@@ -952,8 +958,12 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 cwd: Some(permission_path(&runtime.project_root)),
                 project_root: runtime.project_root.clone(),
                 title: format!("Run MCP tool {name}?"),
-                detail: "The assistant wants to call an MCP server tool. Review the arguments before allowing."
-                    .to_string(),
+                detail: if unvouched {
+                    "This chat is in a mode that changes no files, and this MCP tool does not say that it only reads. Review the arguments before allowing."
+                } else {
+                    "The assistant wants to call an MCP server tool. Review the arguments before allowing."
+                }
+                .to_string(),
                 command: Some(preview),
                 path: None,
                 folder: None,
@@ -965,6 +975,8 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
                 folders: Vec::new(),
                 hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
+                mcp_tool: grant,
+                secret_folders: Vec::new(),
                 justification: runtime.justification.clone(),
             },
             &runtime.cancel,
@@ -975,6 +987,16 @@ async fn call_mcp_tool(runtime: &mut ToolRuntime, name: &str, arguments: &Value)
     if !decision.allowed {
         return ToolOutcome::refused(&decision);
     }
+    run_mcp_tool(runtime, &manager, name, arguments).await
+}
+
+/// Calls an MCP tool the user has allowed and turns its answer into a result.
+async fn run_mcp_tool(
+    runtime: &ToolRuntime,
+    manager: &McpManager,
+    name: &str,
+    arguments: &Value,
+) -> ToolOutcome {
     // Stop ends the call even when the server does not answer.
     let result = tokio::select! {
         _ = runtime.cancel.cancelled() => return ToolOutcome::cancelled(),
@@ -1135,6 +1157,17 @@ fn ignore_relative(runtime: &ToolRuntime, path: &Path) -> String {
 /// Reason the agent should not touch a path, or `None` if it is allowed.
 fn file_ignore_reason(runtime: &ToolRuntime, path: &Path) -> Option<&'static str> {
     let relative = ignore_relative(runtime, path);
+    // A file in the scratch folder or another folder the user opened is
+    // judged below that folder: the names above it (`~/.cache`, `/tmp`) say
+    // nothing about the file, and neither does the project's `.gitignore`.
+    if !path.starts_with(&runtime.project_root) {
+        // An exemption may name such a file by its whole path.
+        if runtime.file_ignore.is_exempt(&relative) {
+            return None;
+        }
+        let below = relative_display(runtime, path);
+        return runtime.file_ignore.ignore_reason(&below, false);
+    }
     let probe = GitProbe {
         project_root: &runtime.project_root,
         shadow: Some(&runtime.shadow),
@@ -1158,6 +1191,18 @@ pub(crate) async fn ensure_path_access(
     let extra = runtime.permissions.folders_for(&runtime.conversation_id);
     if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
         && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
+    {
+        return Ok(());
+    }
+    // A skill's instructions refer to the files next to them, which are named
+    // to the agent when it loads the skill. Reading those is part of using a
+    // skill the user enabled; writing there or running something is not.
+    if operation == PermissionOperation::Read
+        && runtime.skills.iter().any(|skill| {
+            let folder = Path::new(&skill.path);
+            permissions::path_is_inside(absolute, folder, &[])
+                && !permissions::symlink_escapes(absolute, folder, &[])
+        })
     {
         return Ok(());
     }
@@ -1193,6 +1238,8 @@ pub(crate) async fn ensure_path_access(
                 folders: Vec::new(),
                 hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
+                mcp_tool: None,
+                secret_folders: Vec::new(),
                 justification: runtime.justification.clone(),
             },
             &runtime.cancel,
@@ -1207,13 +1254,33 @@ pub(crate) async fn ensure_path_access(
     }
 }
 
+/// Whether `path` is an environment file that the user's rules keep from the
+/// agent. Writing one takes the user's yes, as a credential file does; a
+/// template such as `.env.example` or a file the user exempted does not.
+fn guarded_env_file(runtime: &ToolRuntime, path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    permissions::is_env_file(&name)
+        && !permissions::is_env_example(&name)
+        // The switch of the rule is private to the rules: whether they hide a
+        // plain `.env` says how it stands.
+        && runtime.file_ignore.category_reason(Path::new(".env")).is_some()
+        // Exempted by the path `read` judges it by (see `file_ignore_reason`).
+        && !runtime.file_ignore.is_exempt(&ignore_relative(runtime, path))
+        && !runtime.file_ignore.is_exempt(&relative_display(runtime, path))
+}
+
 async fn ensure_write_access(
     runtime: &mut ToolRuntime,
     absolute: &Path,
 ) -> std::result::Result<(), ToolOutcome> {
     ensure_path_access(runtime, absolute, "file", PermissionOperation::Write).await?;
     let relative = relative_display(runtime, absolute);
-    if runtime.file_ignore.sensitive_reason(absolute).is_none() {
+    if runtime.file_ignore.sensitive_reason(absolute).is_none()
+        && !guarded_env_file(runtime, absolute)
+    {
         return Ok(());
     }
     let reason = "this is a sensitive file (env, key, database, credentials)".to_string();
@@ -1238,6 +1305,8 @@ async fn ensure_write_access(
                 folders: Vec::new(),
                 hosts: Vec::new(),
                 grant_session_id: runtime.conversation_id.clone(),
+                mcp_tool: None,
+                secret_folders: Vec::new(),
                 justification: runtime.justification.clone(),
             },
             &runtime.cancel,
@@ -1292,6 +1361,8 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
                     folders: Vec::new(),
                     hosts: Vec::new(),
                     grant_session_id: runtime.conversation_id.clone(),
+                    mcp_tool: None,
+                    secret_folders: Vec::new(),
                     justification: runtime.justification.clone(),
                 },
                 &runtime.cancel,
@@ -1303,11 +1374,32 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
             return ToolOutcome::refused(&decision);
         }
     }
-    let content = match tokio::fs::read_to_string(&absolute).await {
-        Ok(content) => content,
+    let bytes = match tokio::fs::read(&absolute).await {
+        Ok(bytes) => bytes,
         Err(error) => {
             return ToolOutcome::error(format!("Cannot read {}: {error}", absolute.display()))
         }
+    };
+    let relative = relative_display(runtime, &absolute);
+    // A notebook is shown as its cells, whose lines are not those of the file.
+    let (content, numbered) = match read_formats::format_of(&absolute, &bytes) {
+        Format::Picture(mime_type) => return read_picture(runtime, &relative, mime_type, &bytes),
+        Format::Pdf => return read_pdf(&relative, bytes, arguments).await,
+        format => match String::from_utf8(bytes) {
+            Ok(text) if format == Format::Notebook => match read_formats::render_notebook(&text) {
+                Some(cells) => (cells, false),
+                None => (text, true),
+            },
+            Ok(text) => (text, true),
+            Err(error) => {
+                let bytes = error.as_bytes();
+                return ToolOutcome::error(format!(
+                    "{relative} is {} ({} bytes), not UTF-8 text. read shows text files, pictures (png, jpg, gif, webp), PDFs and Jupyter notebooks.",
+                    read_formats::binary_kind(bytes),
+                    bytes.len()
+                ));
+            }
+        },
     };
     let lines: Vec<&str> = content.lines().collect();
     let offset = arguments
@@ -1322,12 +1414,17 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         .max(1) as usize;
     let mut output = String::new();
     for (index, line) in lines.iter().skip(offset - 1).take(limit).enumerate() {
-        output.push_str(&format!("{}\t{}\n", offset + index, line));
+        if numbered {
+            output.push_str(&format!("{}\t{}\n", offset + index, line));
+        } else {
+            output.push_str(&format!("{line}\n"));
+        }
     }
     let shown_end = (offset - 1 + limit).min(lines.len());
     if lines.len() > shown_end {
         output.push_str(&format!(
-            "\n… file has {} lines total; showing {}-{}. Continue with offset={} and the same limit to read on.",
+            "\n… {} has {} lines total; showing {}-{}. Continue with offset={} and the same limit to read on.",
+            if numbered { "file" } else { "notebook text" },
             lines.len(),
             offset,
             shown_end,
@@ -1335,6 +1432,114 @@ async fn read_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         ));
     }
     runtime.files.note(&runtime.session_id, &absolute);
+    ToolOutcome::ok(output)
+}
+
+/// A picture `read` was given. It is stored with the result, which shows it
+/// in the chat, and the history hands it to the model after the results of
+/// the step (see `agent::stored_history`).
+fn read_picture(
+    runtime: &ToolRuntime,
+    relative: &str,
+    mime_type: &str,
+    bytes: &[u8],
+) -> ToolOutcome {
+    if !runtime.vision {
+        return ToolOutcome::error(format!(
+            "{relative} is a picture, and the model in use does not take pictures. Show it to the user with the screenshot tool (path) and ask what you need to know about it."
+        ));
+    }
+    if bytes.len() > read_formats::MAX_PICTURE_BYTES {
+        return ToolOutcome::error(format!(
+            "{relative} is {:.1} MB, more than the {} MB a model takes. Save a smaller copy to the scratch folder (for example with `sips -Z 1600` on macOS or ImageMagick's `magick -resize 1600x1600`) and read that.",
+            bytes.len() as f64 / (1024.0 * 1024.0),
+            read_formats::MAX_PICTURE_BYTES / (1024 * 1024)
+        ));
+    }
+    let mut outcome = ToolOutcome::ok(format!(
+        "{relative} is a picture ({mime_type}, {} KB). It follows the tool results of this step.",
+        bytes.len().div_ceil(1024)
+    ));
+    outcome.attachments = vec![read_formats::picture(relative, mime_type, bytes)];
+    outcome
+}
+
+/// Text of a PDF's pages that one result holds, leaving room for the lines
+/// around it.
+const PDF_TEXT_BYTES: usize = MAX_TOOL_OUTPUT - 2_000;
+
+/// The text of a PDF: the pages asked for, or its first ones, as many as fit
+/// in a result whole.
+async fn read_pdf(relative: &str, bytes: Vec<u8>, arguments: &Value) -> ToolOutcome {
+    if bytes.len() > read_formats::MAX_PDF_BYTES {
+        return ToolOutcome::error(format!(
+            "{relative} is {} MB, more than the {} MB read takes a PDF's text from.",
+            bytes.len() / (1024 * 1024),
+            read_formats::MAX_PDF_BYTES / (1024 * 1024)
+        ));
+    }
+    let parsed = tokio::task::spawn_blocking(move || read_formats::pdf_pages(&bytes)).await;
+    let pages = match parsed {
+        Ok(Ok(pages)) if !pages.is_empty() => pages,
+        Ok(Ok(_)) => return ToolOutcome::error(format!("{relative} is a PDF without pages.")),
+        Ok(Err(reason)) => {
+            return ToolOutcome::error(format!("Cannot read {relative} as a PDF: {reason}."))
+        }
+        Err(error) => {
+            return ToolOutcome::error(format!("Cannot read {relative} as a PDF: {error}."))
+        }
+    };
+    let total = pages.len();
+    let asked = arguments
+        .get("pages")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|spec| !spec.is_empty());
+    let chosen: Vec<usize> = match asked {
+        Some(spec) => match read_formats::page_selection(spec, total) {
+            Ok(chosen) => chosen,
+            Err(reason) => return ToolOutcome::error(reason),
+        },
+        None => (1..=total.min(read_formats::DEFAULT_PDF_PAGES)).collect(),
+    };
+    if chosen.iter().all(|page| pages[page - 1].trim().is_empty()) {
+        return ToolOutcome::error(format!(
+            "{relative} has no text on {}: it is probably a scan, whose pages are pictures. read cannot show those.",
+            if chosen.len() == total { "its pages".to_string() } else { format!("page {}", read_formats::page_ranges(&chosen)) }
+        ));
+    }
+
+    // Whole pages only: a result cut in the middle of the text would lose
+    // the pages the model asked for without saying which.
+    let mut shown: Vec<usize> = Vec::new();
+    let mut size = 0usize;
+    for page in &chosen {
+        let length = pages[page - 1].trim().len() + 32;
+        if !shown.is_empty() && size + length > PDF_TEXT_BYTES {
+            break;
+        }
+        size += length;
+        shown.push(*page);
+    }
+    let last_shown = shown.last().copied().unwrap_or(1);
+    // What is left to read: the rest of what was asked for, or the pages
+    // after a first look.
+    let last_wanted = match asked {
+        Some(_) => chosen.last().copied().unwrap_or(total),
+        None => total.min(last_shown + read_formats::DEFAULT_PDF_PAGES),
+    };
+    let mut output = format!(
+        "{relative}: PDF, {total} page(s). Below is the text of page {}.",
+        read_formats::page_ranges(&shown)
+    );
+    if last_shown < last_wanted {
+        output.push_str(&format!(
+            " Read on with pages=\"{}-{last_wanted}\".",
+            last_shown + 1
+        ));
+    }
+    output.push_str("\n\n");
+    output.push_str(&read_formats::render_pdf(&pages, &shown));
     ToolOutcome::ok(output)
 }
 
@@ -1348,6 +1553,19 @@ async fn write_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Err(error) => return ToolOutcome::error(error.to_string()),
     };
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
+    // Replacing a file takes having read it, and a file `read` refuses is
+    // never read: asking the user about it first would waste their yes.
+    if absolute.starts_with(&runtime.project_root)
+        && !runtime.files.knows(&runtime.session_id, &absolute)
+        && std::fs::metadata(&absolute).is_ok_and(|file| file.is_file() && file.len() > 0)
+    {
+        if let Some(reason) = file_ignore_reason(runtime, &absolute) {
+            let relative = relative_display(runtime, &absolute);
+            return ToolOutcome::error(format!(
+                "{relative} already exists and was not replaced: {reason}, so you cannot read it first. Ask the user to change it, or to allow it in Settings → Agent rules."
+            ));
+        }
+    }
     if let Err(outcome) = ensure_write_access(runtime, &absolute).await {
         return outcome;
     }
@@ -1357,17 +1575,37 @@ async fn write_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         }
     }
     let existed = absolute.exists();
-    let old = tokio::fs::read_to_string(&absolute)
-        .await
-        .unwrap_or_default();
+    let known = runtime.files.knows(&runtime.session_id, &absolute);
+    // Read as bytes: a file that is not UTF-8 text holds something as well,
+    // and `read` never showed it.
+    let old = match String::from_utf8(tokio::fs::read(&absolute).await.unwrap_or_default()) {
+        Ok(old) => old,
+        Err(error) if !known => {
+            let relative = relative_display(runtime, &absolute);
+            return ToolOutcome::error(format!(
+                "{relative} already exists ({} bytes, not UTF-8 text) and you have not read it in this chat, so it was not replaced. It cannot be read as text: convert or remove it with a command first if it is to be replaced.",
+                error.as_bytes().len()
+            ));
+        }
+        // What can be read of it is what the change is counted against.
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    };
     // Replacing a file the agent never looked at loses whatever is in it.
-    if !old.trim().is_empty() && !runtime.files.knows(&runtime.session_id, &absolute) {
+    if !old.trim().is_empty() && !known {
         let relative = relative_display(runtime, &absolute);
         return ToolOutcome::error(format!(
             "{relative} already exists ({} lines) and you have not read it in this chat, so it was not replaced. Read it first; then change it with edit, or call write again to replace all of it.",
             old.lines().count()
         ));
     }
+    // `read` shows a file without its `\r`, so the content for a file of
+    // `\r\n` lines comes back with `\n` alone: the file keeps its line endings.
+    let content =
+        if !content.contains('\r') && old.matches("\r\n").count() * 2 > old.matches('\n').count() {
+            content.replace('\n', "\r\n")
+        } else {
+            content
+        };
     if let Err(error) = tokio::fs::write(&absolute, &content).await {
         return ToolOutcome::error(format!("Cannot write {}: {error}", absolute.display()));
     }
@@ -1408,6 +1646,14 @@ async fn edit_file(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome 
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let absolute = permissions::resolve_path(&runtime.project_root, &path);
+    // The result of an edit shows the lines around it, and a failed one the
+    // closest text: a file `read` refuses is not to be seen this way either.
+    if let Some(reason) = file_ignore_reason(runtime, &absolute) {
+        let relative = relative_display(runtime, &absolute);
+        return ToolOutcome::error(format!(
+            "Refusing to edit {relative}: {reason}. Change the file access rules in Settings → Agent rules if the assistant should access it."
+        ));
+    }
     if let Err(outcome) = ensure_write_access(runtime, &absolute).await {
         return outcome;
     }
@@ -1623,14 +1869,18 @@ enum EditMatch {
         old_indent: String,
         target_indent: String,
     },
-    Whitespace(Vec<(usize, usize)>),
+    Whitespace {
+        ranges: Vec<(usize, usize)>,
+        old_indent: String,
+        target_indent: String,
+    },
 }
 
 impl EditMatch {
     fn ranges(&self) -> &[(usize, usize)] {
         match self {
-            EditMatch::Exact(ranges) | EditMatch::Whitespace(ranges) => ranges,
-            EditMatch::LineTrimmed { ranges, .. } => ranges,
+            EditMatch::Exact(ranges) => ranges,
+            EditMatch::LineTrimmed { ranges, .. } | EditMatch::Whitespace { ranges, .. } => ranges,
         }
     }
 }
@@ -1660,9 +1910,19 @@ fn apply_edit(
             old_indent,
             target_indent,
             ..
+        }
+        | EditMatch::Whitespace {
+            old_indent,
+            target_indent,
+            ..
         } => reindent(new, old_indent, target_indent),
-        _ => new.to_string(),
+        EditMatch::Exact(_) => new.to_string(),
     };
+    // `read` shows no `\r`, so the model writes `\n` into a file of `\r\n`
+    // lines as well. One it did send is not doubled.
+    let crlf = content
+        .contains("\r\n")
+        .then(|| replacement.replace("\r\n", "\n").replace('\n', "\r\n"));
     let take = if replace_all { ranges.len() } else { 1 };
     let mut result = String::with_capacity(content.len() + replacement.len());
     let mut cursor = 0;
@@ -1672,12 +1932,30 @@ fn apply_edit(
             continue;
         }
         result.push_str(&content[cursor..*start]);
-        result.push_str(&replacement);
+        let text = match &crlf {
+            Some(crlf) if ends_lines_with_crlf(content, *start) => crlf,
+            _ => &replacement,
+        };
+        // A match that began in the middle of a `\r\n` left its `\r` behind.
+        result.push_str(match text.strip_prefix('\r') {
+            Some(rest) if rest.starts_with('\n') && result.ends_with('\r') => rest,
+            _ => text,
+        });
         cursor = *end;
         replaced += 1;
     }
     result.push_str(&content[cursor..]);
     Ok((result, replaced))
+}
+
+/// Whether the line `position` is on ends in `\r\n`; for a last line without
+/// a line break, whether the line before it does.
+fn ends_lines_with_crlf(content: &str, position: usize) -> bool {
+    content[position..]
+        .find('\n')
+        .map(|offset| position + offset)
+        .or_else(|| content[..position].rfind('\n'))
+        .is_some_and(|newline| content[..newline].ends_with('\r'))
 }
 
 /// Try an exact byte-for-byte match first, then a line-trimmed match (ignores
@@ -1692,7 +1970,7 @@ fn find_match(content: &str, old: &str) -> EditMatch {
     if !trimmed.ranges().is_empty() {
         return trimmed;
     }
-    EditMatch::Whitespace(whitespace_ranges(content, old))
+    whitespace_ranges(content, old)
 }
 
 fn leading_whitespace(line: &str) -> &str {
@@ -1833,23 +2111,83 @@ fn normalize_whitespace(text: &str) -> (String, Vec<usize>) {
     (normalized, map)
 }
 
-fn whitespace_ranges(content: &str, old: &str) -> Vec<(usize, usize)> {
+/// Where the part of `run` begins that the whitespace `lead` at the start of
+/// a needle stands for. `run` is all the whitespace in front of the match,
+/// which reaches back to the line above: the needle has only as many of its
+/// line breaks as `lead` has, and the indentation after the last of them.
+fn leading_share(run: &str, lead: &str) -> usize {
+    let breaks = lead.matches('\n').count();
+    let from = run
+        .rmatch_indices('\n')
+        .nth(breaks)
+        .map_or(0, |(index, _)| index + 1);
+    // What stands before the first line break is the end of the line above,
+    // and a needle that begins with the break has nothing of it.
+    if lead.starts_with(['\n', '\r']) {
+        return from + run[from..].find(['\n', '\r']).unwrap_or(0);
+    }
+    from
+}
+
+/// How much of `run`, all the whitespace after a match, the whitespace
+/// `trail` at the end of a needle stands for: as many line breaks as `trail`
+/// has, and what follows the last of them only when `trail` has that too.
+/// The rest is the indentation of the next line.
+fn trailing_share(run: &str, trail: &str) -> usize {
+    let breaks = trail.matches('\n').count();
+    let next_break = run.match_indices('\n').nth(breaks).map(|(index, _)| index);
+    let within = &run[..next_break.unwrap_or(run.len())];
+    if trail.ends_with('\n') {
+        return within.rfind('\n').map_or(within.len(), |index| index + 1);
+    }
+    match next_break {
+        Some(_) => within.trim_end_matches('\r').len(),
+        None => within.len(),
+    }
+}
+
+fn whitespace_ranges(content: &str, old: &str) -> EditMatch {
     let (haystack, map) = normalize_whitespace(content);
     let (needle, _) = normalize_whitespace(old);
-    if needle.is_empty() || needle.len() > haystack.len() {
-        return Vec::new();
-    }
+    // The whitespace `old` begins and ends with. Normalised it is one space
+    // that matches a whole run in the file, and that run also holds the line
+    // break and the indentation of the lines next to the match.
+    let lead = &old[..old.len() - old.trim_start().len()];
+    let trail = &old[old.trim_end().len()..];
     let mut ranges = Vec::new();
-    let mut cursor = 0;
-    while let Some(position) = haystack[cursor..].find(&needle) {
-        let start = cursor + position;
-        let end = start + needle.len();
-        let original_start = map[start];
-        let original_end = map.get(end).copied().unwrap_or(content.len());
-        ranges.push((original_start, original_end));
-        cursor = end;
+    let mut old_indent = String::new();
+    let mut target_indent = String::new();
+    // Whitespace alone would match every run of it in the file.
+    if !old.trim().is_empty() {
+        let mut cursor = 0;
+        while let Some(position) = haystack[cursor..].find(&needle) {
+            let start = cursor + position;
+            let end = start + needle.len();
+            let mut from = map[start];
+            let mut upto = map.get(end).copied().unwrap_or(content.len());
+            if !lead.is_empty() {
+                let run = &content[from..map[start + 1]];
+                // A match that begins its line takes `new` from the
+                // indentation `old` came with to the one the file has.
+                if ranges.is_empty() && (from == 0 || run.contains('\n')) {
+                    old_indent = lead.rsplit('\n').next().unwrap_or_default().to_string();
+                    target_indent = run.rsplit('\n').next().unwrap_or_default().to_string();
+                }
+                from += leading_share(run, lead);
+            }
+            if !trail.is_empty() {
+                let text_end = map[end - 1];
+                upto = text_end + trailing_share(&content[text_end..upto], trail);
+            }
+            ranges.push((from, upto));
+            cursor = end;
+        }
     }
-    ranges
+    EditMatch::Whitespace {
+        ranges,
+        old_indent,
+        target_indent,
+    }
 }
 
 /// Build a directory walker that never descends into `.git` and that prunes
@@ -1896,6 +2234,10 @@ fn file_walker(base: &Path, project_root: &Path, config: &Arc<FileIgnoreConfig>)
     builder.build()
 }
 
+/// Files and folders `glob` looks at in one search, and matches it lists.
+const GLOB_WALK_LIMIT: usize = 100_000;
+const GLOB_SHOWN: usize = 500;
+
 async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     let pattern = match arg_str(arguments, "pattern") {
         Ok(pattern) => pattern,
@@ -1916,11 +2258,13 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         Err(error) => return ToolOutcome::error(format!("Invalid pattern: {error}")),
     };
     let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut walk_cut = false;
     for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
         }
-        if candidates.len() >= 100_000 {
+        if candidates.len() >= GLOB_WALK_LIMIT {
+            walk_cut = true;
             break;
         }
         candidates.push(entry.path().to_path_buf());
@@ -1934,9 +2278,6 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     for path in &candidates {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
-        }
-        if results.len() >= 500 {
-            break;
         }
         let relative_to_base = path.strip_prefix(&base).unwrap_or(path);
         if !matcher.is_match(relative_to_base) {
@@ -1952,11 +2293,51 @@ async fn glob_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
         }
         results.push(relative_display(runtime, path));
     }
+    let walk_note = if walk_cut {
+        format!(
+            "\n\n… looked at the first {GLOB_WALK_LIMIT} files and folders only. Add path to search a part of the project."
+        )
+    } else {
+        String::new()
+    };
     if results.is_empty() {
-        return ToolOutcome::ok(format!("No files match '{pattern}'."));
+        return ToolOutcome::ok(format!("No files match '{pattern}'.{walk_note}"));
     }
+    // Sorted before it is cut, so the same search shows the same files.
     results.sort();
-    ToolOutcome::ok(results.join("\n"))
+    let total = results.len();
+    results.truncate(GLOB_SHOWN);
+    let mut output = results.join("\n");
+    if total > GLOB_SHOWN {
+        output.push_str(&format!(
+            "\n\n… showing the first {GLOB_SHOWN} of {total} matches only. Narrow the pattern or add path to see more."
+        ));
+    }
+    output.push_str(&walk_note);
+    ToolOutcome::ok(output)
+}
+
+/// Files `grep` looks at in one search.
+const GREP_WALK_LIMIT: usize = 200_000;
+/// How much of a file's start tells a binary file from text.
+const BINARY_PROBE_BYTES: usize = 8_000;
+
+/// Whether a file that is not UTF-8 text is a binary one and not text in
+/// another encoding. Judged the way git does, by a NUL byte near the start;
+/// UTF-16 text has those too and is known by its byte order mark.
+fn looks_binary(start: &[u8]) -> bool {
+    let start = &start[..start.len().min(BINARY_PROBE_BYTES)];
+    start.contains(&0) && !start.starts_with(&[0xff, 0xfe]) && !start.starts_with(&[0xfe, 0xff])
+}
+
+/// The first bytes of a file, as many as `looks_binary` judges by.
+fn file_start(path: &Path) -> Vec<u8> {
+    use std::io::Read;
+    let mut start = Vec::new();
+    if let Ok(file) = std::fs::File::open(path) {
+        let _ = file.take(BINARY_PROBE_BYTES as u64).read_to_end(&mut start);
+    }
+    start
 }
 
 async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
@@ -2001,12 +2382,25 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     {
         return outcome;
     }
+    // A search aimed at one file says why it cannot look into it, as `read`
+    // does. In a folder such a file is passed over.
+    let single = !base.is_dir();
+    if single {
+        if let Some(reason) = file_ignore_reason(runtime, &base) {
+            let relative = relative_display(runtime, &base);
+            return ToolOutcome::error(format!(
+                "Refusing to search {relative}: {reason}. Change the file access rules in Settings → Agent rules if the assistant should access it."
+            ));
+        }
+    }
     let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut walk_cut = false;
     for entry in file_walker(&base, &runtime.project_root, &runtime.file_ignore).flatten() {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
         }
-        if candidates.len() >= 200_000 {
+        if candidates.len() >= GREP_WALK_LIMIT {
+            walk_cut = true;
             break;
         }
         if entry
@@ -2031,6 +2425,10 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     // Credential files are read only after a prompt (see `read_file`), so grep
     // leaves them out instead of printing their contents.
     let mut sensitive_skipped = 0usize;
+    // Text files left out for their size or their encoding. Binary files are
+    // not counted: no search looks into those, and a project full of pictures
+    // would have every search say so.
+    let (mut too_large, mut not_text) = (0usize, 0usize);
     'outer: for path in &candidates {
         if runtime.cancel.is_cancelled() {
             return ToolOutcome::cancelled();
@@ -2058,10 +2456,32 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             Err(_) => continue,
         };
         if metadata.len() > 1_000_000 {
+            if single {
+                return ToolOutcome::error(format!(
+                    "{} is {:.1} MB, more than the 1 MB grep searches. Search it with a command such as rg, or read it in parts.",
+                    relative_display(runtime, path),
+                    metadata.len() as f64 / 1_000_000.0
+                ));
+            }
+            if !looks_binary(&file_start(path)) {
+                too_large += 1;
+            }
             continue;
         }
-        let content = match std::fs::read_to_string(path) {
-            Ok(content) => content,
+        let content = match std::fs::read(path).map(String::from_utf8) {
+            Ok(Ok(content)) => content,
+            Ok(Err(error)) => {
+                if single {
+                    return ToolOutcome::error(format!(
+                        "{} is not UTF-8 text, so grep cannot search it.",
+                        relative_display(runtime, path)
+                    ));
+                }
+                if !looks_binary(error.as_bytes()) {
+                    not_text += 1;
+                }
+                continue;
+            }
             Err(_) => continue,
         };
         let lines: Vec<&str> = content.lines().collect();
@@ -2115,12 +2535,32 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
             printed = end;
         }
     }
-    let skipped_note = (sensitive_skipped > 0).then(|| {
-        format!(
+    let files = |count: usize| format!("{count} file{}", if count == 1 { "" } else { "s" });
+    let mut skipped: Vec<String> = Vec::new();
+    if sensitive_skipped > 0 {
+        skipped.push(format!(
             "{sensitive_skipped} file{} that look like credentials or keys were not searched; read one with the read tool to ask the user for access.",
             if sensitive_skipped == 1 { "" } else { "s" }
-        )
-    });
+        ));
+    }
+    // Text the search did not look into: without a word of it, "no matches"
+    // reads as "nowhere in the project".
+    let mut unsearched: Vec<String> = Vec::new();
+    if too_large > 0 {
+        unsearched.push(format!("{} over 1 MB", files(too_large)));
+    }
+    if not_text > 0 {
+        unsearched.push(format!("{} not in UTF-8", files(not_text)));
+    }
+    if !unsearched.is_empty() {
+        skipped.push(format!("Not searched: {}.", unsearched.join(", ")));
+    }
+    if walk_cut {
+        skipped.push(format!(
+            "… searched the first {GREP_WALK_LIMIT} files only. Add path to search a part of the project."
+        ));
+    }
+    let skipped_note = (!skipped.is_empty()).then(|| skipped.join("\n"));
     if results.is_empty() {
         let mut output = format!("No matches for '{pattern}'.");
         if let Some(note) = skipped_note {
@@ -2140,6 +2580,9 @@ async fn grep_files(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome
     }
     ToolOutcome::ok(output)
 }
+
+/// Entries `ls` lists of one folder.
+const LIST_SHOWN: usize = 1000;
 
 async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
     let base = arguments
@@ -2185,12 +2628,19 @@ async fn list_dir(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         b.0.cmp(&a.0)
             .then(a.1.to_lowercase().cmp(&b.1.to_lowercase()))
     });
-    let output = items
+    let total = items.len();
+    let mut output = items
         .into_iter()
-        .take(1000)
+        .take(LIST_SHOWN)
         .map(|(is_dir, name, _)| if is_dir { format!("{name}/") } else { name })
         .collect::<Vec<_>>()
         .join("\n");
+    // Without this the agent takes an entry beyond the cut for missing.
+    if total > LIST_SHOWN {
+        output.push_str(&format!(
+            "\n\n… showing the first {LIST_SHOWN} of {total} entries only. Use glob with a pattern to find the others."
+        ));
+    }
     ToolOutcome::ok(output)
 }
 
@@ -2283,6 +2733,8 @@ pub(crate) async fn ensure_website_access(
                         folders: Vec::new(),
                         hosts: Vec::new(),
                         grant_session_id: runtime.conversation_id.clone(),
+                        mcp_tool: None,
+                        secret_folders: Vec::new(),
                         justification: runtime.justification.clone(),
                     },
                     &runtime.cancel,
@@ -2855,6 +3307,19 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         Some(&restorable),
         &mut trace,
     );
+    // What a prompt for this call names, and the user says yes to with it.
+    let mut asked = Asked::default();
+    if let CommandDecision::Ask {
+        outside_folders,
+        secret_folders,
+        hosts,
+        ..
+    } = &decision
+    {
+        asked.folders = outside_folders.iter().map(PathBuf::from).collect();
+        asked.secrets = secret_folders.iter().map(PathBuf::from).collect();
+        asked.hosts = !hosts.is_empty();
+    }
     match &decision {
         CommandDecision::Deny { reason } => {
             audit_unprompted(runtime, "command", &command, false, reason.clone());
@@ -2878,6 +3343,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         scope_options,
         outside_folders,
         hosts,
+        secret_folders,
     } = decision
     {
         let answer = runtime
@@ -2901,6 +3367,8 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     folders: outside_folders,
                     hosts,
                     grant_session_id: runtime.conversation_id.clone(),
+                    mcp_tool: None,
+                    secret_folders,
                     justification: runtime.justification.clone(),
                 },
                 &runtime.cancel,
@@ -2913,6 +3381,50 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         }
     }
 
+    let mut policy = command_policy(runtime, &command, &cwd, &asked);
+    // Leaving the sandbox is the user's call, every time.
+    let wants_out = match arguments.get(UNSANDBOXED_ARGUMENT) {
+        Some(Value::Bool(wanted)) => *wanted,
+        Some(Value::String(wanted)) => wanted.trim().eq_ignore_ascii_case("true"),
+        _ => false,
+    };
+    if policy.is_some() && wants_out {
+        let answer = runtime
+            .broker
+            .ask(
+                PermissionPrompt {
+                    kind: "command".to_string(),
+                    operation: PermissionOperation::Unsandboxed,
+                    cwd: Some(permission_path(&cwd)),
+                    project_root: runtime.project_root.clone(),
+                    title: "Run command outside the sandbox?".to_string(),
+                    detail: "Outside the sandbox this command can change any file your account can, not only those of the project, and read the folders that hold your keys.".to_string(),
+                    command: Some(command.clone()),
+                    path: None,
+                    folder: None,
+                    url: None,
+                    suggested_rule: None,
+                    segments: Vec::new(),
+                    risk: None,
+                    scope_options: Vec::new(),
+                    folders: Vec::new(),
+                    hosts: Vec::new(),
+                    grant_session_id: runtime.conversation_id.clone(),
+                    mcp_tool: None,
+                    secret_folders: Vec::new(),
+                    justification: runtime.justification.clone(),
+                },
+                &runtime.cancel,
+                &runtime.session_id,
+                &runtime.emit,
+            )
+            .await;
+        if !answer.allowed {
+            return ToolOutcome::refused(&answer);
+        }
+        policy = None;
+    }
+
     #[cfg(unix)]
     let preview = TailPreview::open(&command);
     #[cfg(unix)]
@@ -2921,17 +3433,12 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         .map_or_else(|| command.clone(), |preview| preview.script(&command));
     #[cfg(not(unix))]
     let script = command.clone();
-    let mut process = if cfg!(windows) {
-        let mut process = Command::new("cmd");
-        process.arg("/C").arg(&script);
-        process
-    } else {
-        let mut process = Command::new("/bin/sh");
-        process.arg("-c").arg(&script);
-        process
-    };
+    let mut process = sandbox::shell(&script, policy.as_ref());
     process
         .current_dir(&cwd)
+        // What the user's shell profile exports and pumr, started from a
+        // launcher, never got: the settings of their tools and skills.
+        .envs(crate::shell_env::command_environment())
         // Python holds back what it prints to a pipe until it has a few
         // kilobytes; the chat shows a command's output as it is printed.
         .env("PYTHONUNBUFFERED", "1")
@@ -3055,14 +3562,110 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         } else {
             format!("Command finished successfully.\n{buffered}")
         }),
-        Some(code) => ToolOutcome {
-            result: truncate(format!("Command failed with exit code {code}.\n{buffered}")),
-            status: "error".to_string(),
-            changes: Vec::new(),
-            attachments: Vec::new(),
-        },
+        Some(code) => {
+            // Said only when the output looks like it: a failing test has
+            // nothing to do with the sandbox.
+            let hint = policy
+                .as_ref()
+                .filter(|policy| sandbox::looks_blocked(&buffered, policy))
+                .map(sandbox_hint)
+                .unwrap_or_default();
+            ToolOutcome {
+                result: format!(
+                    "{}{hint}",
+                    truncate(format!("Command failed with exit code {code}.\n{buffered}"))
+                ),
+                status: "error".to_string(),
+                changes: Vec::new(),
+                attachments: Vec::new(),
+            }
+        }
         None => ToolOutcome::error("Command did not report an exit code."),
     }
+}
+
+/// The argument with which a `bash` call asks to run outside the sandbox.
+const UNSANDBOXED_ARGUMENT: &str = "unsandboxed";
+
+/// Offers `bash` the way out of the sandbox. Left out where commands run
+/// unconfined anyway, so that no model spends a thought on it there.
+pub fn offer_unsandboxed(schemas: &mut [Value]) {
+    for schema in schemas {
+        if schema.pointer("/function/name").and_then(Value::as_str) != Some("bash") {
+            continue;
+        }
+        if let Some(properties) = schema
+            .pointer_mut("/function/parameters/properties")
+            .and_then(Value::as_object_mut)
+        {
+            properties.insert(
+                UNSANDBOXED_ARGUMENT.to_string(),
+                json!({
+                    "type": "boolean",
+                    "description": "Run outside the sandbox that confines commands to the project. Only for a command the sandbox stopped; the user is asked each time."
+                }),
+            );
+        }
+    }
+}
+
+/// What a prompt in front of a command named: saying yes to the command says
+/// yes to these for this one run.
+#[derive(Default)]
+struct Asked {
+    /// Folders outside the project the command touches.
+    folders: Vec<PathBuf>,
+    /// Folders whose sensitive files it uses.
+    secrets: Vec<PathBuf>,
+    /// Whether it named hosts that were not allowed yet.
+    hosts: bool,
+}
+
+/// How the sandbox confines `command`, or `None` when it runs unconfined.
+fn command_policy(
+    runtime: &ToolRuntime,
+    command: &str,
+    cwd: &Path,
+    asked: &Asked,
+) -> Option<sandbox::Policy> {
+    let config = runtime.permissions.sandbox();
+    if config.mode == sandbox::Mode::Off {
+        return None;
+    }
+    let permissions = &runtime.permissions;
+    let mut folders = permissions.folders_for(&runtime.conversation_id);
+    folders.extend(asked.folders.iter().cloned());
+    let mut released = permissions.secret_folders_for(&runtime.conversation_id);
+    released.extend(asked.secrets.iter().cloned());
+    // Only asked for where the network is closed, since it means reading
+    // the command line once more.
+    let network_approved = config.mode == sandbox::Mode::FilesAndNetwork
+        && (asked.hosts
+            || permissions.contacts_hosts(
+                command,
+                &runtime.project_root,
+                cwd,
+                &runtime.conversation_id,
+            ));
+    config.policy(&sandbox::Call {
+        command,
+        project_root: &runtime.project_root,
+        folders: &folders,
+        released: &released,
+        network_approved,
+    })
+}
+
+/// What a command the sandbox seems to have stopped is told about it.
+fn sandbox_hint(policy: &sandbox::Policy) -> String {
+    let network = if policy.network {
+        ""
+    } else {
+        " and reaches no network but this machine"
+    };
+    format!(
+        "\n\n[pumr] This command ran in the sandbox: it writes only to the project, the scratch folder and temp folders, cannot read the folders that hold keys (such as ~/.ssh){network}. A program with a sandbox of its own, such as a browser, cannot start inside it. If that is what stopped the command, run it again with \"{UNSANDBOXED_ARGUMENT}\": true, which asks the user."
+    )
 }
 
 /// Longest a command may run before it is moved to the background, in seconds.
@@ -3727,9 +4330,284 @@ pub(crate) mod tests {
             mcp: None,
             skills: Vec::new(),
             justification: None,
+            vision: true,
+            read_only: false,
             cancel: CancellationToken::new(),
             emit: Arc::new(|_: RoutedEvent| {}),
         }
+    }
+
+    #[tokio::test]
+    async fn the_files_of_an_enabled_skill_are_read_without_asking() {
+        let directory = tempfile::tempdir().unwrap();
+        let base = directory.path().canonicalize().unwrap();
+        let root = base.join("project");
+        let skill = base.join("skills/elevation4/status-pages");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(skill.join("providers")).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "See providers/ionos.md").unwrap();
+        std::fs::write(skill.join("providers/ionos.md"), "IONOS status page").unwrap();
+        std::fs::write(base.join("skills/elevation4/notes.md"), "next to the skill").unwrap();
+        let mut runtime = test_runtime(&root, &base.join("app-data"));
+        runtime.skills = vec![SkillEntry {
+            name: "status-pages".to_string(),
+            description: String::new(),
+            path: skill.to_string_lossy().to_string(),
+        }];
+        // Every prompt is counted and answered with No.
+        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+        let broker = runtime.broker.clone();
+        let seen = asked.clone();
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::PermissionRequest {
+                request_id, title, ..
+            } = routed.event
+            {
+                seen.lock().unwrap().push(title);
+                broker.resolve(
+                    &request_id,
+                    PermissionDecision {
+                        allowed: false,
+                        rule: None,
+                        folder: None,
+                        decided_by: "user".to_string(),
+                        decision: Some("deny".to_string()),
+                    },
+                );
+            }
+        });
+        let file = |path: PathBuf| json!({ "path": path.to_string_lossy() });
+
+        // Loading the skill names the file; reading it then needs no prompt.
+        let loaded = execute(&mut runtime, "skill", &json!({ "name": "status-pages" })).await;
+        assert_eq!(loaded.status, "ok", "{}", loaded.result);
+        assert!(
+            loaded.result.contains("\n- providers/ionos.md\n"),
+            "{}",
+            loaded.result
+        );
+        let read = execute(
+            &mut runtime,
+            "read",
+            &file(skill.join("providers/ionos.md")),
+        )
+        .await;
+        assert_eq!(read.status, "ok", "{}", read.result);
+        assert!(read.result.contains("IONOS status page"), "{}", read.result);
+        assert!(asked.lock().unwrap().is_empty());
+
+        // A file next to the skill is outside the project like any other.
+        let outside = execute(
+            &mut runtime,
+            "read",
+            &file(base.join("skills/elevation4/notes.md")),
+        )
+        .await;
+        assert_ne!(outside.status, "ok", "{}", outside.result);
+        assert_eq!(asked.lock().unwrap().len(), 1);
+
+        // And a skill's folder is read from, never written to, without asking.
+        let mut write = file(skill.join("providers/new.md"));
+        write["content"] = json!("x");
+        let written = execute(&mut runtime, "write", &write).await;
+        assert_ne!(written.status, "ok", "{}", written.result);
+        assert_eq!(asked.lock().unwrap().len(), 2);
+        assert!(!skill.join("providers/new.md").exists());
+    }
+
+    /// A stdio MCP server with one `echo` tool that answers every request
+    /// under the id it came with.
+    #[cfg(unix)]
+    fn echo_server(dir: &Path) -> crate::mcp::McpServerConfig {
+        let script = dir.join("echo-mcp.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"echo\",\"version\":\"1\"}}}" ;;
+    *'"tools/list"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"tools\":[{\"name\":\"echo\",\"description\":\"Echo\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}}}}]}}" ;;
+    *'"tools/call"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}" ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        crate::mcp::McpServerConfig {
+            name: "echo".to_string(),
+            command: Some("/bin/sh".to_string()),
+            args: vec![script.to_string_lossy().to_string()],
+            env: Vec::new(),
+            url: None,
+            source: "test".to_string(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_mcp_tool_asks_until_its_approval_is_remembered() {
+        use crate::models::McpToolGrant;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+        let manager = McpManager::connect(vec![echo_server(directory.path())], None, &|_| {}).await;
+        assert!(manager.errors.is_empty(), "{:?}", manager.errors);
+        let grant = manager.tool_grant("mcp__echo__echo").unwrap();
+        runtime.mcp = Some(Arc::new(manager));
+
+        // Every prompt gets a plain Yes; what it offered to remember is kept.
+        let offered: Arc<Mutex<Vec<Option<McpToolGrant>>>> = Arc::default();
+        let broker = runtime.broker.clone();
+        let seen = offered.clone();
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::PermissionRequest {
+                request_id,
+                mcp_tool,
+                ..
+            } = routed.event
+            {
+                seen.lock().unwrap().push(mcp_tool);
+                broker.resolve(
+                    &request_id,
+                    PermissionDecision {
+                        allowed: true,
+                        rule: None,
+                        folder: None,
+                        decided_by: "user".to_string(),
+                        decision: Some("allow_once".to_string()),
+                    },
+                );
+            }
+        });
+        let audit: Arc<Mutex<Vec<PermissionAuditEntry>>> = Arc::default();
+        let log = audit.clone();
+        runtime
+            .broker
+            .set_audit_sink(Arc::new(move |entry| log.lock().unwrap().push(entry)));
+        let call = |text: &'static str| json!({ "text": text, "reason": "to test" });
+
+        // Allowed once: the next call asks again.
+        for text in ["one", "two"] {
+            let outcome = execute(&mut runtime, "mcp__echo__echo", &call(text)).await;
+            assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        }
+        assert_eq!(
+            *offered.lock().unwrap(),
+            vec![Some(grant.clone()), Some(grant.clone())]
+        );
+
+        // Remembered for the chat: no prompt, whatever the arguments, and the
+        // permission log says why it ran.
+        runtime
+            .permissions
+            .add_session_mcp_tool_grant("session", &grant);
+        let outcome = execute(&mut runtime, "mcp__echo__echo", &call("three")).await;
+        assert_eq!(outcome.result, "hello");
+        assert_eq!(offered.lock().unwrap().len(), 2);
+        let entry = audit.lock().unwrap().last().cloned().unwrap();
+        assert!(entry.allowed);
+        assert_eq!(entry.decided_by, "auto");
+        assert_eq!(
+            entry.reason,
+            "remembered approval: MCP tool allowed in this chat"
+        );
+        assert!(entry.subject.contains("three"), "{}", entry.subject);
+
+        // Another chat was not given that approval.
+        runtime.conversation_id = "other".to_string();
+        let outcome = execute(&mut runtime, "mcp__echo__echo", &call("four")).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert_eq!(offered.lock().unwrap().len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_remembered_mcp_tool_asks_again_in_a_mode_that_changes_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        // `save` says nothing of itself; `look` says that it only reads.
+        let script = directory.path().join("notes-mcp.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"serverInfo\":{\"name\":\"notes\",\"version\":\"1\"}}}" ;;
+    *'"tools/list"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"tools\":[{\"name\":\"save\",\"inputSchema\":{\"type\":\"object\"}},{\"name\":\"look\",\"inputSchema\":{\"type\":\"object\"},\"annotations\":{\"readOnlyHint\":true}}]}}" ;;
+    *'"tools/call"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}" ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        let server = crate::mcp::McpServerConfig {
+            name: "notes".to_string(),
+            command: Some("/bin/sh".to_string()),
+            args: vec![script.to_string_lossy().to_string()],
+            env: Vec::new(),
+            url: None,
+            source: "test".to_string(),
+        };
+        let mut runtime = test_runtime(&root, &directory.path().join("app-data"));
+        let manager = McpManager::connect(vec![server], None, &|_| {}).await;
+        assert!(manager.errors.is_empty(), "{:?}", manager.errors);
+        for tool in ["mcp__notes__save", "mcp__notes__look"] {
+            let grant = manager.tool_grant(tool).unwrap();
+            runtime.permissions.add_session_mcp_tool_grant("session", &grant);
+        }
+        runtime.mcp = Some(Arc::new(manager));
+
+        // What each prompt said and offered to remember; all get a plain Yes.
+        let asked: Arc<Mutex<Vec<(String, bool)>>> = Arc::default();
+        let (seen, broker) = (asked.clone(), runtime.broker.clone());
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::PermissionRequest {
+                request_id,
+                detail,
+                mcp_tool,
+                ..
+            } = routed.event
+            {
+                seen.lock().unwrap().push((detail, mcp_tool.is_some()));
+                broker.resolve(
+                    &request_id,
+                    PermissionDecision {
+                        allowed: true,
+                        rule: None,
+                        folder: None,
+                        decided_by: "user".to_string(),
+                        decision: Some("allow_once".to_string()),
+                    },
+                );
+            }
+        });
+
+        // While files may change, both run on the approval they were given.
+        for tool in ["mcp__notes__save", "mcp__notes__look"] {
+            let outcome = execute(&mut runtime, tool, &json!({})).await;
+            assert_eq!(outcome.result, "done", "{tool}");
+        }
+        assert!(asked.lock().unwrap().is_empty());
+
+        // In planning or a read-only mode the approval covers only the tool
+        // that says it reads; the other asks, and offers no remembering.
+        runtime.read_only = true;
+        let outcome = execute(&mut runtime, "mcp__notes__look", &json!({})).await;
+        assert_eq!(outcome.result, "done");
+        assert!(asked.lock().unwrap().is_empty());
+        for _ in 0..2 {
+            let outcome = execute(&mut runtime, "mcp__notes__save", &json!({})).await;
+            assert_eq!(outcome.result, "done");
+        }
+        let asked = asked.lock().unwrap();
+        assert_eq!(asked.len(), 2);
+        assert!(asked[0].0.contains("a mode that changes no files"), "{}", asked[0].0);
+        assert!(!asked[0].1 && !asked[1].1);
     }
 
     #[tokio::test]
@@ -4016,6 +4894,96 @@ pub(crate) mod tests {
         assert_eq!(updated, "c = 3\r\n");
     }
 
+    /// The file after one edit of it.
+    fn edited(content: &str, old: &str, new: &str) -> String {
+        apply_edit(content, old, new, false).unwrap().0
+    }
+
+    #[test]
+    fn edit_by_whitespace_keeps_the_line_break_before_its_indentation() {
+        assert_eq!(
+            edited(
+                "x = 1\n    foo(a, b)\ny = 2\n",
+                "    foo(a,  b)",
+                "    foo(a, c)"
+            ),
+            "x = 1\n    foo(a, c)\ny = 2\n"
+        );
+    }
+
+    #[test]
+    fn edit_by_whitespace_keeps_the_indentation_of_the_next_line() {
+        assert_eq!(
+            edited(
+                "if ok:\n    foo(a, b)\n    bar()\n",
+                "foo(a,  b)\n",
+                "foo(a, c)\n"
+            ),
+            "if ok:\n    foo(a, c)\n    bar()\n"
+        );
+        // With both ends in `old`, the line can also be taken out whole.
+        assert_eq!(
+            edited("if ok:\n    foo(a, b)\n    bar()\n", "    foo(a,  b)\n", ""),
+            "if ok:\n    bar()\n"
+        );
+    }
+
+    #[test]
+    fn edit_by_whitespace_keeps_a_line_of_tabs_on_its_own_line() {
+        assert_eq!(
+            edited("top:\n\tkey:\tvalue\n", "\tkey: value", "\tkey: other"),
+            "top:\n\tkey: other\n"
+        );
+        // The indentation of the file wins over the one `old` came with.
+        assert_eq!(
+            edited(
+                "top:\n\tkey:\tvalue\n",
+                "    key: value",
+                "    key: other\n    more: 1"
+            ),
+            "top:\n\tkey: other\n\tmore: 1\n"
+        );
+    }
+
+    #[test]
+    fn edit_does_not_search_for_whitespace_alone() {
+        assert!(matches!(
+            apply_edit("a b c", "\t\t", "-", true),
+            Err(EditError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn edit_keeps_carriage_returns_in_a_replacement_of_several_lines() {
+        assert_eq!(
+            edited(
+                "a = 1\r\nb = 2\r\nc = 3\r\n",
+                "a = 1\nb = 2",
+                "a = 10\nb = 20"
+            ),
+            "a = 10\r\nb = 20\r\nc = 3\r\n"
+        );
+        // One line matched as it is, two put in its place.
+        assert_eq!(
+            edited("a = 1\r\nb = 2\r\n", "a = 1", "a = 1\nz = 0"),
+            "a = 1\r\nz = 0\r\nb = 2\r\n"
+        );
+        // A `\r` the model did send is not doubled, nor one `old` left behind.
+        assert_eq!(
+            edited("a = 1\r\nb = 2\r\n", "a = 1\nb = 2", "a = 10\r\nb = 20"),
+            "a = 10\r\nb = 20\r\n"
+        );
+        assert_eq!(
+            edited("a = 1\r\nb = 2\r\n", "\nb = 2", "\nb = 20"),
+            "a = 1\r\nb = 20\r\n"
+        );
+        // A file of `\n` lines stays one.
+        assert_eq!(
+            edited("a = 1\nb = 2\n", "a = 1", "a = 1\nz = 0"),
+            "a = 1\nz = 0\nb = 2\n"
+        );
+    }
+
     #[test]
     fn only_the_users_own_denial_is_reported_as_one() {
         let refused = |decided_by: &str| {
@@ -4188,6 +5156,298 @@ mod guidance_tests {
     }
 
     #[tokio::test]
+    async fn an_unread_file_that_is_not_utf8_is_not_replaced() {
+        // Latin-1 text, which `read` cannot show.
+        let legacy = b"caf\xe9 au lait\n";
+        let (_directory, mut runtime) = project_with("legacy.txt", legacy);
+        let root = runtime.project_root.clone();
+
+        let refused = write_file(
+            &mut runtime,
+            &json!({ "path": "legacy.txt", "content": "tea\n" }),
+        )
+        .await;
+        assert_eq!(refused.status, "error");
+        assert!(
+            refused.result.starts_with(
+                "legacy.txt already exists (13 bytes, not UTF-8 text) and you have not read it"
+            ),
+            "{}",
+            refused.result
+        );
+        assert_eq!(std::fs::read(root.join("legacy.txt")).unwrap(), legacy);
+
+        // A file the agent wrote stays its own after a command converted it,
+        // and the change is counted against what can be read of it.
+        let write = json!({ "path": "tea.txt", "content": "tea\n" });
+        assert_eq!(write_file(&mut runtime, &write).await.status, "ok");
+        std::fs::write(root.join("tea.txt"), b"th\xe9\n").unwrap();
+        let replaced = write_file(&mut runtime, &write).await;
+        assert_eq!(replaced.status, "ok", "{}", replaced.result);
+        let change = &replaced.changes[0];
+        assert_eq!(
+            (change.status.as_str(), change.additions, change.deletions),
+            ("M", 1, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_replaced_file_keeps_its_line_endings() {
+        let (_directory, mut runtime) = project_with("win.txt", b"one\r\ntwo\r\n");
+        let root = runtime.project_root.clone();
+        // The agent sees the lines without their `\r`, and sends them back so.
+        let read = read_file(&mut runtime, &json!({ "path": "win.txt" })).await;
+        assert_eq!(read.result, "1\tone\n2\ttwo\n");
+
+        let written = write_file(
+            &mut runtime,
+            &json!({ "path": "win.txt", "content": "one\ntwo\nthree\n" }),
+        )
+        .await;
+        assert_eq!(written.status, "ok", "{}", written.result);
+        assert_eq!(
+            std::fs::read_to_string(root.join("win.txt")).unwrap(),
+            "one\r\ntwo\r\nthree\r\n"
+        );
+        let change = &written.changes[0];
+        assert_eq!((change.additions, change.deletions), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn an_environment_file_is_not_edited() {
+        let secret = "API_KEY=hunter2\nDEBUG=1\n";
+        let (_directory, mut runtime) = project_with(".env", secret.as_bytes());
+        let root = runtime.project_root.clone();
+        let asked = answering(&mut runtime, true);
+
+        // An edit that would land, and one whose miss would show the closest text.
+        for old in ["API_KEY=", "API_KEY = hunter"] {
+            let outcome = edit_file(
+                &mut runtime,
+                &json!({ "path": ".env", "old_string": old, "new_string": "API_KEY=#" }),
+            )
+            .await;
+            assert_eq!(outcome.status, "error");
+            assert!(
+                outcome
+                    .result
+                    .starts_with("Refusing to edit .env: it is an environment file."),
+                "{}",
+                outcome.result
+            );
+            assert!(!outcome.result.contains("hunter2"), "{}", outcome.result);
+            assert!(!outcome.result.contains("DEBUG"), "{}", outcome.result);
+        }
+        assert_eq!(std::fs::read_to_string(root.join(".env")).unwrap(), secret);
+        assert!(asked.lock().unwrap().is_empty());
+
+        // With the rule switched off the file is read and edited like any other.
+        runtime.file_ignore = Arc::new(FileIgnoreConfig::new(true, false, false, false, &[]));
+        let outcome = edit_file(
+            &mut runtime,
+            &json!({ "path": ".env", "old_string": "DEBUG=1", "new_string": "DEBUG=0" }),
+        )
+        .await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(asked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_folder_above_the_scratch_folder_does_not_hide_its_files() {
+        let (directory, mut runtime) = project_with("a.txt", b"");
+        // Where Linux keeps it: below `~/.cache`, a name builds leave behind.
+        let scratch = directory.path().canonicalize().unwrap().join(".cache/scratch");
+        runtime.permissions.set_scratch_root(scratch.clone());
+        let notes = scratch.join("session/notes.txt");
+        let asked = answering(&mut runtime, false);
+        let at = |path: &Path| path.to_string_lossy().to_string();
+
+        let written = write_file(
+            &mut runtime,
+            &json!({ "path": at(&notes), "content": "one\n" }),
+        )
+        .await;
+        assert_eq!(written.status, "ok", "{}", written.result);
+        let edited = edit_file(
+            &mut runtime,
+            &json!({ "path": at(&notes), "old_string": "one", "new_string": "two" }),
+        )
+        .await;
+        assert_eq!(edited.status, "ok", "{}", edited.result);
+        let read = read_file(&mut runtime, &json!({ "path": at(&notes) })).await;
+        assert_eq!(read.result, "1\ttwo\n");
+
+        // The rules for names hold there as in the project.
+        let env = scratch.join("session/.env");
+        std::fs::write(&env, "KEY=value\n").unwrap();
+        let read = read_file(&mut runtime, &json!({ "path": at(&env) })).await;
+        assert!(read.result.contains("it is an environment file"), "{}", read.result);
+        let edited = edit_file(
+            &mut runtime,
+            &json!({ "path": at(&env), "old_string": "KEY", "new_string": "K" }),
+        )
+        .await;
+        assert!(edited.result.starts_with("Refusing to edit .env:"), "{}", edited.result);
+        assert!(asked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn writing_an_environment_file_takes_the_users_yes() {
+        let (_directory, mut runtime) = project_with(".gitignore", b"scratch/\n");
+        let root = runtime.project_root.clone();
+        let write = |path: &str| json!({ "path": path, "content": "KEY=value\n" });
+
+        let asked = answering(&mut runtime, false);
+        let refused = write_file(&mut runtime, &write(".env")).await;
+        assert_eq!(refused.status, "denied", "{}", refused.result);
+        assert!(!root.join(".env").exists());
+        assert_eq!(*asked.lock().unwrap(), ["Modify .env?"]);
+
+        let asked = answering(&mut runtime, true);
+        let written = write_file(&mut runtime, &write("config/.env.local")).await;
+        assert_eq!(written.status, "ok", "{}", written.result);
+        assert_eq!(*asked.lock().unwrap(), ["Modify config/.env.local?"]);
+
+        // A template holds no values, and a folder that git ignores or a build
+        // writes to is where such files go: none of them asks, though `read`
+        // refuses what is in the folders.
+        let asked = answering(&mut runtime, false);
+        for path in [".env.example", "scratch/notes.md", "dist/app.js"] {
+            let written = write_file(&mut runtime, &write(path)).await;
+            assert_eq!(written.status, "ok", "{path}: {}", written.result);
+        }
+        let read = read_file(&mut runtime, &json!({ "path": "scratch/notes.md" })).await;
+        assert!(read.result.contains("ignored by .gitignore"), "{}", read.result);
+        assert!(asked.lock().unwrap().is_empty());
+
+        // The user's rules decide: with the rule off or the file exempted,
+        // nothing is asked.
+        runtime.file_ignore = Arc::new(FileIgnoreConfig::new(true, false, false, false, &[]));
+        let written = write_file(&mut runtime, &write(".env")).await;
+        assert_eq!(written.status, "ok", "{}", written.result);
+        runtime.file_ignore = Arc::new(FileIgnoreConfig::new(
+            true,
+            false,
+            false,
+            true,
+            &[".env.test".to_string()],
+        ));
+        let written = write_file(&mut runtime, &write(".env.test")).await;
+        assert_eq!(written.status, "ok", "{}", written.result);
+        assert!(asked.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_environment_file_that_is_there_is_not_asked_about() {
+        let (_directory, mut runtime) = project_with(".env", b"API_KEY=secret\n");
+        let asked = answering(&mut runtime, true);
+
+        let outcome = write_file(
+            &mut runtime,
+            &json!({ "path": ".env", "content": "API_KEY=other\n" }),
+        )
+        .await;
+        // It could only be replaced after a read that is refused, so the
+        // user is not asked for a yes that leads nowhere.
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+        assert!(
+            outcome.result.starts_with(".env already exists and was not replaced:")
+                && !outcome.result.contains("secret"),
+            "{}",
+            outcome.result
+        );
+        assert!(asked.lock().unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(runtime.project_root.join(".env")).unwrap(),
+            "API_KEY=secret\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn glob_says_when_it_shows_only_some_of_the_matches() {
+        let (_directory, mut runtime) = project_with("f000.txt", b"");
+        let total = GLOB_SHOWN + 20;
+        for index in 1..total {
+            std::fs::write(runtime.project_root.join(format!("f{index:03}.txt")), "").unwrap();
+        }
+
+        let outcome = glob_files(&mut runtime, &json!({ "pattern": "*.txt" })).await;
+        let lines: Vec<&str> = outcome.result.lines().collect();
+        // The first by name, in whatever order the folder was walked.
+        let first: Vec<String> = (0..GLOB_SHOWN).map(|index| format!("f{index:03}.txt")).collect();
+        assert_eq!(lines[..GLOB_SHOWN], first);
+        assert_eq!(
+            lines[GLOB_SHOWN..],
+            [
+                "",
+                "… showing the first 500 of 520 matches only. Narrow the pattern or add path to see more."
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn ls_says_when_it_shows_only_some_of_the_entries() {
+        let (_directory, mut runtime) = project_with("f0000.txt", b"");
+        for index in 1..LIST_SHOWN + 5 {
+            std::fs::write(runtime.project_root.join(format!("f{index:04}.txt")), "").unwrap();
+        }
+
+        let outcome = list_dir(&mut runtime, &json!({})).await;
+        let lines: Vec<&str> = outcome.result.lines().collect();
+        assert_eq!(lines.len(), LIST_SHOWN + 2);
+        assert_eq!(lines[LIST_SHOWN - 1], "f0999.txt");
+        assert_eq!(
+            lines[LIST_SHOWN + 1],
+            "… showing the first 1000 of 1005 entries only. Use glob with a pattern to find the others."
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_says_which_text_it_did_not_search() {
+        let (_directory, mut runtime) = project_with("notes.txt", b"needle here\n");
+        let root = runtime.project_root.clone();
+        std::fs::write(root.join("big.txt"), "needle\n".repeat(160_000)).unwrap();
+        std::fs::write(root.join("legacy.txt"), b"needle caf\xe9\n").unwrap();
+        // Binary files are no text of the project: nothing is said of them.
+        std::fs::write(root.join("logo.png"), b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR needle").unwrap();
+        std::fs::write(root.join("film.bin"), vec![0u8; 1_100_000]).unwrap();
+
+        let left_out = "Not searched: 1 file over 1 MB, 1 file not in UTF-8.";
+        let found = grep_files(&mut runtime, &json!({ "pattern": "needle" })).await;
+        assert_eq!(found.result, format!("notes.txt:1: needle here\n\n{left_out}"));
+        let none = grep_files(&mut runtime, &json!({ "pattern": "absent" })).await;
+        assert_eq!(none.result, format!("No matches for 'absent'.\n\n{left_out}"));
+
+        // Aimed at one file, the search says why it did not look into it.
+        let aimed_at = |path: &str| json!({ "pattern": "needle", "path": path });
+        let big = grep_files(&mut runtime, &aimed_at("big.txt")).await;
+        assert_eq!(big.status, "error");
+        assert!(
+            big.result
+                .starts_with("big.txt is 1.1 MB, more than the 1 MB grep searches."),
+            "{}",
+            big.result
+        );
+        let legacy = grep_files(&mut runtime, &aimed_at("legacy.txt")).await;
+        assert_eq!(legacy.status, "error");
+        assert_eq!(
+            legacy.result,
+            "legacy.txt is not UTF-8 text, so grep cannot search it."
+        );
+        // So does one the rules keep from the agent, as `read` does.
+        std::fs::write(root.join("app.log"), "needle\n").unwrap();
+        let hidden = grep_files(&mut runtime, &aimed_at("app.log")).await;
+        assert_eq!(hidden.status, "error");
+        assert!(
+            hidden.result.starts_with(
+                "Refusing to search app.log: it is inside a generated or dependency directory."
+            ),
+            "{}",
+            hidden.result
+        );
+    }
+
+    #[tokio::test]
     async fn an_edit_shows_where_it_landed() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("project");
@@ -4348,6 +5608,21 @@ mod guidance_tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn a_command_gets_what_the_users_shell_exports() {
+        crate::shell_env::set_command_var("PUMR_TEST_FROM_PROFILE", "set in the profile");
+        let (_, outcome) = streamed("printf '%s' \"$PUMR_TEST_FROM_PROFILE\"").await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(
+            outcome.result.ends_with("set in the profile"),
+            "{}",
+            outcome.result
+        );
+        // pumr's own environment stays what the desktop session gave it.
+        assert!(std::env::var_os("PUMR_TEST_FROM_PROFILE").is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn the_chat_sees_what_a_tail_holds_back() {
         let (shown, outcome) = streamed("printf 'one\\ntwo\\nthree\\n' | tail -n 1").await;
         assert_eq!(outcome.status, "ok", "{}", outcome.result);
@@ -4366,6 +5641,294 @@ mod guidance_tests {
         let (shown, outcome) = streamed("printf 'one\\ntwo\\n' | head -n 1").await;
         assert_eq!(outcome.result, "Command finished successfully.\none\n");
         assert_eq!(shown, "one\n");
+    }
+
+    /// A project with one file, and the runtime of a call in it.
+    fn project_with(name: &str, content: &[u8]) -> (tempfile::TempDir, ToolRuntime) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(name), content).unwrap();
+        let runtime = test_runtime(&root, &directory.path().join("app-data"));
+        (directory, runtime)
+    }
+
+    #[tokio::test]
+    async fn a_picture_is_read_for_a_model_that_takes_pictures() {
+        let png = b"\x89PNG\r\n\x1a\nrest of the picture";
+        let (_directory, mut runtime) = project_with("shot.png", png);
+
+        let outcome = read_file(&mut runtime, &json!({ "path": "shot.png" })).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(outcome.result.starts_with("shot.png is a picture (image/png, 1 KB)."));
+        let picture = &outcome.attachments[0];
+        assert_eq!((picture.kind.as_str(), picture.name.as_str()), ("image", "shot.png"));
+        assert_eq!(
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &picture.data)
+                .unwrap(),
+            png
+        );
+
+        // A model without vision is told so, and gets no picture to choke on.
+        runtime.vision = false;
+        let outcome = read_file(&mut runtime, &json!({ "path": "shot.png" })).await;
+        assert_eq!(outcome.status, "error");
+        assert!(outcome.result.contains("does not take pictures"), "{}", outcome.result);
+        assert!(outcome.attachments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_picture_too_large_for_a_model_is_not_read() {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.resize(read_formats::MAX_PICTURE_BYTES + 1, 0);
+        let (_directory, mut runtime) = project_with("huge.png", &png);
+
+        let outcome = read_file(&mut runtime, &json!({ "path": "huge.png" })).await;
+        assert_eq!(outcome.status, "error");
+        assert!(outcome.result.contains("more than the 5 MB"), "{}", outcome.result);
+        assert!(outcome.attachments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_pdf_is_read_as_the_text_of_its_pages() {
+        let pdf = read_formats::tests::pdf_with(&["Pumas are fast.", "They also climb."]);
+        let (_directory, mut runtime) = project_with("pumas.pdf", &pdf);
+
+        let all = read_file(&mut runtime, &json!({ "path": "pumas.pdf" })).await;
+        assert_eq!(all.status, "ok", "{}", all.result);
+        assert_eq!(
+            all.result,
+            "pumas.pdf: PDF, 2 page(s). Below is the text of page 1-2.\n\n--- page 1 ---\nPumas are fast.\n\n--- page 2 ---\nThey also climb.\n\n"
+        );
+
+        let second = read_file(&mut runtime, &json!({ "path": "pumas.pdf", "pages": "2" })).await;
+        assert!(second.result.contains("They also climb."), "{}", second.result);
+        assert!(!second.result.contains("Pumas are fast."), "{}", second.result);
+
+        let beyond = read_file(&mut runtime, &json!({ "path": "pumas.pdf", "pages": "5" })).await;
+        assert_eq!(beyond.status, "error");
+        assert!(beyond.result.contains("this document has 2"), "{}", beyond.result);
+    }
+
+    #[tokio::test]
+    async fn a_long_pdf_is_read_a_few_pages_at_a_time() {
+        let lines: Vec<String> = (1..=25).map(|page| format!("Text of page {page}.")).collect();
+        let pages: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let (_directory, mut runtime) =
+            project_with("long.pdf", &read_formats::tests::pdf_with(&pages));
+
+        let first = read_file(&mut runtime, &json!({ "path": "long.pdf" })).await;
+        assert!(
+            first.result.starts_with(
+                "long.pdf: PDF, 25 page(s). Below is the text of page 1-10. Read on with pages=\"11-20\"."
+            ),
+            "{}",
+            first.result
+        );
+        assert!(first.result.contains("Text of page 10."));
+        assert!(!first.result.contains("Text of page 11."));
+    }
+
+    #[tokio::test]
+    async fn a_scanned_pdf_says_that_it_has_no_text() {
+        let (_directory, mut runtime) =
+            project_with("scan.pdf", &read_formats::tests::pdf_with(&[""]));
+        let outcome = read_file(&mut runtime, &json!({ "path": "scan.pdf" })).await;
+        assert_eq!(outcome.status, "error");
+        assert!(outcome.result.contains("probably a scan"), "{}", outcome.result);
+    }
+
+    #[tokio::test]
+    async fn a_notebook_is_read_as_its_cells() {
+        let notebook = json!({
+            "cells": [
+                { "cell_type": "code", "source": ["speed = 80\n", "print(speed)"],
+                  "outputs": [{ "output_type": "stream", "text": "80\n" }] }
+            ]
+        });
+        let (_directory, mut runtime) =
+            project_with("speed.ipynb", notebook.to_string().as_bytes());
+
+        let outcome = read_file(&mut runtime, &json!({ "path": "speed.ipynb" })).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(
+            outcome.result.contains("\n[1] code\nspeed = 80\nprint(speed)\n-- output --\n80\n"),
+            "{}",
+            outcome.result
+        );
+        // Not the file's own lines, so they carry no line numbers.
+        assert!(!outcome.result.contains("1\t"), "{}", outcome.result);
+    }
+
+    #[tokio::test]
+    async fn a_binary_file_is_named_instead_of_read() {
+        let (_directory, mut runtime) = project_with("bundle.zip", b"PK\x03\x04\xff\xfe");
+        let outcome = read_file(&mut runtime, &json!({ "path": "bundle.zip" })).await;
+        assert_eq!(outcome.status, "error");
+        assert!(
+            outcome.result.starts_with(
+                "bundle.zip is a zip archive (or an Office document) (6 bytes), not UTF-8 text."
+            ),
+            "{}",
+            outcome.result
+        );
+    }
+
+    /// A project whose `write.sh` writes a file outside of it, a runtime that
+    /// confines commands and runs the script without asking, and the file.
+    #[cfg(unix)]
+    fn confined_project() -> (tempfile::TempDir, ToolRuntime, PathBuf) {
+        // Below the home folder: the system's temp folder stays writable.
+        let directory = tempfile::Builder::new()
+            .prefix(".pumr-bash-test-")
+            .tempdir_in(std::env::var_os("HOME").unwrap())
+            .unwrap();
+        let base = directory.path().canonicalize().unwrap();
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("write.sh"), "echo escaped > ../escaped.txt\n").unwrap();
+        let runtime = test_runtime(&root, &base.join("app-data"));
+        runtime.permissions.set_sandbox(sandbox::Config {
+            mode: sandbox::Mode::Files,
+            ..Default::default()
+        });
+        runtime.permissions.add_session_command_rule(
+            "session",
+            &crate::models::CommandRule::Exact("sh write.sh".to_string()),
+        );
+        (directory, runtime, base.join("escaped.txt"))
+    }
+
+    /// Answers every prompt of `runtime` with `allowed` and keeps the titles.
+    fn answering(runtime: &mut ToolRuntime, allowed: bool) -> Arc<Mutex<Vec<String>>> {
+        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+        let (seen, broker) = (asked.clone(), runtime.broker.clone());
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::PermissionRequest {
+                request_id, title, ..
+            } = routed.event
+            {
+                seen.lock().unwrap().push(title);
+                broker.resolve(
+                    &request_id,
+                    PermissionDecision {
+                        allowed,
+                        rule: None,
+                        folder: None,
+                        decided_by: "user".to_string(),
+                        decision: Some(if allowed { "allow_once" } else { "deny" }.to_string()),
+                    },
+                );
+            }
+        });
+        asked
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_sandbox_stops_what_a_command_writes_outside_the_project() {
+        if !sandbox::support().files {
+            return;
+        }
+        let (_directory, mut runtime, escaped) = confined_project();
+        let asked = answering(&mut runtime, true);
+
+        let outcome = run_bash(&mut runtime, &json!({ "command": "sh write.sh" })).await;
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+        assert!(!escaped.exists());
+        // The agent learns what stopped the command and how to ask for more.
+        assert!(
+            outcome.result.contains(
+                "[pumr] This command ran in the sandbox: it writes only to the project"
+            ) && outcome.result.contains("\"unsandboxed\": true"),
+            "{}",
+            outcome.result
+        );
+        assert!(asked.lock().unwrap().is_empty());
+
+        // A command that fails for a reason of its own is told nothing.
+        let outcome = run_bash(&mut runtime, &json!({ "command": "false" })).await;
+        assert_eq!(outcome.result, "Command failed with exit code 1.\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_confined_command_still_shows_what_its_tail_holds_back() {
+        if !sandbox::support().files {
+            return;
+        }
+        let (_directory, mut runtime, _) = confined_project();
+        let shown = Arc::new(Mutex::new(String::new()));
+        let sink = shown.clone();
+        runtime.emit = Arc::new(move |routed: RoutedEvent| {
+            if let StreamEvent::ToolDelta { text, .. } = routed.event {
+                sink.lock().unwrap().push_str(&text);
+            }
+        });
+
+        let command = "printf 'one\\ntwo\\nthree\\n' | tail -n 1";
+        let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+        assert_eq!(outcome.result, "Command finished successfully.\nthree\n");
+        // The pipe to the chat is one of the command's own file descriptors.
+        assert!(shown.lock().unwrap().starts_with("one\ntwo\nthree\n"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn leaving_the_sandbox_takes_the_users_yes_every_time() {
+        if !sandbox::support().files {
+            return;
+        }
+        let (_directory, mut runtime, escaped) = confined_project();
+        let call = json!({ "command": "sh write.sh", "unsandboxed": true });
+
+        let asked = answering(&mut runtime, false);
+        let refused = run_bash(&mut runtime, &call).await;
+        assert_eq!(refused.status, "denied", "{}", refused.result);
+        assert!(!escaped.exists());
+
+        let asked_again = answering(&mut runtime, true);
+        for _ in 0..2 {
+            let outcome = run_bash(&mut runtime, &call).await;
+            assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        }
+        assert_eq!(std::fs::read_to_string(&escaped).unwrap(), "escaped\n");
+        let title = "Run command outside the sandbox?".to_string();
+        assert_eq!(*asked.lock().unwrap(), [title.clone()]);
+        // Nothing remembers the yes: the second run asked like the first.
+        assert_eq!(*asked_again.lock().unwrap(), [title.clone(), title]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn without_a_sandbox_nothing_is_asked_about_leaving_it() {
+        let (_directory, mut runtime, escaped) = confined_project();
+        runtime.permissions.set_sandbox(sandbox::Config::default());
+        let asked = answering(&mut runtime, false);
+
+        let call = json!({ "command": "sh write.sh", "unsandboxed": true });
+        let outcome = run_bash(&mut runtime, &call).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(escaped.exists());
+        assert!(asked.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_bash_is_offered_the_way_out_of_the_sandbox() {
+        let mut schemas = tool_schemas();
+        offer_unsandboxed(&mut schemas);
+        let offered: Vec<&str> = schemas
+            .iter()
+            .filter(|schema| {
+                schema
+                    .pointer("/function/parameters/properties/unsandboxed")
+                    .is_some()
+            })
+            .filter_map(|schema| schema.pointer("/function/name")?.as_str())
+            .collect();
+        assert_eq!(offered, ["bash"]);
+        // Where nothing is confined, the schema says nothing of it.
+        assert!(!json!(tool_schemas()).to_string().contains("unsandboxed"));
     }
 
     #[test]

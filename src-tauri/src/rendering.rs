@@ -25,6 +25,7 @@ use std::time::Duration;
 
 const DISABLE_EXPLICIT_SYNC: &str = "__NV_DISABLE_EXPLICIT_SYNC";
 const DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+const DISABLE_COMPOSITING: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
 const STARTING: &str = "starting";
 const FALLBACK: &str = "fallback";
 /// How long a start has to survive to count as working. The protocol error
@@ -87,17 +88,37 @@ pub fn prepare(identifier: &str) -> StartupGuard {
     guard
 }
 
+/// Whether the webview paints on the CPU, without GPU compositing: the
+/// renderer [`prepare`] picks for X11 and falls back to on Wayland. Every
+/// repaint then runs on the page's own thread, so the interface keeps them
+/// small and rare (`data-renderer` in `styles.css`). Call after [`prepare`].
+pub fn software() -> bool {
+    cfg!(target_os = "linux") && paints_on_cpu(|key| std::env::var_os(key))
+}
+
+/// WebKitGTK reads both switches the same way: set to anything but `0`.
+fn paints_on_cpu(var: impl Fn(&str) -> Option<OsString>) -> bool {
+    [DISABLE_DMABUF, DISABLE_COMPOSITING]
+        .iter()
+        .any(|key| var(key).is_some_and(|value| value != "0"))
+}
+
 fn needs_explicit_sync_off(nvidia: bool, var: impl Fn(&str) -> Option<OsString>) -> bool {
     nvidia && on_wayland(&var) && var(DISABLE_EXPLICIT_SYNC).is_none()
 }
 
 /// Whether the window talks to a Wayland compositor rather than an X server.
 fn on_wayland(var: impl Fn(&str) -> Option<OsString>) -> bool {
-    let wayland = var("WAYLAND_DISPLAY").is_some()
-        || var("XDG_SESSION_TYPE").is_some_and(|kind| kind == "wayland");
     // GDK_BACKEND=x11 runs the window through XWayland.
     let forced_x11 = var("GDK_BACKEND").is_some_and(|backend| backend == "x11");
-    wayland && !forced_x11
+    wayland_session(&var) && !forced_x11
+}
+
+/// Whether the desktop is a Wayland one, whichever way pumr's own window
+/// reaches it.
+pub(crate) fn wayland_session(var: impl Fn(&str) -> Option<OsString>) -> bool {
+    var("WAYLAND_DISPLAY").is_some()
+        || var("XDG_SESSION_TYPE").is_some_and(|kind| kind == "wayland")
 }
 
 /// Marks a start as under way and reports whether it has to use the fallback
@@ -166,6 +187,16 @@ mod tests {
     }
 
     #[test]
+    fn cpu_painting_follows_the_webkit_switches() {
+        assert!(paints_on_cpu(lookup(vec![(DISABLE_DMABUF, "1")])));
+        assert!(paints_on_cpu(lookup(vec![(DISABLE_COMPOSITING, "1")])));
+        // WebKitGTK takes any value but "0" as a yes, the empty one included.
+        assert!(paints_on_cpu(lookup(vec![(DISABLE_DMABUF, "")])));
+        assert!(!paints_on_cpu(lookup(vec![(DISABLE_DMABUF, "0")])));
+        assert!(!paints_on_cpu(lookup(vec![("WAYLAND_DISPLAY", "wayland-0")])));
+    }
+
+    #[test]
     fn x11_sessions_are_told_apart_from_wayland() {
         assert!(on_wayland(lookup(vec![("WAYLAND_DISPLAY", "wayland-0")])));
         assert!(!on_wayland(lookup(vec![
@@ -177,6 +208,12 @@ mod tests {
             ("GDK_BACKEND", "x11")
         ])));
         assert!(!on_wayland(lookup(vec![])));
+        // The session stays a Wayland one when the window goes through XWayland.
+        assert!(wayland_session(lookup(vec![
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            ("GDK_BACKEND", "x11")
+        ])));
+        assert!(!wayland_session(lookup(vec![("XDG_SESSION_TYPE", "x11")])));
     }
 
     #[test]

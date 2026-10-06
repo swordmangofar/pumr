@@ -53,6 +53,12 @@ raise permission and question prompts (see `FakeStep`). First run needs
 
 - Seed data with the builders in `e2e/support/fixtures.ts` and start the app
   with `app.start(seed({...}))`; assert on backend traffic with `app.backend`.
+- For the Git tab the fake keeps a small repository: `files` is the work tree,
+  `git.committed` what HEAD holds, `git.refs` and `git.commits` the branches,
+  tags, stashes and history, and `git.incoming` what merging a branch brings
+  in, conflicts included. `failures` makes a command fail with the error
+  Rust would return, and `app.backend.setConfirm` / `answerNext` answer the
+  native confirm dialogs in front of destructive actions.
 - A test fails if the app calls a Tauri command the fake does not handle. When
   you add a command to `api.ts`, add a handler to the fake's `handlers` table
   that mirrors the Rust command.

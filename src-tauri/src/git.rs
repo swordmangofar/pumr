@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 mod hunks;
+#[cfg(test)]
+mod safety_tests;
 
 pub use hunks::{git_apply_lines, project_file_hunks};
 
@@ -45,10 +47,35 @@ const MAX_DIFF_BYTES: u64 = 4 * 1024 * 1024;
 /// Upper bound for the line diff that counts additions and deletions.
 const LINE_DIFF_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Settings shared by every git process pumr starts: it never prompts or opens
-/// an editor, never takes optional locks, treats paths literally and reports
-/// errors in English so the UI can classify them.
+/// Variables that tie a git command to a repository, index or object store
+/// other than the one of the folder it runs in: what
+/// `git rev-parse --local-env-vars` lists, without the two that only carry
+/// `-c` settings. Git sets them for hooks and for `rebase --exec`, so a pumr
+/// started from there would run every command in that repository instead.
+const REPOSITORY_ENV: [&str; 13] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+];
+
+/// Settings shared by every git process pumr starts: it works on the
+/// repository it is pointed at whatever the environment names, never prompts
+/// or opens an editor, never takes optional locks, treats paths literally and
+/// reports errors in English so the UI can classify them.
 fn configure(command: &mut Command) {
+    for name in REPOSITORY_ENV {
+        command.env_remove(name);
+    }
     command
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_MERGE_AUTOEDIT", "no")
@@ -69,8 +96,33 @@ fn git(root: &Path) -> Command {
     command
         .arg("-C")
         .arg(root)
-        .args(["-c", "core.quotepath=false"]);
+        .args(["-c", "core.quotepath=false"])
+        // `git diff` otherwise rewrites the index to bring its file times up
+        // to date, holding `index.lock` like any other write.
+        .args(["-c", "diff.autoRefreshIndex=false"]);
     configure(&mut command);
+    // A project is the repository in its own folder or none (`is_repo_root`):
+    // git must not go looking for one in the folders above. Git works from
+    // where a linked folder really is, so that is the folder to stop at;
+    // Windows spells resolved paths in a way git does not read (`\\?\C:\`).
+    let resolved = match root.canonicalize() {
+        Ok(resolved) if !cfg!(windows) => resolved,
+        _ => root.to_path_buf(),
+    };
+    if let Some(parent) = resolved.parent().filter(|parent| parent.is_absolute()) {
+        command.env("GIT_CEILING_DIRECTORIES", parent);
+    }
+    command
+}
+
+/// Git for an operation pumr passes no file names to, such as a commit, a
+/// merge or a stash. These run the user's hooks and git's own helper commands,
+/// which have to read pathspecs the way they do in a terminal: a hook listing
+/// `'*.rs'` would otherwise match nothing, and `stash --include-untracked`
+/// would leave the files it stashed in the work tree.
+fn git_action(root: &Path) -> Command {
+    let mut command = git(root);
+    command.env_remove("GIT_LITERAL_PATHSPECS");
     command
 }
 
@@ -136,14 +188,6 @@ fn nul_entries(bytes: &[u8]) -> impl Iterator<Item = String> + '_ {
 fn combined_output(output: Output, command: &str) -> Result<String> {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !output.status.success() {
-        let detail = if stderr.is_empty() {
-            format!("git {command} failed")
-        } else {
-            stderr
-        };
-        return Err(AppError::msg(detail));
-    }
     let mut text = stdout;
     if !stderr.is_empty() {
         if !text.is_empty() {
@@ -151,11 +195,22 @@ fn combined_output(output: Output, command: &str) -> Result<String> {
         }
         text.push_str(&stderr);
     }
+    if !output.status.success() {
+        // A failure reports stdout too: that is where git names the conflicts
+        // a merge, pick or stash stopped at, and says why nothing was
+        // committed.
+        if text.is_empty() {
+            text = format!("git {command} failed");
+        }
+        return Err(AppError::msg(text));
+    }
     Ok(text)
 }
 
+/// Runs an operation without file names (see [`git_action`]) and returns what
+/// it printed.
 fn git_combined(root: &Path, args: &[&str]) -> Result<String> {
-    let output = git(root).args(args).output()?;
+    let output = git_action(root).args(args).output()?;
     combined_output(output, &args.join(" "))
 }
 
@@ -221,12 +276,18 @@ fn ensure_stash(value: &str) -> Result<&str> {
     }
 }
 
-/// Accepts only repository-relative paths: no absolute paths and no `..`.
+/// Accepts only repository-relative paths: no absolute paths, no `..` and
+/// nothing in a `.git`, which holds a repository's own data and is never a
+/// path git lists.
 fn ensure_relative_path(path: &str) -> Result<&str> {
     let valid = !path.is_empty()
         && Path::new(path)
             .components()
-            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+            .all(|component| match component {
+                Component::Normal(name) => !name.eq_ignore_ascii_case(".git"),
+                Component::CurDir => true,
+                _ => false,
+            });
     if valid {
         Ok(path)
     } else {
@@ -426,6 +487,24 @@ pub fn remove_shadow(app_data_dir: &Path, project_id: &str) -> Result<()> {
     }
 }
 
+/// The folder of a shadow repository that holds one note per snapshot: the
+/// paths that snapshot left out because they were ignored.
+const IGNORED_NOTES: &str = "pumr-ignored";
+
+/// Whether `path` is one of the noted `ignored` paths or lies in an ignored
+/// folder, which a note names with a trailing `/`.
+fn was_ignored(ignored: &HashSet<String>, path: &str) -> bool {
+    ignored.contains(path)
+        || path
+            .match_indices('/')
+            .any(|(end, _)| ignored.contains(&path[..=end]))
+}
+
+/// Whether `path` names an ignore file that git reads in the work tree.
+fn is_ignore_file(path: &str) -> bool {
+    path == ".gitignore" || path.ends_with("/.gitignore")
+}
+
 pub struct ShadowRepo {
     git_dir: PathBuf,
     work_tree: PathBuf,
@@ -525,8 +604,32 @@ impl ShadowRepo {
     }
 
     fn stage_all_unlocked(&self) -> Result<()> {
-        self.run(["add", "-A", "--", "."])?;
-        Ok(())
+        // A folder that is a repository without a commit cannot be staged,
+        // not even as a link, and `git add` stops at the first one. With
+        // `--ignore-errors` it stages everything else and names each of them,
+        // so those folders are left out and any other error still fails.
+        let output = self
+            .command()
+            .args(["add", "-A", "--ignore-errors", "--", "."])
+            .output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut errors = stderr
+            .lines()
+            .filter(|line| line.starts_with("error: ") || line.starts_with("fatal: "))
+            .peekable();
+        let only_unborn = errors.peek().is_some()
+            && errors.all(|line| line.ends_with("' does not have a commit checked out"));
+        if only_unborn {
+            Ok(())
+        } else {
+            Err(AppError::msg(format!(
+                "shadow git failed: {}",
+                stderr.trim()
+            )))
+        }
     }
 
     pub fn snapshot(&self, message: &str) -> Result<String> {
@@ -540,7 +643,80 @@ impl ShadowRepo {
             "-m",
             message,
         ])?;
-        self.head()
+        let head = self.head()?;
+        self.note_ignored_unlocked(&head);
+        Ok(head)
+    }
+
+    /// Notes which paths the snapshot `commit` left out because they were
+    /// ignored: a folder an ignore pattern names as `folder/`, everything else
+    /// file by file. They were there when it was taken although it does not
+    /// hold them, and nothing else says so once an ignore file changes.
+    /// Without a note (git failed, or the snapshot is older than the notes)
+    /// `restore_to` falls back to keeping more.
+    fn note_ignored_unlocked(&self, commit: &str) {
+        // `--ignore-submodules` keeps git from running a status of its own in
+        // every nested repository.
+        let Ok(status) = self.run_bytes([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--no-renames",
+            "--untracked-files=normal",
+            "--ignored=matching",
+            "--ignore-submodules=all",
+        ]) else {
+            return;
+        };
+        let mut listing = Vec::new();
+        for entry in status.split(|byte| *byte == 0) {
+            if let Some(path) = entry.strip_prefix(b"!! ") {
+                listing.extend_from_slice(path);
+                listing.push(0);
+            }
+        }
+        let folder = self.git_dir.join(IGNORED_NOTES);
+        if std::fs::create_dir_all(&folder).is_err() {
+            return;
+        }
+        let note = folder.join(commit);
+        // Most snapshots leave out what the one before left out. A hard link
+        // to that note takes no room, however long the list is.
+        let latest = folder.join("latest");
+        let unchanged = std::fs::read(&latest).is_ok_and(|previous| previous == listing);
+        if unchanged && std::fs::hard_link(&latest, &note).is_ok() {
+            return;
+        }
+        // Written under another name first, so a note is never half a list.
+        let draft = folder.join("draft");
+        if std::fs::write(&draft, &listing).is_ok() && std::fs::rename(&draft, &note).is_ok() {
+            let _ = std::fs::remove_file(&latest);
+            let _ = std::fs::hard_link(&note, &latest);
+        }
+    }
+
+    /// The note of the snapshot `commit`, or `None` when it has none.
+    fn ignored_at(&self, commit: &str) -> Option<HashSet<String>> {
+        let name = ensure_hash(commit).ok()?;
+        let note = std::fs::read(self.git_dir.join(IGNORED_NOTES).join(name)).ok()?;
+        Some(nul_entries(&note).collect())
+    }
+
+    /// Takes the additions out of `changes` that the snapshot `base` left out
+    /// as ignored and returns them: they were there before, and only look new
+    /// because an ignore file was changed or deleted since. `None` when the
+    /// snapshot has no note to tell.
+    fn take_formerly_ignored(
+        &self,
+        base: &str,
+        changes: &mut Vec<FileChange>,
+    ) -> Option<Vec<FileChange>> {
+        let ignored = self.ignored_at(base)?;
+        let (formerly_ignored, rest) = std::mem::take(changes)
+            .into_iter()
+            .partition(|change| change.status == "A" && was_ignored(&ignored, &change.path));
+        *changes = rest;
+        Some(formerly_ignored)
     }
 
     pub fn head(&self) -> Result<String> {
@@ -561,10 +737,15 @@ impl ShadowRepo {
         Ok(parse_name_status(&self.run_bytes(&name_status)?, &stats))
     }
 
+    /// Changes of the working tree since the snapshot `base`. A file that
+    /// snapshot left out as ignored is not reported as added when an ignore
+    /// file stops covering it.
     pub fn changes_since(&self, base: &str) -> Result<Vec<FileChange>> {
         let _guard = lock_ignoring_poison(&self.lock);
         self.stage_all_unlocked()?;
-        self.diff_unlocked(&["--cached", base])
+        let mut changes = self.diff_unlocked(&["--cached", base])?;
+        self.take_formerly_ignored(base, &mut changes);
+        Ok(changes)
     }
 
     /// Changes between two shadow commits. Unlike `changes_since`, this never
@@ -572,7 +753,9 @@ impl ShadowRepo {
     /// the range and cannot pick up edits made by other sessions.
     pub fn changes_between(&self, base: &str, after: &str) -> Result<Vec<FileChange>> {
         let _guard = lock_ignoring_poison(&self.lock);
-        self.diff_unlocked(&[base, after])
+        let mut changes = self.diff_unlocked(&[base, after])?;
+        self.take_formerly_ignored(base, &mut changes);
+        Ok(changes)
     }
 
     /// Whether `ancestor` is `commit` or one of its ancestors. Snapshots form
@@ -599,7 +782,24 @@ impl ShadowRepo {
     pub fn restore_to(&self, commit: &str) -> Result<Vec<String>> {
         let _guard = lock_ignoring_poison(&self.lock);
         self.stage_all_unlocked()?;
-        let changes = self.diff_unlocked(&["--cached", commit])?;
+        let mut changes = self.diff_unlocked(&["--cached", commit])?;
+        // Only what was made after the snapshot may be deleted. A file it left
+        // out as ignored was there before and is not in it, so it could never
+        // be brought back.
+        let kept = match self.take_formerly_ignored(commit, &mut changes) {
+            Some(kept) => kept,
+            // An older snapshot does not say what it left out. Ignored files
+            // only look new once an ignore file changed, and then every
+            // addition is kept.
+            None if changes.iter().any(|change| is_ignore_file(&change.path)) => {
+                let (kept, rest) = std::mem::take(&mut changes)
+                    .into_iter()
+                    .partition(|change| change.status == "A");
+                changes = rest;
+                kept
+            }
+            None => Vec::new(),
+        };
         let mut restore = Vec::new();
         for change in &changes {
             if change.status == "A" {
@@ -621,6 +821,14 @@ impl ShadowRepo {
             args.extend(chunk);
             self.run(&args)?;
         }
+        // What was kept leaves the index, so the files an ignore file covers
+        // again are ignored again; the others are staged right back.
+        let kept: Vec<&str> = kept.iter().map(|change| change.path.as_str()).collect();
+        for chunk in kept.chunks(PATH_CHUNK) {
+            let mut args = vec!["rm", "--cached", "-f", "--quiet", "--ignore-unmatch", "--"];
+            args.extend(chunk);
+            self.run(&args)?;
+        }
         self.stage_all_unlocked()?;
         Ok(changes.into_iter().map(|change| change.path).collect())
     }
@@ -632,11 +840,12 @@ impl ShadowRepo {
     /// Untracked files and folders at or below `path` that snapshots skip
     /// because `.gitignore` (or the default excludes) ignores them, relative to
     /// the project root. A wholly ignored folder is listed once, with a
-    /// trailing `/`. `None` when `path` is not below the project root or git
-    /// fails, so callers treat it as not restorable.
+    /// trailing `/`. `None` when `path` is not below the project root, when
+    /// it lies in, is or holds a repository of its own, or when git fails, so
+    /// callers treat it as not restorable.
     pub fn ignored_entries(&self, path: &Path) -> Option<Vec<String>> {
         let relative = path.strip_prefix(&self.work_tree).ok()?.to_str()?;
-        if relative.is_empty() {
+        if relative.is_empty() || self.touches_repository(relative) {
             return None;
         }
         let output = self
@@ -658,6 +867,69 @@ impl ShadowRepo {
                 .map(|entry| String::from_utf8_lossy(entry).into_owned())
                 .collect(),
         )
+    }
+
+    /// Whether `relative` lies in, is or holds a repository of its own: a
+    /// clone, a submodule or a linked worktree. A snapshot keeps the commit
+    /// such a folder has checked out and nothing else, and nothing at all
+    /// before its first commit, so its `.git`, its history and its
+    /// uncommitted files cannot be restored.
+    fn touches_repository(&self, relative: &str) -> bool {
+        let is_repository = |folder: &Path| {
+            std::fs::symlink_metadata(folder).is_ok_and(|metadata| metadata.is_dir())
+                && std::fs::symlink_metadata(folder.join(".git")).is_ok()
+        };
+        // On the way down to the path and at the path itself.
+        let mut folder = self.work_tree.clone();
+        for component in Path::new(relative).components() {
+            if component.as_os_str().eq_ignore_ascii_case(".git") {
+                return true;
+            }
+            folder.push(component);
+            if is_repository(&folder) {
+                return true;
+            }
+        }
+        // Below the path git says where to look, so nothing it ignores is
+        // walked. The index holds a repository with a commit as a link (mode
+        // 160000). One without a commit is an untracked folder that git lists
+        // but does not enter. And a folder whose files were tracked before it
+        // became a repository keeps them as plain entries, so the folders of
+        // all entries are looked at as well.
+        let Ok(entries) = self.run_bytes([
+            "ls-files",
+            "-z",
+            "--stage",
+            "--others",
+            "--exclude-standard",
+            "--",
+            relative,
+        ]) else {
+            return true;
+        };
+        let mut looked_at = HashSet::new();
+        for entry in entries.split(|byte| *byte == 0) {
+            if entry.starts_with(b"160000 ") || entry.ends_with(b"/") {
+                return true;
+            }
+            // An index entry is `mode hash stage TAB path`, an untracked one
+            // just the path.
+            let path = entry
+                .splitn(2, |byte| *byte == b'\t')
+                .last()
+                .unwrap_or(entry);
+            let path = String::from_utf8_lossy(path);
+            for parent in Path::new(path.as_ref()).ancestors().skip(1) {
+                // A folder seen before had the ones above it looked at too.
+                if parent.as_os_str().is_empty() || !looked_at.insert(parent.to_path_buf()) {
+                    break;
+                }
+                if is_repository(&self.work_tree.join(parent)) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -688,8 +960,36 @@ impl GitProbe<'_> {
 
 /// The checked-out branch, or `None` when HEAD is detached. Unlike
 /// `rev-parse --abbrev-ref`, this also names a branch that has no commit yet.
+/// The name is cut from the full ref: `--short` would print `heads/name`
+/// while a tag is called the same.
 pub fn project_current_branch(project_root: &Path) -> Option<String> {
-    git_stdout_opt(project_root, &["symbolic-ref", "--short", "-q", "HEAD"])
+    let head = git_stdout_opt(project_root, &["symbolic-ref", "-q", "HEAD"])?;
+    Some(
+        head.strip_prefix("refs/heads/")
+            .unwrap_or(&head)
+            .to_string(),
+    )
+}
+
+/// The revision that names the branch `name` for commands that take any
+/// revision. They read a bare name as the tag when a tag is called the same,
+/// so the branch is then spelled `heads/name` (or `remotes/origin/name`).
+/// Anything that is not a branch, such as a commit hash, is returned as it is.
+fn branch_revision(project_root: &Path, name: &str) -> String {
+    // A full hash always means the commit.
+    if matches!(name.len(), 40 | 64) && name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return name.to_string();
+    }
+    ["refs/heads/", "refs/remotes/"]
+        .iter()
+        .find_map(|namespace| {
+            let full = format!("{namespace}{name}");
+            git_stdout_opt(
+                project_root,
+                &["rev-parse", "--verify", "-q", "--abbrev-ref", &full],
+            )
+        })
+        .unwrap_or_else(|| name.to_string())
 }
 
 pub fn project_git_info(project_root: &Path) -> GitInfo {
@@ -776,7 +1076,10 @@ fn non_empty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-const BRANCH_FORMAT: &str = "--format=%(refname)%1f%(refname:short)%1f%(HEAD)%1f%(upstream:short)%1f%(upstream:remotename)%1f%(upstream:remoteref)%1f%(objectname)%1f%(committerdate:unix)%1f%(contents:subject)";
+/// The name is the ref without `refs/heads/` or `refs/remotes/`, the form the
+/// branch commands take. `%(refname:short)` is not: it prints `heads/name`
+/// while a tag is called the same.
+const BRANCH_FORMAT: &str = "--format=%(refname)%1f%(refname:lstrip=2)%1f%(HEAD)%1f%(upstream:short)%1f%(upstream:remotename)%1f%(upstream:remoteref)%1f%(objectname)%1f%(committerdate:unix)%1f%(contents:subject)";
 
 fn project_branches(project_root: &Path, remotes: &[String]) -> Vec<GitBranch> {
     let Some(output) = git_stdout_opt(
@@ -804,8 +1107,7 @@ fn project_branches(project_root: &Path, remotes: &[String]) -> Vec<GitBranch> {
                 .map(|seconds| seconds * 1000);
             let subject = parts.next().unwrap_or("");
             let remote_tracking = full.strip_prefix("refs/remotes/");
-            // `refs/remotes/origin/HEAD` is a pointer, not a branch; its short
-            // name is just `origin`, so it has to be skipped by its full name.
+            // `refs/remotes/origin/HEAD` is a pointer, not a branch.
             if name.is_empty() || remote_tracking.is_some_and(|rest| rest.ends_with("/HEAD")) {
                 return None;
             }
@@ -839,7 +1141,8 @@ fn project_branches(project_root: &Path, remotes: &[String]) -> Vec<GitBranch> {
 }
 
 fn project_tags(project_root: &Path) -> Vec<GitTag> {
-    let format = "--format=%(refname:short)%1f%(objecttype)%1f%(objectname)%1f%(*objectname)";
+    // `lstrip=2` for the plain name, see `BRANCH_FORMAT`.
+    let format = "--format=%(refname:lstrip=2)%1f%(objecttype)%1f%(objectname)%1f%(*objectname)";
     git_stdout_opt(project_root, &["tag", "--sort=-creatordate", format])
         .map(|output| {
             output
@@ -946,7 +1249,9 @@ pub fn project_commits(
     let path = path
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let mut args = vec!["log"];
+    // `log.showSignature` would print what it finds out about a signature
+    // in front of each commit.
+    let mut args = vec!["log", "--no-show-signature"];
     match &path {
         Some(path) => {
             ensure_relative_path(path)?;
@@ -1104,6 +1409,7 @@ fn commit_changes(project_root: &Path, hash: &str) -> Result<Vec<FileChange>> {
             project_root,
             &[
                 "show",
+                "--no-show-signature",
                 "-m",
                 "--first-parent",
                 mode,
@@ -1125,8 +1431,11 @@ pub fn project_commit_detail(project_root: &Path, revision: &str) -> Result<GitC
         &[
             "show",
             "-s",
+            "--no-show-signature",
             "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%at%x1f%P%x1f%D%x1f%s%x1f%b",
             revision,
+            // `HEAD` may also be the name of a file.
+            "--",
         ],
     )?;
     let mut parts = output.splitn(9, '\u{1f}');
@@ -1436,13 +1745,67 @@ fn has_head(project_root: &Path) -> bool {
     git_succeeds(project_root, &["rev-parse", "--quiet", "--verify", "HEAD"])
 }
 
+/// Starts the error of an unstage that named nothing but conflicted files.
+const UNSTAGE_CONFLICT: &str = "conflicts are resolved, not unstaged";
+
+/// The entries (`-z`) a listing `command` prints for `paths`, which it is
+/// given a chunk at a time.
+fn list_for_paths(project_root: &Path, command: &[&str], paths: &[&str]) -> Result<Vec<String>> {
+    let mut entries = Vec::new();
+    for chunk in paths.chunks(PATH_CHUNK) {
+        let mut args = command.to_vec();
+        args.extend(chunk);
+        entries.extend(nul_entries(&git_bytes(project_root, &args)?));
+    }
+    Ok(entries)
+}
+
 fn unstage_unlocked(project_root: &Path, paths: &[&str]) -> Result<()> {
+    // A conflicted path is left as it is. Unstaging it would take the conflict
+    // out of the index while the merge stays open, and continuing would then
+    // commit the file as HEAD has it, without what was merged. Whatever else
+    // is staged at or below `paths` is unstaged by name instead.
+    let unmerged: BTreeSet<String> =
+        list_for_paths(project_root, &["ls-files", "-u", "-z", "--"], paths)?
+            .into_iter()
+            .filter_map(|entry| entry.split_once('\t').map(|(_, path)| path.to_string()))
+            .collect();
+    let staged: Vec<String>;
+    let paths = if unmerged.is_empty() {
+        paths.to_vec()
+    } else {
+        let listing = [
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--",
+        ];
+        staged = list_for_paths(project_root, &listing, paths)?
+            .into_iter()
+            .filter(|path| !unmerged.contains(path))
+            .collect();
+        if staged.is_empty() {
+            let mut names: Vec<String> = unmerged.iter().take(5).cloned().collect();
+            if unmerged.len() > 5 {
+                names.push(format!("and {} more", unmerged.len() - 5));
+            }
+            return Err(AppError::msg(format!(
+                "{UNSTAGE_CONFLICT}: {}",
+                names.join(", ")
+            )));
+        }
+        staged.iter().map(String::as_str).collect()
+    };
     // Before the first commit there is nothing to restore from, so the paths
-    // are dropped from the index without touching the work tree.
+    // are dropped from the index without touching the work tree. `-f` lets
+    // that happen for a file that was edited after it was staged, which git
+    // otherwise refuses for fear of losing the staged version.
     let command: &[&str] = if has_head(project_root) {
         &["restore", "--staged", "--"]
     } else {
-        &["rm", "--cached", "-r", "--quiet", "--"]
+        &["rm", "--cached", "-r", "-f", "--quiet", "--"]
     };
     for chunk in paths.chunks(PATH_CHUNK) {
         let mut args = command.to_vec();
@@ -1501,11 +1864,96 @@ pub fn git_unstage_paths(project_root: &Path, paths: &[String]) -> Result<()> {
 /// to its staged version (staged work is never touched), and untracked files
 /// are deleted. Tracked paths are restored in chunks, so tens of thousands of
 /// files do not mean tens of thousands of processes.
+///
+/// Only what was named is lost. A repository inside the project is kept, and
+/// so is a path whose restoring would delete other files; the rest is still
+/// discarded and the error says what was kept.
 pub fn git_discard_paths(project_root: &Path, paths: &[String]) -> Result<()> {
     if paths.is_empty() {
         return Ok(());
     }
     with_repo_lock(project_root, || discard_paths_unlocked(project_root, paths))
+}
+
+/// The index entries inside a folder; a folder that has some is tracked.
+fn entries_below<'a>(
+    index: &'a BTreeSet<String>,
+    folder: &str,
+) -> impl Iterator<Item = &'a String> {
+    let prefix = format!("{}/", folder.trim_end_matches('/'));
+    index
+        .range::<str, _>((Bound::Included(prefix.as_str()), Bound::Unbounded))
+        .take_while(move |entry| entry.starts_with(&prefix))
+}
+
+/// Whether a folder is a repository of its own (a linked worktree and a
+/// submodule are, too) or has one somewhere inside. Git lists such a folder as
+/// a single untracked entry and `git clean` skips it: deleting it would take
+/// that repository's history and its uncommitted work along.
+fn holds_repository(folder: &Path) -> bool {
+    let is_folder = std::fs::symlink_metadata(folder).is_ok_and(|metadata| metadata.is_dir());
+    if !is_folder {
+        return false;
+    }
+    if std::fs::symlink_metadata(folder.join(".git")).is_ok() {
+        return true;
+    }
+    match std::fs::read_dir(folder) {
+        Ok(children) => children
+            .flatten()
+            .any(|child| holds_repository(&child.path())),
+        // What cannot be read cannot be vouched for.
+        Err(_) => true,
+    }
+}
+
+/// Whether a folder holds anything but empty folders.
+fn has_files(folder: &Path) -> bool {
+    match std::fs::read_dir(folder) {
+        Ok(children) => children.flatten().any(|child| {
+            let path = child.path();
+            std::fs::symlink_metadata(&path)
+                .map_or(true, |metadata| !metadata.is_dir() || has_files(&path))
+        }),
+        Err(_) => true,
+    }
+}
+
+/// Why `git checkout -- path` would delete other files to put an index entry
+/// back. Git forces its way: a folder that took the file's place goes with
+/// all it holds, and so does a file that took the place of one of the entry's
+/// folders. Those are files nobody named, ignored ones included.
+fn restore_blocker(project_root: &Path, path: &str) -> Option<String> {
+    let mut current = project_root.to_path_buf();
+    let mut walked = String::new();
+    let mut parts = path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .peekable();
+    while let Some(part) = parts.next() {
+        current.push(part);
+        if !walked.is_empty() {
+            walked.push('/');
+        }
+        walked.push_str(part);
+        let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+            // Nothing is here, so nothing is in the way further down either.
+            return None;
+        };
+        if parts.peek().is_some() {
+            if !metadata.is_dir() {
+                return Some(format!(
+                    "{walked} is not a folder anymore and would be deleted"
+                ));
+            }
+        } else if metadata.is_dir() {
+            // Git leaves the folder of a submodule alone.
+            let submodule = std::fs::symlink_metadata(current.join(".git")).is_ok();
+            return (!submodule && has_files(&current))
+                .then(|| "it is a folder now and its files would be deleted".to_string());
+        }
+    }
+    None
 }
 
 fn discard_paths_unlocked(project_root: &Path, paths: &[String]) -> Result<()> {
@@ -1515,32 +1963,52 @@ fn discard_paths_unlocked(project_root: &Path, paths: &[String]) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     let index: BTreeSet<String> =
         nul_entries(&git_bytes(project_root, &["ls-files", "-z"])?).collect();
-    // A folder counts as tracked when the index has files inside it.
-    let tracked_folder = |path: &str| {
-        let prefix = format!("{}/", path.trim_end_matches('/'));
-        index
-            .range::<str, _>((Bound::Included(prefix.as_str()), Bound::Unbounded))
-            .next()
-            .is_some_and(|entry| entry.starts_with(&prefix))
-    };
     let mut restore = Vec::new();
     let mut delete = Vec::new();
     for (path, entry) in paths.iter().zip(entries) {
-        if index.contains(path.as_str()) || tracked_folder(path) {
+        // An untracked file can sit where a tracked folder was. It is then
+        // the file that was named, not the folder.
+        let is_file = std::fs::symlink_metadata(&entry).is_ok_and(|metadata| !metadata.is_dir());
+        let tracked = index.contains(path.as_str())
+            || (!is_file && entries_below(&index, path).next().is_some());
+        if tracked {
             restore.push(path.as_str());
         } else {
-            delete.push(entry);
+            delete.push((path.as_str(), entry));
         }
     }
-    for chunk in restore.chunks(PATH_CHUNK) {
+    let mut kept = Vec::new();
+    // Deleting comes first: an untracked file that was named may be what
+    // stands in the way of a restore.
+    for (path, entry) in delete {
+        if holds_repository(&entry) {
+            kept.push(format!("{path} is a git repository and was not deleted"));
+        } else {
+            remove_entry(&entry)?;
+        }
+    }
+    let mut checkout = Vec::new();
+    for path in restore {
+        let blocker = if index.contains(path) {
+            restore_blocker(project_root, path)
+        } else {
+            entries_below(&index, path).find_map(|entry| restore_blocker(project_root, entry))
+        };
+        match blocker {
+            Some(reason) => kept.push(format!("{path} was not restored: {reason}")),
+            None => checkout.push(path),
+        }
+    }
+    for chunk in checkout.chunks(PATH_CHUNK) {
         let mut args = vec!["checkout", "--"];
         args.extend(chunk);
         git_stdout(project_root, &args)?;
     }
-    for entry in delete {
-        remove_entry(&entry)?;
+    if kept.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::msg(kept.join("; ")))
     }
-    Ok(())
 }
 
 /// Returns the per-line blame for a tracked file.
@@ -1837,7 +2305,15 @@ pub fn staged_summary(project_root: &Path, max_patch_chars: usize) -> Result<Sta
     };
     let recent_subjects = git_stdout_opt(
         project_root,
-        &["log", "-n", "12", "--no-merges", "--format=%s", "--"],
+        &[
+            "log",
+            "--no-show-signature",
+            "-n",
+            "12",
+            "--no-merges",
+            "--format=%s",
+            "--",
+        ],
     )
     .map(|text| text.lines().map(str::to_string).collect())
     .unwrap_or_default();
@@ -1997,7 +2473,9 @@ pub fn git_submodule_update(project_root: &Path, path: Option<&str>) -> Result<S
         args.push("--");
         args.push(ensure_relative_path(path)?);
     }
-    git_combined(project_root, &args)
+    // The path is a file name, so pathspecs stay literal here.
+    let output = git(project_root).args(&args).output()?;
+    combined_output(output, &args.join(" "))
 }
 
 /// The remote and merge ref (`refs/heads/...`) a local branch tracks.
@@ -2038,16 +2516,16 @@ pub fn git_fast_forward(project_root: &Path, branch: &str) -> Result<String> {
 }
 
 pub fn git_merge(project_root: &Path, branch: &str) -> Result<String> {
-    let branch = ensure_arg(branch, "branch")?;
+    let branch = branch_revision(project_root, ensure_arg(branch, "branch")?);
     with_repo_lock(project_root, || {
-        git_combined(project_root, &["merge", "--no-edit", branch])
+        git_combined(project_root, &["merge", "--no-edit", &branch])
     })
 }
 
 pub fn git_rebase(project_root: &Path, onto: &str) -> Result<String> {
-    let onto = ensure_arg(onto, "branch")?;
+    let onto = branch_revision(project_root, ensure_arg(onto, "branch")?);
     with_repo_lock(project_root, || {
-        git_combined(project_root, &["rebase", "--autostash", onto])
+        git_combined(project_root, &["rebase", "--autostash", &onto])
     })
 }
 
@@ -2081,7 +2559,8 @@ pub fn git_rebase_interactive(
     onto: &str,
     todo: &[(String, String)],
 ) -> Result<String> {
-    let onto = ensure_arg(onto, "branch")?;
+    let onto = branch_revision(project_root, ensure_arg(onto, "branch")?);
+    let onto = onto.as_str();
     if todo.is_empty() {
         return git_rebase(project_root, onto);
     }
@@ -2108,7 +2587,7 @@ pub fn git_rebase_interactive(
             .collect();
         let path = std::env::temp_dir().join(format!("pumr-rebase-{}.todo", uuid::Uuid::new_v4()));
         std::fs::write(&path, text)?;
-        let output = git(project_root)
+        let output = git_action(project_root)
             .args([
                 "-c",
                 "rebase.missingCommitsCheck=error",
@@ -2143,13 +2622,14 @@ pub fn git_branch_create(
     let start = start_point
         .filter(|value| !value.is_empty())
         .map(|value| ensure_arg(value, "start point"))
-        .transpose()?;
+        .transpose()?
+        .map(|value| branch_revision(project_root, value));
     let mut args = if checkout {
         vec!["checkout", "-b", name]
     } else {
         vec!["branch", name]
     };
-    args.extend(start);
+    args.extend(start.as_deref());
     with_repo_lock(project_root, || git_combined(project_root, &args))
 }
 
@@ -2160,6 +2640,11 @@ pub fn git_tag_create(
     message: Option<&str>,
 ) -> Result<String> {
     let name = ensure_arg(name, "tag")?;
+    let target = target
+        .filter(|value| !value.is_empty())
+        .map(|value| ensure_arg(value, "target"))
+        .transpose()?
+        .map(|value| branch_revision(project_root, value));
     let mut args = vec!["tag"];
     if let Some(message) = message.filter(|value| !value.trim().is_empty()) {
         args.push("-a");
@@ -2167,9 +2652,7 @@ pub fn git_tag_create(
         args.push(message);
     }
     args.push(name);
-    if let Some(target) = target.filter(|value| !value.is_empty()) {
-        args.push(ensure_arg(target, "target")?);
-    }
+    args.extend(target.as_deref());
     with_repo_lock(project_root, || git_combined(project_root, &args))
 }
 
@@ -2195,9 +2678,15 @@ pub fn git_branch_delete(
         let remotes = project_remotes(project_root);
         let (remote_name, branch_name) = split_remote_ref(&remotes, branch)
             .ok_or_else(|| AppError::msg(format!("'{branch}' is not on a known remote")))?;
+        // The full name: a tag on the remote may be called the same.
         return git_combined(
             project_root,
-            &["push", &remote_name, "--delete", &branch_name],
+            &[
+                "push",
+                &remote_name,
+                "--delete",
+                &format!("refs/heads/{branch_name}"),
+            ],
         );
     }
     let flag = if force { "-D" } else { "-d" };
@@ -2313,11 +2802,12 @@ pub fn git_pull_request_url(project_root: &Path, remote: &str, branch: &str) -> 
 /// mirrors git's own todo: no merges and no commits `onto` already contains as
 /// an equivalent patch.
 pub fn project_rebase_commits(project_root: &Path, onto: &str) -> Result<Vec<GitCommit>> {
-    let onto = ensure_arg(onto, "branch")?;
+    let onto = branch_revision(project_root, ensure_arg(onto, "branch")?);
     let output = git_stdout(
         project_root,
         &[
             "log",
+            "--no-show-signature",
             "--no-merges",
             "--topo-order",
             "--reverse",
@@ -2466,6 +2956,51 @@ mod tests {
     }
 
     #[test]
+    fn a_nested_repository_is_not_vouched_for_as_restorable() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::create_dir_all(project.join("packages/app/src")).unwrap();
+        std::fs::write(project.join("src/main.ts"), "tracked\n").unwrap();
+        std::fs::write(project.join("packages/app/src/index.ts"), "tracked\n").unwrap();
+        // A cloned dependency with history and work of its own. The snapshot
+        // records which commit it is on and nothing else.
+        init_repo(&project.join("vendor/lib"));
+        std::fs::write(project.join("vendor/lib/uncommitted.txt"), "work\n").unwrap();
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        shadow.snapshot("base").unwrap();
+        // One that was cloned after the last snapshot.
+        init_repo(&project.join("tools/cloned"));
+        // And a folder that became one after snapshots held its files, which
+        // they keep doing without its `.git`.
+        init_repo(&project.join("packages/app"));
+        shadow.snapshot("later").unwrap();
+
+        for path in [
+            "vendor/lib",
+            "vendor",
+            "vendor/lib/tracked.txt",
+            "vendor/lib/.git",
+            "tools/cloned",
+            "tools",
+            "packages/app",
+            "packages",
+            "packages/app/src",
+        ] {
+            assert_eq!(shadow.ignored_entries(&project.join(path)), None, "{path}");
+        }
+        // Ordinary tracked files and folders stay restorable.
+        assert_eq!(
+            shadow.ignored_entries(&project.join("src")),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            shadow.ignored_entries(&project.join("src/main.ts")),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
     fn shadow_repo_tracks_new_modified_and_restores() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
@@ -2548,6 +3083,191 @@ mod tests {
         );
         assert!(!project.join("renamed.ts").exists());
         assert!(shadow.changes_since(&base).unwrap().is_empty());
+    }
+
+    /// A project whose ignore files hide `secret.env`, `src/local.json` and
+    /// all of `uploads`, its own ignore file included. `assets` holds nothing
+    /// but a log, which the default excludes ignore.
+    fn project_with_ignored_files(project: &Path) {
+        for (path, content) in [
+            (".gitignore", "secret.env\n"),
+            ("secret.env", "KEY=1\n"),
+            ("src/.gitignore", "local.json\n"),
+            ("src/local.json", "{}\n"),
+            ("src/main.ts", "main\n"),
+            ("uploads/.gitignore", "*\n"),
+            ("uploads/photo.png", "pixels\n"),
+            ("assets/cache.log", "log\n"),
+        ] {
+            let file = project.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, content).unwrap();
+        }
+    }
+
+    fn listed(changes: Vec<FileChange>) -> Vec<String> {
+        let mut listed: Vec<String> = changes
+            .into_iter()
+            .map(|change| format!("{} {}", change.status, change.path))
+            .collect();
+        listed.sort();
+        listed
+    }
+
+    fn read(project: &Path, path: &str) -> String {
+        std::fs::read_to_string(project.join(path)).unwrap()
+    }
+
+    #[test]
+    fn restore_keeps_ignored_files_after_a_turn_edited_the_ignore_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().canonicalize().unwrap().join("project");
+        project_with_ignored_files(&project);
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        let base = shadow.snapshot("base").unwrap();
+
+        // The turn empties the ignore files, so git sees every file, and adds
+        // files of its own next to the ones that were ignored.
+        for ignore_file in [".gitignore", "src/.gitignore", "uploads/.gitignore"] {
+            std::fs::write(project.join(ignore_file), "").unwrap();
+        }
+        for made in ["made.txt", "uploads/made.png", "assets/logo.svg"] {
+            std::fs::write(project.join(made), "made\n").unwrap();
+        }
+
+        // Only the turn's own work is a change: what was ignored is not new.
+        let turn = [
+            "A assets/logo.svg",
+            "A made.txt",
+            "A uploads/made.png",
+            "M .gitignore",
+            "M src/.gitignore",
+        ];
+        assert_eq!(listed(shadow.changes_since(&base).unwrap()), turn);
+        let after = shadow.snapshot("change set").unwrap();
+        assert_eq!(listed(shadow.changes_between(&base, &after).unwrap()), turn);
+
+        let mut restored = shadow.restore_to(&base).unwrap();
+        restored.sort();
+        assert_eq!(
+            restored,
+            [
+                ".gitignore",
+                "assets/logo.svg",
+                "made.txt",
+                "src/.gitignore",
+                "uploads/made.png"
+            ]
+        );
+        for made in ["made.txt", "uploads/made.png", "assets/logo.svg"] {
+            assert!(!project.join(made).exists(), "{made}");
+        }
+        assert_eq!(read(&project, ".gitignore"), "secret.env\n");
+        assert_eq!(read(&project, "src/.gitignore"), "local.json\n");
+        assert_eq!(read(&project, "secret.env"), "KEY=1\n");
+        assert_eq!(read(&project, "src/local.json"), "{}\n");
+        assert_eq!(read(&project, "uploads/photo.png"), "pixels\n");
+        assert_eq!(read(&project, "assets/cache.log"), "log\n");
+        // An ignored ignore file was never in a snapshot and stays as edited.
+        assert_eq!(read(&project, "uploads/.gitignore"), "");
+        assert!(shadow.changes_since(&base).unwrap().is_empty());
+        // Covered by its ignore file again, the secret is ignored again.
+        assert_eq!(
+            shadow.ignored_entries(&project.join("secret.env")),
+            Some(vec!["secret.env".to_string()])
+        );
+    }
+
+    #[test]
+    fn restore_keeps_ignored_files_after_a_turn_deleted_the_ignore_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        project_with_ignored_files(&project);
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        let base = shadow.snapshot("base").unwrap();
+
+        for ignore_file in [".gitignore", "src/.gitignore", "uploads/.gitignore"] {
+            std::fs::remove_file(project.join(ignore_file)).unwrap();
+        }
+        std::fs::write(project.join("made.txt"), "made\n").unwrap();
+        // The snapshot at the end of the turn stages what is no longer ignored.
+        shadow.snapshot("change set").unwrap();
+
+        let mut restored = shadow.restore_to(&base).unwrap();
+        restored.sort();
+        assert_eq!(restored, [".gitignore", "made.txt", "src/.gitignore"]);
+        assert!(!project.join("made.txt").exists());
+        assert_eq!(read(&project, ".gitignore"), "secret.env\n");
+        assert_eq!(read(&project, "src/.gitignore"), "local.json\n");
+        assert_eq!(read(&project, "secret.env"), "KEY=1\n");
+        assert_eq!(read(&project, "src/local.json"), "{}\n");
+        assert_eq!(read(&project, "uploads/photo.png"), "pixels\n");
+        assert_eq!(read(&project, "assets/cache.log"), "log\n");
+        // No snapshot ever held this one, so it cannot come back.
+        assert!(!project.join("uploads/.gitignore").exists());
+        assert!(shadow.changes_since(&base).unwrap().is_empty());
+    }
+
+    #[test]
+    fn restore_to_a_snapshot_without_a_note_keeps_additions_once_an_ignore_file_changed() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        project_with_ignored_files(&project);
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        let base = shadow.snapshot("base").unwrap();
+        // A snapshot from before notes were kept.
+        std::fs::remove_file(shadow.git_dir.join(IGNORED_NOTES).join(&base)).unwrap();
+
+        std::fs::write(project.join("made.txt"), "made\n").unwrap();
+        shadow.restore_to(&base).unwrap();
+        assert!(!project.join("made.txt").exists());
+
+        std::fs::write(project.join(".gitignore"), "").unwrap();
+        std::fs::write(project.join("made.txt"), "made\n").unwrap();
+        shadow.restore_to(&base).unwrap();
+        assert_eq!(read(&project, ".gitignore"), "secret.env\n");
+        assert_eq!(read(&project, "secret.env"), "KEY=1\n");
+        // Nothing tells this file from the secret, so it is kept as well.
+        assert_eq!(read(&project, "made.txt"), "made\n");
+    }
+
+    #[test]
+    fn snapshots_leave_out_a_repository_without_commits() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/main.ts"), "one\n").unwrap();
+        // `git init` and no commit: an empty one, one with a file and one two
+        // folders down, next to an ordinary file.
+        for nested in ["empty", "draft", "deep/a/b"] {
+            std::fs::create_dir_all(project.join(nested)).unwrap();
+            sh(&project.join(nested), &["init", "-q"]);
+        }
+        std::fs::write(project.join("draft/notes.txt"), "notes\n").unwrap();
+        std::fs::write(project.join("deep/a/sibling.txt"), "sibling\n").unwrap();
+
+        let shadow = ShadowRepo::open(temp.path(), "project-1", &project).unwrap();
+        let base = shadow.snapshot("base").unwrap();
+        std::fs::write(project.join("src/main.ts"), "two\n").unwrap();
+        std::fs::write(project.join("deep/a/sibling.txt"), "changed\n").unwrap();
+        std::fs::write(project.join("draft/notes.txt"), "more notes\n").unwrap();
+        assert_eq!(
+            listed(shadow.changes_since(&base).unwrap()),
+            ["M deep/a/sibling.txt", "M src/main.ts"]
+        );
+
+        shadow.restore_to(&base).unwrap();
+        assert_eq!(read(&project, "src/main.ts"), "one\n");
+        assert_eq!(read(&project, "deep/a/sibling.txt"), "sibling\n");
+        // What no snapshot holds is neither restored nor vouched for.
+        assert_eq!(read(&project, "draft/notes.txt"), "more notes\n");
+        for path in ["empty", "draft", "draft/notes.txt", "deep", "deep/a/b"] {
+            assert_eq!(shadow.ignored_entries(&project.join(path)), None, "{path}");
+        }
+        assert_eq!(
+            shadow.ignored_entries(&project.join("src")),
+            Some(Vec::new())
+        );
     }
 
     #[test]
@@ -3383,6 +4103,62 @@ mod tests {
     }
 
     #[test]
+    fn a_branch_and_a_tag_of_the_same_name_are_told_apart() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        let default = project_current_branch(&project).unwrap();
+        let first = sh(&project, &["rev-parse", "HEAD"]);
+        // The tag stays on the first commit while the branch moves on.
+        sh(&project, &["tag", "release"]);
+        sh(&project, &["checkout", "-q", "-b", "release"]);
+        std::fs::write(project.join("released.txt"), "released\n").unwrap();
+        commit(&project, "on the branch");
+        let tip = sh(&project, &["rev-parse", "HEAD"]);
+        let commit_of = |name: &str| sh(&project, &["rev-parse", &format!("{name}^{{commit}}")]);
+
+        // Both are listed under the name the commands take.
+        assert_eq!(project_current_branch(&project).as_deref(), Some("release"));
+        let all = refs(&project);
+        let current = all.branches.iter().find(|branch| branch.current);
+        assert_eq!(current.map(|branch| branch.name.as_str()), Some("release"));
+        let tags: Vec<&str> = all.tags.iter().map(|tag| tag.name.as_str()).collect();
+        assert_eq!(tags, ["release"]);
+
+        // Checking the name out switches to the branch, not to the tag's commit.
+        git_checkout(&project, &default, false, None).unwrap();
+        git_checkout(&project, "release", false, None).unwrap();
+        assert_eq!(project_current_branch(&project).as_deref(), Some("release"));
+        assert_eq!(commit_of("HEAD"), tip);
+        git_checkout(&project, &default, false, None).unwrap();
+
+        // As a revision the name means the branch as well.
+        git_branch_create(&project, "from-release", Some("release"), false).unwrap();
+        assert_eq!(commit_of("refs/heads/from-release"), tip);
+        git_tag_create(&project, "on-release", Some("release"), None).unwrap();
+        assert_eq!(commit_of("refs/tags/on-release"), tip);
+        git_merge(&project, "release").unwrap();
+        assert_eq!(commit_of("HEAD"), tip);
+        // Nothing is ahead of the branch now; a commit is ahead of the tag.
+        assert!(project_rebase_commits(&project, "release")
+            .unwrap()
+            .is_empty());
+
+        // Renaming and deleting one leaves the other alone.
+        git_branch_rename(&project, "release", "renamed").unwrap();
+        git_branch_rename(&project, "renamed", "release").unwrap();
+        git_tag_delete(&project, "release").unwrap();
+        assert_eq!(commit_of("refs/heads/release"), tip);
+        sh(&project, &["tag", "release", &first]);
+        git_branch_delete(&project, "release", false, false).unwrap();
+        assert!(!refs(&project)
+            .branches
+            .iter()
+            .any(|branch| branch.name == "release"));
+        assert_eq!(commit_of("refs/tags/release"), first);
+    }
+
+    #[test]
     fn tag_create_supports_lightweight_and_annotated() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
@@ -3664,6 +4440,84 @@ mod tests {
         let status = project_git_status(&project).unwrap();
         assert!(status.staged.is_empty());
         assert!(project.join("first.txt").exists());
+
+        // A file edited after it was staged matches neither the index nor a
+        // commit, and git drops its entry only when forced to.
+        std::fs::write(project.join("second.txt"), "second\n").unwrap();
+        git_stage(&project, None).unwrap();
+        std::fs::write(project.join("first.txt"), "first\nedited\n").unwrap();
+        git_unstage(&project, None).unwrap();
+        assert!(project_git_status(&project).unwrap().staged.is_empty());
+
+        git_stage(&project, None).unwrap();
+        std::fs::write(project.join("first.txt"), "first\nedited twice\n").unwrap();
+        git_unstage_paths(&project, &["first.txt".to_string()]).unwrap();
+        let status = project_git_status(&project).unwrap();
+        assert_eq!(listed(status.staged), ["A second.txt"]);
+        assert_eq!(read(&project, "first.txt"), "first\nedited twice\n");
+    }
+
+    #[test]
+    fn unstaging_leaves_a_conflicted_file_in_conflict() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        start_conflicting_merge(&project);
+        std::fs::write(project.join("other.txt"), "other\n").unwrap();
+        git_stage(&project, Some("other.txt")).unwrap();
+        let conflict = sh(&project, &["ls-files", "-u"]);
+        assert_eq!(conflict.lines().count(), 3);
+        let other_is_staged = || {
+            let staged = project_git_status(&project).unwrap().staged;
+            staged.iter().any(|change| change.path == "other.txt")
+        };
+
+        // Named on its own, the conflicted file is refused.
+        let by_path = git_unstage(&project, Some("tracked.txt"));
+        let by_list = git_unstage_paths(&project, &["tracked.txt".to_string()]);
+        for result in [by_path, by_list] {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "conflicts are resolved, not unstaged: tracked.txt"
+            );
+        }
+        assert!(git_apply_lines(&project, "tracked.txt", true, "unstage", 3, "", &[0]).is_err());
+        assert!(other_is_staged());
+
+        // Named along with others, it is skipped and the others are unstaged.
+        git_unstage(&project, None).unwrap();
+        assert!(!other_is_staged());
+        git_stage(&project, Some("other.txt")).unwrap();
+        git_unstage_paths(
+            &project,
+            &["tracked.txt".to_string(), "other.txt".to_string()],
+        )
+        .unwrap();
+        assert!(!other_is_staged());
+        // Nothing but the conflict is left to unstage.
+        assert!(git_unstage(&project, None).is_err());
+
+        // The merge is still open and still waits for the conflict.
+        assert_eq!(sh(&project, &["ls-files", "-u"]), conflict);
+        let status = project_git_status(&project).unwrap();
+        assert_eq!(status.operation.as_deref(), Some("merge"));
+        assert_eq!(status.conflicted, ["tracked.txt"]);
+        assert!(git_operation_continue(&project, "merge").is_err());
+    }
+
+    #[test]
+    fn a_merge_stopped_by_conflicts_names_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init_repo(&project);
+        start_conflicting_merge(&project);
+        git_operation_abort(&project, "merge").unwrap();
+
+        let error = git_merge(&project, "feature").unwrap_err().to_string();
+        assert!(
+            error.contains("CONFLICT (content): Merge conflict in tracked.txt"),
+            "{error}"
+        );
     }
 
     fn start_conflicting_merge(project: &Path) {

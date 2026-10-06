@@ -154,7 +154,12 @@ import { FileView } from './file-view';
               </div>
             </div>
             <div class="min-h-0 flex-1">
-              @if (liveDiff(); as diff) {
+              @if (activeContent()?.binary) {
+                <!-- Not text: an editor would show it empty and save that over the file. -->
+                <div class="flex h-full items-center justify-center p-4" data-testid="binary-file">
+                  <p class="text-sm text-mist/40">{{ 'common.binaryFile' | transloco }}</p>
+                </div>
+              } @else if (liveDiff(); as diff) {
                 @if (mode() === 'diff') {
                   <app-diff-view
                     [diff]="diff"
@@ -190,7 +195,7 @@ export class WorkspaceEditor {
   private readonly editor = inject(WorkspaceEditorService);
   private readonly settings = inject(SettingsService);
 
-  protected readonly project = this.workspace.activeProject;
+  protected readonly project = this.workspace.browseProject;
   protected readonly mode = signal<'diff' | 'file'>('diff');
   protected readonly diffLayout = signal<'single' | 'split'>('single');
   protected readonly tabs = computed(() => {
@@ -224,8 +229,13 @@ export class WorkspaceEditor {
       ? { ...diff, newContent: content.content }
       : diff;
   });
+  /** The active session when it works in the shown project: its changes are the diffs here. */
+  private readonly session = computed(() => {
+    const project = this.project();
+    return project ? this.workspace.sessionIn(project.id) : null;
+  });
   protected readonly changes = computed(() => {
-    const session = this.workspace.activeSession();
+    const session = this.session();
     const map = new Map<string, FileChange>();
     if (session) {
       for (const change of this.workspace.changesFor(session.id)) {
@@ -239,6 +249,8 @@ export class WorkspaceEditor {
     effect(() => {
       const project = this.project();
       const path = this.activePath();
+      // Another session brings its own diff of the file, or none.
+      this.session();
       this.mode.set('diff');
       if (project && path) {
         untracked(() => void this.workspace.loadEditorFile(project.id, path));

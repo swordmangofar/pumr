@@ -78,8 +78,8 @@ describe('matchesAction', () => {
   });
 
   it('binds the terminal tab hotkeys to the tab keys of the platform', () => {
-    const newTab = isMacPlatform() ? 'Cmd+T' : 'Ctrl+Shift+T';
-    const closeTab = isMacPlatform() ? 'Cmd+W' : 'Ctrl+Shift+W';
+    const newTab = isMacPlatform() ? 'Cmd+T' : 'Ctrl+T';
+    const closeTab = isMacPlatform() ? 'Cmd+W' : 'Ctrl+W';
     expect(hotkeyBindings(settings({}), 'terminalNewTab')).toEqual([newTab]);
     expect(hotkeyBindings(settings({}), 'terminalCloseTab')).toEqual([closeTab]);
     expect(hotkeyBindings(settings({ terminalNewTab: 'Alt+N' }), 'terminalNewTab')).toEqual([

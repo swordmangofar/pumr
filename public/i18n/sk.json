@@ -6,16 +6,18 @@
     "toggleSidebar": "Prepnúť bočný panel",
     "toggleRightPanel": "Prepnúť pravý panel",
     "toggleTerminal": "Zobraziť/skryť terminál",
+    "keepAwake": "Udržať počítač aktívny, kým agenti pracujú",
+    "keepAwakeOn": "Počítač zostáva aktívny, kým agenti pracujú. Kliknutím vypnete.",
+    "keepAwakeOff": "Počítač sa môže uspať, aj keď agenti pracujú. Kliknutím ho udržíte aktívny.",
     "refresh": "Obnoviť",
     "notTauri": "pumr musí bežať v Tauri. Spustite ho pomocou: pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Projekty",
+    "sessions": "Relácie",
     "workspace": "Pracovný priestor",
     "git": "Git",
     "addProject": "Pridať projekt",
     "newSession": "Nová relácia",
-    "new": "Nová",
     "noProjects": "Zatiaľ žiadne projekty. Pridajte priečinok a začnite.",
     "noSessions": "Žiadne relácie",
     "removeProject": "Odstrániť projekt",
@@ -36,8 +38,6 @@
     "yesterday": "včera"
   },
   "workspace": {
-    "title": "Pracovný priestor",
-    "noSession": "Otvorte reláciu na prehliadanie jej súborov.",
     "empty": "Nenašli sa žiadne súbory.",
     "libraryRoot": "koreň knižnice",
     "noOpenFiles": "Žiadne otvorené súbory. Vyberte súbor v strome.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Zmazať tag {{ tag }}?",
     "stashes": "Schránky",
     "stashCreate": "Odložiť zmeny",
+    "stash": "Odložiť",
+    "stashMessage": "Správa (voliteľné)",
+    "stashIncludeUntracked": "Zahrnúť nesledované súbory",
     "stashApply": "Použiť",
     "stashPop": "Vytiahnuť",
     "stashDropConfirm": "Zahodiť {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Použiť prichádzajúcu (theirs)",
       "markResolved": "Označiť ako vyriešené",
       "fileHint": "Tento súbor má konflikty. Ponechajte jednu stranu alebo súbor upravte a označte ako vyriešený.",
+      "markersLeftIn": "Súbory s konfliktmi, ktoré stále obsahujú značky konfliktu (<<<<<<< alebo >>>>>>>): {{ count }}. Napriek tomu ich označiť ako vyriešené?",
       "markersLeft": "Súbor stále obsahuje značky konfliktu (<<<<<<< alebo >>>>>>>). Napriek tomu označiť ako vyriešený?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Cieľový priečinok",
     "cloneChoose": "Vybrať…",
     "createBranch": "Vytvoriť vetvu",
+    "branch": "Vetva",
     "branchName": "Názov vetvy",
     "createBranchAt": "Vytvoriť vetvu na: {{branch}}",
     "checkoutAfterCreate": "Po vytvorení prepnúť",
@@ -298,6 +303,7 @@
     "tokens": "Tokeny",
     "cache": "Vyrovnávacia pamäť",
     "noKey": "Pripojte poskytovateľa modelov v Nastaveniach a začnite chatovať.",
+    "noDefaultModel": "Zatiaľ nie je nastavený predvolený model. Otvorte Nastavenia, v časti „Poskytovatelia modelov“ vyberte model pod položkou „Predvolený model“ a kliknite na „Uložiť“.",
     "openSettings": "Otvoriť nastavenia",
     "error": "Chyba",
     "retry": "Skúsiť znova",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} pre odoslanie · {{ newLine }} pre nový riadok",
     "hintStreaming": "{{ send }} pre zaradenie do frontu · {{ stop }} pre zastavenie",
     "hintRecall": "{{ recall }} pre posledný prompt",
+    "hintCommands": "/ pre príkazy",
     "handover": "Odovzdanie",
     "handovering": "Zhrnutie…",
     "handoverHint": "Zhrňte túto reláciu a pokračujte v novej",
@@ -328,6 +335,13 @@
     "compacting": "Kontext sa komprimuje",
     "compacted": "Kontext skomprimovaný",
     "compactedHint": "Odtiaľto model pracuje s týmto zhrnutím namiesto správ vyššie.",
+    "mcpStarting": "Spúšťa sa MCP server {{ name }}",
+    "mcpIssues": "Niektoré MCP servery sa pre túto správu nepodarilo použiť:",
+    "sideQuestion": "Vedľajšia otázka",
+    "sideQuestionHint": "Položte rýchlu otázku k tejto relácii alebo k čomukoľvek inému. Odpoveď sa do relácie nepridá.",
+    "sideQuestionPrivate": "Nepridáva sa do relácie",
+    "sideQuestionAnswering": "Odpovedá…",
+    "sideQuestionStopped": "Zastavené",
     "interrupted": "Tento chat bol prerušený skôr, ako agent skončil: aplikácia pumr bola zatvorená alebo počítač prešiel do režimu spánku. Môžete v ňom pokračovať tam, kde sa zastavil.",
     "limitReached": "Pozastavené po {{ count }} volaniach nástroja bez konečnej odpovede. Limit bráni zaseknutému agentovi, aby sa navždy zacyklil. Pokračujte v prideľovaní nového rozpočtu alebo zapnite automatické pokračovanie.",
     "continue": "Pokračovať",
@@ -456,7 +470,8 @@
         "cascade": "Odmietnuté spolu s inou požiadavkou",
         "stopped": "Zastavené",
         "timeout": "Vypršal čas",
-        "cancelled": "Zrušené"
+        "cancelled": "Zrušené",
+        "hook": "Váš hook"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "Žiadne zhody. Píšte ďalej alebo stlačte Escape.",
     "mentionFetch": "Načítať {{ url }}",
     "removeMention": "Odstrániť odkaz",
+    "commandPrompt": "Použije váš prompt „{{ name }}“ na to, čo zaň napíšete",
+    "commandEffort": "Nastavte, ako veľmi má model uvažovať",
+    "commandMode": "Prepnite režim tejto relácie",
+    "commandModel": "Prepnite model tejto relácie",
+    "commandProvider": "Vyberte poskytovateľa, ktorý model poskytuje",
+    "commandRevert": "Vráti sa k vášmu poslednému promptu: všetko po ňom sa odstráni a súbory možno obnoviť",
+    "commandRevertNone": "Zatiaľ nie je žiadny prompt, ku ktorému by sa dalo vrátiť",
+    "commandRevertRunning": "Najprv zastavte agenta",
+    "commandNoEffort": "Tento model nemá žiadnu úroveň uvažovania na nastavenie.",
+    "commandNoProvider": "K poskytovateľovi možno smerovať len modely z OpenRoutera.",
     "textBlockWords": "{{ count }} slov",
     "textBlockRemove": "Odstrániť vložený text",
     "textBlockTitle": "Vložený text",
@@ -634,7 +659,7 @@
     "alwaysOn": "Vždy zapnuté",
     "editInSettings": "Upraviť v nastaveniach",
     "yourPrompts": "Vaše prompty",
-    "yourPromptsHint": "Povolené prompty sa pripájajú k aktívnym systémovým promptom. Upravte ich alebo obnovte vstavané na pôvodný text.",
+    "yourPromptsHint": "Prompt vyvoláte v poli chatu lomkou a jeho názvom, napríklad /code-review. Platí potom len pre danú správu. Upravte ich alebo vráťte vstavané na pôvodný text.",
     "addPrompt": "Nový",
     "customPrompt": "Vlastný prompt",
     "promptName": "Názov promptu",
@@ -718,6 +743,8 @@
       "providers": "Poskytovatelia",
       "agent": "Konfigurácia agenta",
       "agentRules": "Whitelist a blacklist agenta",
+      "sandbox": "Sandbox",
+      "hooks": "Hooky",
       "general": "Všeobecné",
       "chat": "Chat",
       "appearance": "Vzhľad",
@@ -727,6 +754,52 @@
       "skills": "Zručnosti",
       "mcp": "Server MCP",
       "workspace": "Pracovný priestor"
+    },
+    "sandbox": {
+      "title": "Sandbox pre príkazy",
+      "hint": "Operačný systém obmedzuje každý príkaz, ktorý agent spustí, aj všetko, čo tento príkaz spustí. Je to druhá vrstva za pravidlami povolení, pre príkaz, ktorý pravidlá nesprávne posúdia. Príkaz, ktorý sandbox zastaví, môže požiadať o spustenie mimo neho; otázku dostanete zakaždým.",
+      "unavailable": "Tento systém nemá sandbox, ktorý by pumr mohol použiť, takže príkazy bežia bez obmedzenia. Potrebný je macOS alebo Linux 5.19 či novší s podporou Landlock.",
+      "networkUnavailable": "Uzavretie siete je možné iba v systéme macOS.",
+      "modes": {
+        "off": "Vypnuté",
+        "files": "Súbory",
+        "filesAndNetwork": "Súbory a sieť"
+      },
+      "modeHints": {
+        "off": "Príkazy bežia pod vaším používateľom a obmedzujú ich iba pravidlá povolení.",
+        "files": "Príkazy zapisujú iba do projektu, do vašich ďalších priečinkov, do dočasných priečinkov a do priečinkov uvedených nižšie. Priečinky, v ktorých sú kľúče, čítať nemôžu.",
+        "filesAndNetwork": "To isté, pričom príkazy dosiahnu iba tento počítač, okrem príkazov, ktorých hostiteľov ste povolili. Inštalácia balíkov potom žiada o spustenie mimo sandboxu."
+      },
+      "writable": "Priečinky, do ktorých môžu príkazy tiež zapisovať",
+      "writableHint": "Vyrovnávacie pamäte nástrojov na zostavenie. Bez nich zostavenie zlyhá pri prvom sťahovaní. Cesta sa začína znakom / alebo ~.",
+      "unreadable": "Priečinky, ktoré príkazy nemôžu čítať",
+      "unreadableHint": "Miesta, kde sú kľúče a tokeny. git, ssh a cloudové nástroje si ponechávajú priečinky, s ktorými pracujú, a priečinok, ktorý ste povolili pre príkazy, zostáva otvorený.",
+      "excluded": "Príkazy, ktoré bežia mimo sandboxu",
+      "excludedHint": "Pre nástroje, ktoré si prinášajú vlastný sandbox a v tomto zlyhávajú, napríklad testy v prehliadači. Záznam určuje, ako sa príkazový riadok začína; s * je to vzor pre celý riadok.",
+      "addCommand": "Pridať príkaz",
+      "noCommands": "Zatiaľ neboli pridané žiadne príkazy."
+    },
+    "hooks": {
+      "title": "Hooky",
+      "hint": "Hook je váš príkaz, ktorý pumr spúšťa v pevne danom okamihu práce agenta. Model nerozhoduje o tom, či sa spustí, takže naň nemôže zabudnúť. Hooky bežia tak, ako ste ich napísali, bez žiadostí o povolenie a mimo sandboxu.",
+      "protocol": "Hook dostane podrobnosti ako JSON na štandardnom vstupe (tool_name, tool_input, tool_response) a súbor, ktorý volanie uvádza, ako $PUMR_FILE. Návratový kód 0 nechá agenta pokračovať. Návratový kód 2 odovzdá agentovi to, čo hook vypísal, a pred volaním nástroja toto volanie odmietne.",
+      "add": "Pridať hook",
+      "empty": "Zatiaľ neboli pridané žiadne hooky.",
+      "remove": "Odstrániť hook",
+      "event": "Kedy sa hook spustí",
+      "events": {
+        "beforeTool": "Pred volaním nástroja",
+        "afterTool": "Po volaní nástroja",
+        "turnEnd": "Keď chce agent skončiť"
+      },
+      "tools": "Nástroje",
+      "toolsPlaceholder": "Všetky nástroje alebo názvy ako edit|write",
+      "files": "Súbory",
+      "filesPlaceholder": "Všetky súbory alebo vzory ako *.ts",
+      "command": "Príkaz",
+      "timeout": "Zastaviť po (sekundy)",
+      "project": "Projekt",
+      "allProjects": "Všetky projekty"
     },
     "providers": {
       "title": "Poskytovatelia modelov",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Zmeňte to iba v prípade, že používate proxy alebo kompatibilnú bránu.",
     "defaultModel": "Predvolený model",
     "defaultModelHint": "Používa sa pre nové relácie.",
+    "defaultModelSetupTitle": "Vyberte predvolený model",
+    "defaultModelSetup": "Poskytovateľ je pripojený. Nové relácie začínajú s predvoleným modelom: vyberte ho pod položkou „Predvolený model“ nižšie na tejto stránke a kliknite na „Uložiť“. V každom chate môžete model aj naďalej zmeniť.",
+    "defaultModelSetupAction": "Prejsť na predvolený model",
     "handoverModel": "Model odovzdania",
     "handoverModelPlaceholder": "Použiť model aktuálnej relácie",
     "handoverModelHint": "Model použitý na zhrnutie relácie pri jej odovzdaní. Ponechajte prázdne na použitie modelu aktuálnej relácie.",
@@ -998,6 +1074,14 @@
       "mist": "Tlmený text",
       "white": "Text"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Zobrazuje sa v hlavičke aplikácie a ako ikona aplikácie, kým pumr beží.",
+      "mascot": "Sediaca puma",
+      "classic": "Klasická tvár",
+      "shaded": "Tieňovaná puma",
+      "tailup": "Puma so zdvihnutým chvostom"
+    },
     "background": {
       "title": "Pozadie aplikácie",
       "hint": "Vyberte si vstavané pozadie alebo použite svoj vlastný obrázok. Sedí za sklenenými panelmi a sleduje vašu tému.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Nový riadok",
       "chatStop": "Zastaviť odpoveď",
       "chatRecallPrompt": "Vyvolať posledný prompt",
+      "chatToggleMode": "Prepnúť medzi plánovaním a programovaním",
+      "chatToggleModeHint": "Vráti režim, v ktorom relácia bola pred plánovaním.",
       "gitToggleStage": "Pridať vybrané súbory do indexu alebo ich z neho odobrať",
       "gitDiscardFiles": "Zahodiť vybrané súbory",
       "gitSelectAllFiles": "Vybrať všetky súbory",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimalizovať",
       "fillScreen": "Vyplniť obrazovku",
       "fillScreenHint": "Vyvolané okno vyplní aktívny monitor namiesto zachovania predchádzajúcej veľkosti.",
+      "shortcutError": "Systémovú skratku sa nepodarilo zaregistrovať, takže pumr nevyvolá. Túto kombináciu klávesov pravdepodobne používa iná aplikácia: zvoľte inú a uložte znova.",
+      "waylandHint": "Vo Waylande si aplikácie nemôžu registrovať systémové skratky, takže táto skratka tu nefunguje spoľahlivo. Namiesto nej priraďte príkaz uvedený nižšie klávesu v nastaveniach klávesnice svojho prostredia.",
+      "command": "Príkaz pre skratku",
+      "commandHint": "Robí to isté čo skratka: vyvolá pumr, alebo ho skryje či minimalizuje, keď je v popredí. Priraďte ho klávesu v nastaveniach klávesnice svojho prostredia.",
+      "commandActions": "Na jedinú akciu ukončite príkaz namiesto toho jedným z týchto prepínačov:",
       "zoom": "Zväčšenie zobrazenia",
       "zoomHint": "Změní mierku celého rozhrania. Skratka: Ctrl/⌘ + + na priblíženie, Ctrl/⌘ + - na oddialenie, Ctrl/⌘ + 0 na reset.",
       "zoomReset": "Obnoviť"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Povoliť príkaz",
     "denyCommand": "Blokovať príkaz",
     "noDeniedCommandRules": "Žiadne blokované príkazy.",
+    "mcpToolGrants": "Povolené nástroje MCP",
+    "mcpToolGrantsHint": "Nástroje serverov MCP, ktoré sa spúšťajú bez opýtania. Záznam platí pre jeden nástroj jedného servera bez ohľadu na argumenty a prestane platiť, keď sa zmení konfigurácia tohto servera. Vytvorte ho pomocou „vždy povoliť“ vo výzve na povolenie.",
+    "noMcpToolGrants": "Zatiaľ žiadne vždy povolené nástroje MCP.",
+    "secretFolders": "Priečinky s povolenými citlivými súbormi",
+    "secretFoldersHint": "Príkazy smú bez opýtania používať citlivé súbory (kľúče, tokeny, prihlasovacie údaje) priamo v týchto priečinkoch. Podpriečinky zahrnuté nie sú. Vytvorte ho pomocou „vždy povoliť“ vo výzve na povolenie.",
+    "noSecretFolders": "Zatiaľ žiadne priečinky s povolenými citlivými súbormi.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + podpríkaz",
@@ -1276,7 +1373,8 @@
       "file": "Súbor",
       "web": "Webová stránka",
       "websearch": "Vyhľadávanie na webe",
-      "folder": "Priečinok"
+      "folder": "Priečinok",
+      "hook": "Hook"
     },
     "allowAlways": "Vždy povoliť",
     "siteRuleLabel": "Pravidlo webovej stránky (doména alebo glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Pridá webovú stránku a jej subdomény medzi povolené webové stránky.",
       "option": "Webová stránka + subdomény"
     },
+    "secretScope": {
+      "title": "Citlivé súbory",
+      "hint": "Príkazy potom smú bez opýtania používať kľúče, tokeny a súbory s prihlasovacími údajmi priamo v tomto priečinku. Podpriečinky zahrnuté nie sú.",
+      "option": "Citlivé súbory v tomto priečinku",
+      "chip": "citlivé súbory v priečinku {{ folder }}"
+    },
     "allowChat": "Povoliť v tomto chate",
     "option": {
       "yes": "Áno",
@@ -1315,6 +1419,7 @@
     "customize": "Prispôsobiť",
     "justification": "Prečo",
     "keyboardHint": "Stlačte 1–{{ count }} alebo použite ↑ ↓ a Enter · Esc odmietne",
+    "mcpToolHint": "Nepýtať sa znova platí pre každé volanie tohto nástroja na tomto serveri bez ohľadu na argumenty.",
     "url": {
       "queryWarning": "Táto adresa nesie v reťazci dopytu veľa údajov. Pred povolením sa uistite, že neobsahuje nič súkromné."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Povolí iba túto požiadavku.",
       "allowSession": "Platí vo všetkých chatoch do reštartu aplikácie.",
       "allowChat": "Pravidlá príkazov platia pre tento chat a jeho subagentov; priečinky a webové stránky do reštartu aplikácie.",
+      "allowChatMcp": "Platí pre tento chat a jeho subagentov: každé volanie tohto nástroja na tomto serveri bez ohľadu na argumenty.",
       "allowAlways": "Uloží sa do nastavení a platí pre všetky chaty."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Nový terminál",
     "close": "Zavrieť terminál",
     "hide": "Skryť terminál",
+    "run": "Spustiť v termináli",
     "noProject": "Otvorte reláciu, aby ste mohli používať terminál.",
     "exited": "Proces skončil s kódom {{ code }}",
     "failed": "Terminál sa nepodarilo spustiť: {{ error }}"

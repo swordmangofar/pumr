@@ -62,9 +62,16 @@ const EDGE_SCROLL_PX = 28;
 const MENU_WIDTH_PX = 240;
 const MENU_HEIGHT_PX = 180;
 
+/**
+ * A line action with the diff its line ids were read from. The diff shown may
+ * be another one by the time the action runs, so the request names its own.
+ */
 export interface LineActionRequest {
   action: GitLineAction;
   lines: number[];
+  path: string;
+  staged: boolean;
+  fingerprint: string;
 }
 
 /** A selection handed to the chat, with its file. */
@@ -1181,14 +1188,20 @@ export class HunkDiffView {
     if (lines.length === 0 || !this.canApply() || this.busy()) {
       return;
     }
-    this.lineAction.emit({ action, lines });
+    this.emitAction(action, lines);
   }
 
   protected runHunk(hunk: number, action: GitLineAction): void {
     if (this.busy()) {
       return;
     }
-    this.lineAction.emit({ action, lines: hunkChangeIds(this.diff().hunks[hunk]) });
+    this.emitAction(action, hunkChangeIds(this.diff().hunks[hunk]));
+  }
+
+  /** Line ids only mean something in the diff they were read from, so it goes along. */
+  private emitAction(action: GitLineAction, lines: number[]): void {
+    const { path, staged, fingerprint } = this.diff();
+    this.lineAction.emit({ action, lines, path, staged, fingerprint });
   }
 
   protected askPumr(): void {

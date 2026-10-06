@@ -285,7 +285,11 @@ export class RightPanel {
   protected isSelected(path: string): boolean {
     if (this.workspace.leftTab() === 'workspace') {
       const project = this.workspace.activeProject();
-      return project ? path === this.editor.activeFileFor(project.id) : false;
+      return (
+        !!project &&
+        project.id === this.workspace.browseProject()?.id &&
+        path === this.editor.activeFileFor(project.id)
+      );
     }
     const id = this.sessionId();
     return id ? path === this.workspace.selectedPathFor(id) : false;
@@ -293,8 +297,10 @@ export class RightPanel {
 
   protected select(path: string): void {
     if (this.workspace.leftTab() === 'workspace') {
+      // The changes are the session's, so its project is the one to open the file in.
       const project = this.workspace.activeProject();
       if (project) {
+        this.workspace.setBrowseProject(project.id);
         this.editor.open(project.id, path);
       }
       return;

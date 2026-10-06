@@ -6,16 +6,18 @@
     "toggleSidebar": "Uri jew ħbi l-sidebar",
     "toggleRightPanel": "Uri jew ħbi l-panel tal-lemin",
     "toggleTerminal": "Uri/aħbi t-terminal",
+    "keepAwake": "Żomm imqajjem waqt li l-aġenti jkunu qed jaħdmu",
+    "keepAwakeOn": "Il-kompjuter jibqa' mqajjem waqt li l-aġenti jkunu qed jaħdmu. Ikklikkja biex titfih.",
+    "keepAwakeOff": "Il-kompjuter jista' jorqod waqt li l-aġenti jkunu qed jaħdmu. Ikklikkja biex iżżommu mqajjem.",
     "refresh": "Aġġorna",
     "notTauri": "pumr irid jaħdem ġewwa Tauri. Ibdieh b': pnpm tauri dev"
   },
   "sidebar": {
-    "projects": "Proġetti",
+    "sessions": "Sessjonijiet",
     "workspace": "Spazju tax-xogħol",
     "git": "Git",
     "addProject": "Żid proġett",
     "newSession": "Sessjoni ġdida",
-    "new": "Ġdid",
     "noProjects": "L-ebda proġett s'issa. Żid folder biex tibda.",
     "noSessions": "L-ebda sessjoni",
     "removeProject": "Neħħi l-proġett",
@@ -36,8 +38,6 @@
     "yesterday": "Ilbieraħ"
   },
   "workspace": {
-    "title": "Spazju tax-xogħol",
-    "noSession": "Iftaħ sessjoni biex tfittex il-fajls tagħha.",
     "empty": "Ma nstab l-ebda fajl.",
     "libraryRoot": "għerq tal-librerija",
     "noOpenFiles": "Ebda fajls miftuħa. Agħżel fajl fis-siġra.",
@@ -101,6 +101,9 @@
     "tagDeleteConfirm": "Ħassar it-tag {{ tag }}?",
     "stashes": "Stashes",
     "stashCreate": "Aħbi l-bidliet",
+    "stash": "Aħbi",
+    "stashMessage": "Messaġġ (mhux obbligatorju)",
+    "stashIncludeUntracked": "Inkludi l-fajls mhux traċċati",
     "stashApply": "Applika",
     "stashPop": "Iġbed",
     "stashDropConfirm": "Tarmi {{ stash }}?",
@@ -129,6 +132,7 @@
       "useTheirs": "Uża dik deħlin (theirs)",
       "markResolved": "Immarka bħala solvut",
       "fileHint": "Dan il-fajl għandu kunflitti. Żomm naħa waħda, jew editja l-fajl u mmarkah bħala solvut.",
+      "markersLeftIn": "Fajls b'kunflitti li għad fihom markaturi tal-kunflitt (<<<<<<< jew >>>>>>>): {{ count }}. Timmarkahom bħala solvuti xorta waħda?",
       "markersLeft": "Il-fajl għad fih markaturi tal-kunflitt (<<<<<<< jew >>>>>>>). Timmarkah bħala solvut xorta waħda?"
     },
     "operation": {
@@ -220,6 +224,7 @@
     "cloneFolder": "Folder tad-destinazzjoni",
     "cloneChoose": "Agħżel…",
     "createBranch": "Oħloq fergħa",
+    "branch": "Fergħa",
     "branchName": "Isem il-fergħa",
     "createBranchAt": "Oħloq fergħa fi: {{branch}}",
     "checkoutAfterCreate": "Aqleb wara l-ħolqien",
@@ -298,6 +303,7 @@
     "tokens": "Tokens",
     "cache": "Cache",
     "noKey": "Qabbad fornitur tal-mudelli fis-Settings biex tibda titkellem.",
+    "noDefaultModel": "Għad m'hemmx mudell default. Iftaħ is-Settings, agħżel mudell taħt “Mudell default” f'“Fornituri tal-mudelli” u agħfas “Salva”.",
     "openSettings": "Iftaħ is-settings",
     "error": "Żball",
     "retry": "Erġa' pprova",
@@ -318,6 +324,7 @@
     "hint": "{{ send }} biex tibgħat · {{ newLine }} għal linja ġdida",
     "hintStreaming": "{{ send }} biex iżżid mal-kju · {{ stop }} biex twaqqaf",
     "hintRecall": "{{ recall }} għall-aħħar prompt",
+    "hintCommands": "/ għall-kmandi",
     "handover": "Konsenja",
     "handovering": "Qed jinġabar fil-qosor…",
     "handoverHint": "Iġbor fil-qosor din is-sessjoni u kompli f'waħda ġdida",
@@ -328,6 +335,13 @@
     "compacting": "Il-kuntest qed jiġi kkompattat",
     "compacted": "Kuntest ikkompattat",
     "compactedHint": "Minn hawn 'il quddiem il-mudell jaħdem minn dan is-sommarju minflok mill-messaġġi ta' fuq.",
+    "mcpStarting": "Qed jinbeda s-server MCP {{ name }}",
+    "mcpIssues": "Xi servers MCP ma setgħux jintużaw għal dan il-messaġġ:",
+    "sideQuestion": "Mistoqsija sekondarja",
+    "sideQuestionHint": "Staqsi mistoqsija ta' malajr dwar din is-sessjoni jew dwar xi ħaġa oħra. It-tweġiba ma tiżdiedx mas-sessjoni.",
+    "sideQuestionPrivate": "Ma tiżdiedx mas-sessjoni",
+    "sideQuestionAnswering": "Qed iwieġeb…",
+    "sideQuestionStopped": "Imwaqqaf",
     "interrupted": "Dan iċ-chat ġie interrott qabel ma l-aġent spiċċa: pumr ingħalaq jew il-kompjuter mar fl-irqad. Tista' tkomplih minn fejn waqaf.",
     "limitReached": "Waqfa wara {{ count }} sejħiet tal-għodda mingħajr tweġiba finali. Il-limitu jipprevjeni aġent mwaħħla milli looping għal dejjem. Kompli agħtih baġit ġdid, jew ixgħel il-kompli awtomatiku.",
     "continue": "Kompli",
@@ -456,7 +470,8 @@
         "cascade": "Miċħud flimkien ma' talba oħra",
         "stopped": "Imwaqqaf",
         "timeout": "Skada l-ħin",
-        "cancelled": "Ikkanċellat"
+        "cancelled": "Ikkanċellat",
+        "hook": "Il-hook tiegħek"
       }
     },
     "export": {
@@ -580,6 +595,16 @@
     "mentionNoResults": "L-ebda riżultat. Kompli ittajpja jew agħfas Escape.",
     "mentionFetch": "Iġbed {{ url }}",
     "removeMention": "Neħħi r-referenza",
+    "commandPrompt": "Japplika l-prompt tiegħek “{{ name }}” għal dak li tikteb warajh",
+    "commandEffort": "Issettja kemm jirraġuna l-mudell",
+    "commandMode": "Ibdel il-mod ta' din is-sessjoni",
+    "commandModel": "Ibdel il-mudell ta' din is-sessjoni",
+    "commandProvider": "Agħżel il-fornitur li jipprovdi l-mudell",
+    "commandRevert": "Imur lura għall-aħħar prompt tiegħek: dak li ġie warajh jitneħħa u l-fajls jistgħu jiġu rrestawrati",
+    "commandRevertNone": "Għad m'hemmx prompt biex tmur lura għalih",
+    "commandRevertRunning": "L-ewwel waqqaf l-aġent",
+    "commandNoEffort": "Dan il-mudell m'għandux livell ta' raġunament x'tissettja.",
+    "commandNoProvider": "Il-mudelli ta' OpenRouter biss jistgħu jiġu diretti lejn fornitur.",
     "textBlockWords": "{{ count }} kliem",
     "textBlockRemove": "Neħħi t-test li tpejst",
     "textBlockTitle": "Test li tpejst",
@@ -634,7 +659,7 @@
     "alwaysOn": "Dejjem mixgħul",
     "editInSettings": "Editja fis-settings",
     "yourPrompts": "Il-prompts tiegħek",
-    "yourPromptsHint": "Il-prompts mixgħula jiġu miżjuda mal-prompts tas-sistema attivi. Editjahom jew irrestitwixxi dawk integrati għall-kontenut oriġinali tagħhom.",
+    "yourPromptsHint": "Sejjaħ prompt mill-kaxxa taċ-chat b'slash u ismu, pereżempju /code-review. Imbagħad japplika biss għal dak il-messaġġ. Editjahom jew irrisettja dawk inkorporati għat-test oriġinali tagħhom.",
     "addPrompt": "Ġdid",
     "customPrompt": "Prompt personalizzat",
     "promptName": "Isem tal-prompt",
@@ -718,6 +743,8 @@
       "providers": "Fornituri",
       "agent": "Konfigurazzjoni tal-aġent",
       "agentRules": "White- u blacklist tal-aġent",
+      "sandbox": "Sandbox",
+      "hooks": "Hooks",
       "general": "Ġenerali",
       "chat": "Chat",
       "appearance": "Dehra",
@@ -727,6 +754,52 @@
       "skills": "Skills",
       "mcp": "MCP server",
       "workspace": "Spazju tax-xogħol"
+    },
+    "sandbox": {
+      "title": "Sandbox għall-kmandi",
+      "hint": "Is-sistema operattiva tirrestrinġi kull kmand li jħaddem l-aġent, u kulma jibda dak il-kmand. Huwa t-tieni saff wara r-regoli tal-permessi, għal kmand li dawn jiġġudikaw ħażin. Kmand imwaqqaf mis-sandbox jista' jitlob li jaħdem barra minnu; tiġi mistoqsi kull darba.",
+      "unavailable": "Din is-sistema m'għandhiex sandbox li pumr jista' juża, għalhekk il-kmandi jaħdmu mingħajr restrizzjoni. Jeħtieġ macOS, jew Linux 5.19 jew aktar ġdid b'Landlock.",
+      "networkUnavailable": "L-għeluq tan-netwerk huwa possibbli biss fuq macOS.",
+      "modes": {
+        "off": "Mitfi",
+        "files": "Fajls",
+        "filesAndNetwork": "Fajls u netwerk"
+      },
+      "modeHints": {
+        "off": "Il-kmandi jaħdmu bħala l-utent tiegħek, miżmuma lura biss mir-regoli tal-permessi.",
+        "files": "Il-kmandi jiktbu biss fil-proġett, fil-foldri addizzjonali tiegħek, fil-foldri temporanji u fil-foldri elenkati hawn taħt. Ma jistgħux jaqraw il-foldri li fihom iċ-ċwievet.",
+        "filesAndNetwork": "L-istess, u l-kmandi jilħqu biss dan il-kompjuter, ħlief kmandi li l-hosts tagħhom ippermettejt. L-installazzjoni ta' pakketti mbagħad titlob li taħdem barra mis-sandbox."
+      },
+      "writable": "Foldri li l-kmandi jistgħu jiktbu fihom ukoll",
+      "writableHint": "Il-caches tal-għodod tal-bini. Mingħajrhom build ifalli mal-ewwel download tiegħu. Mogħdija tibda bi / jew ~.",
+      "unreadable": "Foldri li l-kmandi ma jistgħux jaqraw",
+      "unreadableHint": "Fejn jinżammu ċ-ċwievet u t-tokens. git, ssh u l-għodod tal-cloud iżommu l-foldri li jaħdmu bihom, u folder li ppermettejt għall-kmandi jibqa' miftuħ.",
+      "excluded": "Kmandi li jaħdmu barra mis-sandbox",
+      "excludedHint": "Għal għodod li jġibu sandbox tagħhom stess u jfallu ġewwa dan, bħat-testijiet tal-browser. Entrata tgħid kif tibda l-linja tal-kmand; bi * hija pattern għal-linja kollha.",
+      "addCommand": "Żid kmand",
+      "noCommands": "Għad m'hemmx kmandi miżjuda."
+    },
+    "hooks": {
+      "title": "Hooks",
+      "hint": "Hook huwa kmand tiegħek li pumr iħaddem f'mument fiss tax-xogħol tal-aġent. Il-mudell ma jiddeċidix jekk jaħdimx, għalhekk ma jistax jinsieh. Il-hooks jaħdmu kif ktibthom, mingħajr talbiet għall-permess u barra mis-sandbox.",
+      "protocol": "Hook jirċievi d-dettalji bħala JSON fuq l-input standard (tool_name, tool_input, tool_response) u, bħala $PUMR_FILE, il-fajl li ssemmi sejħa. Il-kodiċi tal-ħruġ 0 jħalli lill-aġent ikompli. Il-kodiċi tal-ħruġ 2 jgħaddi lill-aġent dak li pprintja l-hook u, qabel sejħa ta' għodda, jiċħad is-sejħa.",
+      "add": "Żid hook",
+      "empty": "Għad m'hemmx hooks miżjuda.",
+      "remove": "Neħħi l-hook",
+      "event": "Meta jaħdem il-hook",
+      "events": {
+        "beforeTool": "Qabel sejħa ta' għodda",
+        "afterTool": "Wara sejħa ta' għodda",
+        "turnEnd": "Meta l-aġent irid jispiċċa"
+      },
+      "tools": "Għodod",
+      "toolsPlaceholder": "Kull għodda, jew ismijiet bħal edit|write",
+      "files": "Fajls",
+      "filesPlaceholder": "Kull fajl, jew patterns bħal *.ts",
+      "command": "Kmand",
+      "timeout": "Waqqaf wara (sekondi)",
+      "project": "Proġett",
+      "allProjects": "Il-proġetti kollha"
     },
     "providers": {
       "title": "Fornituri tal-mudelli",
@@ -758,6 +831,9 @@
     "baseUrlHint": "Ibdel dan biss jekk tuża proxy jew gateway kompatibbli.",
     "defaultModel": "Mudell default",
     "defaultModelHint": "Jintuża għal sessjonijiet ġodda.",
+    "defaultModelSetupTitle": "Agħżel mudell default",
+    "defaultModelSetup": "Il-fornitur tiegħek huwa mqabbad. Is-sessjonijiet il-ġodda jibdew bil-mudell default: agħżlu taħt “Mudell default” aktar 'l isfel f'din il-paġna u agħfas “Salva”. Xorta tista' tibdel il-mudell f'kull chat.",
+    "defaultModelSetupAction": "Mur għall-mudell default",
     "handoverModel": "Mudell tal-konsenja",
     "handoverModelPlaceholder": "Uża l-mudell tas-sessjoni attwali",
     "handoverModelHint": "Il-mudell użat biex tiġbor fil-qosor sessjoni meta tiġi konsenjata. Ħalliha vojta biex tuża l-mudell tas-sessjoni attwali.",
@@ -998,6 +1074,14 @@
       "mist": "Test mgħotti",
       "white": "Test"
     },
+    "logo": {
+      "title": "Logo",
+      "hint": "Jidher fil-header tal-app u bħala l-ikona tal-app sakemm pumr ikun qed jaħdem.",
+      "mascot": "Puma bilqiegħda",
+      "classic": "Wiċċ klassiku",
+      "shaded": "Puma bid-dellijiet",
+      "tailup": "Puma b'denbha mgħolli"
+    },
     "background": {
       "title": "Sfond tal-app",
       "hint": "Agħżel sfond inkorporat jew uża l-immaġni tiegħek stess. Tpoġġi wara l-pannelli tal-ħġieġ u ssegwi t-tema tiegħek.",
@@ -1131,6 +1215,8 @@
       "chatNewLine": "Linja ġdida",
       "chatStop": "Waqqaf ir-risposta",
       "chatRecallPrompt": "Erġa' ġib l-aħħar prompt",
+      "chatToggleMode": "Aqleb bejn l-ippjanar u l-ikkowdjar",
+      "chatToggleModeHint": "Jerġa' lura għall-mod li s-sessjoni kienet fih qabel l-ippjanar.",
       "gitToggleStage": "Ipprepara jew neħħi l-preparazzjoni tal-fajls magħżula",
       "gitDiscardFiles": "Warrab il-fajls magħżula",
       "gitSelectAllFiles": "Agħżel il-fajls kollha",
@@ -1167,6 +1253,11 @@
       "actionMinimize": "Minimizza",
       "fillScreen": "Imla l-iskrin",
       "fillScreenHint": "It-tieqa msejħa timla l-monitor attiv minflok ma żżomm id-daqs preċedenti.",
+      "shortcutError": "Is-shortcut għas-sistema kollha ma setax jiġi rreġistrat, għalhekk ma jsejjaħx lil pumr. X'aktarx app oħra diġà qed tuża din il-kombinazzjoni ta' buttuni: agħżel oħra u erġa' ssejvja.",
+      "waylandHint": "Fuq Wayland l-apps ma jistgħux jirreġistraw shortcuts għas-sistema kollha, għalhekk dan is-shortcut ma jaħdimx b'mod affidabbli hawn. Minflok, orbot il-kmand ta' hawn taħt ma' buttuna fis-settings tat-tastiera tad-desktop tiegħek.",
+      "command": "Kmand għas-shortcut",
+      "commandHint": "Jagħmel dak li jagħmel is-shortcut: isejjaħ lil pumr, jew jaħbih jew jimminimizzah meta jkun quddiem. Orbtu ma' buttuna fis-settings tat-tastiera tad-desktop tiegħek.",
+      "commandActions": "Għal azzjoni waħda, temm il-kmand b'waħda minn dawn minflok:",
       "zoom": "Skalar tal-wiri",
       "zoomHint": "Iskala l-interfaċċa kollha. Shortcut: Ctrl/⌘ + + biex tkabbar, Ctrl/⌘ + - biex tnaqqas, Ctrl/⌘ + 0 biex terġa' tissettja.",
       "zoomReset": "Erġa' ssettja"
@@ -1221,6 +1312,12 @@
     "allowCommand": "Ippermetti kmand",
     "denyCommand": "Imblokka kmand",
     "noDeniedCommandRules": "L-ebda kmand imblukkat.",
+    "mcpToolGrants": "Għodod MCP permessi",
+    "mcpToolGrantsHint": "Għodod ta' servers MCP li jaħdmu mingħajr ma jistaqsu. Entrata tapplika għal għodda waħda ta' server wieħed, ikunu x'ikunu l-argumenti, u ma tibqax tapplika meta tinbidel il-konfigurazzjoni ta' dak is-server. Uża \"ħalli dejjem\" f'talba għall-permess biex toħloq waħda.",
+    "noMcpToolGrants": "Għad m'hemmx għodod MCP permessi dejjem.",
+    "secretFolders": "Folders b'fajls sensittivi permessi",
+    "secretFoldersHint": "Il-kmandi jistgħu jużaw mingħajr ma jistaqsu l-fajls sensittivi (ċwievet, tokens, kredenzjali) li jinsabu direttament f'dawn il-folders. Is-sottfolders mhumiex inklużi. Uża \"ħalli dejjem\" f'talba għall-permess biex toħloq waħda.",
+    "noSecretFolders": "Għad m'hemmx folders b'fajls sensittivi permessi.",
     "scope": {
       "program": "Programm",
       "subcommand": "Programm + sottokmand",
@@ -1276,7 +1373,8 @@
       "file": "Fajl",
       "web": "Sit web",
       "websearch": "Tfittxija fuq il-web",
-      "folder": "Folder"
+      "folder": "Folder",
+      "hook": "Hook"
     },
     "allowAlways": "Ħalli dejjem",
     "siteRuleLabel": "Regola tas-sit web (dominju jew glob)",
@@ -1303,6 +1401,12 @@
       "hint": "Iżżid is-sit web u s-sottdominji tiegħu mas-siti web permessi.",
       "option": "Sit web + sottdominji"
     },
+    "secretScope": {
+      "title": "Fajls sensittivi",
+      "hint": "Il-kmandi mbagħad jistgħu jużaw mingħajr ma jistaqsu ċ-ċwievet, it-tokens u l-fajls tal-kredenzjali li jinsabu direttament f'dan il-folder. Is-sottfolders mhumiex inklużi.",
+      "option": "Fajls sensittivi f'dan il-folder",
+      "chip": "fajls sensittivi f'{{ folder }}"
+    },
     "allowChat": "Ippermetti f’dan iċ-chat",
     "option": {
       "yes": "Iva",
@@ -1315,6 +1419,7 @@
     "customize": "Ippersonalizza",
     "justification": "Għaliex",
     "keyboardHint": "Agħfas 1–{{ count }} jew uża ↑ ↓ u Enter · Esc jiċħad",
+    "mcpToolHint": "Mingħajr ma terġa' tistaqsi, kull sejħa għal din l-għodda fuq dan is-server titħalla sseħħ, ikunu x'ikunu l-argumenti.",
     "url": {
       "queryWarning": "Dan l-indirizz iġorr ħafna data fl-istring tal-mistoqsija tiegħu. Kun żgur li ma fih xejn privat qabel ma tippermettih."
     },
@@ -1324,6 +1429,7 @@
       "allowOnce": "Ippermetti din it-talba biss.",
       "allowSession": "Tiftakarha f’kull chat sakemm l-app terġa' tibda.",
       "allowChat": "Ir-regoli tal-kmandi jiġu mfakkra għal dan iċ-chat u s-sottaġenti tiegħu; folders u siti web sakemm l-app terġa' tibda.",
+      "allowChatMcp": "Jiġi mfakkar għal dan iċ-chat u s-sottaġenti tiegħu: kull sejħa għal din l-għodda fuq dan is-server, ikunu x'ikunu l-argumenti.",
       "allowAlways": "Tiġi ssejvjata fis-settings tiegħek u tapplika għal kull chat."
     }
   },
@@ -1365,6 +1471,7 @@
     "new": "Terminal ġdid",
     "close": "Agħlaq it-terminal",
     "hide": "Aħbi t-terminal",
+    "run": "Ħaddem fit-terminal",
     "noProject": "Iftaħ sessjoni biex tuża t-terminal.",
     "exited": "Il-proċess spiċċa bil-kodiċi {{ code }}",
     "failed": "It-terminal ma setax jinbeda: {{ error }}"
