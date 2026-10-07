@@ -54,11 +54,10 @@ pub async fn resolve(
 
 fn allowed_path(runtime: &ToolRuntime, value: &str) -> Result<PathBuf, String> {
     let candidate = permissions::resolve_path(&runtime.project_root, value);
-    if permissions::path_is_inside(
-        &candidate,
-        &runtime.project_root,
-        &runtime.permissions.extra_folders(),
-    ) {
+    // A mention is read, so a folder opened for reading only will do.
+    let mut folders = runtime.permissions.extra_folders();
+    folders.extend(runtime.permissions.read_folders());
+    if permissions::path_is_inside(&candidate, &runtime.project_root, &folders) {
         Ok(candidate)
     } else {
         Err(format!(

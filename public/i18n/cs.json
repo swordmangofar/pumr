@@ -276,8 +276,8 @@
     "more": "Další karty"
   },
   "projectAppearance": {
-    "title": "Vzhled projektu",
-    "edit": "Upravit vzhled projektu",
+    "title": "Nastavení projektu",
+    "edit": "Upravit projekt",
     "color": "Barva",
     "auto": "Auto",
     "customColor": "Vlastní barva",
@@ -289,7 +289,11 @@
     "imageHint": "Nejlépe funguje čtvercový obrázek. Automaticky se ořízne a změní velikost.",
     "notAnImage": "Vyberte prosím soubor obrázku.",
     "imageFailed": "Ten obrázek se nepodařilo přečíst.",
-    "saveFailed": "Vzhled projektu se nepodařilo uložit."
+    "saveFailed": "Vzhled projektu se nepodařilo uložit.",
+    "environment": "Prostředí pro příkazy",
+    "environmentHint": "Jedno NAME=value na řádek, jako v profilu shellu. Každý příkaz, který asistent v tomto projektu spouští, začíná s těmito proměnnými. $NAME a ~ se nahradí, takže PATH=$JAVA_HOME/bin:$PATH funguje.",
+    "environmentInvalid": "Řádek {{ line }} není NAME=value.",
+    "environmentFailed": "Prostředí se nepodařilo uložit: {{ error }}"
   },
   "chat": {
     "placeholder": "Popište svůj úkol... použijte @ pro přidání souborů, složek, webových stránek, dovedností nebo serverů MCP",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globální výzvy",
       "mode": "Konfigurace režimu",
       "projectRules": "Pravidla projektu",
+      "memory": "Zapamatované preference",
       "user": "Uživatelská zpráva",
       "assistant": "Odezva modelu",
       "tool": "Volání nástroje",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globální výzvy",
       "mode": "Výzva režimu",
       "projectRules": "Pravidla projektu",
+      "memory": "Zapamatované preference",
       "prompt": "Výzva",
       "referencedContext": "Odkazovaný kontext",
       "mentions": "Zmínky",
@@ -632,6 +638,8 @@
     "presetValueHint": "Vybere poskytovatele s nejlepším počtem tokenů za sekundu na dolar.",
     "trains": "trénuje na datech",
     "trainsHint": "Tento poskytovatel může používat vaše prompty k trénování.",
+    "blocked": "blokováno",
+    "blockedHint": "Vaše nastavení soukromí nebo poskytovatelů v OpenRouter tohoto poskytovatele blokuje.",
     "priceHint": "Cena za 1 mil. tokenů, obarvená vzhledem k ostatním poskytovatelům tohoto modelu"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Poskytovatelé",
       "agent": "Konfigurace agenta",
+      "memory": "Paměť",
       "agentRules": "Whitelist a blacklist agenta",
       "sandbox": "Sandbox",
       "hooks": "Hooky",
@@ -760,6 +769,8 @@
       "hint": "Operační systém omezuje každý příkaz, který agent spustí, i vše, co tento příkaz spustí. Je to druhá vrstva za pravidly oprávnění, pro příkaz, který tato pravidla posoudí špatně. Příkaz zastavený sandboxem může požádat o spuštění mimo něj; pokaždé budete dotázáni.",
       "unavailable": "Tento systém nemá žádný sandbox, který by pumr mohl použít, takže příkazy běží bez omezení. Je potřeba macOS nebo Linux 5.19 či novější s funkcí Landlock.",
       "networkUnavailable": "Uzavřít síť lze jen v systému macOS.",
+      "inlineCode": "Spouštět vložený kód v přísnějším sandboxu místo dotazu",
+      "inlineCodeHint": "Vložený kód node nebo python a skripty, které jim předá heredoc, nelze zkontrolovat jako příkaz. Dokud je zapnuto „Všechny příkazy v projektu“, běží takový kód bez dotazu v přísnějším sandboxu: dosáhne jen na tento počítač, zapisuje jen do projektu, do vašich dalších složek a dočasných složek a nemůže spouštět aplikace, dosáhnout na jiné programy ani měnit git hooky. Totéž platí pro příkaz, jehož argumenty jsou známy až při spuštění. Kód, který jmenuje soubory mimo projekt, citlivé soubory nebo jiné weby, se stále ptá. Když sandbox skript zastaví, může vás agent požádat, abyste jej spustili běžným způsobem. Jen macOS.",
       "modes": {
         "off": "Vypnuto",
         "files": "Soubory",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Příkazy běží pod vaším uživatelem a omezují je jen pravidla oprávnění.",
-        "files": "Příkazy zapisují jen do projektu, do vašich dalších složek, dočasných složek a složek uvedených níže. Složky, ve kterých jsou klíče, číst nemohou.",
+        "files": "Příkazy zapisují jen do projektu, do vašich dalších složek, dočasných složek a složek uvedených níže. Složky, ve kterých jsou klíče, číst nemohou. V systému macOS také nemohou spouštět jiné aplikace: open funguje jen jako samostatný příkaz, který kontrolují pravidla oprávnění.",
         "filesAndNetwork": "Totéž a příkazy se dostanou jen na tento počítač, s výjimkou příkazů, jejichž hostitele jste povolili. Instalace balíčků pak požádá o spuštění mimo sandbox."
       },
       "writable": "Složky, do kterých mohou příkazy také zapisovat",
       "writableHint": "Mezipaměti nástrojů pro sestavení. Bez nich sestavení selže při prvním stahování. Cesta začíná znakem / nebo ~.",
       "unreadable": "Složky, které příkazy nemohou číst",
-      "unreadableHint": "Místa, kde jsou uloženy klíče a tokeny. git, ssh a cloudové nástroje si ponechávají složky, se kterými pracují, a složka, kterou jste pro příkazy povolili, zůstává otevřená.",
+      "unreadableHint": "Místa, kde jsou uloženy klíče a tokeny. git, ssh a cloudové nástroje si ponechávají složky, se kterými pracují, a složka, kterou jste pro příkazy povolili, zůstává otevřená. Vlastní datová složka pumr s vašimi chaty a nastavením je pro příkazy rovněž uzavřená, ať už tento seznam obsahuje cokoli.",
       "excluded": "Příkazy, které běží mimo sandbox",
       "excludedHint": "Pro nástroje, které si přinášejí vlastní sandbox a v tomto selhávají, například testy v prohlížeči. Záznam udává, jak příkazový řádek začíná; s * je to vzor pro celý řádek.",
       "addCommand": "Přidat příkaz",
@@ -800,6 +811,19 @@
       "timeout": "Zastavit po (sekundách)",
       "project": "Projekt",
       "allProjects": "Všechny projekty"
+    },
+    "memory": {
+      "title": "Paměť",
+      "hint": "pumr si může zapamatovat, jak rádi pracujete, například jak chcete mít podanou revizi kódu, a sdělí to agentovi v každém chatu a každém projektu. Bez vašeho souhlasu se nic nezapamatuje.",
+      "enabled": "Používat paměť",
+      "enabledHint": "Při vypnutí zůstanou položky níže zachovány, ale agentovi se neposílají a nic nového se nenavrhuje.",
+      "suggestions": "Navrhovat, co si zapamatovat",
+      "suggestionsHint": "Když některá vaše zpráva ukáže trvalou preferenci, pumr se po odpovědi zeptá, zda si ji má zapamatovat: nejvýše jednou za chat a jednou denně, a méně často pokaždé, když návrh neuložíte. Při vypnutí si pumr dál zapamatuje to, o co ho požádáte.",
+      "list": "Zapamatované preference",
+      "add": "Přidat položku",
+      "empty": "Zatím není nic zapamatováno.",
+      "placeholder": "Například: Při revizi kódu se mě u každého nálezu zeptej, zda ho opravit, nebo přeskočit.",
+      "remove": "Odebrat položku"
     },
     "providers": {
       "title": "Poskytovatelé modelů",
@@ -846,7 +870,9 @@
     "languageHint": "Projeví se po uložení.",
     "workspace": {
       "allowed": "Povolené složky",
-      "foldersHint": "Asistent může tyto složky číst a zapisovat bez dotazování. Aktivní projekt je vždy povolen."
+      "foldersHint": "Asistent může tyto složky číst a zapisovat bez dotazování. Aktivní projekt je vždy povolen.",
+      "readable": "Složky pouze pro čtení",
+      "readableHint": "Asistent může tyto složky číst bez dotazování, ale změny se tam stále ptají. Zapamatováním výzvy ke čtení nebo výpisu složky se složka přidá sem."
     },
     "mcp": {
       "tabBrowse": "Procházet",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Vyberte obrázek",
       "clearFile": "Odebrat obrázek",
       "noFile": "Není vybrán žádný obrázek",
-      "opacity": "Neprůhlednost",
-      "blur": "Rozmazat",
+      "opacity": "Viditelnost pozadí",
+      "blur": "Rozmazání pozadí",
+      "preview": "Náhled",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Pletivo",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Složky s povolenými citlivými soubory",
     "secretFoldersHint": "Příkazy smějí bez dotazu používat citlivé soubory (klíče, tokeny, přihlašovací údaje) přímo v těchto složkách. Podsložky zahrnuty nejsou. Vytvořte ji pomocí „vždy povolit“ ve výzvě k oprávnění.",
     "noSecretFolders": "Zatím žádné složky s povolenými citlivými soubory.",
+    "pathFolders": "Složky důvěryhodné v PATH",
+    "pathFoldersHint": "Příkazy smějí tyto složky bez dotazu přidat do PATH, přestože v nich asistent může měnit soubory. Přidejte ji pomocí „vždy povolit“ ve výzvě k oprávnění.",
+    "noPathFolders": "Zatím žádné složky důvěryhodné v PATH.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + podpříkaz",
       "programFlags": "Program + přepínače",
-      "exact": "Přesný"
+      "exact": "Přesný",
+      "pathFolder": "Složka v PATH"
     },
     "websiteAllowlist": "Povolené",
     "websiteDenylist": "Blokované",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Spustitelné soubory projektu",
     "autoApproveProjectExecutablesHint": "Umožní spustitelné soubory v projektu, jako ./node_modules/.bin/ng, bez dotazování pokaždé.",
     "autoApproveProjectCommands": "Všechny příkazy v projektu",
-    "autoApproveProjectCommandsHint": "Povolí každý nenebezpečný příkaz, jehož cesty zůstávají v projektu, včetně vloženého kódu node nebo python, který jen čte. Nebezpečné příkazy, jiný vložený kód, stahování balíčků, dosud nepovolené weby, citlivé soubory a vše mimo projekt se stále ptají.",
+    "autoApproveProjectCommandsHint": "Povolí každý nenebezpečný příkaz, jehož cesty zůstávají v projektu, včetně vloženého kódu node nebo python, který jen čte. Nebezpečné příkazy, jiný vložený kód, stahování balíčků, dosud nepovolené weby, citlivé soubory a vše mimo projekt se stále ptají. Výjimkou je vložený kód node nebo python, který sandbox spustí, místo aby se ptal (viz Sandbox).",
     "permissionPreset": {
       "strict": "Přísný",
       "strictHint": "Bez dotazu běží jen příkazy, které pouze čtou.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonomní",
       "autonomousHint": "Každý nenebezpečný příkaz uvnitř projektu běží bez dotazu.",
       "custom": "Vlastní",
-      "autonomousWarning": "Autonomní režim důvěřuje tomuto projektu: jeho skripty, soubory Makefile a spustitelné soubory mohou bez dotazu dělat cokoli a vložený kód, který jen čte, se také spustí. Jiný vložený kód, stahování balíčků, dosud nepovolené weby, nebezpečné příkazy a vše mimo projekt se stále ptají.",
+      "autonomousWarning": "Autonomní režim důvěřuje tomuto projektu: jeho skripty, soubory Makefile a spustitelné soubory mohou bez dotazu dělat cokoli a vložený kód, který jen čte, se také spustí. Jiný vložený kód, stahování balíčků, dosud nepovolené weby, nebezpečné příkazy a vše mimo projekt se stále ptají. Výjimkou je vložený kód node nebo python, který sandbox spustí, místo aby se ptal (viz Sandbox).",
       "confirm": "Použít autonomní režim"
     },
     "noAllowedWebsites": "Zatím žádné vždy povolené webové stránky.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Povolit složku",
       "hint": "Přidá složku a vše v ní do vždy povolených složek.",
-      "option": "Složka + podsložky"
+      "option": "Složka + podsložky",
+      "hintRead": "Otevře složku a vše v ní pro čtení. Změny se tam stále ptají.",
+      "optionRead": "Číst složku + podsložky"
     },
     "hostScope": {
       "title": "Povolit web",
@@ -1406,6 +1439,10 @@
       "hint": "Příkazy pak smějí bez dotazu používat klíče, tokeny a soubory s přihlašovacími údaji přímo v této složce. Podsložky zahrnuty nejsou.",
       "option": "Citlivé soubory v této složce",
       "chip": "citlivé soubory ve složce {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Složku důvěryhodnou v PATH tam smějí příkazy přidat bez dotazu. Její programy se pak spouštějí místo jiných se stejným názvem.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Povolit v tomto chatu",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Proč",
     "keyboardHint": "Stiskněte 1–{{ count }} nebo použijte ↑ ↓ a Enter · Esc odmítne",
     "mcpToolHint": "Neptat se znovu platí pro každé volání tohoto nástroje na tomto serveru, ať jsou argumenty jakékoli.",
+    "folderReadHint": "Zapamatovaná složka se otevře pouze pro čtení. Změny se tam stále ptají.",
     "url": {
       "queryWarning": "Tato adresa nese v dotazu mnoho dat. Než ji povolíte, ověřte, že neobsahuje nic soukromého."
     },
@@ -1443,7 +1481,8 @@
     "back": "Zpět",
     "next": "Další",
     "submit": "Odeslat",
-    "skip": "Přeskočit"
+    "skip": "Přeskočit",
+    "resetPosition": "Obnovit pozici"
   },
   "modelChoice": {
     "title": "Který model má podagent použít?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Oprávnění odepřeno",
     "canceled": "Zrušeno",
     "error": "Chyba"
+  },
+  "memory": {
+    "title": "Zapamatovat si to?",
+    "noticed": "pumr si toho všiml ve vaší zprávě.",
+    "requested": "pumr si to má zapamatovat na vaši žádost.",
+    "replaces": "Nahrazuje: {{ text }}",
+    "textLabel": "Co si zapamatovat",
+    "hint": "Uložené preference platí pro každý chat ve všech projektech. Změnit je můžete v nastavení v části Paměť.",
+    "save": "Zapamatovat",
+    "decline": "Ne, děkuji",
+    "disable": "Už se neptat",
+    "disableHint": "pumr přestane navrhovat, co si zapamatovat. Znovu to můžete zapnout v nastavení v části Paměť."
   },
   "terminal": {
     "title": "Terminál {{ number }}",

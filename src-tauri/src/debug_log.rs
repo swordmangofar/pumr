@@ -110,6 +110,32 @@ pub struct SystemInfo {
     pub app_image: bool,
 }
 
+/// What decides a chat's permission prompts beyond the saved settings: the
+/// `PATH` its commands start with and what was granted for the chat or until
+/// the app restarts. A log without these cannot say why a command asked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionState {
+    /// The `PATH` commands of the chat's project start with.
+    pub command_path: Option<String>,
+    /// Whether commands get the environment of the user's login shell;
+    /// otherwise the one pumr was started in.
+    pub login_shell: bool,
+    /// The names of the variables the project gives its commands. Values
+    /// are left out: one of them may be a key.
+    pub project_variables: Vec<String>,
+    /// Folders allowed for changes until the app restarts.
+    pub session_folders: Vec<String>,
+    /// Folders opened for reading until the app restarts.
+    pub session_read_folders: Vec<String>,
+    /// Folders the chat's commands may put on `PATH`.
+    pub chat_path_folders: Vec<String>,
+    /// Folders whose sensitive files the chat's commands may use.
+    pub chat_secret_folders: Vec<String>,
+    /// Command rules that hold for the chat.
+    pub chat_command_rules: Vec<crate::models::CommandRule>,
+}
+
 /// Collects [`SystemInfo`]. Runs small OS tools, so call it off the main thread.
 pub fn system_info(app_version: String) -> SystemInfo {
     SystemInfo {

@@ -19,6 +19,9 @@ pub enum PermissionOperation {
     Write,
     Access,
     Execute,
+    /// Running a command that only reads, as far as its line tells. A folder
+    /// remembered from its prompt is opened for reading, not for changes.
+    ExecuteReadOnly,
     Fetch,
     McpTool,
     McpStart,
@@ -80,6 +83,20 @@ struct PermissionSignature {
     url: Option<String>,
 }
 
+impl PermissionOperation {
+    /// Whether a folder remembered from a prompt about this operation is
+    /// opened for reading only.
+    pub fn reads_only(self) -> bool {
+        matches!(self, Self::Read | Self::Access | Self::ExecuteReadOnly)
+    }
+
+    /// Whether the prompt is about a shell command line, which can be judged
+    /// again once the user granted something.
+    fn runs_command(self) -> bool {
+        matches!(self, Self::Execute | Self::ExecuteReadOnly)
+    }
+}
+
 impl PermissionPrompt {
     /// Only equivalent operations within the same session share a decision.
     fn signature(&self, session_id: &str) -> PermissionSignature {
@@ -125,6 +142,9 @@ struct PendingPermission {
 #[derive(Debug, Clone)]
 pub struct PendingPrompt {
     pub kind: String,
+    /// What the prompt asked to do, which decides whether a folder it
+    /// remembers is opened for reading or for changes too.
+    pub operation: PermissionOperation,
     pub command: Option<String>,
     pub folder: Option<String>,
     pub suggested_rule: Option<String>,
@@ -186,6 +206,14 @@ fn decide_once(
 /// Receives every permission decision for the audit log.
 pub type AuditSink = Arc<dyn Fn(PermissionAuditEntry) + Send + Sync>;
 
+/// Told the chat whose turn does nothing but wait for an answer; what it
+/// returns is kept until the answer is in (see `PowerManager::park`).
+pub type Parking = Arc<dyn Fn(&str) -> Box<dyn Send> + Send + Sync>;
+
+/// How long a prompt waits before its turn counts as waiting only. Until
+/// then the user is taken to be at the machine, reading what is asked.
+const PARK_AFTER: Duration = Duration::from_secs(600);
+
 /// A queued prompt's backend-owned state, snapshotted so it can be
 /// re-evaluated against the live permissions without holding the broker lock.
 struct PendingSnapshot {
@@ -219,7 +247,7 @@ impl PendingSnapshot {
             }
             // Only real shell commands can be re-evaluated; MCP prompts carry a
             // JSON preview, not a command line.
-            "command" if self.operation == PermissionOperation::Execute => {
+            "command" if self.operation.runs_command() => {
                 let command = self.command.as_deref()?.trim().to_string();
                 if command.is_empty() {
                     return None;
@@ -246,7 +274,12 @@ impl PendingSnapshot {
             "folder" => {
                 let path = self.path.as_deref()?;
                 let absolute = crate::permissions::resolve_path(&self.project_root, path);
-                let extra = permissions.folders_for(&self.grant_session_id);
+                // Reading is covered by a folder opened for reading too.
+                let extra = if self.operation.reads_only() {
+                    permissions.readable_folders_for(&self.grant_session_id)
+                } else {
+                    permissions.folders_for(&self.grant_session_id)
+                };
                 if crate::permissions::path_is_inside(&absolute, &self.project_root, &extra)
                     && !crate::permissions::symlink_escapes(&absolute, &self.project_root, &extra)
                 {
@@ -277,6 +310,9 @@ impl PendingSnapshot {
 pub struct PermissionBroker {
     inner: Mutex<BrokerInner>,
     audit: Mutex<Option<AuditSink>>,
+    parking: Mutex<Option<Parking>>,
+    /// See [`PARK_AFTER`]; a field so that a test need not wait that long.
+    park_after: Duration,
 }
 
 #[derive(Default)]
@@ -291,7 +327,15 @@ impl PermissionBroker {
         Self {
             inner: Mutex::new(BrokerInner::default()),
             audit: Mutex::new(None),
+            parking: Mutex::new(None),
+            park_after: PARK_AFTER,
         }
+    }
+
+    /// What is told when a prompt has waited for a long time (see
+    /// [`Parking`]); without it nothing is.
+    pub fn set_parking(&self, parking: Parking) {
+        *self.parking.lock().unwrap() = Some(parking);
     }
 
     /// Where decisions are recorded; without a sink nothing is logged.
@@ -335,6 +379,7 @@ impl PermissionBroker {
             .filter(|entry| entry.sender.borrow().is_none())
             .map(|entry| PendingPrompt {
                 kind: entry.kind.clone(),
+                operation: entry.signature.operation,
                 command: entry.signature.command.clone(),
                 folder: entry.folder.clone(),
                 suggested_rule: entry.suggested_rule.clone(),
@@ -484,6 +529,7 @@ impl PermissionBroker {
                         hosts: prompt.hosts.clone(),
                         mcp_tool: prompt.mcp_tool.clone(),
                         secret_folders: prompt.secret_folders.clone(),
+                        read_only: prompt.operation.reads_only(),
                         justification: prompt.justification.clone(),
                     };
                     inner.next_seq += 1;
@@ -524,6 +570,12 @@ impl PermissionBroker {
             });
         }
 
+        // A prompt nobody answers stays open until someone does or the turn
+        // is stopped. Denying it after a while made the agent give up on, or
+        // ask again for, a command the user would have allowed on coming
+        // back. Only the machine is let go: a turn that has waited this long
+        // does nothing else, and no longer keeps it awake.
+        let mut parked: Option<Box<dyn Send>> = None;
         let decision = loop {
             if let Some(value) = receiver.borrow().clone() {
                 break value;
@@ -535,9 +587,13 @@ impl PermissionBroker {
                     }
                 }
                 _ = cancel.cancelled() => break deny_by("cancelled"),
-                _ = tokio::time::sleep(Duration::from_secs(600)) => break deny_by("timeout"),
+                _ = tokio::time::sleep(self.park_after), if parked.is_none() => {
+                    let parking = self.parking.lock().unwrap().clone();
+                    parked = parking.map(|park| park(&prompt.grant_session_id));
+                }
             }
         };
+        drop(parked);
 
         if is_new {
             self.audit(PermissionAuditEntry {
@@ -1217,6 +1273,90 @@ mod tests {
         assert!(first.await.allowed);
         assert!(second.await.allowed);
         assert!(broker.inner.lock().unwrap().pending.is_empty());
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[tokio::test]
+    async fn a_prompt_nobody_answers_stays_open_and_lets_the_machine_go() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// Counts as parked until it is dropped.
+        struct Parked(Arc<AtomicUsize>);
+        impl Drop for Parked {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut broker = PermissionBroker::new();
+        broker.park_after = Duration::from_millis(20);
+        let parked = Arc::new(AtomicUsize::new(0));
+        let chats = Arc::new(Mutex::new(Vec::<String>::new()));
+        let (count, seen) = (parked.clone(), chats.clone());
+        broker.set_parking(Arc::new(move |chat| {
+            seen.lock().unwrap().push(chat.to_string());
+            count.fetch_add(1, Ordering::SeqCst);
+            Box::new(Parked(count.clone()))
+        }));
+        let cancel = CancellationToken::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let emit: EventSink = {
+            let events = events.clone();
+            Arc::new(move |event| events.lock().unwrap().push(event))
+        };
+        let answer = broker.ask(command_prompt(), &cancel, "subagent", &emit);
+        tokio::pin!(answer);
+
+        // Long after the wait counts as one, the prompt is still open: the
+        // turn is said to only wait, once, under the chat it belongs to.
+        let waited = tokio::time::timeout(Duration::from_millis(150), answer.as_mut()).await;
+        assert!(waited.is_err(), "the prompt must not answer itself");
+        assert_eq!(parked.load(Ordering::SeqCst), 1);
+        assert_eq!(*chats.lock().unwrap(), vec!["chat".to_string()]);
+        let request_id = events
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|event| match &event.event {
+                StreamEvent::PermissionRequest { request_id, .. } => Some(request_id.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(broker.pending_prompt(&request_id).is_some());
+
+        // The user comes back and answers: the turn goes on and works again.
+        broker.resolve(&request_id, allow_by("user"));
+        let decision = answer.await;
+        assert!(decision.allowed);
+        assert_eq!(decision.decided_by, "user");
+        assert_eq!(parked.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_folder_opened_for_reading_answers_prompts_about_reading_only() {
+        let root = std::env::current_dir().unwrap();
+        let outside = outside_test_dir("reading");
+        let broker = PermissionBroker::new();
+        let cancel = CancellationToken::new();
+        let emit: EventSink = Arc::new(|_| {});
+        let read = folder_prompt(&root, &outside.join("a.txt"), "chat");
+        let mut write = folder_prompt(&root, &outside.join("b.txt"), "chat");
+        write.operation = PermissionOperation::Write;
+        let read = broker.ask(read, &cancel, "chat", &emit);
+        let write = broker.ask(write, &cancel, "chat", &emit);
+        tokio::pin!(read, write);
+        assert!(futures_util::poll!(read.as_mut()).is_pending());
+        assert!(futures_util::poll!(write.as_mut()).is_pending());
+
+        let permissions = live_permissions(Vec::new());
+        permissions.add_session_read_folder(&outside.display().to_string());
+        assert_eq!(broker.auto_resolve("chat", &permissions).len(), 1);
+        assert!(read.await.allowed);
+        // The change still waits for the user, who allows the folder for it.
+        assert!(futures_util::poll!(write.as_mut()).is_pending());
+        permissions.add_session_folder(&outside.display().to_string());
+        assert_eq!(broker.auto_resolve("chat", &permissions).len(), 1);
+        assert!(write.await.allowed);
         std::fs::remove_dir_all(&outside).ok();
     }
 

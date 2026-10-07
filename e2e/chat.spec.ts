@@ -641,6 +641,8 @@ test.describe('chat', () => {
     const preview = dialog.getByTestId('debug-export-preview');
     await expect(preview).toContainText('- OS: macOS 15.6 (24G84)');
     await expect(preview).toContainText('- App: pumr 0.0.0-e2e');
+    // What decides the permission prompts is part of the log.
+    await expect(preview).toContainText('- PATH of commands: /usr/bin:/bin');
     await expect(preview).toContainText('OpenRouter returned 400: invalid tool_result');
     await expect(preview).toContainText('jane.doe@example.com');
 

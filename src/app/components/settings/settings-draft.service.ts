@@ -75,19 +75,29 @@ export class SettingsDraftService {
     this.background.apply(this.draft());
   }
 
+  // The three backdrop sliders only change the draft while they are dragged,
+  // which the preview in the dialog follows. See `applyBackdrop`.
   setBackgroundOpacity(value: number): void {
     this.patch('backgroundOpacity', value);
-    this.background.apply(this.draft());
   }
 
   setBackgroundBlur(value: number): void {
     this.patch('backgroundBlur', value);
-    this.background.apply(this.draft());
   }
 
   setGlassOpacity(value: number): void {
     this.patch('glassOpacity', value);
-    this.theme.applyGlassOpacity(value);
+  }
+
+  /**
+   * Shows the draft's backdrop and glass in the app behind the dialog. The
+   * sliders call this when they are released: both are driven by custom
+   * properties on the root, so every write restyles the whole document, and
+   * doing that on each step of a drag made the sliders stutter.
+   */
+  applyBackdrop(): void {
+    this.background.apply(this.draft());
+    this.theme.applyGlassOpacity(this.draft().glassOpacity);
   }
 
   selectLogo(id: string): void {
@@ -111,6 +121,7 @@ export class SettingsDraftService {
         deniedWebsites: this.settingsService.settings()?.deniedWebsites ?? [],
         mcpToolGrants: this.settingsService.settings()?.mcpToolGrants ?? [],
         secretFolders: this.settingsService.settings()?.secretFolders ?? [],
+        pathFolders: this.settingsService.settings()?.pathFolders ?? [],
         // Starred straight from the model pickers, outside the draft.
         favoriteModels: this.settingsService.settings()?.favoriteModels ?? [],
       });

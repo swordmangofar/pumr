@@ -44,6 +44,8 @@ interface PermissionAction {
   grants: string[];
   /** Folders whose sensitive files the choice releases, shown as chips too. */
   secrets: string[];
+  /** Folders the choice trusts on `PATH`, shown as chips too. */
+  paths: string[];
 }
 
 interface SegmentScope {
@@ -142,9 +144,11 @@ export function queryLooksLikeData(search: string): boolean {
 
 /// The narrowest scope worth remembering by default: a subcommand
 /// (`git push *`), else the program (`kill *`), else what is offered last (the
-/// exact line).
+/// exact line). A part that asks about a folder on `PATH` remembers that
+/// folder: the line it stands in is a different one every time.
 function preferredScope(options: CommandScopeOption[]): CommandScopeOption | undefined {
   return (
+    options.find((option) => option.kind === 'pathFolder') ??
     options.find((option) => option.kind === 'subcommand') ??
     options.find((option) => option.kind === 'program') ??
     options[options.length - 1]
@@ -302,8 +306,20 @@ export function anotherLayerOpen(self: Element): boolean {
                   index + 1
                 }}</span>
                 <span class="shrink-0">{{ action.labelKey | transloco }}</span>
-                @if (action.grants.length > 0 || action.secrets.length > 0) {
+                @if (
+                  action.grants.length > 0 || action.secrets.length > 0 || action.paths.length > 0
+                ) {
                   <span class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                    @for (folder of action.paths; track folder) {
+                      <code
+                        class="max-w-[18rem] truncate rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs"
+                        [attr.title]="folder"
+                        data-testid="path-chip"
+                        >{{
+                          'permission.pathScope.chip' | transloco: { folder: displayFolder(folder) }
+                        }}</code
+                      >
+                    }
                     @for (grant of action.grants; track $index) {
                       <code
                         class="max-w-[18rem] truncate rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs"
@@ -331,6 +347,12 @@ export function anotherLayerOpen(self: Element): boolean {
           @if (mcpToolLabel()) {
             <p class="text-xs text-mist/40" data-testid="mcp-tool-hint">
               {{ 'permission.mcpToolHint' | transloco }}
+            </p>
+          }
+
+          @if (readOnlyFolder()) {
+            <p class="text-xs text-mist/40" data-testid="read-only-hint">
+              {{ 'permission.folderReadHint' | transloco }}
             </p>
           }
 
@@ -396,7 +418,7 @@ export function anotherLayerOpen(self: Element): boolean {
                                   {{ ('settings.scope.' + option.kind) | transloco }}
                                 </span>
                                 <code class="ml-auto truncate font-mono text-xs text-mist">{{
-                                  option.rule.value
+                                  scopeValue(option)
                                 }}</code>
                               </button>
                             }
@@ -405,7 +427,10 @@ export function anotherLayerOpen(self: Element): boolean {
                       }
                     </div>
                     <p class="mt-1.5 text-xs text-mist/30">
-                      {{ 'permission.scope.hint' | transloco }}
+                      {{
+                        (offersPathFolder() ? 'permission.pathScope.hint' : 'permission.scope.hint')
+                          | transloco
+                      }}
                     </p>
                   </div>
                 } @else if (segmentScopes().length === 0 && scopeOptions().length > 1) {
@@ -424,13 +449,16 @@ export function anotherLayerOpen(self: Element): boolean {
                             {{ ('settings.scope.' + option.kind) | transloco }}
                           </span>
                           <code class="ml-auto truncate font-mono text-xs text-mist">{{
-                            option.rule.value
+                            scopeValue(option)
                           }}</code>
                         </button>
                       }
                     </div>
                     <p class="mt-1.5 text-xs text-mist/30">
-                      {{ 'permission.scope.hint' | transloco }}
+                      {{
+                        (offersPathFolder() ? 'permission.pathScope.hint' : 'permission.scope.hint')
+                          | transloco
+                      }}
                     </p>
                   </div>
                 }
@@ -450,7 +478,12 @@ export function anotherLayerOpen(self: Element): boolean {
                           (click)="toggleFolder(folder)"
                         >
                           <span class="shrink-0 text-xs text-mist/50">
-                            {{ 'permission.folderScope.option' | transloco }}
+                            {{
+                              (request().readOnly
+                                ? 'permission.folderScope.optionRead'
+                                : 'permission.folderScope.option'
+                              ) | transloco
+                            }}
                           </span>
                           <code class="ml-auto truncate font-mono text-xs text-mist">{{
                             displayFolder(folder)
@@ -459,7 +492,12 @@ export function anotherLayerOpen(self: Element): boolean {
                       }
                     </div>
                     <p class="mt-1.5 text-xs text-mist/30">
-                      {{ 'permission.folderScope.hint' | transloco }}
+                      {{
+                        (request().readOnly
+                          ? 'permission.folderScope.hintRead'
+                          : 'permission.folderScope.hint'
+                        ) | transloco
+                      }}
                     </p>
                   </div>
                 }
@@ -575,6 +613,29 @@ export class PermissionOverlay {
   /// Folders whose sensitive files a command prompt offers to release: its
   /// commands may then use the keys and credential files in them unasked.
   protected readonly secretFolderOptions = computed(() => this.request().secretFolders ?? []);
+
+  /// The options that are no rule for a command line but a folder to trust
+  /// on `PATH`, by the key of the rule that carries the folder.
+  private readonly pathFolderKeys = computed(() => {
+    const options = [
+      ...this.scopeOptions(),
+      ...(this.request().segments ?? []).flatMap((segment) => segment.scopeOptions ?? []),
+    ];
+    return new Set(
+      options
+        .filter((option) => option.kind === 'pathFolder')
+        .map((option) => this.ruleKey(option.rule)),
+    );
+  });
+
+  protected readonly offersPathFolder = computed(() => this.pathFolderKeys().size > 0);
+
+  /// A prompt of a file tool about reading or listing: the folder it
+  /// remembers is opened for reading only.
+  protected readonly readOnlyFolder = computed(
+    () =>
+      this.request().promptKind === 'folder' && !!this.request().readOnly && !!this.request().folder,
+  );
 
   /// One entry per part of a compound command that still needs approval.
   protected readonly segmentScopes = computed<SegmentScope[]>(() => {
@@ -727,7 +788,7 @@ export class PermissionOverlay {
     }
     const mcpTool = this.mcpToolLabel();
     return [
-      ...this.chosenRules().map((rule) => rule.value),
+      ...this.chosenCommandRules().map((rule) => rule.value),
       ...this.selectedFolders().map((folder) => this.displayFolder(folder)),
       ...this.selectedHosts(),
       ...(mcpTool ? [mcpTool] : []),
@@ -748,7 +809,7 @@ export class PermissionOverlay {
     if (request.promptKind !== 'command') {
       return [];
     }
-    const rules = this.chosenRules().map((rule) => rule.value);
+    const rules = this.deniedRules().map((rule) => rule.value);
     if (rules.length > 0) {
       return rules;
     }
@@ -762,6 +823,7 @@ export class PermissionOverlay {
     const allowGrants = this.allowGrants();
     const denyGrants = this.denyGrants();
     const secrets = command ? this.selectedSecretFolders() : [];
+    const paths = command ? this.chosenPathFolders() : [];
     const actions: PermissionAction[] = [
       {
         id: 'allow',
@@ -771,9 +833,10 @@ export class PermissionOverlay {
         danger: false,
         grants: [],
         secrets: [],
+        paths: [],
       },
     ];
-    if (allowGrants.length > 0 || secrets.length > 0) {
+    if (allowGrants.length > 0 || secrets.length > 0 || paths.length > 0) {
       actions.push(
         {
           id: 'allow_session',
@@ -787,6 +850,7 @@ export class PermissionOverlay {
           danger: false,
           grants: allowGrants,
           secrets,
+          paths,
         },
         {
           id: 'allow_always',
@@ -796,6 +860,7 @@ export class PermissionOverlay {
           danger: false,
           grants: allowGrants,
           secrets,
+          paths,
         },
       );
     }
@@ -807,6 +872,7 @@ export class PermissionOverlay {
       danger: true,
       grants: [],
       secrets: [],
+      paths: [],
     });
     if (denyGrants.length > 0) {
       actions.push({
@@ -817,6 +883,7 @@ export class PermissionOverlay {
         danger: true,
         grants: denyGrants,
         secrets: [],
+        paths: [],
       });
     }
     return actions;
@@ -1040,6 +1107,52 @@ export class PermissionOverlay {
     return single ? [single] : [];
   }
 
+  /// The chosen rules that are rules for a command line.
+  private chosenCommandRules(): CommandRule[] {
+    const paths = this.pathFolderKeys();
+    return this.chosenRules().filter((rule) => !paths.has(this.ruleKey(rule)));
+  }
+
+  /// The folders a remembering choice trusts on `PATH`.
+  private chosenPathFolders(): string[] {
+    const paths = this.pathFolderKeys();
+    return this.chosenRules()
+      .filter((rule) => paths.has(this.ruleKey(rule)))
+      .map((rule) => rule.value);
+  }
+
+  /// What "always deny" remembers. A folder on `PATH` is nothing to deny:
+  /// for a part that has one chosen, the exact line is denied instead, which
+  /// is what the backend saves.
+  private deniedRules(): CommandRule[] {
+    const paths = this.pathFolderKeys();
+    const exactOf = (options: CommandScopeOption[]) =>
+      options.find((option) => option.kind === 'exact')?.rule ?? null;
+    const groups = this.segmentScopes();
+    const chosen: (CommandRule | null)[] =
+      groups.length > 0
+        ? groups.map((group) => {
+            const rule = this.selectedSegmentRule(group.index);
+            return rule && paths.has(this.ruleKey(rule)) ? exactOf(group.options) : rule;
+          })
+        : [this.selectedScopeRule()].map((rule) =>
+            rule && paths.has(this.ruleKey(rule)) ? exactOf(this.scopeOptions()) : rule,
+          );
+    const rules: CommandRule[] = [];
+    for (const rule of chosen) {
+      if (rule && !rules.some((existing) => this.ruleKey(existing) === this.ruleKey(rule))) {
+        rules.push(rule);
+      }
+    }
+    return rules;
+  }
+
+  /// What a scope option shows next to its label: the rule, or the folder
+  /// shortened like every other folder of the prompt.
+  protected scopeValue(option: CommandScopeOption): string {
+    return option.kind === 'pathFolder' ? this.displayFolder(option.rule.value) : option.rule.value;
+  }
+
   /// Keyboard like Claude Code: 1–n picks a choice, arrows move, Enter
   /// confirms, Esc denies. Typing into a field is never intercepted.
   protected onKeydown(event: KeyboardEvent): void {
@@ -1173,7 +1286,7 @@ export class PermissionOverlay {
         );
         return;
       case 'deny_always':
-        void this.workspace.resolvePermission('deny_always', this.chosenRules(), [], []);
+        void this.workspace.resolvePermission('deny_always', this.deniedRules(), [], []);
         return;
       default:
         void this.workspace.resolvePermission(decision);

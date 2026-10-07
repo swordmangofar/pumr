@@ -433,6 +433,34 @@ import { TypedInput } from '../typed-input';
       </div>
     </section>
 
+    <section class="mt-8" data-testid="path-folders">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.pathFolders' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs text-mist/30">{{ 'settings.pathFoldersHint' | transloco }}</p>
+      <div class="space-y-1.5">
+        @for (folder of pathFolders(); track folder) {
+          <div
+            class="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-ink/40 px-4 py-2"
+            data-testid="path-folder"
+          >
+            <code class="truncate font-mono text-sm text-emerald-300" [attr.title]="folder">{{
+              folder
+            }}</code>
+            <button
+              type="button"
+              class="text-mist/40 transition-colors hover:text-rose-400"
+              (click)="deletePathFolder(folder)"
+            >
+              ✕
+            </button>
+          </div>
+        } @empty {
+          <p class="text-sm text-mist/30">{{ 'settings.noPathFolders' | transloco }}</p>
+        }
+      </div>
+    </section>
+
     <section class="mt-8">
       <h3 class="mb-2 text-sm font-semibold text-white">
         {{ 'settings.websiteRules' | transloco }}
@@ -848,6 +876,9 @@ export class AgentRulesSettings {
   protected readonly secretFolders = computed(
     () => this.settingsService.settings()?.secretFolders ?? [],
   );
+  protected readonly pathFolders = computed(
+    () => this.settingsService.settings()?.pathFolders ?? [],
+  );
   protected readonly newWebsite = signal('');
   protected readonly allowedWebsites = computed(
     () => this.settingsService.settings()?.allowedWebsites ?? [],
@@ -906,6 +937,10 @@ export class AgentRulesSettings {
 
   protected async deleteSecretFolder(folder: string): Promise<void> {
     await this.settingsService.deleteSecretFolder(folder);
+  }
+
+  protected async deletePathFolder(folder: string): Promise<void> {
+    await this.settingsService.deletePathFolder(folder);
   }
 
   protected async addWebsite(allow: boolean): Promise<void> {

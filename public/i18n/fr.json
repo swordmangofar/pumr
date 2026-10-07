@@ -276,8 +276,8 @@
     "more": "Plus d’onglets"
   },
   "projectAppearance": {
-    "title": "Apparence du projet",
-    "edit": "Modifier l'apparence du projet",
+    "title": "Paramètres du projet",
+    "edit": "Modifier le projet",
     "color": "Couleur",
     "auto": "Auto",
     "customColor": "Couleur personnalisée",
@@ -289,7 +289,11 @@
     "imageHint": "Une image carrée fonctionne mieux. Il est recadré et redimensionné automatiquement.",
     "notAnImage": "Veuillez choisir un fichier image.",
     "imageFailed": "Impossible de lire cette image.",
-    "saveFailed": "Impossible d'enregistrer l'apparence du projet."
+    "saveFailed": "Impossible d'enregistrer l'apparence du projet.",
+    "environment": "Environnement pour les commandes",
+    "environmentHint": "Un NAME=value par ligne, comme dans un profil de shell. Chaque commande que l'assistant exécute dans ce projet démarre avec ces variables. $NAME et ~ sont remplacés par leur valeur, donc PATH=$JAVA_HOME/bin:$PATH fonctionne.",
+    "environmentInvalid": "La ligne {{ line }} n'est pas au format NAME=value.",
+    "environmentFailed": "Impossible d'enregistrer l'environnement : {{ error }}"
   },
   "chat": {
     "placeholder": "Décris ta tâche... utilise @ pour ajouter des fichiers, dossiers, sites web, skills ou MCP servers",
@@ -395,6 +399,7 @@
       "globalPrompts": "Invites globales",
       "mode": "Configuration des modes",
       "projectRules": "Règles du projet",
+      "memory": "Préférences retenues",
       "user": "Message utilisateur",
       "assistant": "Réponse du modèle",
       "tool": "Appel d'outil",
@@ -433,6 +438,7 @@
       "globalPrompts": "Invites globales",
       "mode": "Invite de mode",
       "projectRules": "Règles du projet",
+      "memory": "Préférences retenues",
       "prompt": "Invite",
       "referencedContext": "Contexte référencé",
       "mentions": "Mentionné",
@@ -632,6 +638,8 @@
     "presetValueHint": "Choisit le fournisseur avec le meilleur rapport tokens par seconde par dollar.",
     "trains": "entraîne sur les données",
     "trainsHint": "Ce fournisseur peut utiliser tes prompts pour son entraînement.",
+    "blocked": "bloqué",
+    "blockedHint": "Tes paramètres de confidentialité ou de fournisseurs dans OpenRouter bloquent ce fournisseur.",
     "priceHint": "Prix par 1M tokens, coloré par rapport aux autres fournisseurs pour ce modèle"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Fournisseurs",
       "agent": "Configuration de l'agent",
+      "memory": "Mémoire",
       "agentRules": "Liste blanche et noire de l'agent",
       "sandbox": "Bac à sable",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Le système d'exploitation confine chaque commande que l'agent exécute, ainsi que tout ce que cette commande lance. C'est une seconde couche derrière les règles d'autorisation, pour une commande qu'elles évaluent mal. Une commande arrêtée par le bac à sable peut demander à s'exécuter en dehors ; la question vous est posée à chaque fois.",
       "unavailable": "Ce système ne dispose d'aucun bac à sable que pumr puisse utiliser, les commandes s'exécutent donc sans confinement. Il faut macOS, ou Linux 5.19 ou plus récent avec Landlock.",
       "networkUnavailable": "Couper le réseau n'est possible que sous macOS.",
+      "inlineCode": "Exécuter le code en ligne dans un bac à sable plus strict au lieu de demander",
+      "inlineCodeHint": "Le code en ligne node ou python, et les scripts qui leur sont passés par un heredoc, ne peuvent pas être vérifiés comme une commande. Tant que « Toutes les commandes dans le projet » est activé, ce code s'exécute sans demande dans un bac à sable plus strict : il n'atteint que cet ordinateur, n'écrit que dans le projet, vos dossiers supplémentaires et les dossiers temporaires, et ne peut ni lancer d'applications, ni atteindre d'autres programmes, ni modifier les hooks git. Il en va de même pour une commande dont les arguments ne sont connus qu'à l'exécution. Le code qui nomme des fichiers hors du projet, des fichiers sensibles ou d'autres sites web demande toujours. Si le bac à sable arrête un script, l'agent peut vous demander de l'exécuter normalement. macOS uniquement.",
       "modes": {
         "off": "Désactivé",
         "files": "Fichiers",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Les commandes s'exécutent sous votre compte utilisateur, limitées uniquement par les règles d'autorisation.",
-        "files": "Les commandes n'écrivent que dans le projet, vos dossiers supplémentaires, les dossiers temporaires et les dossiers listés ci-dessous. Elles ne peuvent pas lire les dossiers qui contiennent des clés.",
+        "files": "Les commandes n'écrivent que dans le projet, vos dossiers supplémentaires, les dossiers temporaires et les dossiers listés ci-dessous. Elles ne peuvent pas lire les dossiers qui contiennent des clés. Sous macOS, elles ne peuvent pas non plus lancer d'autres applications : open ne fonctionne que comme commande à part entière, que les règles d'autorisation vérifient.",
         "filesAndNetwork": "Même chose, et les commandes n'atteignent que cet ordinateur, sauf celles dont vous avez autorisé les hôtes. L'installation de paquets demande alors à s'exécuter hors du bac à sable."
       },
       "writable": "Dossiers où les commandes peuvent aussi écrire",
       "writableHint": "Les caches des outils de build. Sans eux, un build échoue dès son premier téléchargement. Un chemin commence par / ou ~.",
       "unreadable": "Dossiers que les commandes ne peuvent pas lire",
-      "unreadableHint": "Là où se trouvent les clés et les jetons. git, ssh et les outils cloud conservent les dossiers avec lesquels ils travaillent, et un dossier que vous avez autorisé pour les commandes reste ouvert.",
+      "unreadableHint": "Là où se trouvent les clés et les jetons. git, ssh et les outils cloud conservent les dossiers avec lesquels ils travaillent, et un dossier que vous avez autorisé pour les commandes reste ouvert. Le dossier de données de pumr lui-même, avec vos discussions et vos paramètres, est lui aussi fermé aux commandes, quoi que contienne cette liste.",
       "excluded": "Commandes qui s'exécutent hors du bac à sable",
       "excludedHint": "Pour les outils qui apportent leur propre bac à sable et échouent dans celui-ci, comme les tests de navigateur. Une entrée indique comment commence la ligne de commande ; avec *, c'est un motif pour toute la ligne.",
       "addCommand": "Ajouter une commande",
@@ -800,6 +811,19 @@
       "timeout": "Arrêter après (secondes)",
       "project": "Projet",
       "allProjects": "Tous les projets"
+    },
+    "memory": {
+      "title": "Mémoire",
+      "hint": "pumr peut retenir votre façon de travailler, par exemple la manière dont vous voulez qu'une revue de code soit présentée, et l'indique à l'agent dans chaque discussion et chaque projet. Rien n'est retenu sans votre accord.",
+      "enabled": "Utiliser la mémoire",
+      "enabledHint": "Désactivé, les entrées ci-dessous sont conservées, mais elles ne sont pas transmises à l'agent et rien de nouveau n'est proposé.",
+      "suggestions": "Proposer des éléments à retenir",
+      "suggestionsHint": "Lorsqu'un de vos messages révèle une préférence durable, pumr demande après la réponse s'il doit la retenir : au plus une fois par discussion et une fois par jour, et moins souvent à chaque proposition que vous n'enregistrez pas. Désactivé, pumr retient toujours ce que vous lui demandez de retenir.",
+      "list": "Préférences retenues",
+      "add": "Ajouter une entrée",
+      "empty": "Rien n'est encore retenu.",
+      "placeholder": "Par exemple : lors d'une revue de code, demande-moi pour chaque point relevé s'il faut le corriger ou l'ignorer.",
+      "remove": "Supprimer l'entrée"
     },
     "providers": {
       "title": "Fournisseurs de modèles",
@@ -846,7 +870,9 @@
     "languageHint": "Appliqué après l'enregistrement.",
     "workspace": {
       "allowed": "Dossiers autorisés",
-      "foldersHint": "L'assistant peut lire et écrire dans ces dossiers sans demander. Le projet actif est toujours autorisé."
+      "foldersHint": "L'assistant peut lire et écrire dans ces dossiers sans demander. Le projet actif est toujours autorisé.",
+      "readable": "Dossiers en lecture seule",
+      "readableHint": "L'assistant peut lire ces dossiers sans demander, mais les modifications y demandent toujours. Mémoriser une demande pour lire ou lister un dossier l'ajoute ici."
     },
     "mcp": {
       "tabBrowse": "Parcourir",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Choisir une image",
       "clearFile": "Supprimer l'image",
       "noFile": "Aucune image sélectionnée",
-      "opacity": "Opacité",
-      "blur": "Se brouiller",
+      "opacity": "Visibilité de l'arrière-plan",
+      "blur": "Flou de l'arrière-plan",
+      "preview": "Aperçu",
       "presets": {
         "aurora": "Aurore",
         "mesh": "Engrener",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Dossiers dont les fichiers sensibles sont autorisés",
     "secretFoldersHint": "Les commandes peuvent utiliser sans demander les fichiers sensibles (clés, jetons, identifiants) situés directement dans ces dossiers. Leurs sous-dossiers ne sont pas inclus. Utilise « toujours autoriser » dans une demande d'autorisation pour en créer un.",
     "noSecretFolders": "Aucun dossier dont les fichiers sensibles sont autorisés pour l'instant.",
+    "pathFolders": "Dossiers de confiance dans le PATH",
+    "pathFoldersHint": "Les commandes peuvent placer ces dossiers dans le PATH sans demander, bien que l'assistant puisse y modifier des fichiers. Utilise « toujours autoriser » dans une demande d'autorisation pour en ajouter un.",
+    "noPathFolders": "Aucun dossier de confiance dans le PATH pour l'instant.",
     "scope": {
       "program": "Programme",
       "subcommand": "Programme + sous-commande",
       "programFlags": "Programme + options",
-      "exact": "Exacte"
+      "exact": "Exacte",
+      "pathFolder": "Dossier dans le PATH"
     },
     "websiteAllowlist": "Autorisés",
     "websiteDenylist": "Bloqués",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Exécutables du projet",
     "autoApproveProjectExecutablesHint": "Autorise les exécutables dans le projet, comme ./node_modules/.bin/ng, sans demander à chaque fois.",
     "autoApproveProjectCommands": "Toutes les commandes dans le projet",
-    "autoApproveProjectCommandsHint": "Autorise toute commande non dangereuse dont les chemins restent dans le projet, y compris le code en ligne node ou python qui ne fait que lire. Les commandes dangereuses, les autres codes en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les fichiers sensibles et tout ce qui est à l'extérieur demandent toujours.",
+    "autoApproveProjectCommandsHint": "Autorise toute commande non dangereuse dont les chemins restent dans le projet, y compris le code en ligne node ou python qui ne fait que lire. Les commandes dangereuses, les autres codes en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les fichiers sensibles et tout ce qui est à l'extérieur demandent toujours. Exception : le code en ligne node ou python que le bac à sable exécute au lieu de demander (voir Bac à sable).",
     "permissionPreset": {
       "strict": "Strict",
       "strictHint": "Seules les commandes en lecture seule s'exécutent sans demander.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonome",
       "autonomousHint": "Toute commande non dangereuse à l'intérieur du projet s'exécute sans demander.",
       "custom": "Personnalisé",
-      "autonomousWarning": "Le mode autonome fait confiance à ce projet : ses scripts, Makefiles et exécutables peuvent tout faire sans demander, et le code en ligne qui ne fait que lire s'exécute aussi. Les autres codes en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les commandes dangereuses et tout ce qui est hors du projet demandent toujours.",
+      "autonomousWarning": "Le mode autonome fait confiance à ce projet : ses scripts, Makefiles et exécutables peuvent tout faire sans demander, et le code en ligne qui ne fait que lire s'exécute aussi. Les autres codes en ligne, les téléchargements de paquets, les sites web pas encore autorisés, les commandes dangereuses et tout ce qui est hors du projet demandent toujours. Exception : le code en ligne node ou python que le bac à sable exécute au lieu de demander (voir Bac à sable).",
       "confirm": "Utiliser le mode autonome"
     },
     "noAllowedWebsites": "Aucun site web toujours autorisé pour l'instant.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Autoriser le dossier",
       "hint": "Ajoute le dossier et tout son contenu aux dossiers toujours autorisés.",
-      "option": "Dossier + sous-dossiers"
+      "option": "Dossier + sous-dossiers",
+      "hintRead": "Ouvre le dossier et tout son contenu en lecture. Les modifications y demandent toujours.",
+      "optionRead": "Lire le dossier + sous-dossiers"
     },
     "hostScope": {
       "title": "Autoriser le site web",
@@ -1406,6 +1439,10 @@
       "hint": "Les commandes pourront alors utiliser sans demander les clés, jetons et fichiers d'identifiants situés directement dans ce dossier. Ses sous-dossiers ne sont pas inclus.",
       "option": "Fichiers sensibles de ce dossier",
       "chip": "fichiers sensibles de {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Un dossier de confiance dans le PATH peut y être placé par les commandes sans demander. Ses programmes s'exécutent alors à la place d'autres portant le même nom.",
+      "chip": "PATH : {{ folder }}"
     },
     "allowChat": "Autoriser dans ce chat",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Pourquoi",
     "keyboardHint": "Appuyez sur 1–{{ count }} ou utilisez ↑ ↓ et Entrée · Échap refuse",
     "mcpToolHint": "Ne plus demander vaut pour chaque appel de cet outil sur ce serveur, quels que soient ses arguments.",
+    "folderReadHint": "Un dossier mémorisé est ouvert en lecture seule. Les modifications y demandent toujours.",
     "url": {
       "queryWarning": "Cette adresse transporte beaucoup de données dans sa chaîne de requête. Vérifiez qu'elle ne contient rien de privé avant de l'autoriser."
     },
@@ -1443,7 +1481,8 @@
     "back": "Retour",
     "next": "Suivant",
     "submit": "Envoyer",
-    "skip": "Passer"
+    "skip": "Passer",
+    "resetPosition": "Réinitialiser la position"
   },
   "modelChoice": {
     "title": "Quel modèle le sous-agent doit-il utiliser ?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Autorisation refusée",
     "canceled": "Annulé",
     "error": "Erreur"
+  },
+  "memory": {
+    "title": "Retenir ceci ?",
+    "noticed": "pumr l'a remarqué dans votre message.",
+    "requested": "Vous avez demandé à pumr de retenir ceci.",
+    "replaces": "Remplace : {{ text }}",
+    "textLabel": "Ce qu'il faut retenir",
+    "hint": "Les préférences enregistrées s'appliquent à chaque discussion, dans tous les projets. Vous pouvez les modifier dans les paramètres, sous Mémoire.",
+    "save": "Retenir",
+    "decline": "Non merci",
+    "disable": "Ne plus demander",
+    "disableHint": "pumr ne propose plus rien à retenir. Vous pouvez réactiver cette option dans les paramètres, sous Mémoire."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

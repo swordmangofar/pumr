@@ -40,8 +40,7 @@ export class BackgroundService {
   apply(settings: Settings | null): void {
     const root = document.documentElement;
     const style = this.resolve(settings);
-    const userOpacity = clamp(settings?.backgroundOpacity ?? 1, 0, 1);
-    const opacity = clamp((style.opacity ?? 1) * userOpacity, 0, 1);
+    const opacity = this.opacity(style, settings);
     const blur = clamp(settings?.backgroundBlur ?? 0, 0, 60);
 
     // Write every variable on each pass (empty means "unset") so switching from
@@ -68,6 +67,25 @@ export class BackgroundService {
     return this.styleVars({ ...preset.style, ...preset.preview });
   }
 
+  /**
+   * Style variables for a miniature of the backdrop `settings` describe, with
+   * the user's opacity and blur applied. `scale` is the size of the miniature
+   * relative to the window, so the blur shrinks along with the picture.
+   */
+  miniatureVars(settings: Settings, scale: number): Record<string, string> {
+    const style = {
+      ...this.resolve(settings),
+      ...findBackground(settings.background)?.preview,
+    };
+    const vars = this.styleVars(style);
+    vars['--app-bg-opacity'] = String(this.opacity(style, settings));
+    const blur = clamp(settings.backgroundBlur, 0, 60) * scale;
+    if (blur > 0) {
+      vars['--app-bg-filter'] = `blur(${blur}px)`;
+    }
+    return vars;
+  }
+
   /** `url(...)` for the user's own image, or an empty string when unavailable. */
   customImageUrl(settings: Settings | null): string {
     const path = settings?.backgroundImage ?? '';
@@ -75,6 +93,12 @@ export class BackgroundService {
       return '';
     }
     return `url("${convertFileSrc(path)}")`;
+  }
+
+  /** The preset's own opacity scaled by the user's setting. */
+  private opacity(style: BackgroundStyle, settings: Settings | null): number {
+    const userOpacity = clamp(settings?.backgroundOpacity ?? 1, 0, 1);
+    return clamp((style.opacity ?? 1) * userOpacity, 0, 1);
   }
 
   private resolve(settings: Settings | null): BackgroundStyle {

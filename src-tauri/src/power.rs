@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,11 +8,20 @@ use tokio::sync::watch;
 
 enum PowerCommand {
     SetEnabled(bool),
-    Acquire,
-    Release,
+    /// A turn of this chat started or ended.
+    Acquire(String),
+    Release(String),
+    /// A turn of this chat does nothing but wait for its user, or stopped
+    /// doing so.
+    Park(String),
+    Unpark(String),
 }
 
 /// Keeps the machine and display awake while one or more agent turns are running.
+///
+/// A turn that only waits for its user does not count: a permission prompt
+/// nobody answers stays open for as long as it takes, and must not keep the
+/// screen from locking and the machine from sleeping all that time.
 ///
 /// The actual OS assertion is owned by a dedicated thread. This matters on
 /// Windows, where `SetThreadExecutionState` is bound to the calling thread:
@@ -39,34 +49,91 @@ impl PowerManager {
     }
 
     /// Prevents the screen from locking and the system from sleeping until the
-    /// returned guard is dropped.
-    pub fn acquire(&self) -> KeepAwakeGuard {
-        let _ = self.tx.send(PowerCommand::Acquire);
+    /// returned guard is dropped. `chat` names the chat the turn belongs to,
+    /// so that [`Self::park`] can say which turn only waits.
+    pub fn acquire(&self, chat: &str) -> KeepAwakeGuard {
+        let _ = self.tx.send(PowerCommand::Acquire(chat.to_string()));
         KeepAwakeGuard {
             tx: self.tx.clone(),
+            chat: chat.to_string(),
+        }
+    }
+
+    /// Says that the turn of `chat` does nothing but wait for its user until
+    /// the returned guard is dropped. A waiting turn does not keep the
+    /// machine awake; every other running turn still does.
+    pub fn park(&self, chat: &str) -> ParkGuard {
+        let _ = self.tx.send(PowerCommand::Park(chat.to_string()));
+        ParkGuard {
+            tx: self.tx.clone(),
+            chat: chat.to_string(),
         }
     }
 }
 
 pub struct KeepAwakeGuard {
     tx: Sender<PowerCommand>,
+    chat: String,
 }
 
 impl Drop for KeepAwakeGuard {
     fn drop(&mut self) {
-        let _ = self.tx.send(PowerCommand::Release);
+        let _ = self.tx.send(PowerCommand::Release(std::mem::take(&mut self.chat)));
+    }
+}
+
+pub struct ParkGuard {
+    tx: Sender<PowerCommand>,
+    chat: String,
+}
+
+impl Drop for ParkGuard {
+    fn drop(&mut self) {
+        let _ = self.tx.send(PowerCommand::Unpark(std::mem::take(&mut self.chat)));
+    }
+}
+
+/// Which turns run and which of them only wait, by chat.
+#[derive(Default)]
+struct Turns {
+    active: HashMap<String, usize>,
+    parked: HashMap<String, usize>,
+}
+
+impl Turns {
+    fn apply(&mut self, command: PowerCommand) {
+        let (counts, chat, more) = match command {
+            PowerCommand::Acquire(chat) => (&mut self.active, chat, true),
+            PowerCommand::Release(chat) => (&mut self.active, chat, false),
+            PowerCommand::Park(chat) => (&mut self.parked, chat, true),
+            PowerCommand::Unpark(chat) => (&mut self.parked, chat, false),
+            PowerCommand::SetEnabled(_) => return,
+        };
+        if more {
+            *counts.entry(chat).or_default() += 1;
+        } else if let Some(count) = counts.get_mut(&chat) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&chat);
+            }
+        }
+    }
+
+    /// Whether a turn is running that does more than wait for its user.
+    fn working(&self) -> bool {
+        self.active.keys().any(|chat| !self.parked.contains_key(chat))
     }
 }
 
 struct Controller {
     enabled: bool,
-    active: usize,
+    turns: Turns,
     assertion: Option<keepawake::KeepAwake>,
 }
 
 impl Controller {
     fn refresh(&mut self) {
-        let should_hold = self.enabled && self.active > 0;
+        let should_hold = self.enabled && self.turns.working();
         match (should_hold, self.assertion.is_some()) {
             (true, false) => match acquire_assertion() {
                 Ok(assertion) => self.assertion = Some(assertion),
@@ -91,14 +158,13 @@ fn acquire_assertion() -> keepawake::Result<keepawake::KeepAwake> {
 fn run(rx: Receiver<PowerCommand>, enabled: bool) {
     let mut controller = Controller {
         enabled,
-        active: 0,
+        turns: Turns::default(),
         assertion: None,
     };
     while let Ok(command) = rx.recv() {
         match command {
             PowerCommand::SetEnabled(value) => controller.enabled = value,
-            PowerCommand::Acquire => controller.active += 1,
-            PowerCommand::Release => controller.active = controller.active.saturating_sub(1),
+            command => controller.turns.apply(command),
         }
         controller.refresh();
     }
@@ -182,6 +248,40 @@ mod tests {
         assert!(slept(tick, after(8 * 60 * 60)));
         // The clock was set back.
         assert!(!slept(after(8 * 60 * 60), tick));
+    }
+
+    #[test]
+    fn a_turn_that_only_waits_for_its_user_keeps_nothing_awake() {
+        let mut turns = Turns::default();
+        assert!(!turns.working());
+        turns.apply(PowerCommand::Acquire("chat".into()));
+        assert!(turns.working());
+
+        // Its prompt went unanswered for a long time: the turn only waits.
+        turns.apply(PowerCommand::Park("chat".into()));
+        assert!(!turns.working());
+        // Two prompts of the same turn wait; one answer is not both.
+        turns.apply(PowerCommand::Park("chat".into()));
+        turns.apply(PowerCommand::Unpark("chat".into()));
+        assert!(!turns.working());
+
+        // Another chat that works is not held back by the waiting one, and
+        // a chat that waits without a turn changes nothing.
+        turns.apply(PowerCommand::Acquire("other".into()));
+        turns.apply(PowerCommand::Park("idle".into()));
+        assert!(turns.working());
+        turns.apply(PowerCommand::Release("other".into()));
+        assert!(!turns.working());
+
+        // The user answered: the turn works again until it ends.
+        turns.apply(PowerCommand::Unpark("chat".into()));
+        assert!(turns.working());
+        turns.apply(PowerCommand::Release("chat".into()));
+        assert!(!turns.working());
+        // A release too many leaves nothing behind.
+        turns.apply(PowerCommand::Release("chat".into()));
+        turns.apply(PowerCommand::Unpark("idle".into()));
+        assert!(turns.active.is_empty() && turns.parked.is_empty());
     }
 
     #[test]

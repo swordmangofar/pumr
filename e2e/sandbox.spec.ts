@@ -44,6 +44,32 @@ test.describe('sandbox', () => {
     });
   });
 
+  test('leaves inline code to the sandbox unless that is switched off', async ({ app, page }) => {
+    await app.start(seed());
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Sandbox' }).click();
+
+    const inlineCode = dialog.getByTestId('sandbox-inline-code');
+    await expect(inlineCode).toContainText('Run inline code in a tighter sandbox instead of asking');
+    const toggle = inlineCode.getByRole('switch');
+    await expect(toggle).toBeChecked();
+
+    // There is no sandbox to leave it to while the sandbox is off.
+    await dialog.getByTestId('sandbox-mode-off').click();
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).not.toBeChecked();
+    await dialog.getByTestId('sandbox-mode-files').click();
+    await expect(toggle).toBeChecked();
+
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    const saved = await app.backend.waitForCall('save_settings');
+    expect(saved.args['settings']).toMatchObject({ sandbox: 'files', sandboxInlineCode: false });
+  });
+
   test('says so where the system has no sandbox', async ({ app, page }) => {
     await app.start(seed({ sandboxSupport: { files: false, network: false } }));
 
@@ -70,5 +96,9 @@ test.describe('sandbox', () => {
     await expect(dialog.getByTestId('sandbox-mode-filesAndNetwork')).toBeDisabled();
     await expect(dialog.getByText('Closing the network is only possible on macOS.')).toBeVisible();
     await expect(dialog.getByTestId('sandbox-unavailable')).toHaveCount(0);
+    // Inline code keeps asking: its sandbox would need the network closed.
+    const inlineCode = dialog.getByTestId('sandbox-inline-code').getByRole('switch');
+    await expect(inlineCode).toBeDisabled();
+    await expect(inlineCode).not.toBeChecked();
   });
 });

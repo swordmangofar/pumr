@@ -11,6 +11,7 @@ import {
   GitInfo,
   GitPullStrategy,
   LiveToolCall,
+  MemoryDecision,
   Mention,
   Message,
   MessageAttachment,
@@ -467,7 +468,11 @@ export class WorkspaceService {
    * so the debugger can render the full branch tree.
    */
   async loadAgentTree(sessionId: string): Promise<void> {
-    await this.loadMessages(sessionId);
+    // What was collected while a subagent ran holds its replies but not what
+    // its tools returned: those arrive as live tools and are gone when it
+    // ends. The stored transcript has both, so a session that is not being
+    // written to right now is read again.
+    await this.loadMessages(sessionId, !this.isStreaming(sessionId));
     await this.loadSubAgents(sessionId);
     for (const child of this.subAgentsState()[sessionId] ?? []) {
       await this.loadAgentTree(child);
@@ -776,6 +781,18 @@ export class WorkspaceService {
     );
   }
 
+  /**
+   * Sets the variables every command of the project starts with: one
+   * `NAME=value` per line. Rejects with the backend's reason when a line is
+   * no assignment.
+   */
+  async updateProjectEnvironment(projectId: string, environment: string): Promise<void> {
+    const updated = await api.setProjectEnvironment(projectId, environment);
+    this.projectsState.update((state) =>
+      state.map((project) => (project.id === updated.id ? updated : project)),
+    );
+  }
+
   async newSession(projectId: string): Promise<Session> {
     const settings = this.settings.settings();
     const session = await api.createSession({
@@ -909,6 +926,11 @@ export class WorkspaceService {
   /** What the session's latest turn could not use of its MCP servers. */
   mcpIssuesFor(sessionId: string): string[] {
     return this.mcpIssuesState()[sessionId] ?? NO_MCP_ISSUES;
+  }
+
+  /** Takes the notice about unusable MCP servers off the session's chat. */
+  dismissMcpIssues(sessionId: string): void {
+    this.setMcpIssues(sessionId, []);
   }
 
   private setMcpStarting(sessionId: string, server: string | null): void {
@@ -1385,6 +1407,11 @@ export class WorkspaceService {
           this.patchSession(sessionId, { agentStatus: event.status });
           this.setStreaming(sessionId, false);
           this.setLiveTools(sessionId, []);
+          // The live tools held what its tools returned; the stored
+          // transcript has it, so a look at the subagent still shows it.
+          if (event.status !== 'running') {
+            void this.loadMessages(sessionId, true);
+          }
           void this.reloadSessions(session.projectId);
           void this.refreshSpend();
           break;
@@ -1510,6 +1537,24 @@ export class WorkspaceService {
   async resolveModelChoice(requestId: string, model: string | null): Promise<void> {
     await api.resolveModelChoice(requestId, model);
     this.settleRequest(requestId);
+  }
+
+  /**
+   * Answers the card of a suggestion for pumr's memory; `text` is the
+   * suggestion as the user edited it. The backend saves the settings and
+   * takes the suggestion off its session, which is mirrored here.
+   */
+  async resolveMemorySuggestion(
+    sessionId: string,
+    id: number,
+    decision: MemoryDecision,
+    text: string | null = null,
+  ): Promise<void> {
+    this.settings.adopt(await api.resolveMemorySuggestion(sessionId, id, decision, text));
+    const open = this.sessionsState()[sessionId]?.memorySuggestions ?? [];
+    this.patchSession(sessionId, {
+      memorySuggestions: open.filter((suggestion) => suggestion.id !== id),
+    });
   }
 
   async updateSession(args: UpdateSessionArgs): Promise<void> {
@@ -1890,10 +1935,20 @@ export class WorkspaceService {
       return null;
     }
     if (sessionId) {
+      const reverted = this.messagesState()[sessionId]?.find((entry) => entry.id === messageId);
       this.pruneMessagesFrom(sessionId, messageId);
+      // What the agent proposed for the memory after this prompt went with it.
+      const open = this.sessionsState()[sessionId]?.memorySuggestions ?? [];
+      const kept = open.filter(
+        (suggestion) => !reverted || suggestion.createdAt < reverted.createdAt,
+      );
       // The turn that was cut off, or that stopped at the tool limit, is among
       // the messages taken back, and the backend resets both marks with them.
-      this.patchSession(sessionId, { interrupted: false, limitReached: false });
+      this.patchSession(sessionId, {
+        interrupted: false,
+        limitReached: false,
+        ...(kept.length < open.length ? { memorySuggestions: kept } : {}),
+      });
       this.setLiveTools(sessionId, []);
       await this.loadMessages(sessionId, true);
       await this.loadChanges(sessionId);

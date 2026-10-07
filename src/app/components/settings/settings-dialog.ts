@@ -9,6 +9,7 @@ import { GeneralSettings } from './general-settings';
 import { HooksSettings } from './hooks-settings';
 import { HotkeysSettings } from './hotkeys-settings';
 import { McpSettings } from './mcp-settings';
+import { MemorySettings } from './memory-settings';
 import { AgentRulesSettings } from './agent-rules-settings';
 import { NotificationsSettings } from './notifications-settings';
 import { ProvidersSettings } from './providers-settings';
@@ -42,6 +43,11 @@ const CATEGORIES: Category[] = [
       'M15 13v2',
       'M9 13v2',
     ],
+  },
+  {
+    id: 'memory',
+    label: 'settings.categories.memory',
+    icon: ['m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z'],
   },
   {
     id: 'agentRules',
@@ -145,6 +151,7 @@ const CATEGORIES: Category[] = [
     TranslocoPipe,
     ProvidersSettings,
     AgentSettings,
+    MemorySettings,
     AgentRulesSettings,
     SandboxSettings,
     HooksSettings,
@@ -234,6 +241,9 @@ const CATEGORIES: Category[] = [
               }
               @case ('agent') {
                 <app-agent-settings />
+              }
+              @case ('memory') {
+                <app-memory-settings />
               }
               @case ('agentRules') {
                 <app-agent-rules-settings />

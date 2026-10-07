@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api, isTauri } from '../../core/api';
 import { BackgroundService } from '../../core/background.service';
@@ -8,6 +8,9 @@ import { CUSTOM_THEME_ID, THEME_PRESETS, ThemeColors } from '../../core/themes';
 import { SettingsDraftService } from './settings-draft.service';
 
 import { TypedInput } from '../typed-input';
+
+/** Width of the preview next to the sliders relative to a typical window. */
+const PREVIEW_SCALE = 0.25;
 
 @Component({
   selector: 'app-appearance-settings',
@@ -243,102 +246,143 @@ import { TypedInput } from '../typed-input';
         </button>
       </div>
 
-      @if (draft.draft().background !== noneId) {
-        <div class="mt-4 space-y-3 rounded-xl border border-white/10 p-4">
-          @if (draft.draft().background === customId) {
-            <div class="flex flex-wrap items-center gap-2">
+      @if (draft.draft().background === customId) {
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="field shrink-0 rounded-xl px-3 py-2 text-xs disabled:opacity-40"
+            [disabled]="!canPickFiles"
+            (click)="pickBackgroundImage()"
+          >
+            {{ 'settings.background.chooseFile' | transloco }}
+          </button>
+          @if (draft.draft().backgroundImage) {
+            <span class="flex min-w-0 items-center gap-2 text-xs text-mist/50">
+              <span class="max-w-56 truncate">{{ fileName(draft.draft().backgroundImage) }}</span>
               <button
                 type="button"
-                class="field shrink-0 rounded-xl px-3 py-2 text-xs disabled:opacity-40"
-                [disabled]="!canPickFiles"
-                (click)="pickBackgroundImage()"
+                class="text-mist/40 transition-colors hover:text-rose-300"
+                [title]="'settings.background.clearFile' | transloco"
+                (click)="draft.setBackgroundImage('')"
               >
-                {{ 'settings.background.chooseFile' | transloco }}
+                ✕
               </button>
-              @if (draft.draft().backgroundImage) {
-                <span class="flex min-w-0 items-center gap-2 text-xs text-mist/50">
-                  <span class="max-w-56 truncate">{{
-                    fileName(draft.draft().backgroundImage)
-                  }}</span>
-                  <button
-                    type="button"
-                    class="text-mist/40 transition-colors hover:text-rose-300"
-                    [title]="'settings.background.clearFile' | transloco"
-                    (click)="draft.setBackgroundImage('')"
-                  >
-                    ✕
-                  </button>
+            </span>
+          } @else {
+            <span class="text-xs text-mist/30">
+              {{ 'settings.background.noFile' | transloco }}
+            </span>
+          }
+        </div>
+      }
+
+      <div class="mt-4 flex flex-col gap-5 rounded-xl border border-white/10 p-4 lg:flex-row">
+        <div class="shrink-0 lg:w-80">
+          <span class="mb-2 block text-xs text-mist/40">
+            {{ 'settings.background.preview' | transloco }}
+          </span>
+          <div
+            class="appearance-preview bg-preview-frame flex aspect-[16/10] w-full gap-1.5 rounded-xl border border-white/10 p-2"
+            data-testid="appearance-preview"
+            aria-hidden="true"
+            [style.--glass-alpha]="draft.draft().glassOpacity"
+          >
+            <span class="bg-preview" [style]="previewVars()"></span>
+            <div class="glass flex w-[30%] flex-col gap-2 rounded-lg p-2.5">
+              <span class="h-1.5 w-3/4 rounded-full bg-white/70"></span>
+              <span class="h-1.5 w-full rounded-full bg-accent/80"></span>
+              <span class="h-1.5 w-2/3 rounded-full bg-mist/40"></span>
+              <span class="h-1.5 w-5/6 rounded-full bg-mist/40"></span>
+            </div>
+            <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+              <div class="glass flex flex-1 flex-col gap-2 rounded-lg p-2.5">
+                <div class="glass-inset ml-auto flex w-1/2 flex-col gap-1.5 rounded-md p-2">
+                  <span class="h-1.5 w-full rounded-full bg-white/70"></span>
+                  <span class="h-1.5 w-2/3 rounded-full bg-white/70"></span>
+                </div>
+                <span class="h-1.5 w-5/6 rounded-full bg-mist/50"></span>
+                <span class="h-1.5 w-3/4 rounded-full bg-mist/50"></span>
+                <span class="h-1.5 w-1/2 rounded-full bg-mist/50"></span>
+              </div>
+              <div class="glass flex h-8 shrink-0 items-center gap-2 rounded-lg px-2.5">
+                <span class="h-1.5 flex-1 rounded-full bg-mist/30"></span>
+                <span class="h-4 w-4 rounded-full bg-accent"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="min-w-0 flex-1 space-y-4">
+          @if (draft.draft().background !== noneId) {
+            <div>
+              <span class="flex items-baseline justify-between gap-3">
+                <span class="text-sm text-mist">
+                  {{ 'settings.background.opacity' | transloco }}
                 </span>
-              } @else {
-                <span class="text-xs text-mist/30">
-                  {{ 'settings.background.noFile' | transloco }}
+                <span class="shrink-0 text-xs tabular-nums text-mist/50">
+                  {{ (draft.draft().backgroundOpacity * 100).toFixed(0) }}%
                 </span>
-              }
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                class="mt-2 w-full cursor-pointer accent-accent"
+                [attr.aria-label]="'settings.background.opacity' | transloco"
+                [value]="draft.draft().backgroundOpacity"
+                (typedValue)="draft.setBackgroundOpacity(+$event)"
+                (change)="draft.applyBackdrop()"
+              />
+            </div>
+
+            <div>
+              <span class="flex items-baseline justify-between gap-3">
+                <span class="text-sm text-mist">
+                  {{ 'settings.background.blur' | transloco }}
+                </span>
+                <span class="shrink-0 text-xs tabular-nums text-mist/50">
+                  {{ draft.draft().backgroundBlur }}px
+                </span>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="40"
+                step="1"
+                class="mt-2 w-full cursor-pointer accent-accent"
+                [attr.aria-label]="'settings.background.blur' | transloco"
+                [value]="draft.draft().backgroundBlur"
+                (typedValue)="draft.setBackgroundBlur(+$event)"
+                (change)="draft.applyBackdrop()"
+              />
             </div>
           }
 
-          <div class="flex items-center gap-3">
-            <span class="w-16 shrink-0 text-sm text-mist">
-              {{ 'settings.background.opacity' | transloco }}
+          <div [class]="draft.draft().background !== noneId ? 'border-t border-white/10 pt-4' : ''">
+            <span class="flex items-baseline justify-between gap-3">
+              <span class="text-sm text-mist">{{ 'settings.glassOpacity' | transloco }}</span>
+              <span class="shrink-0 text-xs tabular-nums text-mist/50">
+                {{ (draft.draft().glassOpacity * 100).toFixed(0) }}%
+              </span>
             </span>
             <input
               type="range"
               min="0"
               max="1"
               step="0.05"
-              class="flex-1 cursor-pointer accent-accent"
-              [value]="draft.draft().backgroundOpacity"
-              (typedValue)="draft.setBackgroundOpacity(+$event)"
+              class="mt-2 w-full cursor-pointer accent-accent"
+              [attr.aria-label]="'settings.glassOpacity' | transloco"
+              [value]="draft.draft().glassOpacity"
+              (typedValue)="draft.setGlassOpacity(+$event)"
+              (change)="draft.applyBackdrop()"
             />
-            <span class="w-10 text-right text-xs tabular-nums text-mist/50">
-              {{ (draft.draft().backgroundOpacity * 100).toFixed(0) }}%
-            </span>
-          </div>
-
-          <div class="flex items-center gap-3">
-            <span class="w-16 shrink-0 text-sm text-mist">
-              {{ 'settings.background.blur' | transloco }}
-            </span>
-            <input
-              type="range"
-              min="0"
-              max="40"
-              step="1"
-              class="flex-1 cursor-pointer accent-accent"
-              [value]="draft.draft().backgroundBlur"
-              (typedValue)="draft.setBackgroundBlur(+$event)"
-            />
-            <span class="w-10 text-right text-xs tabular-nums text-mist/50">
-              {{ draft.draft().backgroundBlur }}px
-            </span>
+            <p class="mt-2 text-xs leading-relaxed text-mist/30">
+              {{ 'settings.glassOpacityHint' | transloco }}
+            </p>
           </div>
         </div>
-      }
-    </section>
-
-    <section class="mt-8">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <h3 class="text-sm font-semibold text-white">
-            {{ 'settings.glassOpacity' | transloco }}
-          </h3>
-          <p class="mt-1 text-xs leading-relaxed text-mist/30">
-            {{ 'settings.glassOpacityHint' | transloco }}
-          </p>
-        </div>
-        <span class="w-10 shrink-0 text-right text-xs tabular-nums text-mist/50">
-          {{ (draft.draft().glassOpacity * 100).toFixed(0) }}%
-        </span>
       </div>
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.05"
-        class="mt-3 w-full cursor-pointer accent-accent"
-        [value]="draft.draft().glassOpacity"
-        (typedValue)="draft.setGlassOpacity(+$event)"
-      />
     </section>
 
     <section class="mt-8 flex items-center justify-between gap-4">
@@ -374,6 +418,9 @@ export class AppearanceSettings {
   protected readonly noneId = BACKGROUND_NONE;
   protected readonly customId = BACKGROUND_CUSTOM;
   protected readonly canPickFiles = isTauri();
+  protected readonly previewVars = computed(() =>
+    this.background.miniatureVars(this.draft.draft(), PREVIEW_SCALE),
+  );
   protected readonly customFields: { key: keyof ThemeColors; labelKey: string }[] = [
     { key: 'ink', labelKey: 'settings.customTheme.ink' },
     { key: 'navy', labelKey: 'settings.customTheme.navy' },

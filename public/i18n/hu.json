@@ -276,8 +276,8 @@
     "more": "További lapok"
   },
   "projectAppearance": {
-    "title": "Projekt megjelenés",
-    "edit": "A projekt megjelenésének szerkesztése",
+    "title": "Projektbeállítások",
+    "edit": "A projekt szerkesztése",
     "color": "Szín",
     "auto": "Auto",
     "customColor": "Egyedi szín",
@@ -289,7 +289,11 @@
     "imageHint": "A négyzet alakú kép működik a legjobban. A rendszer automatikusan levágja és átméretezi.",
     "notAnImage": "Kérjük, válasszon egy képfájlt.",
     "imageFailed": "Nem sikerült elolvasni a képet.",
-    "saveFailed": "Nem sikerült menteni a projekt megjelenését."
+    "saveFailed": "Nem sikerült menteni a projekt megjelenését.",
+    "environment": "Környezet a parancsokhoz",
+    "environmentHint": "Soronként egy NAME=value, mint egy shell-profilban. Minden parancs, amelyet az asszisztens ebben a projektben futtat, ezekkel a változókkal indul. A $NAME és a ~ behelyettesítődik, így a PATH=$JAVA_HOME/bin:$PATH működik.",
+    "environmentInvalid": "A(z) {{ line }}. sor nem NAME=value alakú.",
+    "environmentFailed": "Nem sikerült menteni a környezetet: {{ error }}"
   },
   "chat": {
     "placeholder": "Írja le a feladatát... használja a @ jelet fájlok, mappák, webhelyek, készségek vagy MCP szerverek hozzáadásához",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globális felszólítások",
       "mode": "Mód konfiguráció",
       "projectRules": "Projektszabályok",
+      "memory": "Megjegyzett preferenciák",
       "user": "Felhasználói üzenet",
       "assistant": "Modell válasz",
       "tool": "Szerszámhívás",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globális felszólítások",
       "mode": "Mode prompt",
       "projectRules": "Projektszabályok",
+      "memory": "Megjegyzett preferenciák",
       "prompt": "Gyors",
       "referencedContext": "Hivatkozott kontextus",
       "mentions": "Említések",
@@ -632,6 +638,8 @@
     "presetValueHint": "A legjobb másodpercenkénti token per dollár arányú szolgáltatót választja.",
     "trains": "adatokon tanít",
     "trainsHint": "Ez a szolgáltató a promptjait tanításhoz használhatja.",
+    "blocked": "letiltva",
+    "blockedHint": "Az OpenRouter adatvédelmi vagy szolgáltatói beállításai letiltják ezt a szolgáltatót.",
     "priceHint": "Ár 1 millió tokenenként, a modell többi szolgáltatójához viszonyítva színezve"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Szolgáltatók",
       "agent": "Ügynök konfigurációja",
+      "memory": "Memória",
       "agentRules": "Ügynök whitelist és blacklist",
       "sandbox": "Homokozó",
       "hooks": "Hookok",
@@ -760,6 +769,8 @@
       "hint": "Az operációs rendszer korlátok közé zár minden parancsot, amelyet az ügynök futtat, és mindent, amit az a parancs elindít. Ez egy második réteg az engedélyszabályok mögött, olyan parancsra, amelyet azok tévesen ítélnek meg. A homokozó által megállított parancs kérheti, hogy azon kívül fusson; erről minden alkalommal kérdést kap.",
       "unavailable": "Ezen a rendszeren nincs olyan homokozó, amelyet a pumr használni tudna, ezért a parancsok korlátozás nélkül futnak. Ehhez macOS, vagy Linux 5.19 vagy újabb kell Landlockkal.",
       "networkUnavailable": "A hálózat lezárása csak macOS-en lehetséges.",
+      "inlineCode": "Beágyazott kód futtatása szigorúbb homokozóban kérdezés helyett",
+      "inlineCodeHint": "A beágyazott node- vagy python-kód és a heredockal nekik átadott szkriptek nem ellenőrizhetők úgy, mint egy parancs. Amíg a „Minden parancs a projekten belül” be van kapcsolva, az ilyen kód kérdezés nélkül fut egy szigorúbb homokozóban: csak ezt a számítógépet éri el, csak a projektbe, az Ön további mappáiba és az ideiglenes mappákba ír, és nem indíthat alkalmazásokat, nem érhet el más programokat, és nem módosíthatja a git hookokat. Ugyanez érvényes arra a parancsra, amelynek argumentumai csak futtatáskor derülnek ki. Az a kód, amely a projekten kívüli fájlokat, érzékeny fájlokat vagy más webhelyeket nevez meg, továbbra is kérdez. Ha a homokozó megállít egy szkriptet, az ügynök megkérheti Önt, hogy futtassa a szokásos módon. Csak macOS-en.",
       "modes": {
         "off": "Ki",
         "files": "Fájlok",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "A parancsok az Ön felhasználójaként futnak, és csak az engedélyszabályok tartják vissza őket.",
-        "files": "A parancsok csak a projektbe, az Ön további mappáiba, az ideiglenes mappákba és az alább felsorolt mappákba írnak. A kulcsokat tároló mappákat nem olvashatják.",
+        "files": "A parancsok csak a projektbe, az Ön további mappáiba, az ideiglenes mappákba és az alább felsorolt mappákba írnak. A kulcsokat tároló mappákat nem olvashatják. macOS-en más alkalmazásokat sem indíthatnak el: az open csak önálló parancsként működik, amelyet az engedélyszabályok ellenőriznek.",
         "filesAndNetwork": "Ugyanez, és a parancsok csak ezt a számítógépet érik el, kivéve azokat, amelyek gazdagépeit engedélyezte. A csomagok telepítése ilyenkor azt kéri, hogy a homokozón kívül futhasson."
       },
       "writable": "Mappák, amelyekbe a parancsok szintén írhatnak",
       "writableHint": "A build eszközök gyorsítótárai. Nélkülük a build az első letöltésnél meghiúsul. Az útvonal / vagy ~ karakterrel kezdődik.",
       "unreadable": "Mappák, amelyeket a parancsok nem olvashatnak",
-      "unreadableHint": "Ahol a kulcsok és a tokenek találhatók. A git, az ssh és a felhőeszközök megtartják azokat a mappákat, amelyekkel dolgoznak, és az a mappa, amelyet a parancsok számára engedélyezett, nyitva marad.",
+      "unreadableHint": "Ahol a kulcsok és a tokenek találhatók. A git, az ssh és a felhőeszközök megtartják azokat a mappákat, amelyekkel dolgoznak, és az a mappa, amelyet a parancsok számára engedélyezett, nyitva marad. A pumr saját adatmappája, amely az Ön csevegéseit és beállításait tartalmazza, szintén zárva van a parancsok elől, bármi szerepel is ebben a listában.",
       "excluded": "A homokozón kívül futó parancsok",
       "excludedHint": "Olyan eszközökhöz, amelyek saját homokozót hoznak magukkal, és ebben meghiúsulnak, például a böngészős tesztekhez. Egy bejegyzés azt adja meg, hogyan kezdődik a parancssor; * karakterrel az egész sorra vonatkozó minta.",
       "addCommand": "Parancs hozzáadása",
@@ -800,6 +811,19 @@
       "timeout": "Leállítás ennyi után (másodperc)",
       "project": "Projekt",
       "allProjects": "Minden projekt"
+    },
+    "memory": {
+      "title": "Memória",
+      "hint": "A pumr megjegyzi, hogyan szeretsz dolgozni, például hogyan kéred a kódáttekintés eredményét, és ezt minden csevegésben és minden projektben közli az ügynökkel. A beleegyezésed nélkül semmit sem jegyez meg.",
+      "enabled": "Memória használata",
+      "enabledHint": "Kikapcsolva az alábbi bejegyzések megmaradnak, de az ügynök nem kapja meg őket, és új javaslat sem érkezik.",
+      "suggestions": "Javaslatok megjegyzendő dolgokra",
+      "suggestionsHint": "Ha valamelyik üzeneted tartós preferenciát mutat, a pumr a válasz után megkérdezi, megjegyezze-e: legfeljebb csevegésenként egyszer és naponta egyszer, és egyre ritkábban, valahányszor nem mentesz el egy javaslatot. Kikapcsolva a pumr továbbra is megjegyzi, amire megkéred.",
+      "list": "Megjegyzett preferenciák",
+      "add": "Bejegyzés hozzáadása",
+      "empty": "Még nincs megjegyzett preferencia.",
+      "placeholder": "Például: kódáttekintéskor minden észrevételnél kérdezd meg tőlem, hogy javítsd-e vagy hagyd ki.",
+      "remove": "Bejegyzés eltávolítása"
     },
     "providers": {
       "title": "Modellszolgáltatók",
@@ -846,7 +870,9 @@
     "languageHint": "Mentés után lép életbe.",
     "workspace": {
       "allowed": "Engedélyezett mappák",
-      "foldersHint": "Az asszisztens kérdezés nélkül olvashatja és írhatja ezeket a mappákat. Az aktív projekt mindig engedélyezett."
+      "foldersHint": "Az asszisztens kérdezés nélkül olvashatja és írhatja ezeket a mappákat. Az aktív projekt mindig engedélyezett.",
+      "readable": "Mappák csak olvasásra",
+      "readableHint": "Az asszisztens kérdezés nélkül olvashatja ezeket a mappákat, de az ottani módosítások továbbra is kérdeznek. Ha megjegyez egy mappa olvasására vagy listázására vonatkozó kérdést, a mappa ide kerül."
     },
     "mcp": {
       "tabBrowse": "Böngészés",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Válasszon képet",
       "clearFile": "Kép eltávolítása",
       "noFile": "Nincs kép kiválasztva",
-      "opacity": "Átlátszatlanság",
-      "blur": "Elhomályosít",
+      "opacity": "Háttér láthatósága",
+      "blur": "Háttér elmosása",
+      "preview": "Előnézet",
       "presets": {
         "aurora": "Hajnal",
         "mesh": "Háló",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Mappák engedélyezett érzékeny fájlokkal",
     "secretFoldersHint": "A parancsok kérdés nélkül használhatják a közvetlenül ezekben a mappákban lévő érzékeny fájlokat (kulcsokat, tokeneket, hitelesítő adatokat). Az almappák nem tartoznak bele. Hozzon létre egyet a „mindig engedélyez” lehetőséggel az engedélykérésben.",
     "noSecretFolders": "Még nincsenek mappák engedélyezett érzékeny fájlokkal.",
+    "pathFolders": "A PATH-ban megbízható mappák",
+    "pathFoldersHint": "A parancsok kérdés nélkül felvehetik ezeket a mappákat a PATH-ba, bár az asszisztens módosíthatja a bennük lévő fájlokat. Adjon hozzá egyet a „mindig engedélyez” lehetőséggel az engedélykérésben.",
+    "noPathFolders": "Még nincsenek a PATH-ban megbízható mappák.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + alparancs",
       "programFlags": "Program + kapcsolók",
-      "exact": "Pontos"
+      "exact": "Pontos",
+      "pathFolder": "Mappa a PATH-ban"
     },
     "websiteAllowlist": "Engedélyezett",
     "websiteDenylist": "Blokkolt",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projekt futtatható fájljai",
     "autoApproveProjectExecutablesHint": "Engedélyezi a projekten belüli futtatható fájlokat, például ./node_modules/.bin/ng, minden alkalommal kérdezés nélkül.",
     "autoApproveProjectCommands": "Minden parancs a projekten belül",
-    "autoApproveProjectCommandsHint": "Engedélyez minden nem veszélyes parancsot, amelynek útvonalai a projekten belül maradnak, beleértve a csak olvasó beágyazott node- vagy python-kódot is. A veszélyes parancsok, az egyéb beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, az érzékeny fájlok és minden külső továbbra is kérdez.",
+    "autoApproveProjectCommandsHint": "Engedélyez minden nem veszélyes parancsot, amelynek útvonalai a projekten belül maradnak, beleértve a csak olvasó beágyazott node- vagy python-kódot is. A veszélyes parancsok, az egyéb beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, az érzékeny fájlok és minden külső továbbra is kérdez. Kivétel az a beágyazott node- vagy python-kód, amelyet a homokozó kérdezés helyett lefuttat (lásd: Homokozó).",
     "permissionPreset": {
       "strict": "Szigorú",
       "strictHint": "Csak a kizárólag olvasó parancsok futnak kérdés nélkül.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Önálló",
       "autonomousHint": "A projekten belüli minden nem veszélyes parancs kérdés nélkül fut.",
       "custom": "Egyéni",
-      "autonomousWarning": "Az önálló mód megbízik ebben a projektben: a szkriptjei, Makefile-jai és futtatható fájljai kérdés nélkül bármit megtehetnek, és a csak olvasó beágyazott kód is lefut. Az egyéb beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, a veszélyes parancsok és a projekten kívüli dolgok továbbra is kérdeznek.",
+      "autonomousWarning": "Az önálló mód megbízik ebben a projektben: a szkriptjei, Makefile-jai és futtatható fájljai kérdés nélkül bármit megtehetnek, és a csak olvasó beágyazott kód is lefut. Az egyéb beágyazott kód, a csomagletöltések, a még nem engedélyezett webhelyek, a veszélyes parancsok és a projekten kívüli dolgok továbbra is kérdeznek. Kivétel az a beágyazott node- vagy python-kód, amelyet a homokozó kérdezés helyett lefuttat (lásd: Homokozó).",
       "confirm": "Önálló mód használata"
     },
     "noAllowedWebsites": "Még nincsenek mindig engedélyezett webhelyek.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Mappa engedélyezése",
       "hint": "Hozzáadja a mappát és mindent, ami benne van, a mindig engedélyezett mappákhoz.",
-      "option": "Mappa + almappák"
+      "option": "Mappa + almappák",
+      "hintRead": "Olvasásra megnyitja a mappát és mindent, ami benne van. Az ottani módosítások továbbra is kérdeznek.",
+      "optionRead": "Mappa + almappák olvasása"
     },
     "hostScope": {
       "title": "Webhely engedélyezése",
@@ -1406,6 +1439,10 @@
       "hint": "A parancsok ezután kérdés nélkül használhatják a közvetlenül ebben a mappában lévő kulcsokat, tokeneket és hitelesítőadat-fájlokat. Az almappák nem tartoznak bele.",
       "option": "Érzékeny fájlok ebben a mappában",
       "chip": "érzékeny fájlok itt: {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "A PATH-ban megbízható mappát a parancsok kérdés nélkül felvehetik oda. A programjai ekkor más, azonos nevű programok helyett futnak.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Engedélyezés ebben a csevegésben",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Miért",
     "keyboardHint": "Nyomd meg az 1–{{ count }} gombot, vagy használd a ↑ ↓ és Enter billentyűket · Esc elutasít",
     "mcpToolHint": "Ha nem kérdez újra, az ennek az eszköznek minden hívására érvényes ezen a szerveren, az argumentumoktól függetlenül.",
+    "folderReadHint": "A megjegyzett mappa csak olvasásra nyílik meg. Az ottani módosítások továbbra is kérdeznek.",
     "url": {
       "queryWarning": "Ez a cím sok adatot hordoz a lekérdezési karakterláncában. Engedélyezés előtt győződj meg róla, hogy nincs benne semmi személyes."
     },
@@ -1443,7 +1481,8 @@
     "back": "Vissza",
     "next": "Tovább",
     "submit": "Beküldés",
-    "skip": "Kihagyás"
+    "skip": "Kihagyás",
+    "resetPosition": "Pozíció visszaállítása"
   },
   "modelChoice": {
     "title": "Melyik modellt használja az alügynök?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Engedély megtagadva",
     "canceled": "Megszakítva",
     "error": "Hiba"
+  },
+  "memory": {
+    "title": "Megjegyezze ezt a pumr?",
+    "noticed": "A pumr ezt vette észre az üzenetedben.",
+    "requested": "Megkérted a pumrt, hogy jegyezze meg ezt.",
+    "replaces": "Ezt váltja fel: {{ text }}",
+    "textLabel": "Mit jegyezzen meg",
+    "hint": "A mentett preferenciák minden csevegésre és minden projektre érvényesek. A beállításokban, a Memória résznél módosíthatod őket.",
+    "save": "Jegyezd meg",
+    "decline": "Köszönöm, nem",
+    "disable": "Ne kérdezd többet",
+    "disableHint": "A pumr nem javasol több megjegyzendő dolgot. A beállításokban, a Memória résznél kapcsolhatod vissza."
   },
   "terminal": {
     "title": "{{ number }}. terminál",

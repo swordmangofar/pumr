@@ -276,8 +276,8 @@
     "more": "Mai multe file"
   },
   "projectAppearance": {
-    "title": "Aspectul proiectului",
-    "edit": "Editați aspectul proiectului",
+    "title": "Setările proiectului",
+    "edit": "Editează proiectul",
     "color": "Culoare",
     "auto": "Auto",
     "customColor": "Culoare personalizată",
@@ -289,7 +289,11 @@
     "imageHint": "O imagine pătrată funcționează cel mai bine. Este decupat și redimensionat automat.",
     "notAnImage": "Vă rugăm să alegeți un fișier imagine.",
     "imageFailed": "Nu am putut citi acea imagine.",
-    "saveFailed": "Nu s-a putut salva aspectul proiectului."
+    "saveFailed": "Nu s-a putut salva aspectul proiectului.",
+    "environment": "Mediu pentru comenzi",
+    "environmentHint": "Câte un NAME=value pe linie, ca într-un profil de shell. Fiecare comandă pe care asistentul o rulează în acest proiect pornește cu aceste variabile. $NAME și ~ sunt expandate, deci PATH=$JAVA_HOME/bin:$PATH funcționează.",
+    "environmentInvalid": "Linia {{ line }} nu este NAME=value.",
+    "environmentFailed": "Nu s-a putut salva mediul: {{ error }}"
   },
   "chat": {
     "placeholder": "Descrie sarcina ta... folosește @ pentru a adăuga fișiere, foldere, site-uri, Skills sau MCP servers",
@@ -395,6 +399,7 @@
       "globalPrompts": "Solicitări globale",
       "mode": "Configurarea modului",
       "projectRules": "Regulile proiectului",
+      "memory": "Preferințe reținute",
       "user": "Mesaj utilizator",
       "assistant": "Răspunsul modelului",
       "tool": "Apel de instrument",
@@ -433,6 +438,7 @@
       "globalPrompts": "Solicitări globale",
       "mode": "Mod prompt",
       "projectRules": "Regulile proiectului",
+      "memory": "Preferințe reținute",
       "prompt": "Prompt",
       "referencedContext": "Context referit",
       "mentions": "Mențiuni",
@@ -632,6 +638,8 @@
     "presetValueHint": "Alege furnizorul cu cei mai mulți tokens pe secundă per dolar.",
     "trains": "antrenează pe date",
     "trainsHint": "Acest furnizor îți poate folosi prompturile pentru antrenare.",
+    "blocked": "blocat",
+    "blockedHint": "Setările tale de confidențialitate sau de furnizori din OpenRouter blochează acest furnizor.",
     "priceHint": "Preț per 1M tokens, colorat relativ la ceilalți furnizori pentru acest model"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Furnizori",
       "agent": "Configurare agent",
+      "memory": "Memorie",
       "agentRules": "Listă albă și neagră a agentului",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Sistemul de operare îngrădește fiecare comandă pe care o rulează agentul și tot ce pornește acea comandă. Este un al doilea strat în spatele regulilor de permisiune, pentru o comandă pe care acestea o evaluează greșit. O comandă oprită de sandbox poate cere să ruleze în afara lui; ești întrebat de fiecare dată.",
       "unavailable": "Acest sistem nu are un sandbox pe care pumr să îl poată folosi, deci comenzile rulează neîngrădite. Este nevoie de macOS sau de Linux 5.19 sau mai nou, cu Landlock.",
       "networkUnavailable": "Închiderea rețelei este posibilă doar pe macOS.",
+      "inlineCode": "Rulează codul inline într-un sandbox mai strict în loc să întrebe",
+      "inlineCodeHint": "Codul inline node sau python și scripturile care le sunt transmise printr-un heredoc nu pot fi verificate ca o comandă. Cât timp „Toate comenzile din proiect” este activat, un astfel de cod rulează fără întrebare într-un sandbox mai strict: ajunge doar la acest computer, scrie doar în proiect, în folderele tale suplimentare și în folderele temporare și nu poate porni aplicații, ajunge la alte programe sau schimba hookurile git. Același lucru este valabil pentru o comandă ale cărei argumente sunt cunoscute abia la rulare. Codul care numește fișiere din afara proiectului, fișiere sensibile sau alte site-uri web întreabă în continuare. Dacă sandboxul oprește un script, agentul îți poate cere să îl rulezi normal. Doar pe macOS.",
       "modes": {
         "off": "Dezactivat",
         "files": "Fișiere",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Comenzile rulează ca utilizatorul tău, limitate doar de regulile de permisiune.",
-        "files": "Comenzile scriu doar în proiect, în folderele tale suplimentare, în folderele temporare și în folderele enumerate mai jos. Nu pot citi folderele care conțin chei.",
+        "files": "Comenzile scriu doar în proiect, în folderele tale suplimentare, în folderele temporare și în folderele enumerate mai jos. Nu pot citi folderele care conțin chei. Pe macOS nu pot nici să pornească alte aplicații: open funcționează doar ca o comandă de sine stătătoare, pe care o verifică regulile de permisiune.",
         "filesAndNetwork": "La fel, iar comenzile ajung doar la acest computer, cu excepția comenzilor ale căror gazde le-ai permis. Instalarea pachetelor cere atunci să ruleze în afara sandboxului."
       },
       "writable": "Foldere în care comenzile mai pot scrie",
       "writableHint": "Cache-urile instrumentelor de build. Fără ele, un build eșuează la prima descărcare. O cale începe cu / sau ~.",
       "unreadable": "Foldere pe care comenzile nu le pot citi",
-      "unreadableHint": "Unde se află cheile și tokenurile. git, ssh și instrumentele cloud își păstrează folderele cu care lucrează, iar un folder pe care l-ai permis pentru comenzi rămâne deschis.",
+      "unreadableHint": "Unde se află cheile și tokenurile. git, ssh și instrumentele cloud își păstrează folderele cu care lucrează, iar un folder pe care l-ai permis pentru comenzi rămâne deschis. Și folderul de date al lui pumr, cu chaturile și setările tale, este închis pentru comenzi, indiferent ce conține această listă.",
       "excluded": "Comenzi care rulează în afara sandboxului",
       "excludedHint": "Pentru instrumente care vin cu propriul sandbox și eșuează în cel de aici, cum ar fi testele de browser. O intrare indică felul în care începe linia de comandă; cu * este un tipar pentru întreaga linie.",
       "addCommand": "Adaugă comandă",
@@ -800,6 +811,19 @@
       "timeout": "Oprește după (secunde)",
       "project": "Proiect",
       "allProjects": "Toate proiectele"
+    },
+    "memory": {
+      "title": "Memorie",
+      "hint": "pumr poate reține cum îți place să lucrezi, de exemplu cum vrei să fie prezentată o revizuire de cod, și îi spune agentului în fiecare chat și în fiecare proiect. Nimic nu este reținut fără acordul tău.",
+      "enabled": "Folosește memoria",
+      "enabledHint": "Când este dezactivată, intrările de mai jos se păstrează, dar nu sunt trimise agentului și nu se sugerează nimic nou.",
+      "suggestions": "Sugerează ce să rețină",
+      "suggestionsHint": "Când unul dintre mesajele tale arată o preferință de durată, pumr întreabă după răspuns dacă să o rețină: cel mult o dată pe chat și o dată pe zi, și mai rar de fiecare dată când nu salvezi o sugestie. Când este dezactivat, pumr reține în continuare ce îi ceri.",
+      "list": "Preferințe reținute",
+      "add": "Adaugă o intrare",
+      "empty": "Încă nu este reținut nimic.",
+      "placeholder": "De exemplu: la revizuirea codului, întreabă-mă pentru fiecare constatare dacă trebuie corectată sau omisă.",
+      "remove": "Elimină intrarea"
     },
     "providers": {
       "title": "Furnizori de modele",
@@ -846,7 +870,9 @@
     "languageHint": "Se aplică după salvare.",
     "workspace": {
       "allowed": "Foldere permise",
-      "foldersHint": "Asistentul poate citi și scrie aceste foldere fără a întreba. Proiectul activ este întotdeauna permis."
+      "foldersHint": "Asistentul poate citi și scrie aceste foldere fără a întreba. Proiectul activ este întotdeauna permis.",
+      "readable": "Foldere doar pentru citire",
+      "readableHint": "Asistentul poate citi aceste foldere fără a întreba, dar modificările de acolo întreabă în continuare. Reținerea unei cereri de citire sau de listare a unui folder îl adaugă aici."
     },
     "mcp": {
       "tabBrowse": "Răsfoiește",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Alege imaginea",
       "clearFile": "Eliminați imaginea",
       "noFile": "Nicio imagine selectată",
-      "opacity": "Opacitate",
-      "blur": "Estompa",
+      "opacity": "Vizibilitatea fundalului",
+      "blur": "Estomparea fundalului",
+      "preview": "Previzualizare",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Plasă",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Foldere cu fișiere sensibile permise",
     "secretFoldersHint": "Comenzile pot folosi fără a întreba fișierele sensibile (chei, tokenuri, date de autentificare) aflate direct în aceste foldere. Subfolderele nu sunt incluse. Folosește \"permite mereu\" într-o cerere de permisiune pentru a crea una.",
     "noSecretFolders": "Niciun folder cu fișiere sensibile permise încă.",
+    "pathFolders": "Foldere de încredere în PATH",
+    "pathFoldersHint": "Comenzile pot pune aceste foldere în PATH fără a întreba, deși asistentul poate modifica fișiere din ele. Folosește \"permite mereu\" într-o cerere de permisiune pentru a adăuga unul.",
+    "noPathFolders": "Niciun folder de încredere în PATH încă.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + subcomandă",
       "programFlags": "Program + opțiuni",
-      "exact": "Exact"
+      "exact": "Exact",
+      "pathFolder": "Folder în PATH"
     },
     "websiteAllowlist": "Permise",
     "websiteDenylist": "Blocate",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Executabilele proiectului",
     "autoApproveProjectExecutablesHint": "Permite executabile din interiorul proiectului, precum ./node_modules/.bin/ng, fără să întrebe de fiecare dată.",
     "autoApproveProjectCommands": "Toate comenzile din proiect",
-    "autoApproveProjectCommandsHint": "Permite orice comandă nepericuloasă ale cărei căi rămân în proiect, inclusiv codul inline node sau python care doar citește. Comenzile periculoase, alt cod inline, descărcările de pachete, site-urile web încă nepermise, fișierele sensibile și orice din exterior întreabă în continuare.",
+    "autoApproveProjectCommandsHint": "Permite orice comandă nepericuloasă ale cărei căi rămân în proiect, inclusiv codul inline node sau python care doar citește. Comenzile periculoase, alt cod inline, descărcările de pachete, site-urile web încă nepermise, fișierele sensibile și orice din exterior întreabă în continuare. Excepția este codul inline node sau python pe care sandboxul îl rulează în loc să întrebe (vezi Sandbox).",
     "permissionPreset": {
       "strict": "Strict",
       "strictHint": "Doar comenzile care doar citesc rulează fără a întreba.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonom",
       "autonomousHint": "Orice comandă nepericuloasă din proiect rulează fără a întreba.",
       "custom": "Personalizat",
-      "autonomousWarning": "Modul autonom are încredere în acest proiect: scripturile, fișierele Makefile și executabilele sale pot face orice fără a întreba, iar codul inline care doar citește rulează și el. Alt cod inline, descărcările de pachete, site-urile web încă nepermise, comenzile periculoase și orice din afara proiectului întreabă în continuare.",
+      "autonomousWarning": "Modul autonom are încredere în acest proiect: scripturile, fișierele Makefile și executabilele sale pot face orice fără a întreba, iar codul inline care doar citește rulează și el. Alt cod inline, descărcările de pachete, site-urile web încă nepermise, comenzile periculoase și orice din afara proiectului întreabă în continuare. Excepția este codul inline node sau python pe care sandboxul îl rulează în loc să întrebe (vezi Sandbox).",
       "confirm": "Folosește modul autonom"
     },
     "noAllowedWebsites": "Niciun site permis mereu încă.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Permite folderul",
       "hint": "Adaugă folderul și tot ce se află în el la folderele permise mereu.",
-      "option": "Folder + subfoldere"
+      "option": "Folder + subfoldere",
+      "hintRead": "Deschide folderul și tot ce se află în el pentru citire. Modificările de acolo întreabă în continuare.",
+      "optionRead": "Citire folder + subfoldere"
     },
     "hostScope": {
       "title": "Permite site-ul web",
@@ -1406,6 +1439,10 @@
       "hint": "Comenzile vor putea apoi folosi fără a întreba cheile, tokenurile și fișierele cu date de autentificare aflate direct în acest folder. Subfolderele nu sunt incluse.",
       "option": "Fișiere sensibile din acest folder",
       "chip": "fișiere sensibile din {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Un folder de încredere în PATH poate fi pus acolo de comenzi fără a întreba. Programele lui rulează apoi în locul altora cu același nume.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Permite în acest chat",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "De ce",
     "keyboardHint": "Apasă 1–{{ count }} sau folosește ↑ ↓ și Enter · Esc refuză",
     "mcpToolHint": "Fără a mai întreba, rulează fiecare apel al acestui instrument pe acest server, indiferent de argumente.",
+    "folderReadHint": "Un folder reținut este deschis doar pentru citire. Modificările de acolo întreabă în continuare.",
     "url": {
       "queryWarning": "Această adresă transportă multe date în șirul de interogare. Asigură-te că nu conține nimic privat înainte de a o permite."
     },
@@ -1443,7 +1481,8 @@
     "back": "Înapoi",
     "next": "Următorul",
     "submit": "Trimite",
-    "skip": "Omite"
+    "skip": "Omite",
+    "resetPosition": "Resetează poziția"
   },
   "modelChoice": {
     "title": "Ce model să folosească subagentul?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Permisiune refuzată",
     "canceled": "Anulat",
     "error": "Eroare"
+  },
+  "memory": {
+    "title": "Să fie reținut?",
+    "noticed": "pumr a observat asta în mesajul tău.",
+    "requested": "I-ai cerut lui pumr să rețină asta.",
+    "replaces": "Înlocuiește: {{ text }}",
+    "textLabel": "Ce să rețină",
+    "hint": "Preferințele salvate se aplică fiecărui chat, în toate proiectele. Le poți modifica în setări, la Memorie.",
+    "save": "Reține",
+    "decline": "Nu, mulțumesc",
+    "disable": "Nu mai întreba",
+    "disableHint": "pumr nu mai sugerează ce să rețină. Poți reactiva opțiunea în setări, la Memorie."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

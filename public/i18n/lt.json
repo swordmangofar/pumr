@@ -276,8 +276,8 @@
     "more": "Daugiau skirtukų"
   },
   "projectAppearance": {
-    "title": "Projekto išvaizda",
-    "edit": "Redaguoti projekto išvaizdą",
+    "title": "Projekto nustatymai",
+    "edit": "Redaguoti projektą",
     "color": "Spalva",
     "auto": "Auto",
     "customColor": "Individualizuota spalva",
@@ -289,7 +289,11 @@
     "imageHint": "Geriausiai tinka kvadratinis vaizdas. Jis automatiškai apkarpomas ir keičiamas dydis.",
     "notAnImage": "Pasirinkite vaizdo failą.",
     "imageFailed": "Nepavyko perskaityti to vaizdo.",
-    "saveFailed": "Nepavyko išsaugoti projekto išvaizdos."
+    "saveFailed": "Nepavyko išsaugoti projekto išvaizdos.",
+    "environment": "Komandų aplinka",
+    "environmentHint": "Po vieną NAME=value eilutėje, kaip shell profilyje. Kiekviena asistento šiame projekte vykdoma komanda paleidžiama su šiais kintamaisiais. $NAME ir ~ pakeičiami reikšmėmis, todėl PATH=$JAVA_HOME/bin:$PATH veikia.",
+    "environmentInvalid": "Eilutė {{ line }} nėra NAME=value.",
+    "environmentFailed": "Nepavyko išsaugoti aplinkos: {{ error }}"
   },
   "chat": {
     "placeholder": "Aprašykite savo užduotį... naudokite @, kad pridėtumėte failus, aplankus, svetaines, Skills ar MCP serverius",
@@ -395,6 +399,7 @@
       "globalPrompts": "Visuotiniai raginimai",
       "mode": "Režimo konfigūracija",
       "projectRules": "Projekto taisyklės",
+      "memory": "Įsiminti pageidavimai",
       "user": "Vartotojo žinutė",
       "assistant": "Modelio atsakas",
       "tool": "Įrankio skambutis",
@@ -433,6 +438,7 @@
       "globalPrompts": "Visuotiniai raginimai",
       "mode": "Režimo raginimas",
       "projectRules": "Projekto taisyklės",
+      "memory": "Įsiminti pageidavimai",
       "prompt": "Raginimas",
       "referencedContext": "Nurodytas kontekstas",
       "mentions": "Pamini",
@@ -632,6 +638,8 @@
     "presetValueHint": "Pasirenka tiekėją, kuris už dolerį pateikia daugiausia tokenų per sekundę.",
     "trains": "treniruojasi su duomenimis",
     "trainsHint": "Šis tiekėjas gali naudoti jūsų užklausas mokymui.",
+    "blocked": "užblokuotas",
+    "blockedHint": "Jūsų „OpenRouter“ privatumo arba tiekėjų nustatymai blokuoja šį tiekėją.",
     "priceHint": "Kaina už 1M tokenų, nuspalvinta kitų šio modelio tiekėjų atžvilgiu"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Tiekėjai",
       "agent": "Agento konfigūracija",
+      "memory": "Atmintis",
       "agentRules": "Agento leidžiamų ir draudžiamų sąrašas",
       "sandbox": "Smėliadėžė",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Operacinė sistema apriboja kiekvieną agento vykdomą komandą ir viską, ką ta komanda paleidžia. Tai antras sluoksnis už leidimų taisyklių, skirtas komandai, kurią jos įvertina klaidingai. Smėliadėžės sustabdyta komanda gali paprašyti leisti ją vykdyti už smėliadėžės ribų; jūsų klausiama kiekvieną kartą.",
       "unavailable": "Šioje sistemoje nėra smėliadėžės, kurią pumr galėtų naudoti, todėl komandos vykdomos be apribojimų. Reikia macOS arba Linux 5.19 ar naujesnės versijos su Landlock.",
       "networkUnavailable": "Uždaryti tinklą galima tik macOS sistemoje.",
+      "inlineCode": "Vykdyti įterptą kodą griežtesnėje smėliadėžėje, užuot klausus",
+      "inlineCodeHint": "Įterpto node ar python kodo ir jiems per heredoc perduotų scenarijų negalima patikrinti kaip komandos. Kol įjungta „Visos komandos projekto viduje“, toks kodas vykdomas neklausiant griežtesnėje smėliadėžėje: jis pasiekia tik šį kompiuterį, rašo tik į projektą, jūsų papildomus aplankus ir laikinuosius aplankus, negali paleisti programų, pasiekti kitų programų ar keisti git hooks. Tas pats galioja komandai, kurios argumentai paaiškėja tik ją vykdant. Kodas, kuriame nurodomi failai už projekto ribų, jautrūs failai ar kitos svetainės, vis tiek klausia. Jei smėliadėžė sustabdo scenarijų, agentas gali paprašyti jūsų paleisti jį įprastai. Tik macOS.",
       "modes": {
         "off": "Išjungta",
         "files": "Failai",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Komandos vykdomos jūsų naudotojo teisėmis, jas riboja tik leidimų taisyklės.",
-        "files": "Komandos rašo tik į projektą, jūsų papildomus aplankus, laikinuosius aplankus ir toliau išvardytus aplankus. Jos negali skaityti aplankų, kuriuose laikomi raktai.",
+        "files": "Komandos rašo tik į projektą, jūsų papildomus aplankus, laikinuosius aplankus ir toliau išvardytus aplankus. Jos negali skaityti aplankų, kuriuose laikomi raktai. macOS sistemoje jos taip pat negali paleisti kitų programų: open veikia tik kaip atskira komanda, kurią tikrina leidimų taisyklės.",
         "filesAndNetwork": "Tas pats, ir komandos pasiekia tik šį kompiuterį, išskyrus komandas, kurių host'us leidote. Paketų diegimas tada prašo leisti vykdyti už smėliadėžės ribų."
       },
       "writable": "Aplankai, į kuriuos komandos taip pat gali rašyti",
       "writableHint": "Kūrimo įrankių talpyklos. Be jų kūrimas nepavyksta per pirmąjį atsisiuntimą. Kelias prasideda simboliu / arba ~.",
       "unreadable": "Aplankai, kurių komandos negali skaityti",
-      "unreadableHint": "Vietos, kuriose laikomi raktai ir prieigos raktai. git, ssh ir debesies įrankiai pasilieka aplankus, su kuriais dirba, o aplankas, kurį leidote komandoms, lieka atviras.",
+      "unreadableHint": "Vietos, kuriose laikomi raktai ir prieigos raktai. git, ssh ir debesies įrankiai pasilieka aplankus, su kuriais dirba, o aplankas, kurį leidote komandoms, lieka atviras. Paties pumr duomenų aplankas su jūsų pokalbiais ir nustatymais komandoms taip pat uždarytas, kad ir kas būtų šiame sąraše.",
       "excluded": "Komandos, vykdomos už smėliadėžės ribų",
       "excludedHint": "Įrankiams, kurie turi savo smėliadėžę ir šioje neveikia, pavyzdžiui, naršyklės testams. Įrašas nurodo, kaip prasideda komandos eilutė; su * tai visos eilutės šablonas.",
       "addCommand": "Pridėti komandą",
@@ -800,6 +811,19 @@
       "timeout": "Stabdyti po (sekundžių)",
       "project": "Projektas",
       "allProjects": "Visi projektai"
+    },
+    "memory": {
+      "title": "Atmintis",
+      "hint": "pumr gali įsiminti, kaip jums patinka dirbti, pavyzdžiui, kaip norite, kad būtų pateikta kodo peržiūra, ir tai pasako agentui kiekviename pokalbyje ir kiekviename projekte. Be jūsų sutikimo niekas neįsimenama.",
+      "enabled": "Naudoti atmintį",
+      "enabledHint": "Išjungus toliau esantys įrašai išlieka, bet agentui nesiunčiami ir nieko naujo nesiūloma.",
+      "suggestions": "Siūlyti, ką įsiminti",
+      "suggestionsHint": "Kai kuri nors jūsų žinutė parodo ilgalaikį pageidavimą, pumr po atsakymo paklausia, ar jį įsiminti: ne dažniau kaip kartą per pokalbį ir kartą per dieną, ir vis rečiau kaskart, kai pasiūlymo neišsaugote. Išjungus pumr vis tiek įsimena tai, ko paprašote.",
+      "list": "Įsiminti pageidavimai",
+      "add": "Pridėti įrašą",
+      "empty": "Dar nieko neįsiminta.",
+      "placeholder": "Pavyzdžiui: peržiūrėdamas kodą, dėl kiekvieno radinio paklausk manęs, ar jį taisyti, ar praleisti.",
+      "remove": "Pašalinti įrašą"
     },
     "providers": {
       "title": "Modelių tiekėjai",
@@ -846,7 +870,9 @@
     "languageHint": "Pritaikoma išsaugojus.",
     "workspace": {
       "allowed": "Leidžiami aplankai",
-      "foldersHint": "Asistentas gali skaityti ir rašyti šiuos aplankus be klausimų. Aktyvus projektas visada leidžiamas."
+      "foldersHint": "Asistentas gali skaityti ir rašyti šiuos aplankus be klausimų. Aktyvus projektas visada leidžiamas.",
+      "readable": "Tik skaitomi aplankai",
+      "readableHint": "Asistentas gali skaityti šiuos aplankus be klausimų, tačiau dėl pakeitimų juose vis tiek klausiama. Įsiminus prašymą skaityti aplanką ar išvardyti jo turinį, aplankas pridedamas čia."
     },
     "mcp": {
       "tabBrowse": "Naršyti",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Pasirinkite vaizdą",
       "clearFile": "Pašalinti vaizdą",
       "noFile": "Nepasirinktas joks vaizdas",
-      "opacity": "Neskaidrumas",
-      "blur": "Suliejimas",
+      "opacity": "Fono matomumas",
+      "blur": "Fono suliejimas",
+      "preview": "Peržiūra",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Tinklelis",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Aplankai su leidžiamais neskelbtinais failais",
     "secretFoldersHint": "Komandos gali neklausdamos naudoti neskelbtinus failus (raktus, prieigos raktus, prisijungimo duomenis), esančius tiesiogiai šiuose aplankuose. Poaplankiai neįtraukiami. Leidimo prašyme naudokite „leisti visada“, kad sukurtumėte vieną.",
     "noSecretFolders": "Aplankų su leidžiamais neskelbtinais failais dar nėra.",
+    "pathFolders": "PATH kintamajame patikimi aplankai",
+    "pathFoldersHint": "Komandos gali neklausdamos įtraukti šiuos aplankus į PATH, nors asistentas gali keisti juose esančius failus. Leidimo prašyme naudokite „leisti visada“, kad pridėtumėte vieną.",
+    "noPathFolders": "PATH kintamajame patikimų aplankų dar nėra.",
     "scope": {
       "program": "Programa",
       "subcommand": "Programa + subkomanda",
       "programFlags": "Programa + parametrai",
-      "exact": "Tiksli"
+      "exact": "Tiksli",
+      "pathFolder": "Aplankas PATH kintamajame"
     },
     "websiteAllowlist": "Leidžiami",
     "websiteDenylist": "Blokuoti",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projekto vykdomieji failai",
     "autoApproveProjectExecutablesHint": "Leidžia vykdomuosius failus projekto viduje, pvz., ./node_modules/.bin/ng, neklausdamas kiekvieną kartą.",
     "autoApproveProjectCommands": "Visos komandos projekto viduje",
-    "autoApproveProjectCommandsHint": "Leidžia bet kurią nepavojingą komandą, kurios keliai lieka projekte, įskaitant įterptą node ar python kodą, kuris tik skaito. Pavojingos komandos, kitas įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, jautrūs failai ir viskas išorėje vis tiek klausia.",
+    "autoApproveProjectCommandsHint": "Leidžia bet kurią nepavojingą komandą, kurios keliai lieka projekte, įskaitant įterptą node ar python kodą, kuris tik skaito. Pavojingos komandos, kitas įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, jautrūs failai ir viskas išorėje vis tiek klausia. Išimtis – įterptas node ar python kodas, kurį smėliadėžė vykdo neklausdama (žr. Smėliadėžė).",
     "permissionPreset": {
       "strict": "Griežtas",
       "strictHint": "Neklausiant vykdomos tik komandos, kurios tik skaito.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonominis",
       "autonomousHint": "Kiekviena nepavojinga komanda projekte vykdoma neklausiant.",
       "custom": "Pasirinktinis",
-      "autonomousWarning": "Autonominis režimas pasitiki šiuo projektu: jo scenarijai, Makefile failai ir vykdomieji failai gali daryti bet ką neklausdami, o įterptas kodas, kuris tik skaito, taip pat vykdomas. Kitas įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, pavojingos komandos ir viskas už projekto ribų vis tiek klausia.",
+      "autonomousWarning": "Autonominis režimas pasitiki šiuo projektu: jo scenarijai, Makefile failai ir vykdomieji failai gali daryti bet ką neklausdami, o įterptas kodas, kuris tik skaito, taip pat vykdomas. Kitas įterptas kodas, paketų atsisiuntimai, dar neleistos svetainės, pavojingos komandos ir viskas už projekto ribų vis tiek klausia. Išimtis – įterptas node ar python kodas, kurį smėliadėžė vykdo neklausdama (žr. Smėliadėžė).",
       "confirm": "Naudoti autonominį režimą"
     },
     "noAllowedWebsites": "Visada leidžiamų svetainių dar nėra.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Leisti aplanką",
       "hint": "Prideda aplanką ir viską jame prie visada leidžiamų aplankų.",
-      "option": "Aplankas + poaplankiai"
+      "option": "Aplankas + poaplankiai",
+      "hintRead": "Atveria aplanką ir viską jame skaityti. Dėl pakeitimų ten vis tiek klausiama.",
+      "optionRead": "Skaityti aplanką + poaplankius"
     },
     "hostScope": {
       "title": "Leisti svetainę",
@@ -1406,6 +1439,10 @@
       "hint": "Tada komandos galės neklausdamos naudoti raktus, prieigos raktus ir prisijungimo duomenų failus, esančius tiesiogiai šiame aplanke. Poaplankiai neįtraukiami.",
       "option": "Neskelbtini failai šiame aplanke",
       "chip": "neskelbtini failai aplanke {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "PATH kintamajame patikimą aplanką komandos gali ten įtraukti neklausdamos. Tada to aplanko programos vykdomos vietoj kitų tokiu pačiu pavadinimu.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Leisti šiame pokalbyje",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Kodėl",
     "keyboardHint": "Spauskite 1–{{ count }} arba naudokite ↑ ↓ ir Enter · Esc atmeta",
     "mcpToolHint": "Nebeklausti galioja kiekvienam šio įrankio iškvietimui šiame serveryje, kad ir kokie būtų argumentai.",
+    "folderReadHint": "Įsimintas aplankas atveriamas tik skaityti. Dėl pakeitimų ten vis tiek klausiama.",
     "url": {
       "queryWarning": "Šis adresas užklausos eilutėje neša daug duomenų. Prieš leisdami įsitikinkite, kad jame nėra nieko privataus."
     },
@@ -1443,7 +1481,8 @@
     "back": "Atgal",
     "next": "Toliau",
     "submit": "Pateikti",
-    "skip": "Praleisti"
+    "skip": "Praleisti",
+    "resetPosition": "Atkurti padėtį"
   },
   "modelChoice": {
     "title": "Kurį modelį turėtų naudoti subagentas?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Leidimas atmestas",
     "canceled": "Atšaukta",
     "error": "Klaida"
+  },
+  "memory": {
+    "title": "Įsiminti tai?",
+    "noticed": "pumr tai pastebėjo jūsų žinutėje.",
+    "requested": "Paprašėte pumr tai įsiminti.",
+    "replaces": "Pakeičia: {{ text }}",
+    "textLabel": "Ką įsiminti",
+    "hint": "Išsaugoti pageidavimai galioja kiekvienam pokalbiui visuose projektuose. Juos galite pakeisti nustatymų skiltyje „Atmintis“.",
+    "save": "Įsiminti",
+    "decline": "Ne, ačiū",
+    "disable": "Daugiau neklausti",
+    "disableHint": "pumr nebesiūlys, ką įsiminti. Tai galite vėl įjungti nustatymų skiltyje „Atmintis“."
   },
   "terminal": {
     "title": "Terminalas {{ number }}",

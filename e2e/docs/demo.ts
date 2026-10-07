@@ -477,6 +477,8 @@ const endpoint = (providerName: string, uptime: number, tps: number, latency: nu
   supportsImplicitCaching: true,
   training: false,
   retainsPrompts: false,
+  blocked: false,
+  blockedReason: null,
 });
 
 export const DEMO_ENDPOINTS = [

@@ -27,6 +27,10 @@ pub struct ProjectFacts {
     pub package_manager: Option<&'static str>,
     /// Commands that check the project, the quickest first.
     pub checks: Vec<String>,
+    /// What to say about the variables the user gave the project's commands
+    /// (see `crate::project_env::describe`). Not read from the project's
+    /// files: whoever asks for the section fills it in.
+    pub variables: Option<String>,
 }
 
 /// Reads the manifests at the project root. Cheap enough for every turn: a
@@ -187,6 +191,9 @@ pub fn section(project_root: &Path, scratch_dir: Option<&Path>, facts: &ProjectF
                 .join(", ")
         ));
     }
+    if let Some(variables) = &facts.variables {
+        section.push_str(variables);
+    }
     section
 }
 
@@ -323,11 +330,13 @@ mod tests {
         let facts = ProjectFacts {
             package_manager: Some("yarn"),
             checks: vec!["yarn run test".to_string()],
+            variables: Some("\n- The user set these variables: JAVA_HOME.".to_string()),
         };
         let section = section(project.path(), None, &facts);
         assert!(section.contains("- Git branch: feature/x"));
         assert!(section.contains("- Package manager: yarn."));
         assert!(section.contains("`yarn run test`"));
+        assert!(section.ends_with("\n- The user set these variables: JAVA_HOME."));
     }
 
     #[test]

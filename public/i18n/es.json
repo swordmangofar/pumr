@@ -276,8 +276,8 @@
     "more": "Más pestañas"
   },
   "projectAppearance": {
-    "title": "Apariencia del proyecto",
-    "edit": "Editar apariencia del proyecto",
+    "title": "Ajustes del proyecto",
+    "edit": "Editar proyecto",
     "color": "Color",
     "auto": "Auto",
     "customColor": "Color personalizado",
@@ -289,7 +289,11 @@
     "imageHint": "Una imagen cuadrada funciona mejor. Se recorta y cambia de tamaño automáticamente.",
     "notAnImage": "Por favor elija un archivo de imagen.",
     "imageFailed": "No se pudo leer esa imagen.",
-    "saveFailed": "No se pudo guardar la apariencia del proyecto."
+    "saveFailed": "No se pudo guardar la apariencia del proyecto.",
+    "environment": "Entorno para comandos",
+    "environmentHint": "Un NAME=value por línea, como en un perfil de shell. Cada comando que el asistente ejecuta en este proyecto se inicia con estas variables. $NAME y ~ se expanden, así que PATH=$JAVA_HOME/bin:$PATH funciona.",
+    "environmentInvalid": "La línea {{ line }} no es NAME=value.",
+    "environmentFailed": "No se pudo guardar el entorno: {{ error }}"
   },
   "chat": {
     "placeholder": "Describe tu tarea... usa @ para añadir archivos, carpetas, sitios web, skills o MCP servers",
@@ -395,6 +399,7 @@
       "globalPrompts": "Avisos globales",
       "mode": "Configuración de modo",
       "projectRules": "Reglas del proyecto",
+      "memory": "Preferencias recordadas",
       "user": "Mensaje de usuario",
       "assistant": "Respuesta modelo",
       "tool": "llamada de herramienta",
@@ -433,6 +438,7 @@
       "globalPrompts": "Avisos globales",
       "mode": "Aviso de modo",
       "projectRules": "Reglas del proyecto",
+      "memory": "Preferencias recordadas",
       "prompt": "rápido",
       "referencedContext": "Contexto referenciado",
       "mentions": "Menciones",
@@ -632,6 +638,8 @@
     "presetValueHint": "Elige el proveedor con la mejor relación tokens por segundo por dólar.",
     "trains": "entrena con datos",
     "trainsHint": "Este proveedor puede usar tus prompts para entrenar.",
+    "blocked": "bloqueado",
+    "blockedHint": "Tu configuración de privacidad o de proveedores en OpenRouter bloquea este proveedor.",
     "priceHint": "Precio por 1M tokens, coloreado en relación con otros proveedores para este modelo"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Proveedores",
       "agent": "Configuración del agente",
+      "memory": "Memoria",
       "agentRules": "Lista blanca y negra del agente",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "El sistema operativo confina cada comando que ejecuta el agente y todo lo que ese comando inicia. Es una segunda capa tras las reglas de permisos, para un comando que estas juzguen mal. Un comando que el sandbox detiene puede pedir ejecutarse fuera de él; se te pregunta cada vez.",
       "unavailable": "Este sistema no tiene ningún sandbox que pumr pueda usar, así que los comandos se ejecutan sin confinar. Hace falta macOS, o Linux 5.19 o posterior con Landlock.",
       "networkUnavailable": "Cerrar la red solo es posible en macOS.",
+      "inlineCode": "Ejecutar el código en línea en un sandbox más estricto en lugar de preguntar",
+      "inlineCodeHint": "El código en línea de node o python, y los scripts que se les pasan mediante un heredoc, no se pueden comprobar como un comando. Mientras «Todos los comandos dentro del proyecto» esté activado, ese código se ejecuta sin preguntar en un sandbox más estricto: solo alcanza este equipo, solo escribe en el proyecto, tus carpetas adicionales y las carpetas temporales, y no puede iniciar aplicaciones, alcanzar otros programas ni cambiar los hooks de git. Lo mismo vale para un comando cuyos argumentos solo se conocen al ejecutarse. El código que nombra archivos fuera del proyecto, archivos sensibles u otros sitios web sigue preguntando. Si el sandbox detiene un script, el agente puede pedirte ejecutarlo de forma normal. Solo en macOS.",
       "modes": {
         "off": "Desactivado",
         "files": "Archivos",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Los comandos se ejecutan como tu usuario, frenados solo por las reglas de permisos.",
-        "files": "Los comandos solo escriben en el proyecto, tus carpetas adicionales, las carpetas temporales y las carpetas indicadas abajo. No pueden leer las carpetas que guardan claves.",
+        "files": "Los comandos solo escriben en el proyecto, tus carpetas adicionales, las carpetas temporales y las carpetas indicadas abajo. No pueden leer las carpetas que guardan claves. En macOS tampoco pueden iniciar otras aplicaciones: open solo funciona como comando propio, que las reglas de permisos comprueban.",
         "filesAndNetwork": "Lo mismo, y los comandos solo alcanzan este equipo, salvo los comandos cuyos hosts hayas permitido. Instalar paquetes pide entonces ejecutarse fuera del sandbox."
       },
       "writable": "Carpetas en las que los comandos también pueden escribir",
       "writableHint": "Las cachés de las herramientas de compilación. Sin ellas, una compilación falla en su primera descarga. Una ruta empieza por / o ~.",
       "unreadable": "Carpetas que los comandos no pueden leer",
-      "unreadableHint": "Donde están las claves y los tokens. git, ssh y las herramientas de la nube conservan las carpetas con las que trabajan, y una carpeta que hayas permitido para los comandos sigue abierta.",
+      "unreadableHint": "Donde están las claves y los tokens. git, ssh y las herramientas de la nube conservan las carpetas con las que trabajan, y una carpeta que hayas permitido para los comandos sigue abierta. La carpeta de datos del propio pumr, con tus chats y ajustes, también está cerrada para los comandos, contenga lo que contenga esta lista.",
       "excluded": "Comandos que se ejecutan fuera del sandbox",
       "excludedHint": "Para herramientas que traen su propio sandbox y fallan dentro de este, como las pruebas de navegador. Una entrada indica cómo empieza la línea de comandos; con * es un patrón para toda la línea.",
       "addCommand": "Añadir comando",
@@ -800,6 +811,19 @@
       "timeout": "Detener tras (segundos)",
       "project": "Proyecto",
       "allProjects": "Todos los proyectos"
+    },
+    "memory": {
+      "title": "Memoria",
+      "hint": "pumr puede recordar cómo te gusta trabajar, por ejemplo cómo quieres que se presente una revisión de código, y se lo indica al agente en cada chat y en cada proyecto. No se recuerda nada sin tu sí.",
+      "enabled": "Usar la memoria",
+      "enabledHint": "Desactivada, las entradas de abajo se conservan, pero no se envían al agente y no se sugiere nada nuevo.",
+      "suggestions": "Sugerir qué recordar",
+      "suggestionsHint": "Cuando uno de tus mensajes muestra una preferencia duradera, pumr pregunta después de la respuesta si debe recordarla: como máximo una vez por chat y una vez al día, y con menos frecuencia cada vez que no guardas una. Desactivado, pumr sigue recordando lo que le pidas.",
+      "list": "Preferencias recordadas",
+      "add": "Añadir entrada",
+      "empty": "Aún no se recuerda nada.",
+      "placeholder": "Por ejemplo: al revisar código, pregúntame por cada hallazgo si hay que corregirlo u omitirlo.",
+      "remove": "Quitar entrada"
     },
     "providers": {
       "title": "Proveedores de modelos",
@@ -846,7 +870,9 @@
     "languageHint": "Se aplica tras guardar.",
     "workspace": {
       "allowed": "Carpetas permitidas",
-      "foldersHint": "El asistente puede leer y escribir en estas carpetas sin preguntar. El proyecto activo siempre está permitido."
+      "foldersHint": "El asistente puede leer y escribir en estas carpetas sin preguntar. El proyecto activo siempre está permitido.",
+      "readable": "Carpetas solo para lectura",
+      "readableHint": "El asistente puede leer estas carpetas sin preguntar, pero los cambios allí siguen preguntando. Al recordar una solicitud para leer o listar una carpeta, esta se añade aquí."
     },
     "mcp": {
       "tabBrowse": "Explorar",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Elige imagen",
       "clearFile": "Quitar imagen",
       "noFile": "Ninguna imagen seleccionada",
-      "opacity": "Opacidad",
-      "blur": "Difuminar",
+      "opacity": "Visibilidad del fondo",
+      "blur": "Desenfoque del fondo",
+      "preview": "Vista previa",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Malla",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Carpetas con archivos sensibles permitidos",
     "secretFoldersHint": "Los comandos pueden usar sin preguntar los archivos sensibles (claves, tokens, credenciales) que están directamente en estas carpetas. Sus subcarpetas no se incluyen. Usa «permitir siempre» en una solicitud de permiso para crear una.",
     "noSecretFolders": "Aún no hay carpetas con archivos sensibles permitidos.",
+    "pathFolders": "Carpetas de confianza en el PATH",
+    "pathFoldersHint": "Los comandos pueden poner estas carpetas en el PATH sin preguntar, aunque el asistente puede cambiar archivos en ellas. Usa «permitir siempre» en una solicitud de permiso para añadir una.",
+    "noPathFolders": "Aún no hay carpetas de confianza en el PATH.",
     "scope": {
       "program": "Programa",
       "subcommand": "Programa + subcomando",
       "programFlags": "Programa + opciones",
-      "exact": "Exacto"
+      "exact": "Exacto",
+      "pathFolder": "Carpeta en el PATH"
     },
     "websiteAllowlist": "Permitidos",
     "websiteDenylist": "Bloqueados",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Ejecutables del proyecto",
     "autoApproveProjectExecutablesHint": "Permite ejecutables dentro del proyecto, como ./node_modules/.bin/ng, sin preguntar cada vez.",
     "autoApproveProjectCommands": "Todos los comandos dentro del proyecto",
-    "autoApproveProjectCommandsHint": "Permite cualquier comando no peligroso cuyas rutas permanezcan dentro del proyecto, incluido el código en línea de node o python que solo lee. Los comandos peligrosos, el resto del código en línea, las descargas de paquetes, los sitios web aún no permitidos, los archivos sensibles y todo lo externo siguen preguntando.",
+    "autoApproveProjectCommandsHint": "Permite cualquier comando no peligroso cuyas rutas permanezcan dentro del proyecto, incluido el código en línea de node o python que solo lee. Los comandos peligrosos, el resto del código en línea, las descargas de paquetes, los sitios web aún no permitidos, los archivos sensibles y todo lo externo siguen preguntando. La excepción es el código en línea de node o python que el sandbox ejecuta en lugar de preguntar (consulta Sandbox).",
     "permissionPreset": {
       "strict": "Estricto",
       "strictHint": "Solo los comandos que únicamente leen se ejecutan sin preguntar.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autónomo",
       "autonomousHint": "Todo comando no peligroso dentro del proyecto se ejecuta sin preguntar.",
       "custom": "Personalizado",
-      "autonomousWarning": "El modo autónomo confía en este proyecto: sus scripts, Makefiles y ejecutables pueden hacer cualquier cosa sin preguntar, y el código en línea que solo lee también se ejecuta. El resto del código en línea, las descargas de paquetes, los sitios web aún no permitidos, los comandos peligrosos y todo lo que esté fuera del proyecto siguen preguntando.",
+      "autonomousWarning": "El modo autónomo confía en este proyecto: sus scripts, Makefiles y ejecutables pueden hacer cualquier cosa sin preguntar, y el código en línea que solo lee también se ejecuta. El resto del código en línea, las descargas de paquetes, los sitios web aún no permitidos, los comandos peligrosos y todo lo que esté fuera del proyecto siguen preguntando. La excepción es el código en línea de node o python que el sandbox ejecuta en lugar de preguntar (consulta Sandbox).",
       "confirm": "Usar modo autónomo"
     },
     "noAllowedWebsites": "Aún no hay sitios web siempre permitidos.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Permitir carpeta",
       "hint": "Añade la carpeta y todo su contenido a las carpetas siempre permitidas.",
-      "option": "Carpeta + subcarpetas"
+      "option": "Carpeta + subcarpetas",
+      "hintRead": "Abre la carpeta y todo su contenido para lectura. Los cambios allí siguen preguntando.",
+      "optionRead": "Leer carpeta + subcarpetas"
     },
     "hostScope": {
       "title": "Permitir sitio web",
@@ -1406,6 +1439,10 @@
       "hint": "Los comandos podrán usar sin preguntar las claves, los tokens y los archivos de credenciales que están directamente en esta carpeta. Sus subcarpetas no se incluyen.",
       "option": "Archivos sensibles de esta carpeta",
       "chip": "archivos sensibles de {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Los comandos pueden poner una carpeta de confianza en el PATH sin preguntar. Sus programas se ejecutan entonces en lugar de otros con el mismo nombre.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Permitir en este chat",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Por qué",
     "keyboardHint": "Pulsa 1–{{ count }} o usa ↑ ↓ y Enter · Esc deniega",
     "mcpToolHint": "No volver a preguntar vale para cada llamada a esta herramienta en este servidor, sean cuales sean sus argumentos.",
+    "folderReadHint": "Una carpeta recordada se abre solo para lectura. Los cambios allí siguen preguntando.",
     "url": {
       "queryWarning": "Esta dirección lleva muchos datos en su cadena de consulta. Asegúrate de que no contiene nada privado antes de permitirla."
     },
@@ -1443,7 +1481,8 @@
     "back": "Atrás",
     "next": "Siguiente",
     "submit": "Enviar",
-    "skip": "Omitir"
+    "skip": "Omitir",
+    "resetPosition": "Restablecer posición"
   },
   "modelChoice": {
     "title": "¿Qué modelo debe usar el subagente?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Permiso denegado",
     "canceled": "Cancelado",
     "error": "Error"
+  },
+  "memory": {
+    "title": "¿Recordar esto?",
+    "noticed": "pumr lo ha notado en tu mensaje.",
+    "requested": "Le pediste a pumr que recordara esto.",
+    "replaces": "Sustituye a: {{ text }}",
+    "textLabel": "Qué recordar",
+    "hint": "Las preferencias guardadas se aplican a todos los chats, en todos los proyectos. Puedes cambiarlas en los ajustes, en Memoria.",
+    "save": "Recordar",
+    "decline": "No, gracias",
+    "disable": "No volver a preguntar",
+    "disableHint": "pumr deja de sugerir cosas que recordar. Puedes volver a activarlo en los ajustes, en Memoria."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

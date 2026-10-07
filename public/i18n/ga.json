@@ -276,8 +276,8 @@
     "more": "Tuilleadh cluaisíní"
   },
   "projectAppearance": {
-    "title": "Cuma an tionscadail",
-    "edit": "Cuir cuma an tionscadail in eagar",
+    "title": "Socruithe an tionscadail",
+    "edit": "Cuir an tionscadal in eagar",
     "color": "Dath",
     "auto": "Auto",
     "customColor": "Dath saincheaptha",
@@ -289,7 +289,11 @@
     "imageHint": "Is fearr a oibríonn íomhá cearnach. Déantar é a bhearradh agus a athrú go huathoibríoch.",
     "notAnImage": "Roghnaigh comhad íomhá.",
     "imageFailed": "Níorbh fhéidir an íomhá sin a léamh.",
-    "saveFailed": "Níorbh fhéidir cuma an tionscadail a shábháil."
+    "saveFailed": "Níorbh fhéidir cuma an tionscadail a shábháil.",
+    "environment": "Timpeallacht d'orduithe",
+    "environmentHint": "NAME=value amháin ar gach líne, mar atá i bpróifíl bhlaoisce. Tosaíonn gach ordú a ritheann an cúntóir sa tionscadal seo leis na hathróga seo. Líontar $NAME agus ~ isteach, mar sin oibríonn PATH=$JAVA_HOME/bin:$PATH.",
+    "environmentInvalid": "Níl líne {{ line }} i bhfoirm NAME=value.",
+    "environmentFailed": "Níorbh fhéidir an timpeallacht a shábháil: {{ error }}"
   },
   "chat": {
     "placeholder": "Déan cur síos ar do thasc... úsáid @ chun comhaid, fillteáin, suíomhanna gréasáin, skills nó MCP servers a chur leis",
@@ -395,6 +399,7 @@
       "globalPrompts": "Leideanna domhanda",
       "mode": "Cumraíocht mód",
       "projectRules": "Rialacha tionscadail",
+      "memory": "Roghanna a gcuimhnítear orthu",
       "user": "Teachtaireacht úsáideora",
       "assistant": "Freagra samhail",
       "tool": "Glao uirlise",
@@ -433,6 +438,7 @@
       "globalPrompts": "Leideanna domhanda",
       "mode": "Mód leid",
       "projectRules": "Rialacha tionscadail",
+      "memory": "Roghanna a gcuimhnítear orthu",
       "prompt": "Leid",
       "referencedContext": "Comhthéacs tagartha",
       "mentions": "Luann",
@@ -632,6 +638,8 @@
     "presetValueHint": "Roghnaíonn an soláthraí leis na tokens is fearr in aghaidh an tsoicind in aghaidh an dollar.",
     "trains": "traenálann ar shonraí",
     "trainsHint": "Féadfaidh an soláthraí seo do chuid leideanna a úsáid le haghaidh traenála.",
+    "blocked": "bactha",
+    "blockedHint": "Cuireann do shocruithe príobháideachta nó soláthraithe in OpenRouter bac ar an soláthraí seo.",
     "priceHint": "Praghas in aghaidh 1M tokens, daite i gcomparáid le soláthraithe eile don mhúnla seo"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Soláthraithe",
       "agent": "Cumraíocht an ghníomhaire",
+      "memory": "Cuimhne",
       "agentRules": "Liosta bán agus liosta dubh an ghníomhaire",
       "sandbox": "Bosca gainimh",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Cuireann an córas oibriúcháin srian ar gach ordú a ritheann an gníomhaire, agus ar cibé rud a thosaíonn an t-ordú sin. Is é an dara sraith é, taobh thiar de na rialacha ceada, d'ordú a mheasann siad go mícheart. Is féidir le hordú atá stoptha ag an mbosca gainimh iarraidh rith lasmuigh de; fiafraítear díot gach uair.",
       "unavailable": "Níl aon bhosca gainimh ar an gcóras seo is féidir le pumr a úsáid, mar sin ritheann orduithe gan srian. Teastaíonn macOS, nó Linux 5.19 nó níos nuaí le Landlock.",
       "networkUnavailable": "Ní féidir an líonra a dhúnadh ach ar macOS.",
+      "inlineCode": "Rith cód inlíne i mbosca gainimh níos déine in ionad fiafraí",
+      "inlineCodeHint": "Ní féidir cód inlíne node nó python, ná scripteanna a thugtar dóibh trí heredoc, a sheiceáil mar a sheiceáiltear ordú. Fad atá “Gach ordú laistigh den tionscadal” ar siúl, ritheann a leithéid de chód gan fiafraí i mbosca gainimh níos déine: ní shroicheann sé ach an ríomhaire seo, ní scríobhann sé ach sa tionscadal, i d'fhillteáin bhreise agus i bhfillteáin shealadacha, agus ní féidir leis aipeanna a thosú, cláir eile a shroicheadh ná crúcaí git a athrú. Is amhlaidh d'ordú nach eol a argóintí go dtí go ritheann sé. Fiafraíonn cód a ainmníonn comhaid lasmuigh den tionscadal, comhaid íogaire nó suíomhanna gréasáin eile i gcónaí. Má stopann an bosca gainimh script, is féidir leis an ngníomhaire iarraidh ort í a rith ar an ngnáthbhealach. macOS amháin.",
       "modes": {
         "off": "As",
         "files": "Comhaid",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Ritheann orduithe mar d'úsáideoir, gan ach na rialacha ceada á gcoinneáil siar.",
-        "files": "Ní scríobhann orduithe ach sa tionscadal, i d'fhillteáin bhreise, i bhfillteáin shealadacha agus sna fillteáin atá liostaithe thíos. Ní féidir leo na fillteáin ina bhfuil eochracha a léamh.",
+        "files": "Ní scríobhann orduithe ach sa tionscadal, i d'fhillteáin bhreise, i bhfillteáin shealadacha agus sna fillteáin atá liostaithe thíos. Ní féidir leo na fillteáin ina bhfuil eochracha a léamh. Ar macOS ní féidir leo aipeanna eile a thosú ach oiread: ní oibríonn open ach mar ordú ann féin, a sheiceálann na rialacha ceada.",
         "filesAndNetwork": "Mar an gcéanna, agus ní shroicheann orduithe ach an ríomhaire seo, seachas orduithe ar cheadaigh tú a n-óstaigh. Ansin iarrann suiteáil pacáistí rith lasmuigh den bhosca gainimh."
       },
       "writable": "Fillteáin ar féidir le horduithe scríobh iontu freisin",
       "writableHint": "Taiscí na n-uirlisí tógála. Gan iad, teipeann ar thógáil ar a céad íoslódáil. Tosaíonn cosán le / nó ~.",
       "unreadable": "Fillteáin nach féidir le horduithe a léamh",
-      "unreadableHint": "An áit a mbíonn eochracha agus comharthaí. Coinníonn git, ssh agus na huirlisí néil na fillteáin a n-oibríonn siad leo, agus fanann fillteán a cheadaigh tú d'orduithe ar oscailt.",
+      "unreadableHint": "An áit a mbíonn eochracha agus comharthaí. Coinníonn git, ssh agus na huirlisí néil na fillteáin a n-oibríonn siad leo, agus fanann fillteán a cheadaigh tú d'orduithe ar oscailt. Tá fillteán sonraí pumr féin, ina bhfuil do chomhráite agus do shocruithe, dúnta d'orduithe freisin, is cuma cad atá ar an liosta seo.",
       "excluded": "Orduithe a ritheann lasmuigh den bhosca gainimh",
       "excludedHint": "D'uirlisí a thugann a mbosca gainimh féin leo agus a dteipeann orthu laistigh den cheann seo, amhail tástálacha brabhsálaí. Ainmníonn iontráil an chaoi a dtosaíonn líne an ordaithe; le * is patrún don líne iomlán í.",
       "addCommand": "Cuir ordú leis",
@@ -800,6 +811,19 @@
       "timeout": "Stop tar éis (soicindí)",
       "project": "Tionscadal",
       "allProjects": "Gach tionscadal"
+    },
+    "memory": {
+      "title": "Cuimhne",
+      "hint": "Is féidir le pumr cuimhneamh ar an gcaoi ar mhaith leat obair a dhéanamh, mar shampla an chaoi ar mhaith leat athbhreithniú cóid a fháil, agus insíonn sé don ghníomhaire é i ngach comhrá agus i ngach tionscadal. Ní chuimhnítear ar aon rud gan do chead.",
+      "enabled": "Úsáid an chuimhne",
+      "enabledHint": "Nuair atá sé as, coinnítear na hiontrálacha thíos, ach ní sheoltar chuig an ngníomhaire iad agus ní mholtar aon rud nua.",
+      "suggestions": "Mol rudaí le cuimhneamh orthu",
+      "suggestionsHint": "Nuair a léiríonn ceann de do theachtaireachtaí rogha bhuan, fiafraíonn pumr tar éis an fhreagra ar cheart cuimhneamh uirthi: uair amháin in aghaidh an chomhrá agus uair amháin sa lá ar a mhéad, agus níos annamh gach uair nach sábhálann tú moladh. Nuair atá sé as, cuimhníonn pumr fós ar an méid a iarrann tú air.",
+      "list": "Roghanna a gcuimhnítear orthu",
+      "add": "Cuir iontráil leis",
+      "empty": "Níl aon rud i gcuimhne fós.",
+      "placeholder": "Mar shampla: agus cód á athbhreithniú agat, fiafraigh díom i gcás gach toraidh ar cheart é a dheisiú nó a scipeáil.",
+      "remove": "Bain an iontráil"
     },
     "providers": {
       "title": "Soláthraithe múnlaí",
@@ -846,7 +870,9 @@
     "languageHint": "Cuirtear i bhfeidhm tar éis sábhála.",
     "workspace": {
       "allowed": "Fillteáin cheadaithe",
-      "foldersHint": "Is féidir leis an gcúntóir na fillteáin seo a léamh agus a scríobh gan fiafraí. Tá an tionscadal gníomhach ceadaithe i gcónaí."
+      "foldersHint": "Is féidir leis an gcúntóir na fillteáin seo a léamh agus a scríobh gan fiafraí. Tá an tionscadal gníomhach ceadaithe i gcónaí.",
+      "readable": "Fillteáin le léamh amháin",
+      "readableHint": "Is féidir leis an gcúntóir na fillteáin seo a léamh gan fiafraí, ach fiafraíonn athruithe iontu i gcónaí. Nuair a chuimhnítear ar leid faoi fhillteán a léamh nó a liostú, cuirtear leis anseo é."
     },
     "mcp": {
       "tabBrowse": "Brabhsáil",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Roghnaigh íomhá",
       "clearFile": "Bain íomhá",
       "noFile": "Níl aon íomhá roghnaithe",
-      "opacity": "Teimhneacht",
-      "blur": "Doiléirigh",
+      "opacity": "Infheictheacht an chúlra",
+      "blur": "Doiléiriú an chúlra",
+      "preview": "Réamhamharc",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Mogall",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Fillteáin a bhfuil a gcomhaid íogaire ceadaithe",
     "secretFoldersHint": "Féadfaidh orduithe na comhaid íogaire (eochracha, comharthaí, dintiúir) atá go díreach sna fillteáin seo a úsáid gan fiafraí. Ní áirítear fofhillteáin. Úsáid \"ceadaigh i gcónaí\" i leid ceada chun ceann a chruthú.",
     "noSecretFolders": "Níl aon fhillteáin a bhfuil a gcomhaid íogaire ceadaithe fós.",
+    "pathFolders": "Fillteáin iontaofa ar PATH",
+    "pathFoldersHint": "Féadfaidh orduithe na fillteáin seo a chur ar PATH gan fiafraí, cé gur féidir leis an gcúntóir comhaid iontu a athrú. Úsáid \"ceadaigh i gcónaí\" i leid ceada chun ceann a chur leis.",
+    "noPathFolders": "Níl aon fhillteáin iontaofa ar PATH fós.",
     "scope": {
       "program": "Clár",
       "subcommand": "Ríomhchlár + fo-ordú",
       "programFlags": "Clár + roghanna",
-      "exact": "Cruinn"
+      "exact": "Cruinn",
+      "pathFolder": "Fillteán ar PATH"
     },
     "websiteAllowlist": "Ceadaithe",
     "websiteDenylist": "Blocáilte",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Inrite tionscadail",
     "autoApproveProjectExecutablesHint": "Ceadaigh inrite laistigh den tionscadal, ar nós ./node_modules/.bin/ng, gan iarraidh gach uair.",
     "autoApproveProjectCommands": "Gach ordú laistigh den tionscadal",
-    "autoApproveProjectCommandsHint": "Ceadaigh aon ordú neamhchontúirteach a bhfanann a chosáin laistigh den tionscadal, lena n-áirítear cód inlíne node nó python nach ndéanann ach léamh. Fiafraíonn orduithe contúirteacha, cód inlíne eile, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, comhaid íogaire agus aon rud lasmuigh i gcónaí.",
+    "autoApproveProjectCommandsHint": "Ceadaigh aon ordú neamhchontúirteach a bhfanann a chosáin laistigh den tionscadal, lena n-áirítear cód inlíne node nó python nach ndéanann ach léamh. Fiafraíonn orduithe contúirteacha, cód inlíne eile, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, comhaid íogaire agus aon rud lasmuigh i gcónaí. Is é an eisceacht cód inlíne node nó python a ritheann an bosca gainimh in ionad fiafraí (féach Bosca gainimh).",
     "permissionPreset": {
       "strict": "Dian",
       "strictHint": "Ní ritheann ach orduithe léite amháin gan fiafraí.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Neamhspleách",
       "autonomousHint": "Ritheann gach ordú neamhchontúirteach laistigh den tionscadal gan fiafraí.",
       "custom": "Saincheaptha",
-      "autonomousWarning": "Tá muinín ag an mód neamhspleách as an tionscadal seo: is féidir lena scripteanna, a chomhaid Makefile agus a chomhaid inrite aon rud a dhéanamh gan fiafraí, agus ritheann cód inlíne nach ndéanann ach léamh freisin. Fiafraíonn cód inlíne eile, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, orduithe contúirteacha agus aon rud lasmuigh den tionscadal i gcónaí.",
+      "autonomousWarning": "Tá muinín ag an mód neamhspleách as an tionscadal seo: is féidir lena scripteanna, a chomhaid Makefile agus a chomhaid inrite aon rud a dhéanamh gan fiafraí, agus ritheann cód inlíne nach ndéanann ach léamh freisin. Fiafraíonn cód inlíne eile, íoslódálacha pacáistí, suíomhanna gréasáin nach bhfuil ceadaithe fós, orduithe contúirteacha agus aon rud lasmuigh den tionscadal i gcónaí. Is é an eisceacht cód inlíne node nó python a ritheann an bosca gainimh in ionad fiafraí (féach Bosca gainimh).",
       "confirm": "Úsáid an mód neamhspleách"
     },
     "noAllowedWebsites": "Níl aon suíomhanna gréasáin a cheadaítear i gcónaí fós.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Ceadaigh fillteán",
       "hint": "Cuireann sé an fillteán agus gach rud faoina bhun leis na fillteáin a cheadaítear i gcónaí.",
-      "option": "Fillteán + fofhillteáin"
+      "option": "Fillteán + fofhillteáin",
+      "hintRead": "Osclaíonn sé an fillteán agus gach rud faoina bhun le léamh. Fiafraíonn athruithe ann i gcónaí.",
+      "optionRead": "Fillteán + fofhillteáin a léamh"
     },
     "hostScope": {
       "title": "Ceadaigh suíomh gréasáin",
@@ -1406,6 +1439,10 @@
       "hint": "Féadfaidh orduithe ansin na heochracha, na comharthaí agus na comhaid dintiúr atá go díreach san fhillteán seo a úsáid gan fiafraí. Ní áirítear fofhillteáin.",
       "option": "Comhaid íogaire san fhillteán seo",
       "chip": "comhaid íogaire in {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Féadfaidh orduithe fillteán atá iontaofa ar PATH a chur air gan fiafraí. Ansin ritheann a chláir in ionad clár eile den ainm céanna.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Ceadaigh sa chomhrá seo",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Cén fáth",
     "keyboardHint": "Brúigh 1–{{ count }} nó úsáid ↑ ↓ agus Enter · Séanann Esc",
     "mcpToolHint": "Gan fiafraí arís, ritear gach glao ar an uirlis seo ar an bhfreastalaí seo, is cuma cad iad na hargóintí.",
+    "folderReadHint": "Osclaítear fillteán a gcuimhnítear air le léamh amháin. Fiafraíonn athruithe ann i gcónaí.",
     "url": {
       "queryWarning": "Iompraíonn an seoladh seo go leor sonraí ina theaghrán iarratais. Déan cinnte nach bhfuil aon rud príobháideach ann sula gceadaíonn tú é."
     },
@@ -1443,7 +1481,8 @@
     "back": "Ar ais",
     "next": "Ar aghaidh",
     "submit": "Seol",
-    "skip": "Scipeáil"
+    "skip": "Scipeáil",
+    "resetPosition": "Athshocraigh an suíomh"
   },
   "modelChoice": {
     "title": "Cén tsamhail ba cheart don fho-ghníomhaí a úsáid?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Diúltaíodh cead",
     "canceled": "Cealaithe",
     "error": "Earráid"
+  },
+  "memory": {
+    "title": "Cuimhneamh air seo?",
+    "noticed": "Thug pumr é seo faoi deara i do theachtaireacht.",
+    "requested": "D'iarr tú ar pumr cuimhneamh air seo.",
+    "replaces": "Cuirtear in ionad: {{ text }}",
+    "textLabel": "Cad ba cheart cuimhneamh air",
+    "hint": "Baineann roghanna sábháilte le gach comhrá, i ngach tionscadal. Is féidir leat iad a athrú sna socruithe faoi Cuimhne.",
+    "save": "Cuimhnigh",
+    "decline": "Níor mhaith, go raibh maith agat",
+    "disable": "Ná fiafraigh arís",
+    "disableHint": "Stopann pumr de rudaí a mholadh le cuimhneamh orthu. Is féidir leat é seo a chur ar siúl arís sna socruithe faoi Cuimhne."
   },
   "terminal": {
     "title": "Teirminéal {{ number }}",

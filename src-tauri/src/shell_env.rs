@@ -14,8 +14,14 @@
 //! aside and given to the commands the agent runs, on top of pumr's own
 //! environment. pumr itself, its webview and the MCP servers it starts keep
 //! what the desktop session gave them.
+//!
+//! However pumr was started, its `PATH` loses the entries that are empty or
+//! relative. Those name whichever folder a command runs in, so a file of the
+//! project could stand in for a program, and the permission check trusts no
+//! program found after such an entry.
 
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 
 /// The variables of the user's shell that a command run by the agent gets on
@@ -23,17 +29,36 @@ use std::sync::RwLock;
 /// from a terminal, where its own environment is already the shell's.
 static COMMAND_ENVIRONMENT: RwLock<Vec<(OsString, OsString)>> = RwLock::new(Vec::new());
 
-/// Adopts the environment of the user's login shell; a no-op on Windows, when
-/// started from a terminal and when the shell cannot be asked. Must run before
-/// any thread or webview exists, as it changes the `PATH`.
+/// Whether the environment of the user's login shell was taken over.
+static FROM_LOGIN_SHELL: AtomicBool = AtomicBool::new(false);
+
+/// Adopts the environment of the user's login shell. Started from a terminal,
+/// or with a shell that cannot be asked, pumr keeps the environment it has
+/// and only tidies its `PATH`. A no-op on Windows. Must run before any thread
+/// or webview exists, as it changes the `PATH`.
 pub fn adopt_login_shell_environment() {
     #[cfg(unix)]
-    if let Some(environment) = unix::resolved() {
-        if let Some(path) = environment.path {
-            std::env::set_var("PATH", path);
+    match unix::resolved() {
+        Some(environment) => {
+            if let Some(path) = environment.path {
+                std::env::set_var("PATH", path);
+            }
+            *COMMAND_ENVIRONMENT.write().unwrap() = environment.variables;
+            FROM_LOGIN_SHELL.store(true, Ordering::Relaxed);
         }
-        *COMMAND_ENVIRONMENT.write().unwrap() = environment.variables;
+        None => {
+            let current = std::env::var_os("PATH");
+            if let Some(path) = current.as_deref().and_then(unix::tidied) {
+                std::env::set_var("PATH", path);
+            }
+        }
     }
+}
+
+/// Whether commands run with the environment of the user's login shell
+/// (`true`) or with the one pumr was started in.
+pub fn from_login_shell() -> bool {
+    FROM_LOGIN_SHELL.load(Ordering::Relaxed)
 }
 
 /// What a command run by the agent is given on top of pumr's own environment.
@@ -249,19 +274,34 @@ mod unix {
     }
 
     /// The shell's directories, followed by those of pumr's own `PATH` the
-    /// shell does not have. Relative entries of the shell are left out: they
-    /// would resolve inside whichever project a command runs in, and the
-    /// permission check trusts no executable while `PATH` has one.
+    /// shell does not have. Empty and relative entries of either are left
+    /// out: they would resolve inside whichever project a command runs in,
+    /// and the permission check trusts no executable while `PATH` has one.
     fn merge(shell: &OsStr, current: Option<&OsStr>) -> Option<OsString> {
         let mut directories: Vec<PathBuf> = Vec::new();
-        let shell = std::env::split_paths(shell).filter(|directory| directory.is_absolute());
+        let shell = std::env::split_paths(shell);
         let current = current.into_iter().flat_map(std::env::split_paths);
-        for directory in shell.chain(current) {
+        for directory in shell.chain(current).filter(|directory| directory.is_absolute()) {
             if !directories.contains(&directory) {
                 directories.push(directory);
             }
         }
         std::env::join_paths(directories).ok()
+    }
+
+    /// `path` without its empty and relative entries, `None` when it has
+    /// none of those and can stay as it is.
+    pub fn tidied(path: &OsStr) -> Option<OsString> {
+        let entries = std::env::split_paths(path).count();
+        let absolute: Vec<PathBuf> = std::env::split_paths(path)
+            .filter(|directory| directory.is_absolute())
+            .collect();
+        // A `PATH` of relative entries only is left alone: without any entry
+        // no command would be found at all.
+        if absolute.len() == entries || absolute.is_empty() {
+            return None;
+        }
+        std::env::join_paths(absolute).ok()
     }
 
     #[cfg(test)]
@@ -442,6 +482,27 @@ mod unix {
             );
             assert_eq!(merged("/usr/bin", None), "/usr/bin");
             assert_eq!(merged("", Some("/usr/bin:/bin")), "/usr/bin:/bin");
+            // pumr's own half is tidied like the shell's.
+            assert_eq!(
+                merged("/opt/tools/bin", Some("/usr/bin::bin:.:/bin:")),
+                "/opt/tools/bin:/usr/bin:/bin"
+            );
+        }
+
+        #[test]
+        fn a_path_pumr_keeps_loses_its_empty_and_relative_entries() {
+            let kept = |path: &str| {
+                tidied(OsStr::new(path)).map(|path| path.into_string().unwrap())
+            };
+            assert_eq!(
+                kept("/home/me/.nvm/bin::/usr/bin:node_modules/.bin:/bin:").as_deref(),
+                Some("/home/me/.nvm/bin:/usr/bin:/bin")
+            );
+            assert_eq!(kept(".:/usr/bin").as_deref(), Some("/usr/bin"));
+            // Nothing to leave out, and nothing that would be left.
+            assert_eq!(kept("/usr/bin:/bin"), None);
+            assert_eq!(kept(".:bin"), None);
+            assert_eq!(kept(""), None);
         }
     }
 }

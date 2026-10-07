@@ -276,8 +276,8 @@
     "more": "Więcej kart"
   },
   "projectAppearance": {
-    "title": "Wygląd projektu",
-    "edit": "Edytuj wygląd projektu",
+    "title": "Ustawienia projektu",
+    "edit": "Edytuj projekt",
     "color": "Kolor",
     "auto": "Automatyczny",
     "customColor": "Kolor niestandardowy",
@@ -289,7 +289,11 @@
     "imageHint": "Najlepiej sprawdza się kwadratowy obraz. Jest przycinany i zmieniany automatycznie.",
     "notAnImage": "Proszę wybrać plik obrazu.",
     "imageFailed": "Nie udało się odczytać tego obrazu.",
-    "saveFailed": "Nie można zapisać wyglądu projektu."
+    "saveFailed": "Nie można zapisać wyglądu projektu.",
+    "environment": "Środowisko dla poleceń",
+    "environmentHint": "Po jednym NAME=value w wierszu, jak w profilu powłoki. Każde polecenie uruchamiane przez asystenta w tym projekcie startuje z tymi zmiennymi. $NAME i ~ są podstawiane, więc PATH=$JAVA_HOME/bin:$PATH działa.",
+    "environmentInvalid": "Wiersz {{ line }} nie ma postaci NAME=value.",
+    "environmentFailed": "Nie udało się zapisać środowiska: {{ error }}"
   },
   "chat": {
     "placeholder": "Opisz swoje zadanie... użyj @, aby dodać pliki, foldery, strony internetowe, umiejętności lub serwery MCP",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globalne monity",
       "mode": "Konfiguracja trybu",
       "projectRules": "Zasady projektu",
+      "memory": "Zapamiętane preferencje",
       "user": "Wiadomość użytkownika",
       "assistant": "Reakcja modelowa",
       "tool": "Wezwanie narzędzia",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globalne monity",
       "mode": "Monit o tryb",
       "projectRules": "Zasady projektu",
+      "memory": "Zapamiętane preferencje",
       "prompt": "Podpowiedź",
       "referencedContext": "Kontekst odniesienia",
       "mentions": "Wspomnienia",
@@ -632,6 +638,8 @@
     "presetValueHint": "Wybiera dostawcę z najlepszą liczbą tokenów na sekundę na dolara.",
     "trains": "trenuje na danych",
     "trainsHint": "Ten dostawca może używać Twoich promptów do trenowania.",
+    "blocked": "zablokowany",
+    "blockedHint": "Twoje ustawienia prywatności lub dostawców w OpenRouter blokują tego dostawcę.",
     "priceHint": "Cena za 1 mln tokenów, kolor względem innych dostawców tego modelu"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Dostawcy",
       "agent": "Konfiguracja agenta",
+      "memory": "Pamięć",
       "agentRules": "Biała i czarna lista agenta",
       "sandbox": "Piaskownica",
       "hooks": "Hooki",
@@ -760,6 +769,8 @@
       "hint": "System operacyjny ogranicza każde polecenie uruchamiane przez agenta i wszystko, co to polecenie uruchomi. To druga warstwa za regułami uprawnień, na wypadek polecenia, które te reguły źle ocenią. Polecenie zatrzymane przez piaskownicę może poprosić o uruchomienie poza nią; za każdym razem dostajesz pytanie.",
       "unavailable": "Ten system nie ma piaskownicy, której pumr mógłby użyć, więc polecenia działają bez ograniczeń. Wymagany jest macOS albo Linux 5.19 lub nowszy z Landlock.",
       "networkUnavailable": "Zamknięcie sieci jest możliwe tylko w macOS.",
+      "inlineCode": "Uruchamiaj kod wbudowany w ciaśniejszej piaskownicy zamiast pytać",
+      "inlineCodeHint": "Wbudowanego kodu node lub python oraz skryptów przekazywanych im przez heredoc nie da się sprawdzić tak jak polecenia. Dopóki opcja „Wszystkie polecenia w projekcie” jest włączona, taki kod działa bez pytania w ciaśniejszej piaskownicy: sięga tylko do tego komputera, zapisuje tylko w projekcie, w Twoich dodatkowych folderach i w folderach tymczasowych, a nie może uruchamiać aplikacji, sięgać do innych programów ani zmieniać hooków gita. To samo dotyczy polecenia, którego argumenty są znane dopiero w chwili uruchomienia. Kod, który wymienia pliki spoza projektu, wrażliwe pliki lub inne strony, nadal pyta. Jeśli piaskownica zatrzyma skrypt, agent może poprosić Cię o uruchomienie go normalnie. Tylko macOS.",
       "modes": {
         "off": "Wyłączona",
         "files": "Pliki",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Polecenia są uruchamiane jako Twój użytkownik, a powstrzymują je tylko reguły uprawnień.",
-        "files": "Polecenia zapisują tylko w projekcie, w Twoich dodatkowych folderach, w folderach tymczasowych i w folderach wymienionych poniżej. Nie mogą odczytywać folderów, w których są klucze.",
+        "files": "Polecenia zapisują tylko w projekcie, w Twoich dodatkowych folderach, w folderach tymczasowych i w folderach wymienionych poniżej. Nie mogą odczytywać folderów, w których są klucze. W macOS nie mogą też uruchamiać innych aplikacji: open działa tylko jako osobne polecenie, które sprawdzają reguły uprawnień.",
         "filesAndNetwork": "To samo, a polecenia łączą się tylko z tym komputerem, z wyjątkiem poleceń, na których hosty zezwalasz. Instalowanie pakietów prosi wtedy o uruchomienie poza piaskownicą."
       },
       "writable": "Foldery, w których polecenia też mogą zapisywać",
       "writableHint": "Pamięci podręczne narzędzi budowania. Bez nich budowanie kończy się niepowodzeniem przy pierwszym pobieraniu. Ścieżka zaczyna się od / lub ~.",
       "unreadable": "Foldery, których polecenia nie mogą odczytywać",
-      "unreadableHint": "Miejsca, w których znajdują się klucze i tokeny. git, ssh i narzędzia chmurowe zachowują foldery, z którymi pracują, a folder dozwolony przez Ciebie dla poleceń pozostaje otwarty.",
+      "unreadableHint": "Miejsca, w których znajdują się klucze i tokeny. git, ssh i narzędzia chmurowe zachowują foldery, z którymi pracują, a folder dozwolony przez Ciebie dla poleceń pozostaje otwarty. Własny folder danych pumr, z Twoimi czatami i ustawieniami, również jest zamknięty dla poleceń, niezależnie od zawartości tej listy.",
       "excluded": "Polecenia uruchamiane poza piaskownicą",
       "excludedHint": "Dla narzędzi, które mają własną piaskownicę i nie działają wewnątrz tej, takich jak testy w przeglądarce. Wpis określa, jak zaczyna się wiersz polecenia; z * jest wzorcem dla całego wiersza.",
       "addCommand": "Dodaj polecenie",
@@ -800,6 +811,19 @@
       "timeout": "Zatrzymaj po (sekundach)",
       "project": "Projekt",
       "allProjects": "Wszystkie projekty"
+    },
+    "memory": {
+      "title": "Pamięć",
+      "hint": "pumr może zapamiętać, jak lubisz pracować, na przykład jak ma być przedstawiony przegląd kodu, i przekazuje to agentowi w każdym czacie i każdym projekcie. Nic nie zostanie zapamiętane bez Twojej zgody.",
+      "enabled": "Używaj pamięci",
+      "enabledHint": "Po wyłączeniu wpisy poniżej zostają zachowane, ale nie są wysyłane agentowi i nic nowego nie jest proponowane.",
+      "suggestions": "Proponuj rzeczy do zapamiętania",
+      "suggestionsHint": "Gdy jedna z Twoich wiadomości pokazuje trwałą preferencję, pumr pyta po odpowiedzi, czy ją zapamiętać: najwyżej raz na czat i raz dziennie, a rzadziej za każdym razem, gdy jej nie zapiszesz. Po wyłączeniu pumr nadal zapamiętuje to, o co go poprosisz.",
+      "list": "Zapamiętane preferencje",
+      "add": "Dodaj wpis",
+      "empty": "Nic jeszcze nie zapamiętano.",
+      "placeholder": "Na przykład: podczas przeglądu kodu pytaj mnie przy każdym znalezisku, czy je naprawić, czy pominąć.",
+      "remove": "Usuń wpis"
     },
     "providers": {
       "title": "Dostawcy modeli",
@@ -846,7 +870,9 @@
     "languageHint": "Zostanie zastosowane po zapisaniu.",
     "workspace": {
       "allowed": "Dozwolone foldery",
-      "foldersHint": "Asystent może odczytywać i zapisywać te foldery bez pytania. Aktywny projekt jest zawsze dozwolony."
+      "foldersHint": "Asystent może odczytywać i zapisywać te foldery bez pytania. Aktywny projekt jest zawsze dozwolony.",
+      "readable": "Foldery tylko do odczytu",
+      "readableHint": "Asystent może odczytywać te foldery bez pytania, ale zmiany w nich nadal pytają. Zapamiętanie prośby o odczyt lub wyświetlenie zawartości folderu dodaje go tutaj."
     },
     "mcp": {
       "tabBrowse": "Przeglądaj",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Wybierz obraz",
       "clearFile": "Usuń obraz",
       "noFile": "Nie wybrano obrazu",
-      "opacity": "Nieprzezroczystość",
-      "blur": "Plama",
+      "opacity": "Widoczność tła",
+      "blur": "Rozmycie tła",
+      "preview": "Podgląd",
       "presets": {
         "aurora": "Zorza polarna",
         "mesh": "Oczko",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Foldery z dozwolonymi poufnymi plikami",
     "secretFoldersHint": "Polecenia mogą bez pytania używać poufnych plików (kluczy, tokenów, danych logowania) znajdujących się bezpośrednio w tych folderach. Podfoldery nie są objęte. Użyj „zezwalaj zawsze” w prośbie o uprawnienia, aby go utworzyć.",
     "noSecretFolders": "Brak folderów z dozwolonymi poufnymi plikami.",
+    "pathFolders": "Foldery zaufane w PATH",
+    "pathFoldersHint": "Polecenia mogą bez pytania umieszczać te foldery w PATH, chociaż asystent może zmieniać w nich pliki. Użyj „zezwalaj zawsze” w prośbie o uprawnienia, aby dodać folder.",
+    "noPathFolders": "Brak folderów zaufanych w PATH.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + podpolecenie",
       "programFlags": "Program + flagi",
-      "exact": "Dokładne"
+      "exact": "Dokładne",
+      "pathFolder": "Folder w PATH"
     },
     "websiteAllowlist": "Dozwolone",
     "websiteDenylist": "Zablokowane",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Pliki wykonywalne projektu",
     "autoApproveProjectExecutablesHint": "Zezwala na pliki wykonywalne w projekcie, takie jak ./node_modules/.bin/ng, bez pytania za każdym razem.",
     "autoApproveProjectCommands": "Wszystkie polecenia w projekcie",
-    "autoApproveProjectCommandsHint": "Zezwala na każde niegroźne polecenie, którego ścieżki pozostają w projekcie, w tym na wbudowany kod node lub python, który tylko czyta. Niebezpieczne polecenia, inny kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, wrażliwe pliki i wszystko na zewnątrz nadal pytają.",
+    "autoApproveProjectCommandsHint": "Zezwala na każde niegroźne polecenie, którego ścieżki pozostają w projekcie, w tym na wbudowany kod node lub python, który tylko czyta. Niebezpieczne polecenia, inny kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, wrażliwe pliki i wszystko na zewnątrz nadal pytają. Wyjątkiem jest wbudowany kod node lub python, który piaskownica uruchamia zamiast pytać (zobacz Piaskownica).",
     "permissionPreset": {
       "strict": "Ścisły",
       "strictHint": "Bez pytania działają tylko polecenia, które wyłącznie czytają.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonomiczny",
       "autonomousHint": "Każde niegroźne polecenie w projekcie działa bez pytania.",
       "custom": "Niestandardowy",
-      "autonomousWarning": "Tryb autonomiczny ufa temu projektowi: jego skrypty, pliki Makefile i pliki wykonywalne mogą zrobić wszystko bez pytania, a kod wbudowany, który tylko czyta, również jest uruchamiany. Inny kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, niebezpieczne polecenia i wszystko poza projektem nadal pytają.",
+      "autonomousWarning": "Tryb autonomiczny ufa temu projektowi: jego skrypty, pliki Makefile i pliki wykonywalne mogą zrobić wszystko bez pytania, a kod wbudowany, który tylko czyta, również jest uruchamiany. Inny kod wbudowany, pobieranie pakietów, jeszcze niedozwolone strony, niebezpieczne polecenia i wszystko poza projektem nadal pytają. Wyjątkiem jest wbudowany kod node lub python, który piaskownica uruchamia zamiast pytać (zobacz Piaskownica).",
       "confirm": "Użyj trybu autonomicznego"
     },
     "noAllowedWebsites": "Brak stron z zawsze zezwolonym dostępem.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Zezwól na folder",
       "hint": "Dodaje folder i wszystko w nim do folderów zawsze dozwolonych.",
-      "option": "Folder + podfoldery"
+      "option": "Folder + podfoldery",
+      "hintRead": "Otwiera folder i wszystko w nim do odczytu. Zmiany w nim nadal pytają.",
+      "optionRead": "Odczyt folderu + podfolderów"
     },
     "hostScope": {
       "title": "Zezwól na stronę",
@@ -1406,6 +1439,10 @@
       "hint": "Polecenia będą mogły bez pytania używać kluczy, tokenów i plików z danymi logowania znajdujących się bezpośrednio w tym folderze. Podfoldery nie są objęte.",
       "option": "Poufne pliki w tym folderze",
       "chip": "poufne pliki w {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Folder zaufany w PATH może być tam umieszczany przez polecenia bez pytania. Jego programy są wtedy uruchamiane zamiast innych o tej samej nazwie.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Zezwól na tym czacie",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Dlaczego",
     "keyboardHint": "Naciśnij 1–{{ count }} lub użyj ↑ ↓ i Enter · Esc odmawia",
     "mcpToolHint": "Niepytanie ponownie obejmuje każde wywołanie tego narzędzia na tym serwerze, niezależnie od argumentów.",
+    "folderReadHint": "Zapamiętany folder jest otwierany tylko do odczytu. Zmiany w nim nadal pytają.",
     "url": {
       "queryWarning": "Ten adres przenosi dużo danych w ciągu zapytania. Przed zezwoleniem upewnij się, że nie zawiera niczego prywatnego."
     },
@@ -1443,7 +1481,8 @@
     "back": "Wstecz",
     "next": "Dalej",
     "submit": "Wyślij",
-    "skip": "Pomiń"
+    "skip": "Pomiń",
+    "resetPosition": "Przywróć położenie"
   },
   "modelChoice": {
     "title": "Którego modelu ma użyć podagent?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Odmowa uprawnień",
     "canceled": "Anulowano",
     "error": "Błąd"
+  },
+  "memory": {
+    "title": "Zapamiętać to?",
+    "noticed": "pumr zauważył to w Twojej wiadomości.",
+    "requested": "pumr ma to zapamiętać na Twoją prośbę.",
+    "replaces": "Zastępuje: {{ text }}",
+    "textLabel": "Co zapamiętać",
+    "hint": "Zapisane preferencje obowiązują w każdym czacie, we wszystkich projektach. Możesz je zmienić w ustawieniach, w sekcji Pamięć.",
+    "save": "Zapamiętaj",
+    "decline": "Nie, dziękuję",
+    "disable": "Nie pytaj ponownie",
+    "disableHint": "pumr przestanie proponować rzeczy do zapamiętania. Możesz to ponownie włączyć w ustawieniach, w sekcji Pamięć."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

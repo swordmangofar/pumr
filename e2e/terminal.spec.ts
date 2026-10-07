@@ -126,6 +126,27 @@ test.describe('terminal dock', () => {
     await page.keyboard.press('Control+Shift+U');
     await expect(closeButtons).toHaveCount(1);
   });
+
+  test('draws the icons of a themed prompt with the bundled icon font', async ({ app, page }) => {
+    // A Powerlevel10k prompt: its icons and separators are Nerd Font glyphs
+    // from the private use area, which no system monospace font has.
+    const prompt =
+      '\x1b[30;47m \uf179 \x1b[37;44m\ue0b0 \uf015 ~/pumr \x1b[34;43m\ue0b0' +
+      '\x1b[30m \ue0a0 master \x1b[0;33m\ue0b0\x1b[0m ';
+    const dock = await openTerminal(page, app.start, { terminalPrompt: prompt });
+    const rows = dock.locator('app-terminal-view .xterm-rows');
+
+    await expect(rows).toContainText('\ue0a0 master');
+    expect(await rows.evaluate((element) => getComputedStyle(element).fontFamily)).toContain(
+      'Symbols Nerd Font',
+    );
+    const loaded = await page.evaluate(() =>
+      [...document.fonts]
+        .filter((face) => face.family.includes('Symbols Nerd Font'))
+        .map((face) => face.status),
+    );
+    expect(loaded).toEqual(['loaded']);
+  });
 });
 
 test.describe('running a command from the chat', () => {

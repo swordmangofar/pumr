@@ -12,7 +12,14 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import { providerModelId } from '../core/api';
 import { formatTokenCount } from '../core/format';
-import { FileChange, LiveToolCall, Message, MessageAttachment, Session } from '../core/models';
+import {
+  FileChange,
+  LiveToolCall,
+  MemorySuggestion,
+  Message,
+  MessageAttachment,
+  Session,
+} from '../core/models';
 import { ModelsService } from '../core/models.service';
 import { ProvidersService } from '../core/providers.service';
 import { SettingsService, FALLBACK_SETTINGS } from '../core/settings.service';
@@ -22,6 +29,7 @@ import { Composer } from './composer';
 import { AgentStatus } from './agent-status';
 import { CopyButton } from './copy-button';
 import { MarkdownView } from './markdown-view';
+import { MemoryCard } from './memory-card';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
 import { ProjectIcon } from './project-icon';
@@ -93,6 +101,8 @@ function isToolCallOnly(message: Message): boolean {
 
 import { TypedInput } from './typed-input';
 
+const NO_MEMORY_SUGGESTIONS: MemorySuggestion[] = [];
+
 @Component({
   selector: 'app-chat-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -114,6 +124,7 @@ import { TypedInput } from './typed-input';
     ProjectIcon,
     CopyButton,
     SideAnswer,
+    MemoryCard,
   ],
   template: `
     <div class="flex h-full min-h-0 flex-col">
@@ -570,15 +581,37 @@ import { TypedInput } from './typed-input';
 
               @if (mcpIssues().length > 0) {
                 <div
-                  class="mb-6 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200"
+                  class="mb-6 flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 py-3 pl-4 pr-2.5 text-sm text-amber-200"
                   data-testid="chat-mcp-issues"
                 >
-                  <p class="leading-relaxed">{{ 'chat.mcpIssues' | transloco }}</p>
-                  <ul class="mt-1 list-disc space-y-1 pl-5 leading-relaxed text-amber-200/80">
-                    @for (issue of mcpIssues(); track $index) {
-                      <li class="break-words">{{ issue }}</li>
-                    }
-                  </ul>
+                  <div class="min-w-0 flex-1">
+                    <p class="leading-relaxed">{{ 'chat.mcpIssues' | transloco }}</p>
+                    <ul class="mt-1 list-disc space-y-1 pl-5 leading-relaxed text-amber-200/80">
+                      @for (issue of mcpIssues(); track $index) {
+                        <li class="break-words">{{ issue }}</li>
+                      }
+                    </ul>
+                  </div>
+                  <button
+                    type="button"
+                    class="-mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-amber-200/60 transition-colors hover:bg-amber-400/15 hover:text-amber-100"
+                    data-testid="chat-mcp-issues-dismiss"
+                    [title]="'chat.waitingDismiss' | transloco"
+                    [attr.aria-label]="'chat.waitingDismiss' | transloco"
+                    (click)="workspace.dismissMcpIssues(active.id)"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3.5 w-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.75"
+                      stroke-linecap="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 4l8 8M12 4l-8 8" />
+                    </svg>
+                  </button>
                 </div>
               }
 
@@ -690,6 +723,10 @@ import { TypedInput } from './typed-input';
                     <span>{{ 'chat.autoContinueAlways' | transloco }}</span>
                   </label>
                 </div>
+              }
+
+              @for (suggestion of memorySuggestions(); track suggestion.id) {
+                <app-memory-card [sessionId]="session()!.id" [suggestion]="suggestion" />
               }
             </div>
           </div>
@@ -986,6 +1023,18 @@ export class ChatView {
     const session = this.session();
     return session ? this.workspace.limitReachedFor(session.id) && !this.streaming() : false;
   });
+  /**
+   * What the agent proposed for pumr's memory in this session and the user has
+   * not answered. The cards wait for the turn to end, out of the reply's way.
+   */
+  protected readonly memorySuggestions = computed(() => {
+    const open = this.streaming() ? undefined : this.session()?.memorySuggestions;
+    if (!open?.length) {
+      return NO_MEMORY_SUGGESTIONS;
+    }
+    // With the memory switched off there is nothing to remember them in.
+    return (this.settings.settings()?.memoryEnabled ?? true) ? open : NO_MEMORY_SUGGESTIONS;
+  });
   /** The last turn was cut off (app closed, machine slept) and can go on. */
   protected readonly interrupted = computed(() => {
     const session = this.session();
@@ -1027,6 +1076,7 @@ export class ChatView {
       this.messages();
       this.liveTools();
       this.streaming();
+      this.memorySuggestions();
       // Follow content updates, not scroll events crossing the bottom threshold.
       if (!untracked(this.atBottom)) {
         return;
@@ -1249,6 +1299,8 @@ export class ChatView {
         return text('description');
       case 'bash_output':
         return text('id');
+      case 'remember':
+        return text('preference');
       case 'screenshot':
         return text('caption') || text('url') || this.relativePath(text('path'));
       default:

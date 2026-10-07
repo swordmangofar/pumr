@@ -276,8 +276,8 @@
     "more": "Aktar tabs"
   },
   "projectAppearance": {
-    "title": "Dehra tal-proġett",
-    "edit": "Editja d-dehra tal-proġett",
+    "title": "Settings tal-proġett",
+    "edit": "Editja l-proġett",
     "color": "Kulur",
     "auto": "Auto",
     "customColor": "Kulur tad-dwana",
@@ -289,7 +289,11 @@
     "imageHint": "Immaġini kwadra taħdem l-aħjar. Huwa maħsud u r-daqs awtomatikament.",
     "notAnImage": "Jekk jogħġbok agħżel fajl tal-immaġni.",
     "imageFailed": "Ma setax jaqra dik l-immaġni.",
-    "saveFailed": "Ma setgħetx issalva d-dehra tal-proġett."
+    "saveFailed": "Ma setgħetx issalva d-dehra tal-proġett.",
+    "environment": "Ambjent għall-kmandi",
+    "environmentHint": "NAME=value wieħed f'kull linja, bħal fi profil tax-shell. Kull kmand li jħaddem l-assistent f'dan il-proġett jibda b'dawn il-varjabbli. $NAME u ~ jiġu sostitwiti, għalhekk PATH=$JAVA_HOME/bin:$PATH jaħdem.",
+    "environmentInvalid": "Il-linja {{ line }} mhix NAME=value.",
+    "environmentFailed": "L-ambjent ma setax jiġi ssejvjat: {{ error }}"
   },
   "chat": {
     "placeholder": "Iddeskrivi l-kompitu tiegħek... uża @ biex iżżid fajls, foldri, siti web, skills jew MCP servers",
@@ -395,6 +399,7 @@
       "globalPrompts": "Prompt globali",
       "mode": "Konfigurazzjoni tal-mod",
       "projectRules": "Regoli tal-proġett",
+      "memory": "Preferenzi mfakkra",
       "user": "Messaġġ tal-utent",
       "assistant": "Reazzjoni mudell",
       "tool": "Sejħa tal-għodda",
@@ -433,6 +438,7 @@
       "globalPrompts": "Prompt globali",
       "mode": "Modalità fil-pront",
       "projectRules": "Regoli tal-proġett",
+      "memory": "Preferenzi mfakkra",
       "prompt": "Pront",
       "referencedContext": "Kuntest referenzjat",
       "mentions": "Isemmi",
@@ -632,6 +638,8 @@
     "presetValueHint": "Jagħżel il-fornitur bl-aqwa tokens kull sekonda għal kull dollaru.",
     "trains": "jitrawwem fuq id-data",
     "trainsHint": "Dan il-fornitur jista' juża l-prompts tiegħek għat-taħriġ.",
+    "blocked": "imblukkat",
+    "blockedHint": "Is-settings tal-privatezza jew tal-fornituri tiegħek f'OpenRouter jimblukkaw lil dan il-fornitur.",
     "priceHint": "Prezz għal kull 1M tokens, ikkulurit relattiv għal fornituri oħra għal dan il-mudell"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Fornituri",
       "agent": "Konfigurazzjoni tal-aġent",
+      "memory": "Memorja",
       "agentRules": "White- u blacklist tal-aġent",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Is-sistema operattiva tirrestrinġi kull kmand li jħaddem l-aġent, u kulma jibda dak il-kmand. Huwa t-tieni saff wara r-regoli tal-permessi, għal kmand li dawn jiġġudikaw ħażin. Kmand imwaqqaf mis-sandbox jista' jitlob li jaħdem barra minnu; tiġi mistoqsi kull darba.",
       "unavailable": "Din is-sistema m'għandhiex sandbox li pumr jista' juża, għalhekk il-kmandi jaħdmu mingħajr restrizzjoni. Jeħtieġ macOS, jew Linux 5.19 jew aktar ġdid b'Landlock.",
       "networkUnavailable": "L-għeluq tan-netwerk huwa possibbli biss fuq macOS.",
+      "inlineCode": "Ħaddem kodiċi inline f'sandbox aktar strett minflok ma tistaqsi",
+      "inlineCodeHint": "Kodiċi inline ta' node jew python, u scripts mgħoddija lilhom permezz ta' heredoc, ma jistgħux jiġu ċċekkjati bħal kmand. Sakemm “Il-kmendi kollha ġewwa l-proġett” ikun mixgħul, dan il-kodiċi jaħdem mingħajr mistoqsija f'sandbox aktar strett: jilħaq biss lil dan il-kompjuter, jikteb biss fil-proġett, fil-foldri addizzjonali tiegħek u fil-foldri temporanji, u ma jistax jibda apps, jilħaq programmi oħra jew ibiddel il-git hooks. L-istess japplika għal kmand li l-argumenti tiegħu jkunu magħrufa biss meta jaħdem. Kodiċi li jsemmi fajls barra l-proġett, fajls sensittivi jew siti web oħra xorta jistaqsi. Jekk is-sandbox iwaqqaf script, l-aġent jista' jitolbok tħaddmu b'mod normali. macOS biss.",
       "modes": {
         "off": "Mitfi",
         "files": "Fajls",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Il-kmandi jaħdmu bħala l-utent tiegħek, miżmuma lura biss mir-regoli tal-permessi.",
-        "files": "Il-kmandi jiktbu biss fil-proġett, fil-foldri addizzjonali tiegħek, fil-foldri temporanji u fil-foldri elenkati hawn taħt. Ma jistgħux jaqraw il-foldri li fihom iċ-ċwievet.",
+        "files": "Il-kmandi jiktbu biss fil-proġett, fil-foldri addizzjonali tiegħek, fil-foldri temporanji u fil-foldri elenkati hawn taħt. Ma jistgħux jaqraw il-foldri li fihom iċ-ċwievet. Fuq macOS lanqas ma jistgħu jibdew apps oħra: open jaħdem biss bħala kmand għalih, li r-regoli tal-permessi jiċċekkjaw.",
         "filesAndNetwork": "L-istess, u l-kmandi jilħqu biss dan il-kompjuter, ħlief kmandi li l-hosts tagħhom ippermettejt. L-installazzjoni ta' pakketti mbagħad titlob li taħdem barra mis-sandbox."
       },
       "writable": "Foldri li l-kmandi jistgħu jiktbu fihom ukoll",
       "writableHint": "Il-caches tal-għodod tal-bini. Mingħajrhom build ifalli mal-ewwel download tiegħu. Mogħdija tibda bi / jew ~.",
       "unreadable": "Foldri li l-kmandi ma jistgħux jaqraw",
-      "unreadableHint": "Fejn jinżammu ċ-ċwievet u t-tokens. git, ssh u l-għodod tal-cloud iżommu l-foldri li jaħdmu bihom, u folder li ppermettejt għall-kmandi jibqa' miftuħ.",
+      "unreadableHint": "Fejn jinżammu ċ-ċwievet u t-tokens. git, ssh u l-għodod tal-cloud iżommu l-foldri li jaħdmu bihom, u folder li ppermettejt għall-kmandi jibqa' miftuħ. Il-folder tad-data ta' pumr innifsu, biċ-chats u s-settings tiegħek, huwa magħluq għall-kmandi wkoll, irrispettivament minn x'fiha din il-lista.",
       "excluded": "Kmandi li jaħdmu barra mis-sandbox",
       "excludedHint": "Għal għodod li jġibu sandbox tagħhom stess u jfallu ġewwa dan, bħat-testijiet tal-browser. Entrata tgħid kif tibda l-linja tal-kmand; bi * hija pattern għal-linja kollha.",
       "addCommand": "Żid kmand",
@@ -800,6 +811,19 @@
       "timeout": "Waqqaf wara (sekondi)",
       "project": "Proġett",
       "allProjects": "Il-proġetti kollha"
+    },
+    "memory": {
+      "title": "Memorja",
+      "hint": "pumr jista' jiftakar kif tħobb taħdem, pereżempju kif trid li tiġi rrappurtata reviżjoni tal-kodiċi, u jgħidha lill-aġent f'kull chat u f'kull proġett. Xejn ma jiġi mfakkar mingħajr il-kunsens tiegħek.",
+      "enabled": "Uża l-memorja",
+      "enabledHint": "Meta tkun mitfija, l-entrati ta' hawn taħt jinżammu, iżda ma jintbagħtux lill-aġent u ma jiġi ssuġġerit xejn ġdid.",
+      "suggestions": "Issuġġerixxi x'għandu jiftakar",
+      "suggestionsHint": "Meta wieħed mill-messaġġi tiegħek juri preferenza dejjiema, pumr jistaqsi wara t-tweġiba jekk għandux jiftakarha: l-aktar darba għal kull chat u darba kuljum, u inqas ta' spiss kull darba li ma ssejvjax suġġeriment. Meta tkun mitfija, pumr xorta jiftakar dak li titolbu.",
+      "list": "Preferenzi mfakkra",
+      "add": "Żid entrata",
+      "empty": "Għad m'hemm xejn imfakkar.",
+      "placeholder": "Pereżempju: meta tirrevedi l-kodiċi, staqsini għal kull sejba jekk għandhiex tissewwa jew tinqabeż.",
+      "remove": "Neħħi l-entrata"
     },
     "providers": {
       "title": "Fornituri tal-mudelli",
@@ -846,7 +870,9 @@
     "languageHint": "Japplika wara li ssalva.",
     "workspace": {
       "allowed": "Foldri permessi",
-      "foldersHint": "L-assistent jista' jaqra u jikteb dawn il-foldri mingħajr ma jistaqsi. Il-proġett attiv hu dejjem permess."
+      "foldersHint": "L-assistent jista' jaqra u jikteb dawn il-foldri mingħajr ma jistaqsi. Il-proġett attiv hu dejjem permess.",
+      "readable": "Foldri għall-qari biss",
+      "readableHint": "L-assistent jista' jaqra dawn il-foldri mingħajr ma jistaqsi, iżda l-bidliet fihom xorta jistaqsu. Talba mfakkra dwar il-qari jew l-elenkar ta' folder iżżid il-folder hawn."
     },
     "mcp": {
       "tabBrowse": "Ibbrawżja",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Agħżel l-immaġni",
       "clearFile": "Neħħi l-immaġni",
       "noFile": "Ebda immaġini magħżula",
-      "opacity": "Opaċità",
-      "blur": "Ċajpra",
+      "opacity": "Viżibbiltà tal-isfond",
+      "blur": "Ċajpir tal-isfond",
+      "preview": "Dehra minn qabel",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Malja",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Folders b'fajls sensittivi permessi",
     "secretFoldersHint": "Il-kmandi jistgħu jużaw mingħajr ma jistaqsu l-fajls sensittivi (ċwievet, tokens, kredenzjali) li jinsabu direttament f'dawn il-folders. Is-sottfolders mhumiex inklużi. Uża \"ħalli dejjem\" f'talba għall-permess biex toħloq waħda.",
     "noSecretFolders": "Għad m'hemmx folders b'fajls sensittivi permessi.",
+    "pathFolders": "Folders fdati fil-PATH",
+    "pathFoldersHint": "Il-kmandi jistgħu jpoġġu dawn il-folders fil-PATH mingħajr ma jistaqsu, għalkemm l-assistent jista' jbiddel fajls fihom. Uża \"ħalli dejjem\" f'talba għall-permess biex iżżid wieħed.",
+    "noPathFolders": "Għad m'hemmx folders fdati fil-PATH.",
     "scope": {
       "program": "Programm",
       "subcommand": "Programm + sottokmand",
       "programFlags": "Programm + flags",
-      "exact": "Eżatt"
+      "exact": "Eżatt",
+      "pathFolder": "Folder fil-PATH"
     },
     "websiteAllowlist": "Permessi",
     "websiteDenylist": "Imblukkati",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Eżegwibbli tal-proġett",
     "autoApproveProjectExecutablesHint": "Tippermetti eżegwibbli ġewwa l-proġett, bħal ./node_modules/.bin/ng, mingħajr ma tistaqsi kull darba.",
     "autoApproveProjectCommands": "Il-kmendi kollha ġewwa l-proġett",
-    "autoApproveProjectCommandsHint": "Ippermetti kull kmand mhux perikoluż li l-mogħdijiet tiegħu jibqgħu ġewwa l-proġett, inkluż kodiċi inline ta' node jew python li jaqra biss. Kmandi perikolużi, kodiċi inline ieħor, downloads ta' pakketti, siti web li għadhom mhumiex permessi, fajls sensittivi u kull ħaġa barra xorta jistaqsu.",
+    "autoApproveProjectCommandsHint": "Ippermetti kull kmand mhux perikoluż li l-mogħdijiet tiegħu jibqgħu ġewwa l-proġett, inkluż kodiċi inline ta' node jew python li jaqra biss. Kmandi perikolużi, kodiċi inline ieħor, downloads ta' pakketti, siti web li għadhom mhumiex permessi, fajls sensittivi u kull ħaġa barra xorta jistaqsu. L-eċċezzjoni hija kodiċi inline ta' node jew python li s-sandbox iħaddem minflok ma jistaqsi (ara Sandbox).",
     "permissionPreset": {
       "strict": "Strett",
       "strictHint": "Il-kmandi li jaqraw biss biss jaħdmu mingħajr ma jistaqsu.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Awtonomu",
       "autonomousHint": "Kull kmand mhux perikoluż ġewwa l-proġett jaħdem mingħajr ma jistaqsi.",
       "custom": "Personalizzat",
-      "autonomousWarning": "Il-modalità awtonoma tafda dan il-proġett: l-iskripts, il-Makefiles u l-eżekutibbli tiegħu jistgħu jagħmlu kollox mingħajr ma jistaqsu, u l-kodiċi inline li jaqra biss jaħdem ukoll. Kodiċi inline ieħor, downloads ta' pakketti, siti web li għadhom mhumiex permessi, kmandi perikolużi u kull ħaġa barra l-proġett xorta jistaqsu.",
+      "autonomousWarning": "Il-modalità awtonoma tafda dan il-proġett: l-iskripts, il-Makefiles u l-eżekutibbli tiegħu jistgħu jagħmlu kollox mingħajr ma jistaqsu, u l-kodiċi inline li jaqra biss jaħdem ukoll. Kodiċi inline ieħor, downloads ta' pakketti, siti web li għadhom mhumiex permessi, kmandi perikolużi u kull ħaġa barra l-proġett xorta jistaqsu. L-eċċezzjoni hija kodiċi inline ta' node jew python li s-sandbox iħaddem minflok ma jistaqsi (ara Sandbox).",
       "confirm": "Uża l-modalità awtonoma"
     },
     "noAllowedWebsites": "Għad m'hemmx siti web permessi dejjem.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Ippermetti l-folder",
       "hint": "Iżżid il-folder u kull ma hemm fih mal-folders dejjem permessi.",
-      "option": "Folder + sottfolders"
+      "option": "Folder + sottfolders",
+      "hintRead": "Tiftaħ il-folder u kull ma hemm fih għall-qari. Il-bidliet fih xorta jistaqsu.",
+      "optionRead": "Qari ta' folder + sottfolders"
     },
     "hostScope": {
       "title": "Ippermetti s-sit web",
@@ -1406,6 +1439,10 @@
       "hint": "Il-kmandi mbagħad jistgħu jużaw mingħajr ma jistaqsu ċ-ċwievet, it-tokens u l-fajls tal-kredenzjali li jinsabu direttament f'dan il-folder. Is-sottfolders mhumiex inklużi.",
       "option": "Fajls sensittivi f'dan il-folder",
       "chip": "fajls sensittivi f'{{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Folder fdat fil-PATH jista' jitpoġġa hemm mill-kmandi mingħajr ma jistaqsu. Il-programmi tiegħu mbagħad jaħdmu minflok oħrajn bl-istess isem.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Ippermetti f’dan iċ-chat",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Għaliex",
     "keyboardHint": "Agħfas 1–{{ count }} jew uża ↑ ↓ u Enter · Esc jiċħad",
     "mcpToolHint": "Mingħajr ma terġa' tistaqsi, kull sejħa għal din l-għodda fuq dan is-server titħalla sseħħ, ikunu x'ikunu l-argumenti.",
+    "folderReadHint": "Folder imfakkar jinfetaħ għall-qari biss. Il-bidliet fih xorta jistaqsu.",
     "url": {
       "queryWarning": "Dan l-indirizz iġorr ħafna data fl-istring tal-mistoqsija tiegħu. Kun żgur li ma fih xejn privat qabel ma tippermettih."
     },
@@ -1443,7 +1481,8 @@
     "back": "Lura",
     "next": "Li jmiss",
     "submit": "Ibgħat",
-    "skip": "Aqbeż"
+    "skip": "Aqbeż",
+    "resetPosition": "Irrisettja l-pożizzjoni"
   },
   "modelChoice": {
     "title": "Liema mudell għandu juża s-subagent?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Permess miċħud",
     "canceled": "Ikkanċellat",
     "error": "Żball"
+  },
+  "memory": {
+    "title": "Għandu jiftakar dan?",
+    "noticed": "pumr innota dan fil-messaġġ tiegħek.",
+    "requested": "Tlabt lil pumr biex jiftakar dan.",
+    "replaces": "Jissostitwixxi: {{ text }}",
+    "textLabel": "X'għandu jiftakar",
+    "hint": "Il-preferenzi ssejvjati japplikaw għal kull chat, fil-proġetti kollha. Tista' tibdilhom fis-settings taħt Memorja.",
+    "save": "Ftakar",
+    "decline": "Le, grazzi",
+    "disable": "Terġax tistaqsi",
+    "disableHint": "pumr jieqaf jissuġġerixxi x'għandu jiftakar. Tista' terġa' tixgħelha fis-settings taħt Memorja."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

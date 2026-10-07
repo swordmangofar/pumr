@@ -185,4 +185,10 @@ export class SettingsService {
     const settings = await api.deleteSecretFolder(folder);
     this.state.set(settings);
   }
+
+  /** Stops trusting a folder on `PATH`; a command that puts it there asks again. */
+  async deletePathFolder(folder: string): Promise<void> {
+    const settings = await api.deletePathFolder(folder);
+    this.state.set(settings);
+  }
 }

@@ -29,10 +29,12 @@ import {
   McpInstallRequest,
   McpServerRef,
   McpToolGrant,
+  MemoryDecision,
   Message,
   Mode,
   ModelInfo,
   PermissionAuditEntry,
+  PermissionState,
   ProcessInfo,
   Project,
   ProjectRule,
@@ -140,6 +142,8 @@ export const api = {
     icon: string | null;
     iconImage: string | null;
   }) => invoke<Project>('update_project', { ...args }),
+  setProjectEnvironment: (projectId: string, environment: string) =>
+    invoke<Project>('set_project_environment', { projectId, environment }),
   listSessions: (projectId: string, includeArchived = false) =>
     invoke<Session[]>('list_sessions', { projectId, includeArchived }),
   listSubSessions: (sessionId: string) => invoke<Session[]>('list_sub_sessions', { sessionId }),
@@ -192,6 +196,16 @@ export const api = {
   /** Picks the model of a `modelChoiceRequest`; `null` skips it. */
   resolveModelChoice: (requestId: string, model: string | null) =>
     invoke<void>('resolve_model_choice', { requestId, model }),
+  /**
+   * Answers the card of a suggestion for pumr's memory. `text` is the
+   * suggestion as the user left it; the settings come back as they are now.
+   */
+  resolveMemorySuggestion: (
+    sessionId: string,
+    id: number,
+    decision: MemoryDecision,
+    text: string | null,
+  ) => invoke<Settings>('resolve_memory_suggestion', { sessionId, id, decision, text }),
   addCommandRule: (rule: CommandRule, allow: boolean) =>
     invoke<Settings>('add_command_rule', { rule, allow }),
   deleteCommandRule: (rule: CommandRule, allow: boolean) =>
@@ -204,6 +218,7 @@ export const api = {
     invoke<Settings>('delete_mcp_tool_grant', { grant }),
   deleteSecretFolder: (folder: string) =>
     invoke<Settings>('delete_secret_folder', { folder }),
+  deletePathFolder: (folder: string) => invoke<Settings>('delete_path_folder', { folder }),
   getFileIgnoreCatalog: () => invoke<IgnoreCatalogEntry[]>('get_file_ignore_catalog'),
   listProcesses: () => invoke<ProcessInfo[]>('list_processes'),
   stopProcess: (processId: string) => invoke<void>('stop_process', { processId }),
@@ -420,6 +435,8 @@ export const api = {
     channel: Channel<SideAnswerEvent>,
   ) => invoke<SideAnswer>('ask_side_question', { sessionId, question, model, channel }),
   getSystemInfo: () => invoke<SystemInfo>('get_system_info'),
+  getPermissionState: (conversationId: string, projectId: string | null) =>
+    invoke<PermissionState>('get_permission_state', { conversationId, projectId }),
   /** Cancel a running call with `stopGeneration(ANONYMIZE_CANCEL_KEY)`. */
   findSensitiveData: (model: string, text: string) =>
     invoke<SensitiveFinding[]>('find_sensitive_data', { model, text }),

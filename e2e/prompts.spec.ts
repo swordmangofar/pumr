@@ -154,6 +154,79 @@ test.describe('agent prompts', () => {
     ]);
   });
 
+  test('moves a question out of the way and keeps it there until it is reset', async ({
+    app,
+    page,
+  }) => {
+    const ask = (question: string): FakeReply => ({
+      steps: [
+        {
+          kind: 'question',
+          question: {
+            header: 'Package manager',
+            question,
+            multiSelect: false,
+            options: [
+              { label: 'npm', description: null, recommended: false },
+              { label: 'pnpm', description: null, recommended: false },
+            ],
+          },
+        },
+        { kind: 'text', text: 'Noted.' },
+      ],
+    });
+    await page.addInitScript(() => {
+      localStorage.setItem('pumr.tabs', JSON.stringify(['session-1']));
+      localStorage.setItem('pumr.activeTab', 'session-1');
+    });
+    await app.start(
+      seed({
+        projects: [project()],
+        sessions: [session()],
+        replies: [ask('Which package manager?'), ask('And for the docs?')],
+      }),
+    );
+    const composer = page.getByRole('textbox', { name: /Describe your task/ });
+    const panel = page.getByTestId('question-panel');
+    const place = async () => {
+      const box = await panel.boundingBox();
+      return box && { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width) };
+    };
+
+    await composer.click();
+    await page.keyboard.type('Set up the project');
+    await page.keyboard.press('Enter');
+    await expect(page.getByText('Which package manager?')).toBeVisible();
+    const home = (await place())!;
+    const moved = { x: home.x + 400, y: home.y - 200, width: home.width };
+
+    // Up and to the right, out of the chat and over the panel next to it.
+    const header = await page.getByTestId('question-header').boundingBox();
+    await page.mouse.move(header!.x + 40, header!.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(header!.x + 440, header!.y - 190, { steps: 5 });
+    await page.mouse.up();
+
+    // The release does not collapse it or take the keyboard off the answers.
+    await expect.poll(place).toEqual(moved);
+    const chat = await page.getByRole('main').boundingBox();
+    expect(moved.x + moved.width).toBeGreaterThan(chat!.x + chat!.width + 100);
+    await expect(page.getByRole('button', { name: 'npm', exact: true })).toBeFocused();
+    await page.getByRole('button', { name: 'pnpm' }).click();
+    await page.getByRole('button', { name: 'Submit' }).click();
+    await expect(page.getByRole('main')).toContainText('Noted.');
+
+    await composer.click();
+    await page.keyboard.type('Now the docs');
+    await page.keyboard.press('Enter');
+    await expect(page.getByText('And for the docs?')).toBeVisible();
+    await expect.poll(place).toEqual(moved);
+
+    await page.getByRole('button', { name: 'Reset position' }).click();
+    await expect.poll(place).toEqual(home);
+    await expect(page.getByRole('button', { name: 'Reset position' })).toHaveCount(0);
+  });
+
   test('answers a question from the keyboard and returns to the composer', async ({
     app,
     page,

@@ -21,8 +21,19 @@ import { TerminalService, TerminalTab } from '../core/terminal.service';
 import { ThemeService } from '../core/theme.service';
 import { ThemePreset } from '../core/themes';
 
-const FONT_FAMILY =
-  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+/** The bundled icon font of `styles.css`, for the glyphs prompt themes use. */
+const SYMBOLS_FONT = '"Symbols Nerd Font"';
+const FONT_SIZE = 13;
+const FONT_FAMILY = `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", ${SYMBOLS_FONT}, monospace`;
+
+/**
+ * Loads the icon font before a terminal draws with it. The browser fetches it
+ * only once a glyph needs it, and xterm keeps the width it measured for a
+ * glyph, so an icon drawn before that would keep the width of a missing one.
+ */
+function loadSymbolsFont(): Promise<unknown> {
+  return document.fonts.load(`${FONT_SIZE}px ${SYMBOLS_FONT}`, '\ue0b0').catch(() => undefined);
+}
 
 /** How long a shell's output has to pause before it counts as its prompt. */
 const PROMPT_PAUSE_MS = 300;
@@ -165,6 +176,7 @@ export class TerminalView {
       import('@xterm/xterm'),
       import('@xterm/addon-fit'),
       import('@xterm/addon-web-links'),
+      loadSymbolsFont(),
     ]);
     await this.terminals.ready;
     if (this.destroyed) {
@@ -175,7 +187,7 @@ export class TerminalView {
       allowTransparency: true,
       cursorBlink: true,
       fontFamily: FONT_FAMILY,
-      fontSize: 13,
+      fontSize: FONT_SIZE,
       lineHeight: 1.2,
       scrollback: 5000,
       theme: terminalTheme(this.theme.current()),

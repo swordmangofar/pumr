@@ -276,8 +276,8 @@
     "more": "Fler flikar"
   },
   "projectAppearance": {
-    "title": "Projektets utseende",
-    "edit": "Redigera projektets utseende",
+    "title": "Projektinställningar",
+    "edit": "Redigera projekt",
     "color": "Färg",
     "auto": "Bil",
     "customColor": "Anpassad färg",
@@ -289,7 +289,11 @@
     "imageHint": "En fyrkantig bild fungerar bäst. Den beskärs och storleksändras automatiskt.",
     "notAnImage": "Välj en bildfil.",
     "imageFailed": "Kunde inte läsa den bilden.",
-    "saveFailed": "Det gick inte att spara projektets utseende."
+    "saveFailed": "Det gick inte att spara projektets utseende.",
+    "environment": "Miljö för kommandon",
+    "environmentHint": "En NAME=value per rad, som i en shell-profil. Varje kommando som assistenten kör i det här projektet startar med de här variablerna. $NAME och ~ expanderas, så PATH=$JAVA_HOME/bin:$PATH fungerar.",
+    "environmentInvalid": "Rad {{ line }} är inte NAME=value.",
+    "environmentFailed": "Det gick inte att spara miljön: {{ error }}"
   },
   "chat": {
     "placeholder": "Beskriv din uppgift... använd @ för att lägga till filer, mappar, webbplatser, skills eller MCP-servrar",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globala uppmaningar",
       "mode": "Lägeskonfiguration",
       "projectRules": "Projektregler",
+      "memory": "Sparade preferenser",
       "user": "Användarmeddelande",
       "assistant": "Modellsvar",
       "tool": "Verktygsanrop",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globala uppmaningar",
       "mode": "Lägesuppmaning",
       "projectRules": "Projektregler",
+      "memory": "Sparade preferenser",
       "prompt": "Prompt",
       "referencedContext": "Refererad kontext",
       "mentions": "Omnämnanden",
@@ -632,6 +638,8 @@
     "presetValueHint": "Väljer leverantören med bäst tokens per sekund per dollar.",
     "trains": "tränar på data",
     "trainsHint": "Denna leverantör kan använda dina prompts för träning.",
+    "blocked": "blockerad",
+    "blockedHint": "Dina inställningar för integritet eller leverantörer i OpenRouter blockerar den här leverantören.",
     "priceHint": "Pris per 1M tokens, färgat i förhållande till andra leverantörer för denna modell"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Leverantörer",
       "agent": "Agentkonfiguration",
+      "memory": "Minne",
       "agentRules": "Agentens vit- och svartlista",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Operativsystemet begränsar varje kommando som agenten kör, och allt som det kommandot startar. Det är ett andra lager bakom behörighetsreglerna, för ett kommando som reglerna bedömer fel. Ett kommando som sandboxen stoppar kan be om att få köras utanför den; du tillfrågas varje gång.",
       "unavailable": "Det här systemet har ingen sandbox som pumr kan använda, så kommandon körs obegränsat. Det krävs macOS, eller Linux 5.19 eller nyare med Landlock.",
       "networkUnavailable": "Att stänga nätverket går bara på macOS.",
+      "inlineCode": "Kör inbäddad kod i en snävare sandbox i stället för att fråga",
+      "inlineCodeHint": "Inbäddad node- eller python-kod, och skript som skickas till dem via en heredoc, kan inte kontrolleras som ett kommando. Så länge ”Alla kommandon i projektet” är på körs sådan kod utan fråga i en snävare sandbox: den når bara den här datorn, skriver bara till projektet, dina extra mappar och temporära mappar, och kan inte starta appar, nå andra program eller ändra git-hookar. Detsamma gäller ett kommando vars argument är kända först när det körs. Kod som nämner filer utanför projektet, känsliga filer eller andra webbplatser frågar fortfarande. Om sandboxen stoppar ett skript kan agenten be dig att köra det som vanligt. Endast macOS.",
       "modes": {
         "off": "Av",
         "files": "Filer",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Kommandon körs som din användare och hålls bara tillbaka av behörighetsreglerna.",
-        "files": "Kommandon skriver bara till projektet, dina extra mappar, temporära mappar och mapparna som anges nedan. De kan inte läsa mapparna som innehåller nycklar.",
+        "files": "Kommandon skriver bara till projektet, dina extra mappar, temporära mappar och mapparna som anges nedan. De kan inte läsa mapparna som innehåller nycklar. På macOS kan de inte heller starta andra appar: open fungerar bara som ett eget kommando, som behörighetsreglerna kontrollerar.",
         "filesAndNetwork": "Samma sak, och kommandon når bara den här datorn, utom kommandon vars värdar du har tillåtit. Paketinstallation ber då om att få köras utanför sandboxen."
       },
       "writable": "Mappar som kommandon också får skriva till",
       "writableHint": "Byggverktygens cachar. Utan dem misslyckas ett bygge vid sin första nedladdning. En sökväg börjar med / eller ~.",
       "unreadable": "Mappar som kommandon inte kan läsa",
-      "unreadableHint": "Där nycklar och token finns. git, ssh och molnverktygen behåller mapparna de arbetar med, och en mapp som du har frisläppt för kommandon förblir öppen.",
+      "unreadableHint": "Där nycklar och token finns. git, ssh och molnverktygen behåller mapparna de arbetar med, och en mapp som du har frisläppt för kommandon förblir öppen. Även pumrs egen datamapp, med dina chattar och inställningar, är stängd för kommandon, oavsett vad den här listan innehåller.",
       "excluded": "Kommandon som körs utanför sandboxen",
       "excludedHint": "För verktyg som har en egen sandbox och misslyckas i den här, till exempel webbläsartester. En post anger hur kommandoraden börjar; med * är den ett mönster för hela raden.",
       "addCommand": "Lägg till kommando",
@@ -800,6 +811,19 @@
       "timeout": "Stoppa efter (sekunder)",
       "project": "Projekt",
       "allProjects": "Alla projekt"
+    },
+    "memory": {
+      "title": "Minne",
+      "hint": "pumr kan komma ihåg hur du vill arbeta, till exempel hur du vill ha en kodgranskning redovisad, och talar om det för agenten i varje chatt och varje projekt. Inget sparas utan ditt ja.",
+      "enabled": "Använd minnet",
+      "enabledHint": "Av: posterna nedan finns kvar, men skickas inte till agenten och inget nytt föreslås.",
+      "suggestions": "Föreslå saker att komma ihåg",
+      "suggestionsHint": "När ett av dina meddelanden visar en bestående preferens frågar pumr efter svaret om den ska kommas ihåg: högst en gång per chatt och en gång per dag, och mer sällan för varje förslag du inte sparar. Av: pumr kommer fortfarande ihåg det du ber om.",
+      "list": "Sparade preferenser",
+      "add": "Lägg till post",
+      "empty": "Inget sparat ännu.",
+      "placeholder": "Till exempel: fråga mig vid kodgranskning för varje fynd om det ska åtgärdas eller hoppas över.",
+      "remove": "Ta bort post"
     },
     "providers": {
       "title": "Modellleverantörer",
@@ -846,7 +870,9 @@
     "languageHint": "Tillämpas efter sparning.",
     "workspace": {
       "allowed": "Tillåtna mappar",
-      "foldersHint": "Assistenten kan läsa och skriva i dessa mappar utan att fråga. Det aktiva projektet är alltid tillåtet."
+      "foldersHint": "Assistenten kan läsa och skriva i dessa mappar utan att fråga. Det aktiva projektet är alltid tillåtet.",
+      "readable": "Mappar endast för läsning",
+      "readableHint": "Assistenten kan läsa dessa mappar utan att fråga, men ändringar där frågar fortfarande. Att komma ihåg en fråga om att läsa eller lista en mapp lägger till mappen här."
     },
     "mcp": {
       "tabBrowse": "Bläddra",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Välj bild",
       "clearFile": "Ta bort bild",
       "noFile": "Ingen bild har valts",
-      "opacity": "Opacitet",
-      "blur": "Fläck",
+      "opacity": "Bakgrundens synlighet",
+      "blur": "Bakgrundens oskärpa",
+      "preview": "Förhandsvisning",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Maska",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Mappar med frisläppta känsliga filer",
     "secretFoldersHint": "Kommandon får använda de känsliga filerna (nycklar, token, inloggningsuppgifter) direkt i de här mapparna utan att fråga. Undermappar ingår inte. Använd \"tillåt alltid\" i en behörighetsfråga för att skapa en.",
     "noSecretFolders": "Inga mappar med frisläppta känsliga filer ännu.",
+    "pathFolders": "Betrodda mappar i PATH",
+    "pathFoldersHint": "Kommandon får lägga de här mapparna i PATH utan att fråga, trots att assistenten kan ändra filer i dem. Använd \"tillåt alltid\" i en behörighetsfråga för att lägga till en.",
+    "noPathFolders": "Inga betrodda mappar i PATH ännu.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + underkommando",
       "programFlags": "Program + flaggor",
-      "exact": "Exakt"
+      "exact": "Exakt",
+      "pathFolder": "Mapp i PATH"
     },
     "websiteAllowlist": "Tillåtna",
     "websiteDenylist": "Blockerade",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projektets körbara filer",
     "autoApproveProjectExecutablesHint": "Tillåt körbara filer i projektet, som ./node_modules/.bin/ng, utan att fråga varje gång.",
     "autoApproveProjectCommands": "Alla kommandon i projektet",
-    "autoApproveProjectCommandsHint": "Tillåt alla ofarliga kommandon vars sökvägar stannar inom projektet, även inbäddad node- eller python-kod som bara läser. Farliga kommandon, annan inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, känsliga filer och allt utanför frågar fortfarande.",
+    "autoApproveProjectCommandsHint": "Tillåt alla ofarliga kommandon vars sökvägar stannar inom projektet, även inbäddad node- eller python-kod som bara läser. Farliga kommandon, annan inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, känsliga filer och allt utanför frågar fortfarande. Undantaget är inbäddad node- eller python-kod som sandboxen kör i stället för att fråga (se Sandbox).",
     "permissionPreset": {
       "strict": "Strikt",
       "strictHint": "Bara kommandon som enbart läser körs utan att fråga.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonom",
       "autonomousHint": "Varje ofarligt kommando inom projektet körs utan att fråga.",
       "custom": "Anpassad",
-      "autonomousWarning": "Autonom litar på det här projektet: dess skript, Makefiles och körbara filer kan göra vad som helst utan att fråga, och inbäddad kod som bara läser körs också. Annan inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, farliga kommandon och allt utanför projektet frågar fortfarande.",
+      "autonomousWarning": "Autonom litar på det här projektet: dess skript, Makefiles och körbara filer kan göra vad som helst utan att fråga, och inbäddad kod som bara läser körs också. Annan inbäddad kod, paketnedladdningar, webbplatser som inte är tillåtna än, farliga kommandon och allt utanför projektet frågar fortfarande. Undantaget är inbäddad node- eller python-kod som sandboxen kör i stället för att fråga (se Sandbox).",
       "confirm": "Använd Autonom"
     },
     "noAllowedWebsites": "Inga alltid-tillåtna webbplatser ännu.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Tillåt mapp",
       "hint": "Lägger till mappen och allt under den bland de alltid tillåtna mapparna.",
-      "option": "Mapp + undermappar"
+      "option": "Mapp + undermappar",
+      "hintRead": "Öppnar mappen och allt under den för läsning. Ändringar där frågar fortfarande.",
+      "optionRead": "Läs mapp + undermappar"
     },
     "hostScope": {
       "title": "Tillåt webbplats",
@@ -1406,6 +1439,10 @@
       "hint": "Kommandon får sedan använda nycklar, token och filer med inloggningsuppgifter direkt i den här mappen utan att fråga. Undermappar ingår inte.",
       "option": "Känsliga filer i den här mappen",
       "chip": "känsliga filer i {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "En mapp som är betrodd i PATH får läggas dit av kommandon utan att fråga. Dess program körs då i stället för andra med samma namn.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Tillåt i denna chatt",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Varför",
     "keyboardHint": "Tryck 1–{{ count }} eller använd ↑ ↓ och Enter · Esc nekar",
     "mcpToolHint": "Att inte fråga igen gäller varje anrop av det här verktyget på den här servern, oavsett argument.",
+    "folderReadHint": "En ihågkommen mapp öppnas endast för läsning. Ändringar där frågar fortfarande.",
     "url": {
       "queryWarning": "Den här adressen innehåller mycket data i sin frågesträng. Kontrollera att den inte innehåller något privat innan du tillåter den."
     },
@@ -1443,7 +1481,8 @@
     "back": "Tillbaka",
     "next": "Nästa",
     "submit": "Skicka",
-    "skip": "Hoppa över"
+    "skip": "Hoppa över",
+    "resetPosition": "Återställ position"
   },
   "modelChoice": {
     "title": "Vilken modell ska subagenten använda?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Åtkomst nekad",
     "canceled": "Avbruten",
     "error": "Fel"
+  },
+  "memory": {
+    "title": "Komma ihåg detta?",
+    "noticed": "pumr lade märke till detta i ditt meddelande.",
+    "requested": "Du bad pumr att komma ihåg detta.",
+    "replaces": "Ersätter: {{ text }}",
+    "textLabel": "Vad som ska kommas ihåg",
+    "hint": "Sparade preferenser gäller i varje chatt, i alla projekt. Du kan ändra dem i inställningarna under Minne.",
+    "save": "Kom ihåg",
+    "decline": "Nej tack",
+    "disable": "Fråga inte igen",
+    "disableHint": "pumr slutar föreslå saker att komma ihåg. Du kan slå på det igen i inställningarna under Minne."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

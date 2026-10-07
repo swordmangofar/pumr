@@ -71,28 +71,55 @@ sessions in SQLite. No project files leave the machine except the requests you a
   shows the command, why it asks and numbered choices, like Claude Code: yes; yes
   and don't ask again for `git push *` (this chat, or always); no. The scope can be
   changed under Customize. One grant auto-approves every queued request it covers,
-  one deny clears the queue.
+  one deny clears the queue. A prompt nobody answers stays open until someone does;
+  after ten minutes the waiting turn no longer keeps the computer awake.
 - Dangerous commands and sensitive files (`.env`, keys, databases) get extra checks,
   especially outside the project. Inline code (`bash -c`, `node -e`), package
   downloads (`npx`) and hosts that `curl`, `git` or `ssh` contact always ask; network
-  commands follow the same website allow/deny list as the web tools.
+  commands follow the same website allow/deny list as the web tools. On macOS the
+  sandbox can take inline node and python code over instead (see below). `open` and
+  `xdg-open` hand what they are given to another app, outside all of this: a web link
+  follows the website list like any network command, a file or an app asks.
 - MCP tools run inside their server, outside these checks, so every call asks. "Don't
   ask again" remembers one tool of one server, whatever its arguments, for the chat or
   always. A server whose configuration changed asks again, and the settings list what
   is always allowed.
 - Strict, Balanced and Autonomous presets pick what runs without asking, and the
   debugger's Permissions view records every decision and why it was made.
-- Tools are sandboxed to the active project and the extra folders you allow.
+- Tools are sandboxed to the active project and the folders you allow. A prompt about
+  reading or listing a folder opens it for reading only, so letting the agent look at
+  where your JDKs are installed does not let it change one; a folder is opened for
+  changes when a change asks for it. Settings → Workspace lists both kinds.
 - Behind the rules, the operating system confines every command and whatever it starts
   (`sandbox-exec` on macOS, Landlock on Linux 5.19 and newer; Windows has no equivalent).
   A command writes only to the project, your extra folders, temp folders and the caches of
   build tools, and cannot read the folders that hold keys (`~/.ssh`, `~/.aws`, …); git, ssh
   and the cloud tools keep the ones they work with. So a `make test` whose script deletes
-  files outside the project is stopped even though the rules let it run. On macOS a second
+  files outside the project is stopped even though the rules let it run. Nor does a
+  command get into pumr's own data folder, which holds the chats of every project, the
+  settings and the snapshots: a script in one project does not read the chats about
+  another. That folder stays closed whatever folders you allow, except for the skills you
+  installed, whose scripts the agent runs, and a command you do want in there has to run
+  outside the sandbox. (Landlock can only allow, so on Linux a project or an allowed
+  folder that contains pumr's data folder opens it.) On macOS a
+  command also starts no other app: what `open` asks the system to launch would run
+  outside the sandbox, so `open` works only as a command of its own, where the rules
+  judge it, and an `open` inside a script or a build tool starts nothing. On macOS a second
   mode also closes the network, except for this machine and for commands whose hosts you
   allowed. A command the sandbox stops can ask to run outside it, which asks you every
   time, and Settings → Sandbox lists the folders and the commands that run outside it
   (tools with a sandbox of their own, such as browser tests, fail inside this one).
+- A one-off script cannot be read like a command, and no saved rule covers it. So on
+  macOS, while all commands inside the project run unasked, inline node or python code
+  (`node -e`, `python3 -c`) and scripts fed to them through a heredoc do not ask either:
+  they run in a tighter sandbox that reaches only this machine, writes only to the
+  project, your extra folders and temp folders, starts no apps, reaches no other
+  program and cannot change git hooks or `.git/config`. The same goes for a command
+  whose arguments are only known when it runs. Code that names a file outside the
+  project, a sensitive file or another host asks as before, and a script the tight
+  sandbox stops can ask for the prompt and run normally. Settings → Sandbox turns this
+  off; on Linux and Windows inline code keeps asking, and the agent is told to write a
+  script file instead.
 - Hooks are commands of yours that pumr runs at fixed moments, whatever the model
   remembers: before a tool call (to refuse it), after one (to format the edited file or
   report on it) and when the agent wants to finish (to send it back to work once). A hook
@@ -104,6 +131,16 @@ sessions in SQLite. No project files leave the machine except the requests you a
 - Commands run with the variables your shell profile exports, also when pumr was opened
   from the Dock or a launcher, so a skill that reads `$MY_CREDENTIALS/token` finds it as
   it does in your terminal.
+- A project can have variables of its own (the pencil next to it in the sidebar): one
+  `NAME=value` per line, such as `JAVA_HOME` and a `PATH` that starts with its `bin`.
+  Every command and hook of that project starts with them, the rules read command lines
+  with them, and the agent is told that they are set. A project that needs JDK 11 on a
+  machine that defaults to another one then needs no prefix on every command.
+- A command that changes `PATH` is judged by the folders it adds. One the agent cannot
+  change runs unasked; one it can change (a folder of the project or one allowed for
+  changes) asks, because a file there would run in place of a program. The prompt names
+  the folder, and "don't ask again" trusts that folder on `PATH`, for the chat or always,
+  rather than one command line. The settings list the trusted folders to take one back.
 - A command that uses a key, token or credential file asks every time, and no command
   rule changes that. What can be remembered is the folder: "don't ask again" releases the
   sensitive files directly in it for commands, for the chat or always, and the settings
@@ -165,6 +202,12 @@ sessions in SQLite. No project files leave the machine except the requests you a
   mode. `⌘⇧P` (`Ctrl+Shift+P` on Linux and Windows, configurable) switches between Planning
   and the mode the session was in before. The
   debugger shows how the system prompt was put together: base, global prompts and mode prompt.
+- Memory: pumr remembers how you like to work. When a message shows a lasting preference
+  ("ask me for every finding whether to fix it"), the agent proposes it, and once its answer
+  is there a card asks whether to remember it; "Remember that ..." works too. Nothing is
+  saved without your yes. It asks at most once per chat and once a day, less often after each
+  no, and "Don't ask again" stops the suggestions. What is remembered goes to the agent in
+  every chat and project, and Settings lists it to edit, add to or switch off.
 
 ### Providers and models
 
@@ -178,7 +221,8 @@ sessions in SQLite. No project files leave the machine except the requests you a
 <td valign="top">
 
 - OpenRouter catalog with per-model endpoints: provider, uptime, tokens/sec, latency,
-  and prices per 1M tokens.
+  and prices per 1M tokens. Providers that your OpenRouter privacy settings, provider
+  lists or guardrails rule out are shown as blocked and cannot be picked.
 - Direct providers with your own key: Anthropic (Messages API, with adaptive thinking and
   prompt caching), OpenAI, Google Gemini, xAI, Mistral, DeepSeek and Groq built in, local
   Ollama and LM Studio servers, and every OpenAI- or Anthropic-compatible provider in
@@ -250,7 +294,7 @@ the backend is a Tauri v2 Rust core.
 
 ## Roadmap
 
-- **Context and integrations:** smart project context, memories, opencode agent import.
+- **Context and integrations:** smart project context, opencode agent import.
 - **Polish:** OpenAI Responses API models (`-pro`, codex), Bedrock/Vertex, context-window management,
   packaging and signing.
 
@@ -311,6 +355,7 @@ src-tauri/src/           Rust core
   permissions.rs         command glob rules, danger list, path and sensitivity checks
   sandbox.rs             the OS sandbox around commands: Seatbelt profile, Landlock rules
   hooks.rs               the user's commands before and after tool calls and at turn end
+  memory.rs              remembered preferences: the remember tool and how often it may ask
   git.rs                 shadow git repo: snapshots, diffs, restore, branch info
   processes.rs           background process registry
   broker.rs              permission request/response plumbing

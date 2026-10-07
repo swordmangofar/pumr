@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { TranslocoPipe } from '@jsverse/transloco';
 import { api } from '../../core/api';
 import { SandboxMode, SandboxSupport } from '../../core/models';
+import { Toggle } from '../toggle';
 import { SettingsDraftService } from './settings-draft.service';
 import { TextList } from './text-list';
 
@@ -10,7 +11,7 @@ const MODES: readonly SandboxMode[] = ['off', 'files', 'filesAndNetwork'];
 @Component({
   selector: 'app-sandbox-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, TextList],
+  imports: [TranslocoPipe, TextList, Toggle],
   template: `
     <section>
       <h3 class="mb-2 text-sm font-semibold text-white">
@@ -58,6 +59,27 @@ const MODES: readonly SandboxMode[] = ['off', 'files', 'filesAndNetwork'];
           {{ 'settings.sandbox.networkUnavailable' | transloco }}
         </p>
       }
+      <div
+        class="mt-4 rounded-xl border border-white/10 bg-ink/40 px-4 py-3"
+        data-testid="sandbox-inline-code"
+      >
+        <div class="flex items-start gap-3">
+          <app-toggle
+            class="mt-0.5"
+            [checked]="inlineCodeAvailable() && draft.draft().sandboxInlineCode"
+            [disabled]="!inlineCodeAvailable()"
+            (toggled)="draft.patch('sandboxInlineCode', $event)"
+          />
+          <div>
+            <label class="block text-sm font-medium text-mist">
+              {{ 'settings.sandbox.inlineCode' | transloco }}
+            </label>
+            <p class="mt-1 text-xs leading-relaxed text-mist/30">
+              {{ 'settings.sandbox.inlineCodeHint' | transloco }}
+            </p>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="mt-8">
@@ -130,5 +152,14 @@ export class SandboxSettings {
   protected available(mode: SandboxMode): boolean {
     const support = this.support();
     return mode === 'off' || (mode === 'files' ? support.files : support.files && support.network);
+  }
+
+  /**
+   * Whether inline code can be left to the sandbox: it is on, and this machine
+   * can close the network around such code.
+   */
+  protected inlineCodeAvailable(): boolean {
+    const support = this.support();
+    return support.files && support.network && this.draft.draft().sandbox !== 'off';
   }
 }

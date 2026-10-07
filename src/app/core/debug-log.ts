@@ -1,8 +1,10 @@
 import {
+  CommandRule,
   LiveToolCall,
   Message,
   Mode,
   PermissionAuditEntry,
+  PermissionState,
   ProjectRule,
   SensitiveFinding,
   Session,
@@ -39,14 +41,40 @@ export interface DebugLogContext {
   /** Whether the system prompt is the session's own or the default one. */
   systemPromptSource: 'session' | 'default';
   globalPrompts: string[];
+  /** What pumr remembers of how the user works, where the turns are sent it. */
+  memories?: string[];
   mode: Mode | null;
   rules: ProjectRule[];
+}
+
+/**
+ * What decides whether a tool call asks: the lists saved in the settings and
+ * what holds for this chat or until the app restarts. Without them a log
+ * shows that a command asked, and not why.
+ */
+export interface DebugLogPermissions {
+  saved: Pick<
+    Settings,
+    | 'extraFolders'
+    | 'readFolders'
+    | 'pathFolders'
+    | 'secretFolders'
+    | 'commandRules'
+    | 'deniedCommandRules'
+    | 'sandboxWritableFolders'
+    | 'sandboxUnreadableFolders'
+    | 'sandboxExcludedCommands'
+  > | null;
+  /** `null` when the backend could not be asked. */
+  live: PermissionState | null;
 }
 
 export interface DebugLogInput {
   exportedAt: number;
   system: SystemInfo | null;
   settings: DebugLogSetting[];
+  /** Left out by callers that have nothing to say about permissions. */
+  permissions?: DebugLogPermissions;
   context: DebugLogContext;
   /** The main session first, then its subagents breadth first. */
   agents: DebugLogAgent[];
@@ -77,8 +105,12 @@ export function debugLogSettings(settings: Settings | null): DebugLogSetting[] {
     ['Auto-approve package scripts', settings.autoApprovePackageScripts],
     ['Auto-approve project executables', settings.autoApproveProjectExecutables],
     ['Auto-approve project commands', settings.autoApproveProjectCommands],
+    ['Sandbox', settings.sandbox],
+    ['Sandbox for inline code', settings.sandboxInlineCode],
     ['Ignore gitignored files', settings.ignoreGitignored],
     ['MCP progressive disclosure', settings.mcpProgressiveDisclosure],
+    ['Memory', settings.memoryEnabled],
+    ['Memory suggestions', settings.memorySuggestions],
     ['Interface zoom', settings.zoom],
   ];
 }
@@ -96,6 +128,14 @@ export function enabledGlobalPrompts(settings: Settings): string[] {
     }
   }
   return prompts;
+}
+
+/** What pumr remembers of the user's preferences and sends with every turn. */
+export function rememberedPreferences(settings: Settings): string[] {
+  if (!settings.memoryEnabled) {
+    return [];
+  }
+  return (settings.memories ?? []).map((entry) => entry.text.trim()).filter((text) => text);
 }
 
 /** Renders the whole chat as one Markdown document. */
@@ -138,6 +178,10 @@ export function buildDebugLog(input: DebugLogInput): string {
     }
   }
 
+  if (input.permissions) {
+    out.push('', ...permissionsSection(input.permissions));
+  }
+
   const [main] = input.agents;
   if (main) {
     const errors = input.agents.filter((agent) => agent.error);
@@ -166,6 +210,53 @@ export function buildDebugLog(input: DebugLogInput): string {
     }
   }
   return `${out.join('\n').trimEnd()}\n`;
+}
+
+function permissionsSection({ saved, live }: DebugLogPermissions): string[] {
+  const out = ['## Permissions', ''];
+  if (live) {
+    out.push(
+      item('PATH of commands', live.commandPath),
+      item(
+        'Environment of commands',
+        live.loginShell ? "the user's login shell" : 'as pumr was started',
+      ),
+      // Names only: a value may be a key.
+      item('Variables set by the project', live.projectVariables.join(', ')),
+    );
+  } else {
+    out.push('- What holds for this chat only could not be read.');
+  }
+  const rules = (list: CommandRule[]) => list.map((rule) => `${rule.kind} ${code(rule.value)}`);
+  const folders = (list: string[]) => list.map((folder) => code(folder));
+  out.push(
+    ...listItem('Folders the assistant may change', folders(saved?.extraFolders ?? [])),
+    ...listItem('The same until the app restarts', folders(live?.sessionFolders ?? [])),
+    ...listItem('Folders the assistant may read', folders(saved?.readFolders ?? [])),
+    ...listItem('The same until the app restarts', folders(live?.sessionReadFolders ?? [])),
+    ...listItem('Folders trusted on PATH', folders(saved?.pathFolders ?? [])),
+    ...listItem('The same in this chat', folders(live?.chatPathFolders ?? [])),
+    ...listItem('Folders with released sensitive files', folders(saved?.secretFolders ?? [])),
+    ...listItem('The same in this chat', folders(live?.chatSecretFolders ?? [])),
+    ...listItem('Allowed command rules', rules(saved?.commandRules ?? [])),
+    ...listItem('The same in this chat', rules(live?.chatCommandRules ?? [])),
+    ...listItem('Denied command rules', rules(saved?.deniedCommandRules ?? [])),
+    ...listItem('Sandbox: writable folders', folders(saved?.sandboxWritableFolders ?? [])),
+    ...listItem('Sandbox: unreadable folders', folders(saved?.sandboxUnreadableFolders ?? [])),
+    ...listItem(
+      'Sandbox: commands that run outside it',
+      (saved?.sandboxExcludedCommands ?? []).map((command) => code(command)),
+    ),
+  );
+  return out;
+}
+
+/** A labelled list, one entry per line below the label; `-` when it is empty. */
+function listItem(label: string, entries: string[]): string[] {
+  if (entries.length === 0) {
+    return [item(label, null)];
+  }
+  return [`- ${label}:`, ...entries.map((entry) => `  - ${entry}`)];
 }
 
 function contextSection(context: DebugLogContext): string[] {
@@ -199,6 +290,10 @@ function contextSection(context: DebugLogContext): string[] {
   }
   if (context.globalPrompts.length > 0) {
     out.push('### Global prompts', '', fence(clip(context.globalPrompts.join('\n\n'))), '');
+  }
+  if (context.memories?.length) {
+    const list = context.memories.map((entry) => `- ${entry}`).join('\n');
+    out.push('### Remembered preferences', '', fence(clip(list)), '');
   }
   for (const rule of context.rules) {
     out.push(`### Project rules: ${rule.path} (${rule.scope})`, '', fence(clip(rule.content)), '');

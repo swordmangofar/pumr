@@ -16,8 +16,23 @@ import { SettingsDraftService } from './settings-draft.service';
         {{ 'settings.workspace.foldersHint' | transloco }}
       </p>
       <app-folder-list
+        data-testid="allowed-folders"
         [folders]="draft.draft().extraFolders"
         (changed)="draft.patch('extraFolders', $event)"
+      />
+    </section>
+
+    <section class="mt-8">
+      <h3 class="mb-2 text-sm font-semibold text-white">
+        {{ 'settings.workspace.readable' | transloco }}
+      </h3>
+      <p class="mb-3 text-xs leading-relaxed text-mist/30">
+        {{ 'settings.workspace.readableHint' | transloco }}
+      </p>
+      <app-folder-list
+        data-testid="read-folders"
+        [folders]="draft.draft().readFolders"
+        (changed)="draft.patch('readFolders', $event)"
       />
     </section>
   `,

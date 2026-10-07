@@ -276,8 +276,8 @@
     "more": "Rohkem vahekaarte"
   },
   "projectAppearance": {
-    "title": "Projekti välimus",
-    "edit": "Muuda projekti välimust",
+    "title": "Projekti seaded",
+    "edit": "Muuda projekti",
     "color": "Värv",
     "auto": "Automaatne",
     "customColor": "Kohandatud värv",
@@ -289,7 +289,11 @@
     "imageHint": "Kõige paremini sobib ruudukujuline pilt. Seda kärbitakse ja selle suurust muudetakse automaatselt.",
     "notAnImage": "Valige pildifail.",
     "imageFailed": "Seda pilti ei õnnestunud lugeda.",
-    "saveFailed": "Projekti välimust ei saanud salvestada."
+    "saveFailed": "Projekti välimust ei saanud salvestada.",
+    "environment": "Käskude keskkond",
+    "environmentHint": "Igal real üks NAME=value, nagu shelli profiilis. Iga käsk, mille assistent selles projektis käivitab, alustab nende muutujatega. $NAME ja ~ asendatakse väärtustega, seega töötab PATH=$JAVA_HOME/bin:$PATH.",
+    "environmentInvalid": "Rida {{ line }} ei ole kujul NAME=value.",
+    "environmentFailed": "Keskkonda ei õnnestunud salvestada: {{ error }}"
   },
   "chat": {
     "placeholder": "Kirjeldage oma ülesannet... kasutage @ failide, kaustade, veebisaitide, Skills'ide või MCP-serverite lisamiseks",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globaalsed juhised",
       "mode": "Režiimi konfiguratsioon",
       "projectRules": "Projekti reeglid",
+      "memory": "Meelde jäetud eelistused",
       "user": "Kasutaja sõnum",
       "assistant": "Mudeli vastus",
       "tool": "Tööriistakõne",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globaalsed juhised",
       "mode": "Režiimi viip",
       "projectRules": "Projekti reeglid",
+      "memory": "Meelde jäetud eelistused",
       "prompt": "Viip",
       "referencedContext": "Viidatud kontekst",
       "mentions": "Mainib",
@@ -632,6 +638,8 @@
     "presetValueHint": "Valib pakkuja, kellel on parim tokenite arv sekundis dollari kohta.",
     "trains": "treenib andmetel",
     "trainsHint": "See pakkuja võib kasutada teie viipasid treenimiseks.",
+    "blocked": "blokeeritud",
+    "blockedHint": "Teie OpenRouteri privaatsus- või pakkujaseaded blokeerivad selle pakkuja.",
     "priceHint": "Hind 1M tokeni kohta, värvitud võrreldes selle mudeli teiste pakkujatega"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Pakkujad",
       "agent": "Agendi konfiguratsioon",
+      "memory": "Mälu",
       "agentRules": "Agendi lubatud ja keelatud nimekiri",
       "sandbox": "Liivakast",
       "hooks": "Hookid",
@@ -760,6 +769,8 @@
       "hint": "Operatsioonisüsteem piirab iga käsku, mille agent käivitab, ja kõike, mida see käsk käivitab. See on teine kiht õiguste reeglite taga käsu jaoks, mida need valesti hindavad. Käsk, mille liivakast peatab, võib taotleda käivitamist väljaspool seda; teilt küsitakse iga kord.",
       "unavailable": "Selles süsteemis pole liivakasti, mida pumr saaks kasutada, seega töötavad käsud piiranguteta. Vaja on macOS-i või Linux 5.19 või uuemat koos Landlockiga.",
       "networkUnavailable": "Võrgu sulgemine on võimalik ainult macOS-is.",
+      "inlineCode": "Käivita tekstisisene kood küsimise asemel rangemas liivakastis",
+      "inlineCodeHint": "Node'i või pythoni tekstisisest koodi ja neile heredoc'iga antud skripte ei saa kontrollida nagu käsku. Kuni „Kõik käsud projekti sees“ on sisse lülitatud, käivitub selline kood küsimata rangemas liivakastis: see ulatub ainult selle arvutini, kirjutab ainult projekti, teie lisakaustadesse ja ajutistesse kaustadesse ning ei saa käivitada rakendusi, ulatuda teiste programmideni ega muuta git'i hook'e. Sama kehtib käsu kohta, mille argumendid selguvad alles käivitamisel. Kood, mis nimetab faile väljaspool projekti, tundlikke faile või teisi veebisaite, küsib endiselt. Kui liivakast skripti peatab, võib agent paluda teil see tavapäraselt käivitada. Ainult macOS.",
       "modes": {
         "off": "Väljas",
         "files": "Failid",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Käsud töötavad teie kasutajana ja neid hoiavad tagasi ainult õiguste reeglid.",
-        "files": "Käsud kirjutavad ainult projekti, teie lisakaustadesse, ajutistesse kaustadesse ja allpool loetletud kaustadesse. Võtmeid sisaldavaid kaustu ei saa käsud lugeda.",
+        "files": "Käsud kirjutavad ainult projekti, teie lisakaustadesse, ajutistesse kaustadesse ja allpool loetletud kaustadesse. Võtmeid sisaldavaid kaustu ei saa käsud lugeda. macOS-is ei saa need ka teisi rakendusi käivitada: open töötab ainult eraldi käsuna, mida õiguste reeglid kontrollivad.",
         "filesAndNetwork": "Sama, ja käsud saavad ühendust ainult selle arvutiga, välja arvatud käsud, mille hostid olete lubanud. Pakettide paigaldamine taotleb siis käivitamist väljaspool liivakasti."
       },
       "writable": "Kaustad, kuhu käsud võivad samuti kirjutada",
       "writableHint": "Ehitustööriistade vahemälud. Ilma nendeta ebaõnnestub ehitus esimesel allalaadimisel. Tee algab märgiga / või ~.",
       "unreadable": "Kaustad, mida käsud ei saa lugeda",
-      "unreadableHint": "Kohad, kus asuvad võtmed ja tokenid. git, ssh ja pilvetööriistad saavad endiselt kasutada kaustu, millega nad töötavad, ja kaust, mille olete käskudele lubanud, jääb avatuks.",
+      "unreadableHint": "Kohad, kus asuvad võtmed ja tokenid. git, ssh ja pilvetööriistad saavad endiselt kasutada kaustu, millega nad töötavad, ja kaust, mille olete käskudele lubanud, jääb avatuks. Ka pumri enda andmekaust teie vestluste ja seadetega on käskudele suletud, olenemata sellest, mis selles loendis on.",
       "excluded": "Käsud, mis töötavad väljaspool liivakasti",
       "excludedHint": "Tööriistadele, mis toovad kaasa oma liivakasti ja ebaõnnestuvad selle liivakasti sees, näiteks brauseritestidele. Kirje nimetab, kuidas käsurida algab; märgiga * on see kogu rea muster.",
       "addCommand": "Lisa käsk",
@@ -800,6 +811,19 @@
       "timeout": "Peata pärast (sekundit)",
       "project": "Projekt",
       "allProjects": "Kõik projektid"
+    },
+    "memory": {
+      "title": "Mälu",
+      "hint": "pumr võib meelde jätta, kuidas sulle meeldib töötada, näiteks kuidas soovid koodiülevaatuse tulemusi näha, ja ütleb seda agendile igas vestluses ja igas projektis. Ilma sinu nõusolekuta ei jäeta midagi meelde.",
+      "enabled": "Kasuta mälu",
+      "enabledHint": "Väljalülitatuna jäävad allolevad kirjed alles, kuid neid ei saadeta agendile ja midagi uut ei pakuta.",
+      "suggestions": "Paku, mida meelde jätta",
+      "suggestionsHint": "Kui mõni sinu sõnum näitab püsivat eelistust, küsib pumr pärast vastust, kas see meelde jätta: kõige rohkem kord vestluse kohta ja kord päevas, ning harvem iga kord, kui sa ettepanekut ei salvesta. Väljalülitatuna jätab pumr endiselt meelde selle, mida sa palud.",
+      "list": "Meelde jäetud eelistused",
+      "add": "Lisa kirje",
+      "empty": "Midagi pole veel meelde jäetud.",
+      "placeholder": "Näiteks: küsi koodi ülevaatamisel iga leiu kohta, kas see parandada või vahele jätta.",
+      "remove": "Eemalda kirje"
     },
     "providers": {
       "title": "Mudelipakkujad",
@@ -846,7 +870,9 @@
     "languageHint": "Rakendub pärast salvestamist.",
     "workspace": {
       "allowed": "Lubatud kaustad",
-      "foldersHint": "Assistent saab neid kaustu ilma küsimata lugeda ja neisse kirjutada. Aktiivne projekt on alati lubatud."
+      "foldersHint": "Assistent saab neid kaustu ilma küsimata lugeda ja neisse kirjutada. Aktiivne projekt on alati lubatud.",
+      "readable": "Kaustad ainult lugemiseks",
+      "readableHint": "Assistent saab neid kaustu ilma küsimata lugeda, kuid sealsed muudatused küsivad endiselt. Kui kausta lugemise või loetlemise küsimus jäetakse meelde, lisatakse kaust siia."
     },
     "mcp": {
       "tabBrowse": "Sirvi",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Valige pilt",
       "clearFile": "Eemalda pilt",
       "noFile": "Ühtegi pilti pole valitud",
-      "opacity": "Läbipaistmatus",
-      "blur": "Hägusus",
+      "opacity": "Tausta nähtavus",
+      "blur": "Tausta hägusus",
+      "preview": "Eelvaade",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Võrk",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Kaustad, mille tundlikud failid on lubatud",
     "secretFoldersHint": "Käsud võivad kasutada otse nendes kaustades olevaid tundlikke faile (võtmeid, tokeneid, mandaate) küsimata. Alamkaustad ei kuulu siia alla. Kasutage õiguste küsimuses „luba alati“, et üks luua.",
     "noSecretFolders": "Kaustu, mille tundlikud failid on lubatud, veel pole.",
+    "pathFolders": "PATH-is usaldatud kaustad",
+    "pathFoldersHint": "Käsud võivad need kaustad küsimata PATH-i lisada, kuigi assistent saab neis olevaid faile muuta. Kasutage õiguste küsimuses „luba alati“, et üks lisada.",
+    "noPathFolders": "PATH-is usaldatud kaustu veel pole.",
     "scope": {
       "program": "Programm",
       "subcommand": "Programm + alamkäsk",
       "programFlags": "Programm + lipud",
-      "exact": "Täpne"
+      "exact": "Täpne",
+      "pathFolder": "Kaust PATH-is"
     },
     "websiteAllowlist": "Lubatud",
     "websiteDenylist": "Blokeeritud",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projekti käivitatavad failid",
     "autoApproveProjectExecutablesHint": "Lubab projekti sees olevaid käivitatavaid faile, näiteks ./node_modules/.bin/ng, ilma iga kord küsima.",
     "autoApproveProjectCommands": "Kõik käsud projekti sees",
-    "autoApproveProjectCommandsHint": "Lubab iga ohutu käsu, mille teed jäävad projekti sisse, sealhulgas node'i või pythoni tekstisisese koodi, mis ainult loeb. Ohtlikud käsud, muu tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, tundlikud failid ja kõik väljaspool küsivad endiselt.",
+    "autoApproveProjectCommandsHint": "Lubab iga ohutu käsu, mille teed jäävad projekti sisse, sealhulgas node'i või pythoni tekstisisese koodi, mis ainult loeb. Ohtlikud käsud, muu tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, tundlikud failid ja kõik väljaspool küsivad endiselt. Erand on node'i või pythoni tekstisisene kood, mille liivakast küsimise asemel käivitab (vt Liivakast).",
     "permissionPreset": {
       "strict": "Range",
       "strictHint": "Küsimata töötavad ainult käsud, mis ainult loevad.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonoomne",
       "autonomousHint": "Iga ohutu käsk projekti sees töötab küsimata.",
       "custom": "Kohandatud",
-      "autonomousWarning": "Autonoomne režiim usaldab seda projekti: selle skriptid, Makefile'id ja käivitatavad failid võivad küsimata teha mida tahes ning ainult lugev tekstisisene kood käivitub samuti. Muu tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, ohtlikud käsud ja kõik väljaspool projekti küsivad endiselt.",
+      "autonomousWarning": "Autonoomne režiim usaldab seda projekti: selle skriptid, Makefile'id ja käivitatavad failid võivad küsimata teha mida tahes ning ainult lugev tekstisisene kood käivitub samuti. Muu tekstisisene kood, pakettide allalaadimine, veel lubamata veebisaidid, ohtlikud käsud ja kõik väljaspool projekti küsivad endiselt. Erand on node'i või pythoni tekstisisene kood, mille liivakast küsimise asemel käivitab (vt Liivakast).",
       "confirm": "Kasuta autonoomset režiimi"
     },
     "noAllowedWebsites": "Alati lubatud veebisaite veel pole.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Luba kaust",
       "hint": "Lisab kausta ja kõik selle sisu alati lubatud kaustade hulka.",
-      "option": "Kaust + alamkaustad"
+      "option": "Kaust + alamkaustad",
+      "hintRead": "Avab kausta ja kõik selle sisu lugemiseks. Sealsed muudatused küsivad endiselt.",
+      "optionRead": "Kaust + alamkaustad lugemiseks"
     },
     "hostScope": {
       "title": "Luba veebisait",
@@ -1406,6 +1439,10 @@
       "hint": "Käsud võivad seejärel kasutada otse selles kaustas olevaid võtmeid, tokeneid ja mandaadifaile küsimata. Alamkaustad ei kuulu siia alla.",
       "option": "Selle kausta tundlikud failid",
       "chip": "tundlikud failid kaustas {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "PATH-is usaldatud kausta võivad käsud sinna küsimata lisada. Selle programmid käivituvad siis teiste samanimeliste asemel.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Luba selles vestluses",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Miks",
     "keyboardHint": "Vajuta 1–{{ count }} või kasuta ↑ ↓ ja Enterit · Esc keelab",
     "mcpToolHint": "Enam mitte küsimine kehtib selle tööriista iga kutse kohta selles serveris, olenemata argumentidest.",
+    "folderReadHint": "Meelde jäetud kaust avatakse ainult lugemiseks. Sealsed muudatused küsivad endiselt.",
     "url": {
       "queryWarning": "See aadress kannab päringustringis palju andmeid. Enne lubamist veendu, et see ei sisalda midagi privaatset."
     },
@@ -1443,7 +1481,8 @@
     "back": "Tagasi",
     "next": "Edasi",
     "submit": "Esita",
-    "skip": "Jäta vahele"
+    "skip": "Jäta vahele",
+    "resetPosition": "Lähtesta asukoht"
   },
   "modelChoice": {
     "title": "Millist mudelit peaks subagent kasutama?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Õigus keelatud",
     "canceled": "Tühistatud",
     "error": "Viga"
+  },
+  "memory": {
+    "title": "Kas jätta see meelde?",
+    "noticed": "pumr märkas seda sinu sõnumis.",
+    "requested": "Sa palusid pumril see meelde jätta.",
+    "replaces": "Asendab: {{ text }}",
+    "textLabel": "Mida meelde jätta",
+    "hint": "Salvestatud eelistused kehtivad igas vestluses ja kõigis projektides. Saad neid muuta seadetes jaotises Mälu.",
+    "save": "Jäta meelde",
+    "decline": "Ei, aitäh",
+    "disable": "Ära enam küsi",
+    "disableHint": "pumr ei paku enam, mida meelde jätta. Saad selle uuesti sisse lülitada seadetes jaotises Mälu."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

@@ -80,6 +80,55 @@ test.describe('settings', () => {
     expect(await app.backend.calls('save_settings')).toEqual([]);
   });
 
+  test('previews the backdrop sliders in the dialog and restyles the app on release', async ({
+    app,
+    page,
+  }) => {
+    const initial = seed();
+    initial.settings.background = 'aurora';
+    await app.start(initial);
+    const rootVar = (name: string) =>
+      page.evaluate((prop) => document.documentElement.style.getPropertyValue(prop), name);
+    // A drag sends `input` on every step and `change` only when it ends.
+    const drag = (name: string, value: string) =>
+      dialog.getByRole('slider', { name }).evaluate((input: HTMLInputElement, next) => {
+        input.value = next;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }, value);
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Appearance' }).click();
+    const preview = dialog.getByTestId('appearance-preview');
+    const wallpaper = preview.locator('.bg-preview');
+
+    await drag('Glass opacity', '0.4');
+    await drag('Background blur', '20');
+    await drag('Background visibility', '0.5');
+    await expect(dialog.getByText('40%')).toBeVisible();
+    // The preview is a quarter of the window, and so is its blur. Aurora's own
+    // opacity is 0.8.
+    expect(await preview.evaluate((el) => el.style.getPropertyValue('--glass-alpha'))).toBe('0.4');
+    await expect(wallpaper).toHaveCSS('filter', 'blur(5px)');
+    await expect(wallpaper).toHaveCSS('opacity', '0.4');
+    expect(await rootVar('--glass-alpha')).toBe('1');
+    expect(await rootVar('--app-bg-filter')).toBe('');
+    expect(await rootVar('--app-bg-opacity')).toBe('0.8');
+
+    await dialog.getByRole('slider', { name: 'Glass opacity' }).dispatchEvent('change');
+    expect(await rootVar('--glass-alpha')).toBe('0.4');
+    expect(await rootVar('--app-bg-filter')).toBe('blur(20px)');
+    expect(await rootVar('--app-bg-opacity')).toBe('0.4');
+
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    const saved = await app.backend.lastCall('save_settings');
+    expect(saved?.args['settings']).toMatchObject({
+      glassOpacity: 0.4,
+      backgroundBlur: 20,
+      backgroundOpacity: 0.5,
+    });
+  });
+
   test('connects a provider with its key and lists its models', async ({ app, page }) => {
     await app.start(seed({ models: [model(), model('anthropic:claude-opus-5', 'Claude Opus 5')] }));
 

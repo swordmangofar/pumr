@@ -84,6 +84,10 @@ pub struct TurnRequest {
     /// The user's hooks for this project: commands run before and after tool
     /// calls and when the agent wants to finish.
     pub hooks: Hooks,
+    /// What the chat's agent is offered of pumr's memory: the `remember`
+    /// tool, with which it proposes a preference of the user's to keep.
+    /// `None` leaves the tool out.
+    pub memory: Option<crate::memory::Offer>,
     pub cancel: CancellationToken,
 }
 
@@ -421,6 +425,14 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
     if deps.permissions.sandboxes() {
         tools::offer_unsandboxed(&mut tool_schemas);
     }
+    if deps.permissions.contains_inline_code() {
+        tools::offer_ask_first(&mut tool_schemas);
+    } else {
+        tools::prefer_script_files(&mut tool_schemas);
+    }
+    if let Some(offer) = &request.memory {
+        tool_schemas.push(crate::memory::schema(offer.suggestions));
+    }
     let mcp_schemas = deps.mcp.schemas();
     if should_defer_mcp(request, &mcp_schemas) {
         // Inline the two discovery tools instead of every MCP schema.
@@ -448,14 +460,17 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
 
 /// Whether the tool `name` may run in this request: planning modes change
 /// nothing and run nothing, read-only modes change no files, and a subagent
-/// neither delegates nor asks the user. It decides both what the model is
-/// offered and what is run, because a model calls a tool it is not offered
-/// all the same when the chat's earlier turns, in another mode, used it.
+/// neither delegates nor asks the user, nor proposes anything for the
+/// memory, which no agent does while it is switched off. It decides both
+/// what the model is offered and what is run, because a model calls a tool it
+/// is not offered all the same when the chat's earlier turns, in another
+/// mode, used it.
 fn tool_allowed(request: &TurnRequest, name: &str) -> bool {
     !match name {
         "write" | "edit" => request.plan_only || request.read_only,
         "bash" | "bash_output" => request.plan_only,
         "task" | "question" => request.depth >= MAX_SUBAGENT_DEPTH,
+        "remember" => request.depth >= MAX_SUBAGENT_DEPTH || request.memory.is_none(),
         _ => false,
     }
 }
@@ -721,6 +736,9 @@ struct TurnWatch {
     unchecked: Vec<String>,
     /// The agent was already asked in this turn to check its changes.
     asked: bool,
+    /// A command since the last change was refused: the user said no, or the
+    /// turn was stopped at its prompt.
+    refused: bool,
     /// Per call (tool and arguments): its last result and how often in a row
     /// it came back the same.
     repeats: HashMap<String, (u64, usize)>,
@@ -739,11 +757,17 @@ impl TurnWatch {
                 for change in &outcome.changes {
                     if is_code_path(&change.path) && !self.unchecked.contains(&change.path) {
                         self.unchecked.push(change.path.clone());
+                        self.refused = false;
                     }
                 }
             }
+            // The agent tried to run something and was not let. Sending it
+            // back to run a check would raise the same prompt once more.
+            "bash" | "bash_output" if matches!(outcome.status.as_str(), "denied" | "canceled") => {
+                self.refused = true;
+            }
             // Any command counts: which one checks a change is the agent's call.
-            "bash" | "bash_output" if !matches!(outcome.status.as_str(), "denied" | "canceled") => {
+            "bash" | "bash_output" => {
                 self.unchecked.clear();
             }
             _ => {}
@@ -812,9 +836,10 @@ impl TurnWatch {
 
     /// What to tell an agent that is about to finish with code it changed
     /// and never ran anything against, given the project's `checks`. `None`
-    /// when there is nothing to ask, or it was asked before in this turn.
+    /// when there is nothing to ask, it was asked before in this turn, or a
+    /// command it tried after the change was refused.
     fn unchecked_note(&mut self, checks: &[String]) -> Option<String> {
-        if self.asked || self.unchecked.is_empty() || checks.is_empty() {
+        if self.asked || self.refused || self.unchecked.is_empty() || checks.is_empty() {
             return None;
         }
         self.asked = true;
@@ -1058,6 +1083,7 @@ fn run_subagent<'a>(
             compaction_model: request.compaction_model.clone(),
             completion_checks: Vec::new(),
             hooks: request.hooks.clone(),
+            memory: None,
             cancel: request.cancel.clone(),
         };
 
@@ -2415,6 +2441,15 @@ async fn run_call(
     if call.name == "todo" {
         return tools::write_todos(&deps.db, &request.session_id, &arguments);
     }
+    if let (crate::memory::TOOL, Some(offer)) = (call.name.as_str(), &request.memory) {
+        return crate::memory::suggest(
+            &deps.db,
+            offer,
+            &request.session_id,
+            &request.conversation_id,
+            &arguments,
+        );
+    }
     let mut runtime = ToolRuntime {
         call_id: call.id.clone(),
         project_root: request.project_root.clone(),
@@ -2476,7 +2511,7 @@ fn pictures(deps: &TurnDeps, request: &TurnRequest) -> Pictures {
 /// True when a tool call may have touched the workspace, so the live change
 /// set is worth recomputing.
 fn may_mutate_workspace(name: &str) -> bool {
-    !is_read_only_tool(name) && !matches!(name, "question" | "todo")
+    !is_read_only_tool(name) && !matches!(name, "question" | "todo" | "remember")
 }
 
 /// The files this session has changed so far, one per line, for a subagent
@@ -2704,6 +2739,11 @@ fn summarize(request: &TurnRequest, name: &str, arguments: &str) -> String {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
+        "remember" => parsed
+            .get("preference")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         "screenshot" => ["caption", "url", "path"]
             .iter()
             .find_map(|key| parsed.get(*key).and_then(Value::as_str))
@@ -2864,6 +2904,30 @@ mod tests {
         let mut watch = TurnWatch::default();
         watch.observe(&call("write", "{}"), &mut edited("docs/guide.md"));
         assert_eq!(watch.unchecked_note(&checks), None);
+    }
+
+    #[test]
+    fn a_check_the_user_refused_is_not_asked_for_again() {
+        let checks = vec!["./gradlew test".to_string()];
+        let refused = |status: &str| ToolOutcome {
+            result: "The user denied this action.".to_string(),
+            status: status.to_string(),
+            changes: Vec::new(),
+            attachments: Vec::new(),
+        };
+        for status in ["denied", "canceled"] {
+            let mut watch = TurnWatch::default();
+            watch.observe(&call("edit", "{}"), &mut edited("src/A.java"));
+            watch.observe(
+                &call("bash", r#"{"command":"./gradlew test"}"#),
+                &mut refused(status),
+            );
+            // The agent tried; the note would only raise the prompt again.
+            assert_eq!(watch.unchecked_note(&checks), None, "{status}");
+            // A change after that is a new reason to check.
+            watch.observe(&call("edit", "{}"), &mut edited("src/B.java"));
+            assert!(watch.unchecked_note(&checks).is_some(), "{status}");
+        }
     }
 
     #[test]
@@ -4015,6 +4079,7 @@ mod tests {
             compaction_model: "ollama:test".to_string(),
             completion_checks: Vec::new(),
             hooks: Hooks::for_project(&hooks, root),
+            memory: None,
             cancel: CancellationToken::new(),
         };
         let deps = TurnDeps {
@@ -4152,7 +4217,7 @@ mod tests {
                 .iter()
                 .filter_map(|schema| schema.pointer("/function/name")?.as_str())
                 .collect();
-            let built_in = "read write edit bash bash_output task question";
+            let built_in = "read write edit bash bash_output task question remember";
             for name in built_in.split(' ') {
                 let allowed = tool_allowed(&request, name);
                 assert_eq!(offered.contains(&name), allowed, "{name}");
@@ -4181,6 +4246,93 @@ mod tests {
                 assert_eq!(result, &format!("The {name} {told}"));
             }
         }
+    }
+
+    fn offered(deps: &TurnDeps, request: &TurnRequest) -> Vec<String> {
+        build_tool_schemas(deps, request)
+            .iter()
+            .filter_map(|schema| schema.pointer("/function/name")?.as_str())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn memory(suggestions: bool) -> Option<crate::memory::Offer> {
+        Some(crate::memory::Offer {
+            suggestions,
+            entries: Vec::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn remember_is_offered_to_the_chats_own_agent_only_and_only_with_memory_on() {
+        let (temp, db, session) = chat();
+        let root = project(&temp);
+        let (deps, mut request) = turn(db, &session, &root, "http://127.0.0.1:9/v1", Vec::new());
+        let noted = call("remember", r#"{"preference":"Keep answers short."}"#);
+        let sink: EventSink = Arc::new(|_: RoutedEvent| {});
+
+        // The memory is switched off.
+        assert!(!offered(&deps, &request).contains(&"remember".to_string()));
+        let outcome = run_call(&deps, &request, &noted, &sink).await;
+        assert_eq!(outcome.status, "error");
+        assert!(outcome.result.starts_with("The remember tool is not"));
+
+        // Whether the agent may propose on its own only changes what the
+        // tool says of itself.
+        for suggestions in [true, false] {
+            request.memory = memory(suggestions);
+            assert!(offered(&deps, &request).contains(&"remember".to_string()));
+        }
+
+        // A subagent reads what a page or a file says and has no user to ask.
+        request.depth = MAX_SUBAGENT_DEPTH;
+        assert!(!offered(&deps, &request).contains(&"remember".to_string()));
+        let outcome = run_call(&deps, &request, &noted, &sink).await;
+        assert_eq!(outcome.status, "error");
+        assert!(deps
+            .db
+            .get_session(&session)
+            .unwrap()
+            .memory_suggestions
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_remember_call_leaves_a_suggestion_and_the_turn_goes_on() {
+        let (temp, db, session) = chat();
+        let root = project(&temp);
+        prompt(&db, &session, "review it, and ask me for every finding");
+        let (base_url, requests) = scripted_server(vec![
+            called(
+                "remember",
+                json!({ "preference": "Ask me for every finding whether to fix it." }),
+            ),
+            said("Here is the review."),
+        ]);
+        let (deps, mut request) = turn(db, &session, &root, &base_url, Vec::new());
+        request.memory = memory(true);
+
+        let result = run_turn(&deps, request, Arc::new(|_: RoutedEvent| {}))
+            .await
+            .unwrap();
+        // The agent did not wait for the user.
+        assert_eq!(result.message.content, "Here is the review.");
+        let sent: Vec<String> = requests.try_iter().collect();
+        assert!(sent[0].contains(r#""name":"remember""#));
+
+        let results = tool_results(&deps.db, &session);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "ok");
+        assert!(results[0].2.starts_with("Noted. Nothing is saved yet"));
+        let open = deps.db.get_session(&session).unwrap().memory_suggestions;
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].text, "Ask me for every finding whether to fix it.");
+    }
+
+    #[test]
+    fn remember_does_not_count_as_a_change_to_the_project() {
+        assert!(!may_mutate_workspace("remember"));
+        assert!(!is_read_only_tool("remember"));
     }
 
     #[tokio::test]

@@ -205,6 +205,54 @@ describe('buildDebugLog', () => {
     expect(log.length).toBeLessThan(MAX_SECTION_CHARS * 1.5);
   });
 
+  it('says what decides the prompts: the saved lists and what holds for this chat', () => {
+    const log = buildDebugLog(
+      input({
+        permissions: {
+          saved: {
+            extraFolders: ['/work/shared'],
+            readFolders: ['/opt/jdks'],
+            pathFolders: [],
+            secretFolders: [],
+            commandRules: [{ kind: 'glob', value: './gradlew *' }],
+            deniedCommandRules: [],
+            sandboxWritableFolders: ['~/.gradle'],
+            sandboxUnreadableFolders: ['~/.ssh'],
+            sandboxExcludedCommands: ['pnpm e2e'],
+          },
+          live: {
+            commandPath: '/opt/jdks/11/bin:/usr/bin:/bin',
+            loginShell: false,
+            projectVariables: ['JAVA_HOME', 'PATH'],
+            sessionFolders: [],
+            sessionReadFolders: ['/usr/lib/jvm'],
+            chatPathFolders: ['/opt/jdks/11/bin'],
+            chatSecretFolders: [],
+            chatCommandRules: [{ kind: 'exact', value: 'npm run lint:ci' }],
+          },
+        },
+      }),
+    );
+    const section = log.slice(log.indexOf('## Permissions'), log.indexOf('## Errors shown'));
+    expect(section).toContain('- PATH of commands: /opt/jdks/11/bin:/usr/bin:/bin');
+    expect(section).toContain('- Environment of commands: as pumr was started');
+    expect(section).toContain('- Variables set by the project: JAVA_HOME, PATH');
+    expect(section).toContain('- Folders the assistant may change:\n  - `/work/shared`');
+    expect(section).toContain('- Folders the assistant may read:\n  - `/opt/jdks`');
+    expect(section).toContain('- The same until the app restarts:\n  - `/usr/lib/jvm`');
+    expect(section).toContain('- Folders trusted on PATH: -\n- The same in this chat:\n  - `/opt/jdks/11/bin`');
+    expect(section).toContain('- Allowed command rules:\n  - glob `./gradlew *`');
+    expect(section).toContain('  - exact `npm run lint:ci`');
+    expect(section).toContain('- Sandbox: commands that run outside it:\n  - `pnpm e2e`');
+  });
+
+  it('says when what holds for the chat could not be read, and leaves the section out unasked', () => {
+    const missing = buildDebugLog(input({ permissions: { saved: null, live: null } }));
+    expect(missing).toContain('- What holds for this chat only could not be read.');
+    expect(missing).toContain('- Folders the assistant may change: -');
+    expect(buildDebugLog(input())).not.toContain('## Permissions');
+  });
+
   it('says when system information or the permission log is missing', () => {
     const log = buildDebugLog(input({ system: null, audit: null }));
     expect(log).toContain('System information could not be read.');

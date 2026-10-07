@@ -276,8 +276,8 @@
     "more": "Weitere Tabs"
   },
   "projectAppearance": {
-    "title": "Projekt-Darstellung",
-    "edit": "Projekt-Darstellung bearbeiten",
+    "title": "Projekteinstellungen",
+    "edit": "Projekt bearbeiten",
     "color": "Farbe",
     "auto": "Automatisch",
     "customColor": "Eigene Farbe",
@@ -289,7 +289,11 @@
     "imageHint": "Ein quadratisches Bild eignet sich am besten. Es wird automatisch zugeschnitten und skaliert.",
     "notAnImage": "Bitte wähle eine Bilddatei aus.",
     "imageFailed": "Das Bild konnte nicht gelesen werden.",
-    "saveFailed": "Die Projekt-Darstellung konnte nicht gespeichert werden."
+    "saveFailed": "Die Projekt-Darstellung konnte nicht gespeichert werden.",
+    "environment": "Umgebung für Befehle",
+    "environmentHint": "Pro Zeile ein NAME=value, wie in einem Shell-Profil. Jeder Befehl, den der Assistent in diesem Projekt ausführt, startet mit diesen Variablen. $NAME und ~ werden aufgelöst, daher funktioniert PATH=$JAVA_HOME/bin:$PATH.",
+    "environmentInvalid": "Zeile {{ line }} ist kein NAME=value.",
+    "environmentFailed": "Umgebung konnte nicht gespeichert werden: {{ error }}"
   },
   "chat": {
     "placeholder": "Beschreibe deine Aufgabe... nutze @ für Dateien, Ordner, Websites, Skills oder MCP-Server",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globale Prompts",
       "mode": "Modus-Konfiguration",
       "projectRules": "Projektregeln",
+      "memory": "Gemerkte Vorlieben",
       "user": "Nutzernachricht",
       "assistant": "Modellantwort",
       "tool": "Tool-Aufruf",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globale Prompts",
       "mode": "Modus-Prompt",
       "projectRules": "Projektregeln",
+      "memory": "Gemerkte Vorlieben",
       "prompt": "Prompt",
       "referencedContext": "Referenzierter Kontext",
       "mentions": "Erwähnungen",
@@ -632,6 +638,8 @@
     "presetValueHint": "Wählt den Anbieter mit den meisten Tokens pro Sekunde pro Dollar.",
     "trains": "trainiert mit Daten",
     "trainsHint": "Dieser Anbieter kann deine Eingaben zum Training verwenden.",
+    "blocked": "blockiert",
+    "blockedHint": "Deine Datenschutz- oder Anbieter-Einstellungen in OpenRouter blockieren diesen Anbieter.",
     "priceHint": "Preis pro 1M Tokens, relativ zu anderen Anbietern dieses Modells eingefärbt"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Anbieter",
       "agent": "Agent-Konfiguration",
+      "memory": "Gedächtnis",
       "agentRules": "Agent White- und Blacklist",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Das Betriebssystem schränkt jeden Befehl ein, den der Agent ausführt, und alles, was dieser Befehl startet. Das ist eine zweite Schicht hinter den Berechtigungsregeln, für einen Befehl, den diese falsch einschätzen. Ein Befehl, den die Sandbox stoppt, kann darum bitten, außerhalb zu laufen; du wirst jedes Mal gefragt.",
       "unavailable": "Dieses System hat keine Sandbox, die pumr nutzen kann, daher laufen Befehle uneingeschränkt. Nötig ist macOS oder Linux 5.19 oder neuer mit Landlock.",
       "networkUnavailable": "Das Netzwerk zu sperren ist nur unter macOS möglich.",
+      "inlineCode": "Inline-Code in einer engeren Sandbox ausführen, statt nachzufragen",
+      "inlineCodeHint": "Inline-Code für node oder python und Skripte, die ihnen per Heredoc übergeben werden, lassen sich nicht wie ein Befehl prüfen. Solange „Alle Befehle innerhalb des Projekts“ aktiv ist, läuft solcher Code ohne Nachfrage in einer engeren Sandbox: Er erreicht nur diesen Computer, schreibt nur in das Projekt, deine zusätzlichen Ordner und temporäre Ordner und kann weder Apps starten noch andere Programme erreichen oder Git-Hooks ändern. Dasselbe gilt für einen Befehl, dessen Argumente erst beim Ausführen feststehen. Code, der Dateien außerhalb des Projekts, sensible Dateien oder andere Websites nennt, fragt weiterhin nach. Stoppt die Sandbox ein Skript, kann der Agent dich bitten, es normal auszuführen. Nur unter macOS.",
       "modes": {
         "off": "Aus",
         "files": "Dateien",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Befehle laufen als dein Benutzer, zurückgehalten nur von den Berechtigungsregeln.",
-        "files": "Befehle schreiben nur in das Projekt, deine zusätzlichen Ordner, temporäre Ordner und die unten aufgeführten Ordner. Die Ordner, in denen Schlüssel liegen, können sie nicht lesen.",
+        "files": "Befehle schreiben nur in das Projekt, deine zusätzlichen Ordner, temporäre Ordner und die unten aufgeführten Ordner. Die Ordner, in denen Schlüssel liegen, können sie nicht lesen. Unter macOS können sie auch keine anderen Apps starten: open funktioniert nur als eigener Befehl, den die Berechtigungsregeln prüfen.",
         "filesAndNetwork": "Dasselbe, und Befehle erreichen nur diesen Computer, ausgenommen Befehle, deren Hosts du erlaubt hast. Das Installieren von Paketen fragt dann, ob es außerhalb der Sandbox laufen darf."
       },
       "writable": "Ordner, in die Befehle zusätzlich schreiben dürfen",
       "writableHint": "Die Caches von Build-Tools. Ohne sie scheitert ein Build beim ersten Download. Ein Pfad beginnt mit / oder ~.",
       "unreadable": "Ordner, die Befehle nicht lesen können",
-      "unreadableHint": "Wo Schlüssel und Tokens liegen. git, ssh und die Cloud-Tools behalten die Ordner, mit denen sie arbeiten, und ein Ordner, den du für Befehle freigegeben hast, bleibt offen.",
+      "unreadableHint": "Wo Schlüssel und Tokens liegen. git, ssh und die Cloud-Tools behalten die Ordner, mit denen sie arbeiten, und ein Ordner, den du für Befehle freigegeben hast, bleibt offen. Auch pumrs eigener Datenordner mit deinen Chats und Einstellungen ist für Befehle geschlossen, egal was in dieser Liste steht.",
       "excluded": "Befehle, die außerhalb der Sandbox laufen",
       "excludedHint": "Für Tools, die eine eigene Sandbox mitbringen und in dieser scheitern, etwa Browsertests. Ein Eintrag nennt, wie die Befehlszeile beginnt; mit * ist er ein Muster für die ganze Zeile.",
       "addCommand": "Befehl hinzufügen",
@@ -800,6 +811,19 @@
       "timeout": "Stoppen nach (Sekunden)",
       "project": "Projekt",
       "allProjects": "Alle Projekte"
+    },
+    "memory": {
+      "title": "Gedächtnis",
+      "hint": "pumr kann sich merken, wie du gern arbeitest, zum Beispiel wie du ein Code-Review berichtet haben möchtest, und sagt es dem Agenten in jedem Chat und jedem Projekt. Ohne dein Ja wird nichts gemerkt.",
+      "enabled": "Gedächtnis verwenden",
+      "enabledHint": "Wenn aus, bleiben die Einträge unten erhalten, werden dem Agenten aber nicht mitgegeben, und es wird nichts Neues vorgeschlagen.",
+      "suggestions": "Vorschlagen, was gemerkt werden soll",
+      "suggestionsHint": "Zeigt eine deiner Nachrichten eine dauerhafte Vorliebe, fragt pumr nach der Antwort, ob es sie sich merken soll: höchstens einmal pro Chat und einmal am Tag, und seltener mit jedem Vorschlag, den du nicht speicherst. Wenn aus, merkt sich pumr weiterhin, worum du es bittest.",
+      "list": "Gemerkte Vorlieben",
+      "add": "Eintrag hinzufügen",
+      "empty": "Noch nichts gemerkt.",
+      "placeholder": "Zum Beispiel: Frag mich bei einem Code-Review zu jedem Befund, ob er behoben oder übersprungen werden soll.",
+      "remove": "Eintrag entfernen"
     },
     "providers": {
       "title": "Modellanbieter",
@@ -846,7 +870,9 @@
     "languageHint": "Wird nach dem Speichern angewendet.",
     "workspace": {
       "allowed": "Erlaubte Ordner",
-      "foldersHint": "Der Assistent darf diese Ordner ohne Nachfrage lesen und schreiben. Das aktive Projekt ist immer erlaubt."
+      "foldersHint": "Der Assistent darf diese Ordner ohne Nachfrage lesen und schreiben. Das aktive Projekt ist immer erlaubt.",
+      "readable": "Ordner nur zum Lesen",
+      "readableHint": "Der Assistent darf diese Ordner ohne Nachfrage lesen, aber Änderungen dort fragen weiterhin nach. Wird eine Freigabe zum Lesen oder Auflisten eines Ordners gemerkt, kommt er hier hinzu."
     },
     "mcp": {
       "tabBrowse": "Durchsuchen",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Bild wählen",
       "clearFile": "Bild entfernen",
       "noFile": "Kein Bild ausgewählt",
-      "opacity": "Deckkraft",
-      "blur": "Weichzeichnen",
+      "opacity": "Hintergrund-Sichtbarkeit",
+      "blur": "Hintergrund-Unschärfe",
+      "preview": "Vorschau",
       "presets": {
         "aurora": "Polarlicht",
         "mesh": "Netz",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Ordner mit freigegebenen sensiblen Dateien",
     "secretFoldersHint": "Befehle dürfen die sensiblen Dateien (Schlüssel, Tokens, Zugangsdaten) direkt in diesen Ordnern ohne Nachfrage verwenden. Unterordner gehören nicht dazu. Nutze \"Immer erlauben\" in einer Freigabe, um einen anzulegen.",
     "noSecretFolders": "Noch keine Ordner mit freigegebenen sensiblen Dateien.",
+    "pathFolders": "Im PATH erlaubte Ordner",
+    "pathFoldersHint": "Befehle dürfen diese Ordner ohne Nachfrage in den PATH eintragen, obwohl der Assistent Dateien darin ändern kann. Nutze \"Immer erlauben\" in einer Freigabe, um einen hinzuzufügen.",
+    "noPathFolders": "Noch keine im PATH erlaubten Ordner.",
     "scope": {
       "program": "Programm",
       "subcommand": "Programm + Unterbefehl",
       "programFlags": "Programm + Optionen",
-      "exact": "Exakt"
+      "exact": "Exakt",
+      "pathFolder": "Ordner im PATH"
     },
     "websiteAllowlist": "Erlaubt",
     "websiteDenylist": "Blockiert",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projekt-Programme",
     "autoApproveProjectExecutablesHint": "Erlaubt Programme innerhalb des Projekts, z. B. ./node_modules/.bin/ng, ohne jedes Mal nachzufragen.",
     "autoApproveProjectCommands": "Alle Befehle innerhalb des Projekts",
-    "autoApproveProjectCommandsHint": "Erlaubt jeden ungefährlichen Befehl, dessen Pfade im Projekt bleiben, auch Inline-Code für node oder python, der nur liest. Gefährliche Befehle, anderer Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, sensible Dateien und alles außerhalb fragen weiterhin nach.",
+    "autoApproveProjectCommandsHint": "Erlaubt jeden ungefährlichen Befehl, dessen Pfade im Projekt bleiben, auch Inline-Code für node oder python, der nur liest. Gefährliche Befehle, anderer Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, sensible Dateien und alles außerhalb fragen weiterhin nach. Die Ausnahme ist Inline-Code für node oder python, den die Sandbox ausführt, statt nachzufragen (siehe Sandbox).",
     "permissionPreset": {
       "strict": "Streng",
       "strictHint": "Nur Befehle, die ausschließlich lesen, laufen ohne Nachfrage.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonom",
       "autonomousHint": "Jeder ungefährliche Befehl innerhalb des Projekts läuft ohne Nachfrage.",
       "custom": "Benutzerdefiniert",
-      "autonomousWarning": "Autonom vertraut diesem Projekt: Seine Skripte, Makefiles und Programme können ohne Nachfrage alles tun, und Inline-Code, der nur liest, läuft ebenfalls. Anderer Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, gefährliche Befehle und alles außerhalb des Projekts fragen weiterhin nach.",
+      "autonomousWarning": "Autonom vertraut diesem Projekt: Seine Skripte, Makefiles und Programme können ohne Nachfrage alles tun, und Inline-Code, der nur liest, läuft ebenfalls. Anderer Inline-Code, Paket-Downloads, noch nicht erlaubte Websites, gefährliche Befehle und alles außerhalb des Projekts fragen weiterhin nach. Die Ausnahme ist Inline-Code für node oder python, den die Sandbox ausführt, statt nachzufragen (siehe Sandbox).",
       "confirm": "Autonom verwenden"
     },
     "noAllowedWebsites": "Noch keine immer erlaubten Websites.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Ordner freigeben",
       "hint": "Fügt den Ordner und alles darunter zu den immer erlaubten Ordnern hinzu.",
-      "option": "Ordner + Unterordner"
+      "option": "Ordner + Unterordner",
+      "hintRead": "Öffnet den Ordner und alles darunter zum Lesen. Änderungen dort fragen weiterhin nach.",
+      "optionRead": "Ordner + Unterordner lesen"
     },
     "hostScope": {
       "title": "Website erlauben",
@@ -1406,6 +1439,10 @@
       "hint": "Befehle dürfen die Schlüssel, Tokens und Zugangsdateien direkt in diesem Ordner dann ohne Nachfrage verwenden. Unterordner gehören nicht dazu.",
       "option": "Sensible Dateien in diesem Ordner",
       "chip": "sensible Dateien in {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Einen im PATH erlaubten Ordner dürfen Befehle ohne Nachfrage dort eintragen. Seine Programme laufen dann anstelle anderer mit demselben Namen.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "In diesem Chat erlauben",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Warum",
     "keyboardHint": "1–{{ count }} drücken oder ↑ ↓ und Enter verwenden · Esc lehnt ab",
     "mcpToolHint": "Nicht mehr fragen gilt für jeden Aufruf dieses Tools auf diesem Server, egal mit welchen Argumenten.",
+    "folderReadHint": "Ein gemerkter Ordner wird nur zum Lesen geöffnet. Änderungen dort fragen weiterhin nach.",
     "url": {
       "queryWarning": "Diese Adresse enthält viele Daten in ihrem Query-String. Prüfe, dass nichts Privates darin steht, bevor du sie erlaubst."
     },
@@ -1443,7 +1481,8 @@
     "back": "Zurück",
     "next": "Weiter",
     "submit": "Absenden",
-    "skip": "Überspringen"
+    "skip": "Überspringen",
+    "resetPosition": "Position zurücksetzen"
   },
   "modelChoice": {
     "title": "Welches Modell soll der Subagent verwenden?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Berechtigung verweigert",
     "canceled": "Abgebrochen",
     "error": "Fehler"
+  },
+  "memory": {
+    "title": "Das merken?",
+    "noticed": "pumr ist das in deiner Nachricht aufgefallen.",
+    "requested": "Du hast pumr gebeten, sich das zu merken.",
+    "replaces": "Ersetzt: {{ text }}",
+    "textLabel": "Was gemerkt werden soll",
+    "hint": "Gemerkte Vorlieben gelten in jedem Chat und in allen Projekten. Du kannst sie in den Einstellungen unter „Gedächtnis“ ändern.",
+    "save": "Merken",
+    "decline": "Nein danke",
+    "disable": "Nicht mehr fragen",
+    "disableHint": "pumr schlägt dann nichts mehr zum Merken vor. Das lässt sich in den Einstellungen unter „Gedächtnis“ wieder einschalten."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

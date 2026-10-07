@@ -56,6 +56,8 @@ export const FALLBACK_SETTINGS: Settings = {
   deniedWebsites: [],
   mcpToolGrants: [],
   secretFolders: [],
+  readFolders: [],
+  pathFolders: [],
   permissionDefaults: { website: 'once', command: 'session', folder: 'session' },
   autoApproveReadOnly: true,
   autoApprovePackageScripts: true,
@@ -112,5 +114,9 @@ export const FALLBACK_SETTINGS: Settings = {
   sandboxWritableFolders: [],
   sandboxUnreadableFolders: [],
   sandboxExcludedCommands: [],
+  sandboxInlineCode: true,
   hooks: [],
+  memoryEnabled: true,
+  memorySuggestions: true,
+  memories: [],
 };

@@ -276,8 +276,8 @@
     "more": "Več zavihkov"
   },
   "projectAppearance": {
-    "title": "Videz projekta",
-    "edit": "Uredite videz projekta",
+    "title": "Nastavitve projekta",
+    "edit": "Uredi projekt",
     "color": "barva",
     "auto": "Avto",
     "customColor": "Barva po meri",
@@ -289,7 +289,11 @@
     "imageHint": "Najbolje deluje kvadratna slika. Samodejno se obreže in spremeni velikost.",
     "notAnImage": "Izberite slikovno datoteko.",
     "imageFailed": "Te slike ni bilo mogoče prebrati.",
-    "saveFailed": "Videza projekta ni bilo mogoče shraniti."
+    "saveFailed": "Videza projekta ni bilo mogoče shraniti.",
+    "environment": "Okolje za ukaze",
+    "environmentHint": "Po en NAME=value na vrstico, kot v profilu lupine. Vsak ukaz, ki ga pomočnik zažene v tem projektu, se začne s temi spremenljivkami. $NAME in ~ se razširita, zato PATH=$JAVA_HOME/bin:$PATH deluje.",
+    "environmentInvalid": "Vrstica {{ line }} ni oblike NAME=value.",
+    "environmentFailed": "Okolja ni bilo mogoče shraniti: {{ error }}"
   },
   "chat": {
     "placeholder": "Opišite svojo nalogo ... uporabite @ za dodajanje datotek, map, spletnih strani, Skills ali MCP strežnikov",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globalni pozivi",
       "mode": "Konfiguracija načina",
       "projectRules": "Pravila projekta",
+      "memory": "Zapomnjene preference",
       "user": "Uporabniško sporočilo",
       "assistant": "Odziv modela",
       "tool": "Klic orodja",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globalni pozivi",
       "mode": "Poziv za način",
       "projectRules": "Pravila projekta",
+      "memory": "Zapomnjene preference",
       "prompt": "Poziv",
       "referencedContext": "Referenčni kontekst",
       "mentions": "Omembe",
@@ -632,6 +638,8 @@
     "presetValueHint": "Izbere ponudnika z najboljšimi tokeni na sekundo na dolar.",
     "trains": "trenira na podatkih",
     "trainsHint": "Ta ponudnik lahko uporablja vaše pozive za usposabljanje.",
+    "blocked": "blokirano",
+    "blockedHint": "Vaše nastavitve zasebnosti ali ponudnikov v OpenRouterju blokirajo tega ponudnika.",
     "priceHint": "Cena na 1M tokenov, obarvana glede na druge ponudnike tega modela"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Ponudniki",
       "agent": "Konfiguracija agenta",
+      "memory": "Spomin",
       "agentRules": "Beli in črni seznam agenta",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Operacijski sistem omeji vsak ukaz, ki ga zažene agent, in vse, kar ta ukaz zažene. To je druga plast za pravili dovoljenj, za ukaz, ki ga pravila napačno presodijo. Ukaz, ki ga sandbox ustavi, lahko zaprosi za zagon zunaj njega; vsakič ste vprašani.",
       "unavailable": "Ta sistem nima sandboxa, ki bi ga pumr lahko uporabil, zato se ukazi izvajajo neomejeno. Potreben je macOS ali Linux 5.19 ali novejši s podporo za Landlock.",
       "networkUnavailable": "Zaprtje omrežja je mogoče samo v sistemu macOS.",
+      "inlineCode": "Zaženi vstavljeno kodo v strožjem sandboxu namesto vprašanja",
+      "inlineCodeHint": "Vstavljene kode node ali python in skriptov, ki so jima podani s heredocom, ni mogoče preveriti kot ukaz. Dokler je vklopljeno »Vsi ukazi znotraj projekta«, se takšna koda zažene brez vprašanja v strožjem sandboxu: doseže samo ta računalnik, piše samo v projekt, vaše dodatne mape in začasne mape ter ne more zagnati aplikacij, doseči drugih programov ali spreminjati git hookov. Enako velja za ukaz, katerega argumenti so znani šele ob zagonu. Koda, ki navaja datoteke zunaj projekta, občutljive datoteke ali druga spletna mesta, še vedno vpraša. Če sandbox ustavi skript, vas lahko agent prosi, da ga zaženete običajno. Samo macOS.",
       "modes": {
         "off": "Izklopljeno",
         "files": "Datoteke",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Ukazi se izvajajo kot vaš uporabnik, omejujejo jih le pravila dovoljenj.",
-        "files": "Ukazi pišejo samo v projekt, vaše dodatne mape, začasne mape in spodaj navedene mape. Map, v katerih so ključi, ne morejo brati.",
+        "files": "Ukazi pišejo samo v projekt, vaše dodatne mape, začasne mape in spodaj navedene mape. Map, v katerih so ključi, ne morejo brati. V sistemu macOS tudi ne morejo zagnati drugih aplikacij: open deluje samo kot samostojen ukaz, ki ga preverijo pravila dovoljenj.",
         "filesAndNetwork": "Enako, pri čemer ukazi dosežejo samo ta računalnik, razen ukazov, katerih gostitelje ste dovolili. Nameščanje paketov nato zaprosi za zagon zunaj sandboxa."
       },
       "writable": "Mape, v katere smejo ukazi tudi pisati",
       "writableHint": "Predpomnilniki orodij za gradnjo. Brez njih gradnja ob prvem prenosu spodleti. Pot se začne z / ali ~.",
       "unreadable": "Mape, ki jih ukazi ne morejo brati",
-      "unreadableHint": "Kjer so ključi in žetoni. git, ssh in orodja za oblak obdržijo mape, s katerimi delajo, mapa, ki ste jo dovolili za ukaze, pa ostane odprta.",
+      "unreadableHint": "Kjer so ključi in žetoni. git, ssh in orodja za oblak obdržijo mape, s katerimi delajo, mapa, ki ste jo dovolili za ukaze, pa ostane odprta. Tudi lastna podatkovna mapa pumr z vašimi klepeti in nastavitvami je za ukaze zaprta, ne glede na to, kaj je na tem seznamu.",
       "excluded": "Ukazi, ki se izvajajo zunaj sandboxa",
       "excludedHint": "Za orodja, ki prinesejo svoj sandbox in v tem spodletijo, na primer testi v brskalniku. Vnos določa, kako se ukazna vrstica začne; z * je vzorec za celotno vrstico.",
       "addCommand": "Dodaj ukaz",
@@ -800,6 +811,19 @@
       "timeout": "Ustavi po (sekunde)",
       "project": "Projekt",
       "allProjects": "Vsi projekti"
+    },
+    "memory": {
+      "title": "Spomin",
+      "hint": "pumr si lahko zapomni, kako radi delate, na primer kako želite, da je predstavljen pregled kode, in to pove agentu v vsakem klepetu in vsakem projektu. Brez vaše privolitve se nič ne zapomni.",
+      "enabled": "Uporabi spomin",
+      "enabledHint": "Ko je izklopljeno, vnosi spodaj ostanejo shranjeni, vendar se ne pošljejo agentu in nič novega se ne predlaga.",
+      "suggestions": "Predlagaj, kaj si zapomniti",
+      "suggestionsHint": "Ko katero od vaših sporočil pokaže trajno preferenco, pumr po odgovoru vpraša, ali naj si jo zapomni: največ enkrat na klepet in enkrat na dan, in redkeje vsakič, ko predloga ne shranite. Ko je izklopljeno, si pumr še vedno zapomni, kar ga prosite.",
+      "list": "Zapomnjene preference",
+      "add": "Dodaj vnos",
+      "empty": "Nič še ni zapomnjeno.",
+      "placeholder": "Na primer: pri pregledu kode me za vsako ugotovitev vprašaj, ali jo je treba popraviti ali preskočiti.",
+      "remove": "Odstrani vnos"
     },
     "providers": {
       "title": "Ponudniki modelov",
@@ -846,7 +870,9 @@
     "languageHint": "Uveljavi se po shranjevanju.",
     "workspace": {
       "allowed": "Dovoljene mape",
-      "foldersHint": "Pomočnik lahko bere in piše v te mape brez vprašanja. Aktivni projekt je vedno dovoljen."
+      "foldersHint": "Pomočnik lahko bere in piše v te mape brez vprašanja. Aktivni projekt je vedno dovoljen.",
+      "readable": "Mape samo za branje",
+      "readableHint": "Pomočnik lahko bere te mape brez vprašanja, vendar spremembe tam še vedno vprašajo. Ko je poziv o branju ali izpisu mape zapomnjen, se mapa doda sem."
     },
     "mcp": {
       "tabBrowse": "Prebrskaj",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Izberite sliko",
       "clearFile": "Odstrani sliko",
       "noFile": "Izbrana ni nobena slika",
-      "opacity": "Motnost",
-      "blur": "Zameglitev",
+      "opacity": "Vidnost ozadja",
+      "blur": "Zameglitev ozadja",
+      "preview": "Predogled",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Mreža",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Mape z dovoljenimi občutljivimi datotekami",
     "secretFoldersHint": "Ukazi smejo brez vprašanja uporabljati občutljive datoteke (ključe, žetone, poverilnice) neposredno v teh mapah. Podmape niso vključene. Uporabite »dovoli vedno« v pozivu za dovoljenje, da jo ustvarite.",
     "noSecretFolders": "Ni še map z dovoljenimi občutljivimi datotekami.",
+    "pathFolders": "Zaupanja vredne mape v PATH",
+    "pathFoldersHint": "Ukazi smejo te mape brez vprašanja dodati v PATH, čeprav lahko pomočnik spreminja datoteke v njih. Uporabite »dovoli vedno« v pozivu za dovoljenje, da jo dodate.",
+    "noPathFolders": "Ni še zaupanja vrednih map v PATH.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + podukaz",
       "programFlags": "Program + zastavice",
-      "exact": "Natančno"
+      "exact": "Natančno",
+      "pathFolder": "Mapa v PATH"
     },
     "websiteAllowlist": "Dovoljeni",
     "websiteDenylist": "Blokirani",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Izvršne datoteke projekta",
     "autoApproveProjectExecutablesHint": "Dovoli izvršne datoteke znotraj projekta, kot je ./node_modules/.bin/ng, brez vsakokratnega vprašanja.",
     "autoApproveProjectCommands": "Vsi ukazi znotraj projekta",
-    "autoApproveProjectCommandsHint": "Dovoli vsak nenevaren ukaz, katerega poti ostanejo znotraj projekta, vključno z vstavljeno kodo node ali python, ki samo bere. Nevarni ukazi, druga vstavljena koda, prenosi paketov, še nedovoljene spletne strani, občutljive datoteke in vse zunaj še vedno vprašajo.",
+    "autoApproveProjectCommandsHint": "Dovoli vsak nenevaren ukaz, katerega poti ostanejo znotraj projekta, vključno z vstavljeno kodo node ali python, ki samo bere. Nevarni ukazi, druga vstavljena koda, prenosi paketov, še nedovoljene spletne strani, občutljive datoteke in vse zunaj še vedno vprašajo. Izjema je vstavljena koda node ali python, ki jo sandbox zažene, namesto da bi vprašal (glejte Sandbox).",
     "permissionPreset": {
       "strict": "Strogo",
       "strictHint": "Brez vprašanja se izvajajo samo ukazi, ki samo berejo.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Samostojno",
       "autonomousHint": "Vsak nenevaren ukaz znotraj projekta se izvede brez vprašanja.",
       "custom": "Po meri",
-      "autonomousWarning": "Samostojni način zaupa temu projektu: njegovi skripti, datoteke Makefile in izvedljive datoteke lahko brez vprašanja naredijo karkoli, vstavljena koda, ki samo bere, pa se prav tako zažene. Druga vstavljena koda, prenosi paketov, še nedovoljene spletne strani, nevarni ukazi in vse zunaj projekta še vedno vprašajo.",
+      "autonomousWarning": "Samostojni način zaupa temu projektu: njegovi skripti, datoteke Makefile in izvedljive datoteke lahko brez vprašanja naredijo karkoli, vstavljena koda, ki samo bere, pa se prav tako zažene. Druga vstavljena koda, prenosi paketov, še nedovoljene spletne strani, nevarni ukazi in vse zunaj projekta še vedno vprašajo. Izjema je vstavljena koda node ali python, ki jo sandbox zažene, namesto da bi vprašal (glejte Sandbox).",
       "confirm": "Uporabi samostojni način"
     },
     "noAllowedWebsites": "Ni še vedno dovoljenih spletnih strani.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Dovoli mapo",
       "hint": "Doda mapo in vse v njej med vedno dovoljene mape.",
-      "option": "Mapa + podmape"
+      "option": "Mapa + podmape",
+      "hintRead": "Odpre mapo in vse v njej za branje. Spremembe tam še vedno vprašajo.",
+      "optionRead": "Branje mape + podmap"
     },
     "hostScope": {
       "title": "Dovoli spletno stran",
@@ -1406,6 +1439,10 @@
       "hint": "Ukazi smejo nato brez vprašanja uporabljati ključe, žetone in datoteke s poverilnicami neposredno v tej mapi. Podmape niso vključene.",
       "option": "Občutljive datoteke v tej mapi",
       "chip": "občutljive datoteke v mapi {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Zaupanja vredno mapo v PATH smejo ukazi tja dodati brez vprašanja. Njeni programi se nato zaženejo namesto drugih z enakim imenom.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Dovoli v tem klepetu",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Zakaj",
     "keyboardHint": "Pritisnite 1–{{ count }} ali uporabite ↑ ↓ in Enter · Esc zavrne",
     "mcpToolHint": "Brez ponovnega vprašanja velja za vsak klic tega orodja na tem strežniku, ne glede na argumente.",
+    "folderReadHint": "Zapomnjena mapa se odpre samo za branje. Spremembe tam še vedno vprašajo.",
     "url": {
       "queryWarning": "Ta naslov v nizu poizvedbe nosi veliko podatkov. Preden ga dovolite, preverite, da ne vsebuje ničesar zasebnega."
     },
@@ -1443,7 +1481,8 @@
     "back": "Nazaj",
     "next": "Naprej",
     "submit": "Pošlji",
-    "skip": "Preskoči"
+    "skip": "Preskoči",
+    "resetPosition": "Ponastavi položaj"
   },
   "modelChoice": {
     "title": "Kateri model naj uporabi podagent?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Dovoljenje zavrnjeno",
     "canceled": "Preklicano",
     "error": "Napaka"
+  },
+  "memory": {
+    "title": "Zapomniti si to?",
+    "noticed": "pumr je to opazil v vašem sporočilu.",
+    "requested": "pumr naj si to zapomni na vašo zahtevo.",
+    "replaces": "Nadomešča: {{ text }}",
+    "textLabel": "Kaj si zapomniti",
+    "hint": "Shranjene preference veljajo za vsak klepet v vseh projektih. Spremenite jih lahko v nastavitvah pod Spomin.",
+    "save": "Zapomni si",
+    "decline": "Ne, hvala",
+    "disable": "Ne sprašuj več",
+    "disableHint": "pumr preneha predlagati, kaj si zapomniti. To lahko znova vklopite v nastavitvah pod Spomin."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

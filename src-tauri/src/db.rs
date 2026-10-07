@@ -1,4 +1,5 @@
 use crate::error::{AppError, Result};
+use crate::memory::{Ask, MemoryEntry, MemorySuggestion, Outcome};
 use crate::models::{
     Attachment, DailySpend, FileChange, Mention, Message, ModelSpend, PermissionAuditEntry,
     Project, Session, SessionSpend, SpendStats, SpendSummary, ToolCallRecord,
@@ -146,6 +147,8 @@ pub struct Checkpoint {
 const AUDIT_MAX_ROWS: i64 = 10_000;
 /// How long permission decisions are kept (90 days).
 const AUDIT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// How many asks about the user's preferences are kept (see `crate::memory`).
+const MEMORY_ASKS_KEPT: i64 = 200;
 
 fn session_tree(conn: &Connection, id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
@@ -205,7 +208,8 @@ impl Db {
                 last_opened_at INTEGER NOT NULL,
                 color TEXT,
                 icon TEXT,
-                icon_image TEXT
+                icon_image TEXT,
+                environment TEXT
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
@@ -265,6 +269,17 @@ impl Db {
             );
             CREATE INDEX IF NOT EXISTS idx_permission_audit_conversation
                 ON permission_audit(conversation_id, id DESC);
+
+            CREATE TABLE IF NOT EXISTS memory_asks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at INTEGER NOT NULL,
+                session_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                requested INTEGER NOT NULL DEFAULT 0,
+                outcome TEXT,
+                resolved_at INTEGER
+            );
             "#,
         )?;
         for (column, definition) in [
@@ -294,10 +309,16 @@ impl Db {
             ("todos", "TEXT NOT NULL DEFAULT '[]'"),
             ("turn_running", "INTEGER NOT NULL DEFAULT 0"),
             ("interrupted", "INTEGER NOT NULL DEFAULT 0"),
+            ("memory_suggestions", "TEXT NOT NULL DEFAULT '[]'"),
         ] {
             add_column_if_missing(&conn, "sessions", column, definition)?;
         }
-        for (column, definition) in [("color", "TEXT"), ("icon", "TEXT"), ("icon_image", "TEXT")] {
+        for (column, definition) in [
+            ("color", "TEXT"),
+            ("icon", "TEXT"),
+            ("icon_image", "TEXT"),
+            ("environment", "TEXT"),
+        ] {
             add_column_if_missing(&conn, "projects", column, definition)?;
         }
         // A run that was interrupted by an app restart can never resume.
@@ -340,7 +361,7 @@ impl Db {
         self.with_conn(|conn| {
             if let Some(existing) = conn
                 .query_row(
-                    "SELECT id, path, name, created_at, last_opened_at, color, icon, icon_image FROM projects WHERE path = ?1",
+                    "SELECT id, path, name, created_at, last_opened_at, color, icon, icon_image, environment FROM projects WHERE path = ?1",
                     params![path],
                     map_project_base,
                 )
@@ -368,7 +389,7 @@ impl Db {
                    (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0
                       AND s.parent_session_id IS NULL),
                    COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0),
-                   p.color, p.icon, p.icon_image
+                   p.color, p.icon, p.icon_image, p.environment
             FROM projects p WHERE p.id = ?1
             "#,
             params![id],
@@ -385,7 +406,7 @@ impl Db {
                        (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.archived = 0
                           AND s.parent_session_id IS NULL),
                        COALESCE((SELECT SUM(s.cost) FROM sessions s WHERE s.project_id = p.id), 0),
-                       p.color, p.icon, p.icon_image
+                       p.color, p.icon, p.icon_image, p.environment
                 FROM projects p
                 ORDER BY p.last_opened_at DESC
                 "#,
@@ -402,7 +423,7 @@ impl Db {
     pub fn get_project(&self, project_id: &str) -> Result<Project> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, path, name, created_at, last_opened_at, 0, 0, color, icon, icon_image FROM projects WHERE id = ?1",
+                "SELECT id, path, name, created_at, last_opened_at, 0, 0, color, icon, icon_image, environment FROM projects WHERE id = ?1",
                 params![project_id],
                 map_project,
             )
@@ -448,6 +469,22 @@ impl Db {
             conn.execute(
                 "UPDATE projects SET color = ?1, icon = ?2, icon_image = ?3 WHERE id = ?4",
                 params![color, icon, icon_image, project_id],
+            )?;
+            self.project_with_stats(conn, project_id.to_string())
+        })
+    }
+
+    /// Stores the variables the project gives its commands, as the user
+    /// typed them; `None` takes them away.
+    pub fn update_project_environment(
+        &self,
+        project_id: &str,
+        environment: Option<&str>,
+    ) -> Result<Project> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE projects SET environment = ?1 WHERE id = ?2",
+                params![environment, project_id],
             )?;
             self.project_with_stats(conn, project_id.to_string())
         })
@@ -1010,6 +1047,115 @@ impl Db {
         })
     }
 
+    /// Every time the user was asked whether to remember a preference, the
+    /// newest first (see `crate::memory`).
+    pub fn memory_asks(&self) -> Result<Vec<Ask>> {
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT id, created_at, conversation_id, text, requested, outcome, resolved_at
+                 FROM memory_asks
+                 ORDER BY id DESC",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(Ask {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    conversation_id: row.get(2)?,
+                    text: row.get(3)?,
+                    requested: row.get::<_, i64>(4)? != 0,
+                    outcome: row
+                        .get::<_, Option<String>>(5)?
+                        .as_deref()
+                        .and_then(Outcome::parse),
+                    resolved_at: row.get(6)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+    }
+
+    /// The suggestions for the memory that a session's user has not answered.
+    pub fn session_memory_suggestions(&self, session_id: &str) -> Result<Vec<MemorySuggestion>> {
+        self.with_conn(|conn| open_memory_suggestions(conn, session_id))
+    }
+
+    /// Records an ask and puts its suggestion on the session, where the chat
+    /// shows it until the user answers. The log keeps its newest
+    /// [`MEMORY_ASKS_KEPT`] asks.
+    pub fn add_memory_suggestion(
+        &self,
+        session_id: &str,
+        conversation_id: &str,
+        text: &str,
+        requested: bool,
+        replaces: Option<MemoryEntry>,
+    ) -> Result<MemorySuggestion> {
+        self.with_conn(|conn| {
+            let mut open = open_memory_suggestions(conn, session_id)?;
+            let now = now_ms();
+            conn.execute(
+                "INSERT INTO memory_asks (created_at, session_id, conversation_id, text, requested)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![now, session_id, conversation_id, text, requested],
+            )?;
+            let id = conn.last_insert_rowid();
+            conn.execute(
+                "DELETE FROM memory_asks WHERE id <= ?1",
+                params![id - MEMORY_ASKS_KEPT],
+            )?;
+            let suggestion = MemorySuggestion {
+                id,
+                text: text.to_string(),
+                requested,
+                replaces,
+                created_at: now,
+            };
+            open.push(suggestion.clone());
+            store_memory_suggestions(conn, session_id, &open)?;
+            Ok(suggestion)
+        })
+    }
+
+    /// Takes an answered suggestion off its session and notes the answer with
+    /// its ask.
+    pub fn settle_memory_suggestion(
+        &self,
+        session_id: &str,
+        id: i64,
+        outcome: Outcome,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE memory_asks SET outcome = ?1, resolved_at = ?2
+                 WHERE id = ?3 AND outcome IS NULL",
+                params![outcome.as_str(), now_ms(), id],
+            )?;
+            let mut open = open_memory_suggestions(conn, session_id)?;
+            open.retain(|suggestion| suggestion.id != id);
+            store_memory_suggestions(conn, session_id, &open)
+        })
+    }
+
+    /// Withdraws the suggestions a session made from `since` on, as if the
+    /// user had never been asked: the prompt they came from was taken back.
+    pub fn withdraw_memory_suggestions(&self, session_id: &str, since: i64) -> Result<()> {
+        self.with_conn(|conn| {
+            let (kept, withdrawn): (Vec<_>, Vec<_>) = open_memory_suggestions(conn, session_id)?
+                .into_iter()
+                .partition(|suggestion| suggestion.created_at < since);
+            if withdrawn.is_empty() {
+                return Ok(());
+            }
+            for suggestion in &withdrawn {
+                conn.execute(
+                    "DELETE FROM memory_asks WHERE id = ?1 AND outcome IS NULL",
+                    params![suggestion.id],
+                )?;
+            }
+            store_memory_suggestions(conn, session_id, &kept)
+        })
+    }
+
     /// Returns the newest user message for a session, even when many assistant
     /// and tool messages have been recorded since.
     pub fn latest_user_message(&self, session_id: &str) -> Result<Option<Message>> {
@@ -1452,6 +1598,7 @@ fn map_project_base(row: &Row<'_>) -> rusqlite::Result<Project> {
         color: row.get(5)?,
         icon: row.get(6)?,
         icon_image: row.get(7)?,
+        environment: row.get(8)?,
     })
 }
 
@@ -1467,6 +1614,7 @@ fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {
         color: row.get(7)?,
         icon: row.get(8)?,
         icon_image: row.get(9)?,
+        environment: row.get(10)?,
     })
 }
 
@@ -1478,7 +1626,7 @@ const SESSION_COLUMNS: &str = "\
     s.completion_tokens, s.cached_tokens, \
     (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id), \
     s.parent_session_id, s.agent_status, s.archived, s.mode_id, \
-    s.limit_reached, s.auto_continue, s.interrupted";
+    s.limit_reached, s.auto_continue, s.interrupted, s.memory_suggestions";
 
 fn session_select(clause: &str) -> String {
     format!("SELECT {SESSION_COLUMNS} FROM sessions s {clause}")
@@ -1507,7 +1655,29 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<Session> {
         limit_reached: row.get::<_, i64>(18)? != 0,
         auto_continue: row.get::<_, i64>(19)? != 0,
         interrupted: row.get::<_, i64>(20)? != 0,
+        memory_suggestions: serde_json::from_str(&row.get::<_, String>(21)?).unwrap_or_default(),
     })
+}
+
+fn open_memory_suggestions(conn: &Connection, session_id: &str) -> Result<Vec<MemorySuggestion>> {
+    let stored: String = conn.query_row(
+        "SELECT memory_suggestions FROM sessions WHERE id = ?1",
+        params![session_id],
+        |row| row.get(0),
+    )?;
+    Ok(serde_json::from_str(&stored).unwrap_or_default())
+}
+
+fn store_memory_suggestions(
+    conn: &Connection,
+    session_id: &str,
+    open: &[MemorySuggestion],
+) -> Result<()> {
+    conn.execute(
+        "UPDATE sessions SET memory_suggestions = ?1 WHERE id = ?2",
+        params![serde_json::to_string(open)?, session_id],
+    )?;
+    Ok(())
 }
 
 fn map_message(row: &Row<'_>) -> rusqlite::Result<Message> {
@@ -1912,6 +2082,99 @@ mod tests {
         assert_eq!(
             db.session_todos(&chat.id).unwrap(),
             r#"[{"content":"a","status":"pending"}]"#
+        );
+    }
+
+    fn memory_chat() -> (tempfile::TempDir, Db, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let db = Db::open(&directory.path().join("test.db")).unwrap();
+        db.migrate().unwrap();
+        let project = db.upsert_project("/tmp/pumr-memory-asks").unwrap();
+        let chat = db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        (directory, db, chat.id)
+    }
+
+    #[test]
+    fn an_open_suggestion_rides_on_its_session_until_it_is_answered() {
+        let (_directory, db, chat) = memory_chat();
+        assert!(db.get_session(&chat).unwrap().memory_suggestions.is_empty());
+
+        let first = db
+            .add_memory_suggestion(&chat, &chat, "Keep answers short.", false, None)
+            .unwrap();
+        let second = db
+            .add_memory_suggestion(&chat, &chat, "Use tabs.", true, None)
+            .unwrap();
+        // Every way a session is read carries what is open on it.
+        let project = db.get_session(&chat).unwrap().project_id;
+        let listed = db.list_sessions(&project, false).unwrap();
+        assert_eq!(
+            listed[0].memory_suggestions,
+            vec![first.clone(), second.clone()]
+        );
+        assert_eq!(
+            db.session_memory_suggestions(&chat).unwrap(),
+            vec![first.clone(), second.clone()]
+        );
+
+        db.settle_memory_suggestion(&chat, first.id, Outcome::Saved)
+            .unwrap();
+        assert_eq!(
+            db.get_session(&chat).unwrap().memory_suggestions,
+            vec![second.clone()]
+        );
+        let asks = db.memory_asks().unwrap();
+        assert_eq!(asks[0].id, second.id);
+        assert!(asks[0].requested);
+        assert_eq!(asks[0].outcome, None);
+        assert_eq!(asks[1].outcome, Some(Outcome::Saved));
+        assert!(asks[1].resolved_at.is_some());
+
+        // An answer given twice keeps the first one.
+        db.settle_memory_suggestion(&chat, first.id, Outcome::Declined)
+            .unwrap();
+        assert_eq!(db.memory_asks().unwrap()[1].outcome, Some(Outcome::Saved));
+    }
+
+    #[test]
+    fn taking_a_prompt_back_withdraws_what_was_suggested_after_it() {
+        let (_directory, db, chat) = memory_chat();
+        let early = db
+            .add_memory_suggestion(&chat, &chat, "Keep answers short.", false, None)
+            .unwrap();
+        let late = db
+            .add_memory_suggestion(&chat, &chat, "Use tabs.", true, None)
+            .unwrap();
+
+        // Nothing was suggested from then on: all stays.
+        db.withdraw_memory_suggestions(&chat, late.created_at + 1)
+            .unwrap();
+        assert_eq!(db.memory_asks().unwrap().len(), 2);
+
+        db.withdraw_memory_suggestions(&chat, early.created_at)
+            .unwrap();
+        assert!(db.get_session(&chat).unwrap().memory_suggestions.is_empty());
+        // As if the user had never been asked.
+        assert!(db.memory_asks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_log_of_asks_keeps_its_newest_rows() {
+        let (_directory, db, chat) = memory_chat();
+        for index in 0..MEMORY_ASKS_KEPT + 5 {
+            let suggestion = db
+                .add_memory_suggestion(&chat, &chat, &format!("Preference {index}."), false, None)
+                .unwrap();
+            db.settle_memory_suggestion(&chat, suggestion.id, Outcome::Declined)
+                .unwrap();
+        }
+        let asks = db.memory_asks().unwrap();
+        assert_eq!(asks.len() as i64, MEMORY_ASKS_KEPT);
+        assert_eq!(
+            asks[0].text,
+            format!("Preference {}.", MEMORY_ASKS_KEPT + 4)
         );
     }
 }

@@ -1,7 +1,9 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
+  afterNextRender,
   afterRenderEffect,
   computed,
   effect,
@@ -9,6 +11,7 @@ import {
   input,
   signal,
   untracked,
+  viewChild,
   viewChildren,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
@@ -24,42 +27,114 @@ interface QuestionDraft {
 import { isEditable } from './permission-overlay';
 import { TypedInput } from './typed-input';
 
+const POSITION_KEY = 'pumr.questionPosition';
+/** How far the pointer travels before a press on the header becomes a drag. */
+const DRAG_THRESHOLD = 4;
+/** The gap a dragged panel keeps to the edges of the window. */
+const EDGE_GAP = 8;
+
+/**
+ * Where a dragged panel floats in the window, and the width it had when it
+ * was picked up: away from the chat there is nothing left to size it.
+ */
+interface Placement {
+  x: number;
+  y: number;
+  width: number;
+}
+
+function loadPlacement(): Placement | null {
+  try {
+    const { x, y, width } = (JSON.parse(localStorage.getItem(POSITION_KEY) ?? 'null') ??
+      {}) as Partial<Placement>;
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(width) && width! > 0) {
+      return { x: x!, y: y!, width: width! };
+    }
+  } catch {
+    // A broken entry falls back to the usual place.
+  }
+  return null;
+}
+
 @Component({
   selector: 'app-question-overlay',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [TypedInput, TranslocoPipe],
-  host: {
-    '(keydown)': 'onKeydown($event)',
-    '(click)': 'onClick($event)',
-    '(focusin)': 'onFocusIn($event)',
-  },
   template: `
-    <div class="pointer-events-none absolute inset-0 z-40 flex flex-col justify-end px-5 pb-3">
+    <div
+      #frame
+      class="pointer-events-none absolute inset-0 z-40 flex flex-col justify-end px-5 pb-3"
+    >
+      <!-- The listeners sit on the panel, not on the host: a dragged panel
+           leaves the host for the window. -->
       <div
+        #panel
         tabindex="-1"
-        class="pointer-events-auto mx-auto flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-white/10 bg-navy/95 shadow-2xl shadow-black/50 outline-none backdrop-blur"
+        data-testid="question-panel"
+        class="pointer-events-auto flex flex-col overflow-hidden rounded-xl border border-white/10 bg-navy/95 shadow-2xl shadow-black/50 outline-none backdrop-blur"
+        [class]="shown() ? 'fixed z-40' : 'mx-auto max-h-full w-full max-w-2xl'"
+        (keydown)="onKeydown($event)"
+        (click)="onClick($event)"
+        (focusin)="onFocusIn($event)"
+        (mousedown)="onMouseDown()"
+        [style.left.px]="shown()?.x"
+        [style.top.px]="shown()?.y"
+        [style.width.px]="shown()?.width"
+        [style.max-height]="shown() ? 'calc(100vh - ' + 2 * edgeGap + 'px)' : null"
       >
-        <button
-          type="button"
-          class="flex w-full shrink-0 items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
-          (click)="toggleCollapsed()"
+        <div
+          class="relative shrink-0"
+          data-testid="question-header"
+          (mousedown)="startDrag($event)"
         >
-          <span class="text-xs font-medium text-white/70">
-            {{ 'question.progress' | transloco: { current: index() + 1, total: total() } }}
-          </span>
-          <svg
-            viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 shrink-0 text-white/40 transition-transform"
-            [class.rotate-180]="collapsed()"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.75"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+          <button
+            type="button"
+            class="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+            [class]="dragging() ? 'cursor-grabbing' : 'cursor-grab'"
+            (click)="toggleCollapsed()"
           >
-            <path d="M4 6l4 4 4-4" />
-          </svg>
-        </button>
+            <span class="text-xs font-medium text-white/70">
+              {{ 'question.progress' | transloco: { current: index() + 1, total: total() } }}
+            </span>
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5 shrink-0 text-white/40 transition-transform"
+              [class.rotate-180]="collapsed()"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+          @if (shown()) {
+            <button
+              type="button"
+              data-testid="question-reset-position"
+              class="absolute top-1/2 right-10 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+              [title]="'question.resetPosition' | transloco"
+              [attr.aria-label]="'question.resetPosition' | transloco"
+              (mousedown)="$event.stopPropagation()"
+              (click)="resetPosition()"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                class="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+            </button>
+          }
+        </div>
 
         @if (!collapsed()) {
           <div class="min-h-0 flex-1 space-y-3 overflow-y-auto border-t border-white/10 px-4 py-3">
@@ -199,11 +274,31 @@ import { TypedInput } from './typed-input';
 export class QuestionOverlay {
   readonly request = input.required<PendingQuestion>();
   protected readonly workspace = inject(WorkspaceService);
-  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly frame = viewChild.required<ElementRef<HTMLElement>>('frame');
+  private readonly panel = viewChild.required<ElementRef<HTMLElement>>('panel');
   private readonly drafts = signal<QuestionDraft[]>([]);
   protected readonly index = signal(0);
   protected readonly collapsed = signal(false);
   private lastRequestId = '';
+
+  /**
+   * Where the user dragged the panel, kept across questions and restarts, and
+   * where it is shown: the window may have become too small for the former.
+   * Without one the panel sits at the bottom of the chat. A dragged panel is
+   * fixed to the window and a child of the body, so it can leave the chat for
+   * any place in the app: inside the chat, WebKit clips it to the chat's box.
+   */
+  private readonly placement = signal(loadPlacement());
+  protected readonly shown = signal(this.placement());
+  protected readonly dragging = signal(false);
+  protected readonly edgeGap = EDGE_GAP;
+  private dragStart = { x: 0, y: 0 };
+  private dragOrigin: Placement = { x: 0, y: 0, width: 0 };
+  /** The panel, to take it out of the window again with the question. */
+  private attached: HTMLElement | null = null;
+  /** Set by a drag, so that the click ending it leaves the panel as it is. */
+  private dragged = false;
 
   /**
    * The answers, the custom answer's field and the buttons below, top to
@@ -230,8 +325,16 @@ export class QuestionOverlay {
       this.lastRequestId = request.requestId;
       this.index.set(0);
       this.collapsed.set(false);
+      // A question with one answer starts on its first option, so it can be
+      // sent as it is. Several answers start empty.
       this.drafts.set(
-        request.questions.map(() => ({ selected: [], custom: '', customActive: false })),
+        request.questions.map((question) => ({
+          selected: question.multiSelect
+            ? []
+            : question.options.slice(0, 1).map((option) => option.label),
+          custom: '',
+          customActive: false,
+        })),
       );
     });
 
@@ -261,6 +364,46 @@ export class QuestionOverlay {
       });
       target.focus();
     });
+
+    afterRenderEffect(() => {
+      const parent = this.shown() ? document.body : this.frame().nativeElement;
+      const panel = this.panel().nativeElement;
+      this.attached = panel;
+      if (panel.parentElement === parent) {
+        return;
+      }
+      // Moving the panel takes the focus and the scroll position off it.
+      const focused = document.activeElement;
+      const held = focused instanceof HTMLElement && panel.contains(focused) ? focused : null;
+      const scrolled = [...panel.querySelectorAll('.overflow-y-auto')].map(
+        (area) => [area, area.scrollTop] as const,
+      );
+      parent.appendChild(panel);
+      scrolled.forEach(([area, top]) => (area.scrollTop = top));
+      held?.focus();
+    });
+    this.destroyRef.onDestroy(() => this.attached?.remove());
+
+    // A dragged panel stays in the window when that is made smaller or the
+    // next question is a longer one.
+    afterNextRender(() => {
+      const settle = () => {
+        const placement = this.placement();
+        if (placement && !this.dragging()) {
+          this.shown.set(this.clamp(placement));
+        }
+      };
+      settle();
+      window.addEventListener('resize', settle);
+      this.destroyRef.onDestroy(() => window.removeEventListener('resize', settle));
+      if (typeof ResizeObserver === 'undefined') {
+        return;
+      }
+      const observer = new ResizeObserver(settle);
+      observer.observe(this.panel().nativeElement);
+      this.destroyRef.onDestroy(() => observer.disconnect());
+    });
+    this.destroyRef.onDestroy(() => this.endDrag());
   }
 
   /**
@@ -270,7 +413,7 @@ export class QuestionOverlay {
    */
   private focusBelongsElsewhere(): boolean {
     const focused = document.activeElement;
-    if (!focused || this.element.nativeElement.contains(focused)) {
+    if (!focused || this.panel().nativeElement.contains(focused)) {
       return false;
     }
     if (focused.closest('[role="dialog"]')) {
@@ -349,6 +492,13 @@ export class QuestionOverlay {
       ?.nativeElement.focus();
   }
 
+  /** A press on the panel in the window does not reach the chat it belongs to. */
+  protected onMouseDown(): void {
+    if (this.shown()) {
+      this.workspace.setFocusedPanel('center');
+    }
+  }
+
   protected onFocusIn(event: FocusEvent): void {
     const target = event.target as HTMLElement | null;
     if (target && this.stops().some((stop) => stop.nativeElement === target)) {
@@ -356,7 +506,114 @@ export class QuestionOverlay {
     }
   }
 
+  /**
+   * The header moves the panel anywhere in the window, so the chat behind it
+   * can be read without collapsing it. A press that stays in place still
+   * collapses it.
+   */
+  protected startDrag(event: MouseEvent): void {
+    if (event.button !== 0) {
+      return;
+    }
+    this.dragged = false;
+    this.dragStart = { x: event.clientX, y: event.clientY };
+    const box = this.panel().nativeElement.getBoundingClientRect();
+    this.dragOrigin = this.shown() ?? { x: box.left, y: box.top, width: box.width };
+    window.addEventListener('mousemove', this.onDrag);
+    window.addEventListener('mouseup', this.stopDrag);
+  }
+
+  private readonly onDrag = (event: MouseEvent): void => {
+    const x = event.clientX - this.dragStart.x;
+    const y = event.clientY - this.dragStart.y;
+    if (!this.dragging()) {
+      if (Math.hypot(x, y) < DRAG_THRESHOLD) {
+        return;
+      }
+      this.dragging.set(true);
+      document.body.style.cursor = 'grabbing';
+      document.body.style.userSelect = 'none';
+    }
+    const next = this.clamp({
+      ...this.dragOrigin,
+      x: this.dragOrigin.x + x,
+      y: this.dragOrigin.y + y,
+    });
+    this.placement.set(next);
+    this.shown.set(next);
+  };
+
+  private readonly stopDrag = (): void => {
+    if (!this.dragging()) {
+      this.endDrag();
+      return;
+    }
+    this.endDrag();
+    this.dragged = true;
+    // The click that follows the release comes before this timer.
+    setTimeout(() => (this.dragged = false));
+    this.savePlacement();
+    // Chromium focuses the pressed header, and the move to the window may drop
+    // the focus: the keyboard stays on the answers.
+    const focused = document.activeElement;
+    const ours =
+      !focused || focused === document.body || this.panel().nativeElement.contains(focused);
+    if (this.lastStop?.isConnected && ours) {
+      this.lastStop.focus();
+    }
+  };
+
+  private endDrag(): void {
+    window.removeEventListener('mousemove', this.onDrag);
+    window.removeEventListener('mouseup', this.stopDrag);
+    if (this.dragging()) {
+      this.dragging.set(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  }
+
+  /** Puts the panel back at the bottom of the chat and forgets the drag. */
+  protected resetPosition(): void {
+    this.placement.set(null);
+    this.shown.set(null);
+    this.savePlacement();
+  }
+
+  /**
+   * Keeps the whole panel inside the window, a little off its edges. One that
+   * does not fit keeps its header in reach.
+   */
+  private clamp(placement: Placement): Placement {
+    const width = Math.min(placement.width, window.innerWidth - 2 * EDGE_GAP);
+    const height = this.panel().nativeElement.offsetHeight;
+    const within = (value: number, room: number) =>
+      Math.round(Math.max(EDGE_GAP, Math.min(value, room - EDGE_GAP)));
+    return {
+      x: within(placement.x, window.innerWidth - width),
+      y: within(placement.y, window.innerHeight - height),
+      width,
+    };
+  }
+
+  private savePlacement(): void {
+    const placement = this.placement();
+    try {
+      if (placement) {
+        localStorage.setItem(POSITION_KEY, JSON.stringify(placement));
+      } else {
+        localStorage.removeItem(POSITION_KEY);
+      }
+    } catch {
+      // Without storage the next question starts at the bottom again.
+    }
+  }
+
   protected toggleCollapsed(): void {
+    if (this.dragged) {
+      this.dragged = false;
+      return;
+    }
     this.collapsed.update((value) => !value);
     // Opening the panel again starts over on the first answer.
     this.focusedStep = '';
@@ -413,8 +670,9 @@ export class QuestionOverlay {
             : [...draft.selected, label];
           return { ...draft, selected };
         }
-        const selected = draft.selected.includes(label) ? [] : [label];
-        return { ...draft, selected, customActive: false };
+        // Pressing the picked option keeps it: the keyboard starts on the
+        // preselected one, where Enter would otherwise clear the answer.
+        return { ...draft, selected: [label], customActive: false };
       }),
     );
   }

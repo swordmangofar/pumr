@@ -2,6 +2,17 @@
 /* Hides xterm's input and measuring elements; see TerminalView. */
 @import '@xterm/xterm/css/xterm.css';
 
+/* The icons that prompt themes such as Powerlevel10k and Starship draw with.
+   No system monospace font has them, so the terminal falls back to this one
+   for exactly these code points; see TerminalView. */
+@font-face {
+  font-family: 'Symbols Nerd Font';
+  src: url('/fonts/SymbolsNerdFont-Regular.woff2') format('woff2');
+  font-display: block;
+  unicode-range:
+    U+23FB-23FE, U+2630, U+2665, U+26A1, U+276C-2771, U+2B58, U+E000-F8FF, U+F0000-FFFFD;
+}
+
 @theme {
   --color-ink: #000000;
   --color-navy: #1e293b;
@@ -164,6 +175,22 @@ html {
   mask-repeat: var(--app-bg-mask-repeat, repeat);
   opacity: var(--app-bg-opacity, 1);
   filter: var(--app-bg-filter, none);
+}
+
+/* Miniature of the app in the appearance settings: the backdrop with a few
+   glass panels on top, following the sliders next to it. It is a stacking
+   context of its own so the panels' blur layers (z-index:-1) stay above the
+   frame and the wallpaper, and it shrinks the glass blur with the picture. */
+.appearance-preview {
+  isolation: isolate;
+  --glass-blur: 7.5px;
+}
+
+/* Bleeds past the frame like .app-background does, so a blurred wallpaper has
+   no soft, see-through edge. */
+.appearance-preview > .bg-preview {
+  inset: -12px;
+  z-index: -1;
 }
 
 ::selection {
@@ -372,9 +399,9 @@ textarea {
     inset: 0;
     z-index: -1;
     border-radius: inherit;
-    -webkit-backdrop-filter: blur(calc(30px * var(--glass-alpha, 1)))
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur, 30px) * var(--glass-alpha, 1)))
       saturate(calc(1 + 0.7 * var(--glass-alpha, 1)));
-    backdrop-filter: blur(calc(30px * var(--glass-alpha, 1)))
+    backdrop-filter: blur(calc(var(--glass-blur, 30px) * var(--glass-alpha, 1)))
       saturate(calc(1 + 0.7 * var(--glass-alpha, 1)));
   }
 

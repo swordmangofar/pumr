@@ -7,6 +7,7 @@ import { api } from './api';
 import { GitService } from './git.service';
 import { MessageQueueService } from './message-queue.service';
 import {
+  MemorySuggestion,
   Message,
   PermissionRequestEvent,
   Project,
@@ -259,6 +260,17 @@ describe('WorkspaceService after a webview reload', () => {
     expect(workspace.mcpIssuesFor('chat')).toEqual([]);
   });
 
+  it('drops the MCP issues of a turn once the user dismisses them', async () => {
+    const issues = ["No MCP server named 'codegraph' was found in the configured sources."];
+    await workspace.resumeRunningTurns();
+
+    emit('chat', { kind: 'mcpReady', issues });
+    expect(workspace.mcpIssuesFor('chat')).toEqual(issues);
+
+    workspace.dismissMcpIssues('chat');
+    expect(workspace.mcpIssuesFor('chat')).toEqual([]);
+  });
+
   it('reads the files of the project again whenever the turn reports changes', async () => {
     await workspace.resumeRunningTurns();
     const changes = [{ path: 'src/a.ts', additions: 1, deletions: 0, status: 'M' }];
@@ -280,6 +292,46 @@ describe('WorkspaceService after a webview reload', () => {
     await workspace.resumeRunningTurns();
 
     expect(api.attachSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the stored transcript of a subagent once it has finished', async () => {
+    await workspace.resumeRunningTurns();
+    emit('worker', { kind: 'subAgentStarted', session: session('worker', 'chat') });
+    // While it runs, the transcript holds what the stream delivered; what
+    // its tools returned only ever arrived as live tools.
+    expect(workspace.messagesFor('worker')).toEqual([]);
+
+    const stored = [{ id: 'result', sessionId: 'worker', role: 'tool' } as Message];
+    vi.mocked(api.listMessages).mockClear();
+    vi.mocked(api.listMessages).mockResolvedValue(stored);
+    emit('worker', { kind: 'subAgentStatus', status: 'done' });
+
+    await vi.waitFor(() => expect(workspace.messagesFor('worker')).toEqual(stored));
+    expect(api.listMessages).toHaveBeenCalledWith('worker');
+  });
+
+  it('reads a finished subagent again for the debugger, and leaves a running session alone', async () => {
+    await workspace.resumeRunningTurns();
+    await workspace.loadMessages('chat');
+    await workspace.loadMessages('subagent');
+    // Only the chat has a subagent; the subagent has none of its own.
+    const subagents = [{ ...session('subagent', 'chat'), agentStatus: 'done' }];
+    vi.mocked(api.listSubSessions).mockImplementation(async (id) =>
+      id === 'chat' ? subagents : [],
+    );
+    const loaded = () => vi.mocked(api.listMessages).mock.calls.map(([id]) => id);
+
+    // Both are being written to: what is on screen is the newest there is.
+    vi.mocked(api.listMessages).mockClear();
+    await workspace.loadAgentTree('chat');
+    expect(loaded()).toEqual([]);
+
+    // The subagent is done; the chat's own turn still runs.
+    emit('subagent', { kind: 'subAgentStatus', status: 'done' });
+    await vi.waitFor(() => expect(loaded()).toEqual(['subagent']));
+    vi.mocked(api.listMessages).mockClear();
+    await workspace.loadAgentTree('chat');
+    expect(loaded()).toEqual(['subagent']);
   });
 
   it('does not restore a prompt the user already answered', async () => {
@@ -329,12 +381,14 @@ describe('WorkspaceService after a webview reload', () => {
 
 describe('WorkspaceService session lifecycle', () => {
   let workspace: WorkspaceService;
+  let adopt: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    adopt = vi.fn();
     TestBed.configureTestingModule({
       providers: [
         WorkspaceService,
-        { provide: SettingsService, useValue: { settings: signal(null) } },
+        { provide: SettingsService, useValue: { settings: signal(null), adopt } },
         { provide: SoundService, useValue: { play: vi.fn() } },
         { provide: TranslocoService, useValue: { translate: (key: string) => key } },
         { provide: ProcessService, useValue: { processes: signal([]) } },
@@ -437,6 +491,71 @@ describe('WorkspaceService session lifecycle', () => {
     expect(workspace.limitReachedFor('chat')).toBe(false);
     expect(workspace.interruptedFor('chat')).toBe(false);
     expect(workspace.pendingDraft()).toBe('Go on');
+  });
+
+  function suggestion(id: number, createdAt: number): MemorySuggestion {
+    return { id, text: `Preference ${id}.`, requested: false, replaces: null, createdAt };
+  }
+
+  it('answering a suggestion adopts the settings and takes the card off the session', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([
+      { ...session('chat'), memorySuggestions: [suggestion(1, 10), suggestion(2, 20)] },
+    ]);
+    await workspace.reloadSessions('project');
+    const saved = { memorySuggestions: true, memories: [{ id: 'a', text: 'Edited.' }] };
+    const resolve = vi
+      .spyOn(api, 'resolveMemorySuggestion')
+      .mockResolvedValue(saved as unknown as Awaited<ReturnType<typeof api.getSettings>>);
+
+    await workspace.resolveMemorySuggestion('chat', 1, 'save', 'Edited.');
+
+    expect(resolve).toHaveBeenCalledWith('chat', 1, 'save', 'Edited.');
+    expect(adopt).toHaveBeenCalledWith(saved);
+    expect(workspace.session('chat')?.memorySuggestions).toEqual([suggestion(2, 20)]);
+
+    // Declining sends no text.
+    await workspace.resolveMemorySuggestion('chat', 2, 'decline');
+    expect(resolve).toHaveBeenLastCalledWith('chat', 2, 'decline', null);
+    expect(workspace.session('chat')?.memorySuggestions).toEqual([]);
+  });
+
+  it('keeps the card when its answer could not be stored', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([
+      { ...session('chat'), memorySuggestions: [suggestion(1, 10)] },
+    ]);
+    await workspace.reloadSessions('project');
+    vi.spyOn(api, 'resolveMemorySuggestion').mockRejectedValue('disk full');
+
+    await expect(workspace.resolveMemorySuggestion('chat', 1, 'save', 'Edited.')).rejects.toBe(
+      'disk full',
+    );
+
+    expect(adopt).not.toHaveBeenCalled();
+    expect(workspace.session('chat')?.memorySuggestions).toEqual([suggestion(1, 10)]);
+  });
+
+  it('takes back what was proposed for the memory after a reverted prompt', async () => {
+    const prompt = {
+      id: 'prompt',
+      sessionId: 'chat',
+      role: 'user',
+      content: 'Go on',
+      createdAt: 15,
+    } as Message;
+    vi.mocked(api.listSessions).mockResolvedValue([
+      { ...session('chat'), memorySuggestions: [suggestion(1, 10), suggestion(2, 20)] },
+    ]);
+    await workspace.reloadSessions('project');
+    const listed = vi.spyOn(api, 'listMessages').mockResolvedValue([prompt]);
+    await workspace.loadMessages('chat', true);
+    listed.mockResolvedValue([]);
+    vi.spyOn(api, 'getSessionChanges').mockResolvedValue([]);
+    vi.spyOn(api, 'revertToMessage').mockResolvedValue({ prompt: 'Go on', restoredFiles: [] });
+
+    await workspace.revertToMessage('prompt', true);
+
+    // The one from an earlier turn still waits for its answer.
+    expect(workspace.session('chat')?.memorySuggestions).toEqual([suggestion(1, 10)]);
   });
 });
 

@@ -60,6 +60,10 @@ pub struct Project {
     /// Data URL of an uploaded square image. Takes precedence over `icon`.
     #[serde(default)]
     pub icon_image: Option<String>,
+    /// The variables every command of the project starts with, as the user
+    /// typed them: one `NAME=value` per line (see `crate::project_env`).
+    #[serde(default)]
+    pub environment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +104,10 @@ pub struct Session {
     /// continue.
     #[serde(default)]
     pub interrupted: bool,
+    /// Preferences the agent proposed for pumr's memory in this session that
+    /// the user has not answered yet (see `crate::memory`).
+    #[serde(default)]
+    pub memory_suggestions: Vec<crate::memory::MemorySuggestion>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -297,8 +305,14 @@ pub struct EndpointInfo {
     pub max_completion_tokens: Option<i64>,
     pub quantization: Option<String>,
     pub supports_implicit_caching: bool,
+    /// Whether the provider may train on prompts and whether it keeps them,
+    /// by its terms as a whole. `None` when OpenRouter does not say.
     pub training: Option<bool>,
     pub retains_prompts: Option<bool>,
+    /// The account's OpenRouter settings rule this endpoint out.
+    pub blocked: bool,
+    /// OpenRouter's explanation of why it is blocked.
+    pub blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -833,6 +847,10 @@ pub enum StreamEvent {
         /// release each, so commands may use the sensitive files directly in
         /// it without asking again.
         secret_folders: Vec<String>,
+        /// Whether a folder remembered from this prompt is opened for
+        /// reading only: the prompt is about reading or listing it, or about
+        /// a command that only reads.
+        read_only: bool,
         /// The assistant's one-sentence explanation of why it asks.
         justification: Option<String>,
     },

@@ -21,6 +21,7 @@ describe('AgentRulesSettings command rules', () => {
   let deleteCommandRule: ReturnType<typeof vi.fn>;
   let deleteMcpToolGrant: ReturnType<typeof vi.fn>;
   let deleteSecretFolder: ReturnType<typeof vi.fn>;
+  let deletePathFolder: ReturnType<typeof vi.fn>;
   let patch: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -30,6 +31,7 @@ describe('AgentRulesSettings command rules', () => {
     deleteCommandRule = vi.fn().mockResolvedValue(undefined);
     deleteMcpToolGrant = vi.fn().mockResolvedValue(undefined);
     deleteSecretFolder = vi.fn().mockResolvedValue(undefined);
+    deletePathFolder = vi.fn().mockResolvedValue(undefined);
     patch = vi.fn((key: keyof Settings, value: Settings[keyof Settings]) =>
       settings.update((current) => ({ ...current, [key]: value })),
     );
@@ -43,6 +45,7 @@ describe('AgentRulesSettings command rules', () => {
             deleteCommandRule,
             deleteMcpToolGrant,
             deleteSecretFolder,
+            deletePathFolder,
           },
         },
         { provide: SettingsDraftService, useValue: { draft: settings, patch } },
@@ -184,6 +187,23 @@ describe('AgentRulesSettings command rules', () => {
 
     rows[1].querySelector('button')!.click();
     expect(deleteSecretFolder).toHaveBeenCalledExactlyOnceWith('/home/me/.ssh');
+  });
+
+  it('lists the folders trusted on PATH and stops trusting one', () => {
+    const section = fixture.nativeElement.querySelector(
+      '[data-testid="path-folders"]',
+    ) as HTMLElement;
+    expect(section.textContent).toContain('settings.noPathFolders');
+
+    const folders = ['/home/me/.sdkman/candidates/java/11.0.32-amzn/bin', '/opt/node14/bin'];
+    settings.update((current) => ({ ...current, pathFolders: folders }));
+    fixture.detectChanges();
+    const rows = [...section.querySelectorAll('[data-testid="path-folder"]')];
+    expect(rows.map((row) => row.querySelector('code')?.textContent?.trim())).toEqual(folders);
+    expect(section.textContent).not.toContain('settings.noPathFolders');
+
+    rows[0].querySelector('button')!.click();
+    expect(deletePathFolder).toHaveBeenCalledExactlyOnceWith(folders[0]);
   });
 
   it('toggles automatic approval settings', () => {

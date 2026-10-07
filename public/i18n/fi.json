@@ -276,8 +276,8 @@
     "more": "Lisää välilehtiä"
   },
   "projectAppearance": {
-    "title": "Projektin ulkoasu",
-    "edit": "Muokkaa projektin ulkoasua",
+    "title": "Projektin asetukset",
+    "edit": "Muokkaa projektia",
     "color": "Väri",
     "auto": "Auto",
     "customColor": "Mukautettu väri",
@@ -289,7 +289,11 @@
     "imageHint": "Neliön muotoinen kuva toimii parhaiten. Se rajataan ja sen kokoa muutetaan automaattisesti.",
     "notAnImage": "Valitse kuvatiedosto.",
     "imageFailed": "Kuvaa ei voitu lukea.",
-    "saveFailed": "Projektin ulkoasua ei voitu tallentaa."
+    "saveFailed": "Projektin ulkoasua ei voitu tallentaa.",
+    "environment": "Komentojen ympäristö",
+    "environmentHint": "Yksi NAME=value riviä kohden, kuten komentotulkin profiilissa. Jokainen avustajan tässä projektissa suorittama komento käynnistyy näillä muuttujilla. $NAME ja ~ korvataan arvoillaan, joten PATH=$JAVA_HOME/bin:$PATH toimii.",
+    "environmentInvalid": "Rivi {{ line }} ei ole muotoa NAME=value.",
+    "environmentFailed": "Ympäristöä ei voitu tallentaa: {{ error }}"
   },
   "chat": {
     "placeholder": "Kuvaile tehtäväsi... käytä @ lisätäksesi tiedostoja, kansioita, verkkosivustoja, skillejä tai MCP-palvelimia",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globaalit kehotteet",
       "mode": "Tilan konfigurointi",
       "projectRules": "Projektin säännöt",
+      "memory": "Muistetut mieltymykset",
       "user": "Käyttäjän viesti",
       "assistant": "Mallin vastaus",
       "tool": "Työkalukutsu",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globaalit kehotteet",
       "mode": "Tilakehote",
       "projectRules": "Projektin säännöt",
+      "memory": "Muistetut mieltymykset",
       "prompt": "Kehote",
       "referencedContext": "Viitattu konteksti",
       "mentions": "Mainitsee",
@@ -632,6 +638,8 @@
     "presetValueHint": "Valitsee tarjoajan, jolla on paras tokenia sekunnissa per dollari.",
     "trains": "kouluttaa datalla",
     "trainsHint": "Tämä tarjoaja voi käyttää kehotteitasi koulutukseen.",
+    "blocked": "estetty",
+    "blockedHint": "OpenRouterin tietosuoja- tai tarjoaja-asetuksesi estävät tämän tarjoajan.",
     "priceHint": "Hinta 1M tokenia kohti, väritettynä suhteessa muihin tämän mallin tarjoajiin"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Tarjoajat",
       "agent": "Agenttiasetukset",
+      "memory": "Muisti",
       "agentRules": "Agentin valko- ja mustalista",
       "sandbox": "Hiekkalaatikko",
       "hooks": "Hookit",
@@ -760,6 +769,8 @@
       "hint": "Käyttöjärjestelmä rajoittaa jokaista agentin suorittamaa komentoa ja kaikkea, minkä se komento käynnistää. Se on toinen kerros lupasääntöjen takana sellaista komentoa varten, jonka ne arvioivat väärin. Hiekkalaatikon pysäyttämä komento voi pyytää suoritusta sen ulkopuolella; sinulta kysytään joka kerta.",
       "unavailable": "Tässä järjestelmässä ei ole hiekkalaatikkoa, jota pumr voisi käyttää, joten komennot suoritetaan rajoituksetta. Tarvitaan macOS tai Linux 5.19 tai uudempi, jossa on Landlock.",
       "networkUnavailable": "Verkon sulkeminen on mahdollista vain macOSissa.",
+      "inlineCode": "Suorita upotettu koodi tiukemmassa hiekkalaatikossa kysymisen sijaan",
+      "inlineCodeHint": "Upotettua node- tai python-koodia ja niille heredocilla annettuja skriptejä ei voi tarkistaa kuten komentoa. Kun ”Kaikki komennot projektin sisällä” on päällä, tällainen koodi suoritetaan kysymättä tiukemmassa hiekkalaatikossa: se tavoittaa vain tämän tietokoneen, kirjoittaa vain projektiin, lisäkansioihisi ja väliaikaiskansioihin eikä voi käynnistää sovelluksia, tavoittaa muita ohjelmia tai muuttaa git-koukkuja. Sama koskee komentoa, jonka argumentit selviävät vasta suoritettaessa. Koodi, joka nimeää projektin ulkopuolisia tiedostoja, arkaluontoisia tiedostoja tai muita verkkosivustoja, kysyy edelleen. Jos hiekkalaatikko pysäyttää skriptin, agentti voi pyytää sinua suorittamaan sen tavallisesti. Vain macOS.",
       "modes": {
         "off": "Pois",
         "files": "Tiedostot",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Komennot suoritetaan käyttäjänäsi, ja niitä rajoittavat vain lupasäännöt.",
-        "files": "Komennot kirjoittavat vain projektiin, lisäkansioihisi, väliaikaiskansioihin ja alla lueteltuihin kansioihin. Ne eivät voi lukea kansioita, joissa on avaimia.",
+        "files": "Komennot kirjoittavat vain projektiin, lisäkansioihisi, väliaikaiskansioihin ja alla lueteltuihin kansioihin. Ne eivät voi lukea kansioita, joissa on avaimia. macOSissa ne eivät myöskään voi käynnistää muita sovelluksia: open toimii vain omana komentonaan, jonka lupasäännöt tarkistavat.",
         "filesAndNetwork": "Sama, ja komennot saavat yhteyden vain tähän tietokoneeseen, paitsi komennot, joiden isännät olet sallinut. Pakettien asentaminen pyytää silloin suoritusta hiekkalaatikon ulkopuolella."
       },
       "writable": "Kansiot, joihin komennot saavat myös kirjoittaa",
       "writableHint": "Käännöstyökalujen välimuistit. Ilman niitä käännös epäonnistuu ensimmäisessä latauksessaan. Polku alkaa merkillä / tai ~.",
       "unreadable": "Kansiot, joita komennot eivät voi lukea",
-      "unreadableHint": "Paikat, joissa avaimet ja tokenit sijaitsevat. git, ssh ja pilvityökalut saavat pitää kansiot, joiden kanssa ne työskentelevät, ja komennoille vapauttamasi kansio pysyy avoimena.",
+      "unreadableHint": "Paikat, joissa avaimet ja tokenit sijaitsevat. git, ssh ja pilvityökalut saavat pitää kansiot, joiden kanssa ne työskentelevät, ja komennoille vapauttamasi kansio pysyy avoimena. Myös pumrin oma datakansio, jossa keskustelusi ja asetuksesi ovat, on suljettu komennoilta riippumatta siitä, mitä tässä luettelossa on.",
       "excluded": "Komennot, jotka suoritetaan hiekkalaatikon ulkopuolella",
       "excludedHint": "Työkaluille, jotka tuovat oman hiekkalaatikkonsa ja epäonnistuvat tämän sisällä, kuten selaintesteille. Merkintä kertoo, miten komentorivi alkaa; merkillä * se on koko rivin kuvio.",
       "addCommand": "Lisää komento",
@@ -800,6 +811,19 @@
       "timeout": "Pysäytä, kun kulunut (sekuntia)",
       "project": "Projekti",
       "allProjects": "Kaikki projektit"
+    },
+    "memory": {
+      "title": "Muisti",
+      "hint": "pumr voi muistaa, miten haluat työskennellä, esimerkiksi miten haluat koodikatselmuksen raportoitavan, ja kertoo sen agentille jokaisessa keskustelussa ja projektissa. Mitään ei muisteta ilman suostumustasi.",
+      "enabled": "Käytä muistia",
+      "enabledHint": "Kun asetus on pois päältä, alla olevat merkinnät säilyvät, mutta niitä ei lähetetä agentille eikä uusia ehdoteta.",
+      "suggestions": "Ehdota muistettavia asioita",
+      "suggestionsHint": "Kun jokin viestisi osoittaa pysyvän mieltymyksen, pumr kysyy vastauksen jälkeen, muistetaanko se: enintään kerran keskustelussa ja kerran päivässä, ja harvemmin aina kun jätät ehdotuksen tallentamatta. Kun asetus on pois päältä, pumr muistaa silti sen, mitä pyydät sitä muistamaan.",
+      "list": "Muistetut mieltymykset",
+      "add": "Lisää merkintä",
+      "empty": "Mitään ei ole vielä muistissa.",
+      "placeholder": "Esimerkiksi: kysy koodikatselmuksessa jokaisen havainnon kohdalla, korjataanko se vai ohitetaanko se.",
+      "remove": "Poista merkintä"
     },
     "providers": {
       "title": "Mallien tarjoajat",
@@ -846,7 +870,9 @@
     "languageHint": "Otetaan käyttöön tallennuksen jälkeen.",
     "workspace": {
       "allowed": "Sallitut kansiot",
-      "foldersHint": "Avustaja voi lukea ja kirjoittaa näihin kansioihin kysymättä. Aktiivinen projekti on aina sallittu."
+      "foldersHint": "Avustaja voi lukea ja kirjoittaa näihin kansioihin kysymättä. Aktiivinen projekti on aina sallittu.",
+      "readable": "Kansiot vain lukemiseen",
+      "readableHint": "Avustaja voi lukea näitä kansioita kysymättä, mutta niissä tehtävät muutokset kysyvät edelleen. Kun kansion lukemista tai luettelemista koskeva lupakysely muistetaan, kansio lisätään tänne."
     },
     "mcp": {
       "tabBrowse": "Selaa",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Valitse kuva",
       "clearFile": "Poista kuva",
       "noFile": "Ei valittua kuvaa",
-      "opacity": "Peittävyys",
-      "blur": "Sumeus",
+      "opacity": "Taustan näkyvyys",
+      "blur": "Taustan sumennus",
+      "preview": "Esikatselu",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Mesh",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Kansiot, joiden arkaluonteiset tiedostot on vapautettu",
     "secretFoldersHint": "Komennot saavat käyttää suoraan näissä kansioissa olevia arkaluonteisia tiedostoja (avaimia, tokeneita, tunnistetietoja) kysymättä. Alikansiot eivät kuulu mukaan. Luo sellainen käyttämällä \"salli aina\" -vaihtoehtoa lupakyselyssä.",
     "noSecretFolders": "Ei vielä kansioita, joiden arkaluonteiset tiedostot on vapautettu.",
+    "pathFolders": "PATH-muuttujassa luotetut kansiot",
+    "pathFoldersHint": "Komennot saavat lisätä nämä kansiot PATH-muuttujaan kysymättä, vaikka avustaja voi muuttaa niissä olevia tiedostoja. Lisää sellainen käyttämällä \"salli aina\" -vaihtoehtoa lupakyselyssä.",
+    "noPathFolders": "Ei vielä PATH-muuttujassa luotettuja kansioita.",
     "scope": {
       "program": "Ohjelma",
       "subcommand": "Ohjelma + alikomento",
       "programFlags": "Ohjelma + valitsimet",
-      "exact": "Tarkka"
+      "exact": "Tarkka",
+      "pathFolder": "Kansio PATH-muuttujassa"
     },
     "websiteAllowlist": "Sallitut",
     "websiteDenylist": "Estetyt",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projektin suoritettavat",
     "autoApproveProjectExecutablesHint": "Sallii projektin sisällä olevat suoritettavat, kuten ./node_modules/.bin/ng, ilman kysymistä joka kerta.",
     "autoApproveProjectCommands": "Kaikki komennot projektin sisällä",
-    "autoApproveProjectCommandsHint": "Sallii minkä tahansa vaarattoman komennon, jonka polut pysyvät projektin sisällä, myös vain lukevan upotetun node- tai python-koodin. Vaaralliset komennot, muu upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, arkaluontoiset tiedostot ja kaikki ulkopuolinen kysyvät edelleen.",
+    "autoApproveProjectCommandsHint": "Sallii minkä tahansa vaarattoman komennon, jonka polut pysyvät projektin sisällä, myös vain lukevan upotetun node- tai python-koodin. Vaaralliset komennot, muu upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, arkaluontoiset tiedostot ja kaikki ulkopuolinen kysyvät edelleen. Poikkeus on upotettu node- tai python-koodi, jonka hiekkalaatikko suorittaa kysymättä (katso Hiekkalaatikko).",
     "permissionPreset": {
       "strict": "Tiukka",
       "strictHint": "Vain pelkästään lukevat komennot suoritetaan kysymättä.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonominen",
       "autonomousHint": "Jokainen vaaraton komento projektin sisällä suoritetaan kysymättä.",
       "custom": "Mukautettu",
-      "autonomousWarning": "Autonominen tila luottaa tähän projektiin: sen skriptit, Makefilet ja suoritettavat tiedostot voivat tehdä mitä tahansa kysymättä, ja vain lukeva upotettu koodi suoritetaan myös. Muu upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, vaaralliset komennot ja kaikki projektin ulkopuolinen kysyvät edelleen.",
+      "autonomousWarning": "Autonominen tila luottaa tähän projektiin: sen skriptit, Makefilet ja suoritettavat tiedostot voivat tehdä mitä tahansa kysymättä, ja vain lukeva upotettu koodi suoritetaan myös. Muu upotettu koodi, pakettien lataukset, vielä sallimattomat verkkosivustot, vaaralliset komennot ja kaikki projektin ulkopuolinen kysyvät edelleen. Poikkeus on upotettu node- tai python-koodi, jonka hiekkalaatikko suorittaa kysymättä (katso Hiekkalaatikko).",
       "confirm": "Käytä autonomista tilaa"
     },
     "noAllowedWebsites": "Ei vielä aina sallittuja verkkosivustoja.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Salli kansio",
       "hint": "Lisää kansion ja kaiken sen sisällön aina sallittuihin kansioihin.",
-      "option": "Kansio + alikansiot"
+      "option": "Kansio + alikansiot",
+      "hintRead": "Avaa kansion ja kaiken sen sisällön luettavaksi. Siellä tehtävät muutokset kysyvät edelleen.",
+      "optionRead": "Kansio + alikansiot luettavaksi"
     },
     "hostScope": {
       "title": "Salli verkkosivusto",
@@ -1406,6 +1439,10 @@
       "hint": "Komennot saavat sen jälkeen käyttää suoraan tässä kansiossa olevia avaimia, tokeneita ja tunnistetietotiedostoja kysymättä. Alikansiot eivät kuulu mukaan.",
       "option": "Tämän kansion arkaluonteiset tiedostot",
       "chip": "arkaluonteiset tiedostot kansiossa {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Komennot saavat lisätä PATH-muuttujassa luotetun kansion sinne kysymättä. Sen ohjelmat suoritetaan silloin muiden samannimisten sijaan.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Salli tässä keskustelussa",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Miksi",
     "keyboardHint": "Paina 1–{{ count }} tai käytä ↑ ↓ ja Enter · Esc hylkää",
     "mcpToolHint": "Kun ei kysytä uudelleen, se koskee tämän työkalun jokaista kutsua tällä palvelimella argumenteista riippumatta.",
+    "folderReadHint": "Muistettu kansio avataan vain luettavaksi. Siellä tehtävät muutokset kysyvät edelleen.",
     "url": {
       "queryWarning": "Tämä osoite sisältää paljon tietoa kyselymerkkijonossaan. Varmista ennen sallimista, ettei se sisällä mitään yksityistä."
     },
@@ -1443,7 +1481,8 @@
     "back": "Takaisin",
     "next": "Seuraava",
     "submit": "Lähetä",
-    "skip": "Ohita"
+    "skip": "Ohita",
+    "resetPosition": "Palauta sijainti"
   },
   "modelChoice": {
     "title": "Mitä mallia aliagentin tulisi käyttää?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Lupa evätty",
     "canceled": "Peruutettu",
     "error": "Virhe"
+  },
+  "memory": {
+    "title": "Muistetaanko tämä?",
+    "noticed": "pumr huomasi tämän viestistäsi.",
+    "requested": "Pyysit pumria muistamaan tämän.",
+    "replaces": "Korvaa: {{ text }}",
+    "textLabel": "Muistettava asia",
+    "hint": "Tallennetut mieltymykset koskevat jokaista keskustelua kaikissa projekteissa. Voit muuttaa niitä asetusten kohdassa Muisti.",
+    "save": "Muista",
+    "decline": "Ei kiitos",
+    "disable": "Älä kysy uudelleen",
+    "disableHint": "pumr lakkaa ehdottamasta muistettavia asioita. Voit ottaa tämän uudelleen käyttöön asetusten kohdassa Muisti."
   },
   "terminal": {
     "title": "Pääte {{ number }}",

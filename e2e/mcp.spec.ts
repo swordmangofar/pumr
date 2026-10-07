@@ -65,6 +65,27 @@ test.describe('MCP servers of a turn', () => {
     await expect(issues).toHaveCount(0);
   });
 
+  test('the notice about missing servers can be dismissed', async ({ app, page }) => {
+    const composer = await openSession(page, app.start, {
+      replies: [
+        {
+          mcp: { server: 'codegraph', issues: [ISSUE] },
+          steps: [{ kind: 'text', text: 'Described without the code graph.' }],
+        },
+      ],
+    });
+    const main = page.getByRole('main');
+    const issues = main.getByTestId('chat-mcp-issues');
+
+    await send(page, composer, 'Describe this merge request');
+    await app.backend.resume();
+    await expect(issues).toContainText('exit status: 127');
+
+    await issues.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(issues).toHaveCount(0);
+    await expect(main).toContainText('Described without the code graph.');
+  });
+
   test('Stop ends the wait for a server', async ({ app, page }) => {
     const composer = await openSession(page, app.start, {
       replies: [{ mcp: { server: 'slow' }, steps: [{ kind: 'text', text: 'Never said.' }] }],

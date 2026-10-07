@@ -27,6 +27,8 @@ function endpoint(
     supportsImplicitCaching: false,
     training: false,
     retainsPrompts: null,
+    blocked: false,
+    blockedReason: null,
     ...patch,
   };
 }
@@ -342,6 +344,76 @@ test.describe('slash commands', () => {
     const toolbarMenu = page.locator('#composer-provider-menu');
     await expect(toolbarMenu).toContainText('61 tok/s');
     await expect(toolbarMenu).toContainText('trains on data');
+  });
+
+  test('a provider the OpenRouter account blocks is listed but cannot be picked', async ({
+    app,
+    page,
+  }) => {
+    const reason =
+      'No endpoints found matching your data policy (Paid model training). Configure: https://openrouter.ai/settings/privacy';
+    const composer = await openSession(page, app.start, {
+      endpoints: [
+        endpoint('Anthropic', 'anthropic'),
+        endpoint('DeepTrain', 'deeptrain/fp8', { blocked: true, blockedReason: reason }),
+        // Blocked without a word from OpenRouter on why.
+        endpoint('Quiet', 'quiet', { blocked: true }),
+      ],
+    });
+
+    await page.getByRole('button', { name: 'Auto (best available)' }).click();
+    const toolbarMenu = page.locator('#composer-provider-menu');
+    const blocked = toolbarMenu.getByRole('button', { name: /DeepTrain/ });
+    await expect(blocked).toContainText('blocked');
+    await expect(blocked).toBeDisabled();
+    await expect(blocked).toHaveAttribute('title', reason);
+    await expect(toolbarMenu.getByRole('button', { name: /Quiet/ })).toHaveAttribute(
+      'title',
+      'Your OpenRouter privacy or provider settings block this provider.',
+    );
+    const allowed = toolbarMenu.getByRole('button', { name: /Anthropic/ });
+    await expect(allowed).toBeEnabled();
+    await expect(allowed).not.toContainText('blocked');
+    await page.keyboard.press('Escape');
+    await expect(toolbarMenu).toHaveCount(0);
+
+    // `/provider` lists it the same way, and neither Enter nor a click picks it.
+    await composer.click();
+    await page.keyboard.type('/provider deep');
+    const option = page.getByRole('listbox').getByRole('option', { name: /DeepTrain/ });
+    await expect(option).toContainText('blocked');
+    await expect(option).toHaveAttribute('aria-disabled', 'true');
+    await page.keyboard.press('Enter');
+    // Playwright itself holds back from a disabled option; the app must too.
+    await option.click({ force: true });
+    await expect(option).toBeVisible();
+    expect(await app.backend.calls('update_session')).toEqual([]);
+  });
+
+  test('a session pinned to a provider that is now blocked leaves the routing to OpenRouter', async ({
+    app,
+    page,
+  }) => {
+    const composer = await openSession(page, app.start, {
+      sessions: [session({ title: 'New session', provider: 'deeptrain' })],
+      endpoints: [
+        endpoint('Anthropic', 'anthropic'),
+        endpoint('DeepTrain', 'deeptrain/fp8', { blocked: true }),
+      ],
+    });
+
+    const chip = page.getByRole('button', { name: 'DeepTrain' });
+    await expect(chip).toHaveAttribute(
+      'title',
+      'Your OpenRouter privacy or provider settings block this provider.',
+    );
+
+    await composer.click();
+    await page.keyboard.type('Hello');
+    await page.keyboard.press('Enter');
+    const call = await app.backend.waitForCall('send_message');
+    expect(call?.args).toMatchObject({ content: 'Hello' });
+    expect(call?.args['provider'] ?? null).toBeNull();
   });
 
   test('/provider explains that a direct model has no provider to pick', async ({ app, page }) => {

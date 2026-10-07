@@ -8,6 +8,7 @@ import type {
   GitRefs,
   GitStatus,
   McpToolGrant,
+  MemoryEntry,
   Message,
   MessageAttachment,
   ModelInfo,
@@ -70,6 +71,12 @@ export type FakeStep =
     }
   /** Asks one question and waits for `resolve_question`. */
   | { kind: 'question'; question: QuestionItem }
+  /**
+   * The agent proposes `text` for pumr's memory with its `remember` tool. The
+   * turn goes on; the suggestion stays on the session until
+   * `resolve_memory_suggestion` answers it.
+   */
+  | { kind: 'memory'; text: string; requested?: boolean; replaces?: MemoryEntry }
   /**
    * Asks which of `candidates` (model ids) the subagent model `query` means,
    * waits for `resolve_model_choice` and reports the pick as a `task` call.
@@ -149,6 +156,8 @@ export interface FakeSeed {
   sandboxSupport: SandboxSupport;
   /** Whether the webview paints without GPU compositing (`is_software_rendered`). */
   softwareRendering: boolean;
+  /** What a new shell prints as its prompt; `$ ` when left out. */
+  terminalPrompt?: string;
   replies: FakeReply[];
   /** Milliseconds between streamed chunks. */
   chunkDelayMs: number;
@@ -294,6 +303,8 @@ export function installFakeBackend(seed: FakeSeed): void {
   let idCounter = 0;
   const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
   const now = () => Date.now();
+  // An entry of the memory as the Rust side stores it: one line, 300 characters.
+  const tidyMemory = (text: string) => text.replace(/\s+/g, ' ').trim().slice(0, 300);
 
   function message(sessionId: string, role: Message['role'], content: string): Message {
     const created = now();
@@ -815,6 +826,10 @@ export function installFakeBackend(seed: FakeSeed): void {
   // release: per open prompt, and released per chat.
   const promptSecretFolders = new Map<string, string[]>();
   const chatSecretFolders = new Map<string, string[]>();
+  // And for folders a command prompt offers to trust on `PATH`: per open
+  // prompt, and trusted per chat.
+  const promptPathFolders = new Map<string, string[]>();
+  const chatPathFolders = new Map<string, string[]>();
   const sameMcpTool = (a: McpToolGrant, b: McpToolGrant) =>
     a.server === b.server &&
     a.tool === b.tool &&
@@ -967,7 +982,17 @@ export function installFakeBackend(seed: FakeSeed): void {
               ...(chatSecretFolders.get(sessionId) ?? []),
               ...(state.settings.secretFolders ?? []),
             ];
+            // The folders the prompt offers to trust on `PATH`; once every one
+            // of them is trusted the command no longer asks, as in the app.
+            const pathFolders = (step.request?.scopeOptions ?? [])
+              .filter((option) => option.kind === 'pathFolder')
+              .map((option) => option.rule.value);
+            const trusted = [
+              ...(chatPathFolders.get(sessionId) ?? []),
+              ...(state.settings.pathFolders ?? []),
+            ];
             const remembered =
+              (pathFolders.length > 0 && pathFolders.every((folder) => trusted.includes(folder))) ||
               (mcpTool !== null &&
                 [
                   ...(chatMcpTools.get(sessionId) ?? []),
@@ -1001,6 +1026,7 @@ export function installFakeBackend(seed: FakeSeed): void {
                 promptMcpTools.set(requestId, mcpTool);
               }
               promptSecretFolders.set(requestId, secretFolders);
+              promptPathFolders.set(requestId, pathFolders);
               const decision = await Promise.race([
                 new Promise((resolve) => permissionWaiters.set(requestId, { sessionId, resolve })),
                 stopped$.then(() => 'deny'),
@@ -1008,6 +1034,7 @@ export function installFakeBackend(seed: FakeSeed): void {
               permissionWaiters.delete(requestId);
               promptMcpTools.delete(requestId);
               promptSecretFolders.delete(requestId);
+              promptPathFolders.delete(requestId);
               allowed = String(decision).startsWith('allow');
               emit({ kind: 'permissionResolved', requestId, allowed });
             }
@@ -1027,6 +1054,46 @@ export function installFakeBackend(seed: FakeSeed): void {
               result: allowed ? 'ok' : 'The user denied this command.',
               changes: [],
             });
+            break;
+          }
+          case 'memory': {
+            const callId = newId('call');
+            const argumentsJson = JSON.stringify({ preference: step.text });
+            emit({
+              kind: 'toolStart',
+              callId,
+              name: 'remember',
+              summary: step.text,
+              arguments: argumentsJson,
+            });
+            await sleep(seed.chunkDelayMs);
+            assistant.toolCalls.push({ id: callId, name: 'remember', arguments: argumentsJson });
+            const result =
+              'Noted. Nothing is saved yet: pumr asks the user after your answer whether to keep it.';
+            const tool = message(sessionId, 'tool', result);
+            tool.toolCallId = callId;
+            tool.toolName = 'remember';
+            tool.status = 'ok';
+            emit({
+              kind: 'toolEnd',
+              callId,
+              name: 'remember',
+              status: 'ok',
+              result,
+              changes: [],
+              attachments: [],
+            });
+            state.messages.push(tool);
+            session.memorySuggestions = [
+              ...(session.memorySuggestions ?? []),
+              {
+                id: now() * 1000 + ++idCounter,
+                text: tidyMemory(step.text),
+                requested: step.requested ?? false,
+                replaces: step.replaces ?? null,
+                createdAt: now(),
+              },
+            ];
             break;
           }
           case 'question': {
@@ -1269,6 +1336,10 @@ export function installFakeBackend(seed: FakeSeed): void {
     get_settings: () => clone(state.settings),
     save_settings: (args) => {
       state.settings = clone(args['settings'] as Settings);
+      // As the Rust command does: the memory's entries are tidied, blank ones dropped.
+      state.settings.memories = (state.settings.memories ?? [])
+        .map((entry) => ({ ...entry, text: tidyMemory(entry.text) }))
+        .filter((entry) => entry.text);
       return clone(state.settings);
     },
     get_default_system_prompts: () => ({
@@ -1361,6 +1432,39 @@ export function installFakeBackend(seed: FakeSeed): void {
         icon: args['icon'] ?? null,
         iconImage: args['iconImage'] ?? null,
       });
+      return projectView(project);
+    },
+    // Mirrors `crate::project_env`: one `NAME=value` per line; a `PATH` of
+    // absolute folders only; an empty text takes the variables away.
+    set_project_environment: (args) => {
+      const project = state.projects.find((entry) => entry.id === args['projectId']);
+      if (!project) {
+        throw 'Project not found';
+      }
+      const text = String(args['environment']).trim();
+      const lines = text.split('\n');
+      const bad: number[] = [];
+      lines.forEach((raw, index) => {
+        const line = raw.trim().replace(/^export\s+/, '');
+        if (!line || line.startsWith('#')) {
+          return;
+        }
+        if (!/^[A-Za-z_][A-Za-z0-9_]*\s*=/.test(line)) {
+          bad.push(index + 1);
+          return;
+        }
+        const value = line.slice(line.indexOf('=') + 1).trim();
+        const relative = value
+          .split(':')
+          .find((entry) => !/^[/~$]/.test(entry));
+        if (/^PATH\s*=/.test(line) && relative !== undefined) {
+          throw `PATH names '${relative}'; every folder in it has to be absolute`;
+        }
+      });
+      if (bad.length > 0) {
+        throw `Not NAME=value: line ${bad.join(', ')}`;
+      }
+      project.environment = text || null;
       return projectView(project);
     },
 
@@ -1500,8 +1604,29 @@ export function installFakeBackend(seed: FakeSeed): void {
           state.settings.secretFolders = [...(state.settings.secretFolders ?? []), ...folders];
         }
       }
+      // A folder on `PATH` is chosen like a rule and trusted as a folder.
+      const offeredPaths = promptPathFolders.get(requestId) ?? [];
+      const paths = ((args['commandRules'] as { value: string }[] | null) ?? [])
+        .map((rule) => rule.value)
+        .filter((folder) => offeredPaths.includes(folder));
+      if (waiter && paths.length > 0) {
+        if (args['decision'] === 'allow_session') {
+          chatPathFolders.set(waiter.sessionId, [
+            ...(chatPathFolders.get(waiter.sessionId) ?? []),
+            ...paths,
+          ]);
+        } else if (args['decision'] === 'allow_always') {
+          state.settings.pathFolders = [...(state.settings.pathFolders ?? []), ...paths];
+        }
+      }
       waiter?.resolve(args['decision']);
       return null;
+    },
+    delete_path_folder: (args) => {
+      state.settings.pathFolders = (state.settings.pathFolders ?? []).filter(
+        (folder) => folder !== args['folder'],
+      );
+      return clone(state.settings);
     },
     delete_secret_folder: (args) => {
       state.settings.secretFolders = (state.settings.secretFolders ?? []).filter(
@@ -1523,6 +1648,33 @@ export function installFakeBackend(seed: FakeSeed): void {
     resolve_model_choice: (args) => {
       modelChoiceWaiters.get(String(args['requestId']))?.resolve(args['model']);
       return null;
+    },
+    // Answers a suggestion's card like the Rust command: "save" keeps the text
+    // in the settings, "disable" switches the agent's own suggestions off, and
+    // every answer takes the card off its session. A card that is gone was
+    // answered before and changes nothing.
+    resolve_memory_suggestion: (args) => {
+      const session = requireSession(args['sessionId']);
+      const open = session.memorySuggestions ?? [];
+      const suggestion = open.find((entry) => entry.id === args['id']);
+      if (!suggestion) {
+        return clone(state.settings);
+      }
+      if (args['decision'] === 'save') {
+        const text = tidyMemory(String(args['text'] ?? suggestion.text));
+        const memories = state.settings.memories ?? [];
+        const corrected = memories.find((entry) => entry.id === suggestion.replaces?.id);
+        if (corrected) {
+          corrected.text = text;
+        } else if (!memories.some((entry) => entry.text === text)) {
+          memories.push({ id: newId('memory'), text });
+        }
+        state.settings.memories = memories;
+      } else if (args['decision'] === 'disable') {
+        state.settings.memorySuggestions = false;
+      }
+      session.memorySuggestions = open.filter((entry) => entry !== suggestion);
+      return clone(state.settings);
     },
     // Takes a session back to one of its prompts like the Rust command: the
     // prompt and what followed it go, and its text returns for the chat box.
@@ -1555,7 +1707,14 @@ export function installFakeBackend(seed: FakeSeed): void {
       state.messages = state.messages.filter(
         (entry) => entry.sessionId !== sessionId || entry.seq < target.seq,
       );
-      requireSession(sessionId).interrupted = false;
+      const session = requireSession(sessionId);
+      session.interrupted = false;
+      // What the agent proposed for the memory after this prompt goes with it.
+      if (session.memorySuggestions?.length) {
+        session.memorySuggestions = session.memorySuggestions.filter(
+          (entry) => entry.createdAt < target.createdAt,
+        );
+      }
       return { prompt: target.content, restoredFiles: restored };
     },
     summarize_session: () => 'Summary of the previous session.',
@@ -1590,6 +1749,25 @@ export function installFakeBackend(seed: FakeSeed): void {
       const marker = message(sessionId, 'compaction', 'Summary of the conversation so far.');
       state.messages.push(marker);
       return { message: clone(marker), usedTokens: 300 };
+    },
+    get_permission_state: (args) => {
+      const project = state.projects.find((entry) => entry.id === args['projectId']);
+      const chat = String(args['conversationId']);
+      return {
+        commandPath: '/usr/bin:/bin',
+        loginShell: true,
+        // Names only, as in the app.
+        projectVariables: (project?.environment ?? '')
+          .split('\n')
+          .map((line) => line.trim().replace(/^export\s+/, ''))
+          .filter((line) => line && !line.startsWith('#') && line.includes('='))
+          .map((line) => line.slice(0, line.indexOf('=')).trim()),
+        sessionFolders: [],
+        sessionReadFolders: [],
+        chatPathFolders: chatPathFolders.get(chat) ?? [],
+        chatSecretFolders: chatSecretFolders.get(chat) ?? [],
+        chatCommandRules: [],
+      };
     },
     get_system_info: () => ({
       osName: 'macOS',
@@ -1728,7 +1906,8 @@ export function installFakeBackend(seed: FakeSeed): void {
     // its tabs and a command sent from the chat.
     terminal_open: (args) => {
       const channel = channelSender(args['channel'] as ChannelLike);
-      setTimeout(() => channel.send({ kind: 'output', data: '$ ' }), 0);
+      const prompt = seed.terminalPrompt ?? '$ ';
+      setTimeout(() => channel.send({ kind: 'output', data: prompt }), 0);
       return `terminal-${++terminalCount}`;
     },
     terminal_write: () => null,

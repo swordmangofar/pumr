@@ -276,8 +276,8 @@
     "more": "Vairāk cilņu"
   },
   "projectAppearance": {
-    "title": "Projekta izskats",
-    "edit": "Rediģēt projekta izskatu",
+    "title": "Projekta iestatījumi",
+    "edit": "Rediģēt projektu",
     "color": "Krāsa",
     "auto": "Auto",
     "customColor": "Pielāgota krāsa",
@@ -289,7 +289,11 @@
     "imageHint": "Vislabāk darbojas kvadrātveida attēls. Tas tiek apgriezts un mainīts automātiski.",
     "notAnImage": "Lūdzu, izvēlieties attēla failu.",
     "imageFailed": "Nevarēja izlasīt šo attēlu.",
-    "saveFailed": "Nevarēja saglabāt projekta izskatu."
+    "saveFailed": "Nevarēja saglabāt projekta izskatu.",
+    "environment": "Komandu vide",
+    "environmentHint": "Viens NAME=value katrā rindā, kā shell profilā. Katra komanda, ko asistents palaiž šajā projektā, sāk darbu ar šiem mainīgajiem. $NAME un ~ tiek aizstāti ar vērtībām, tāpēc PATH=$JAVA_HOME/bin:$PATH darbojas.",
+    "environmentInvalid": "Rinda {{ line }} nav NAME=value.",
+    "environmentFailed": "Neizdevās saglabāt vidi: {{ error }}"
   },
   "chat": {
     "placeholder": "Aprakstiet savu uzdevumu... izmantojiet @, lai pievienotu failus, mapes, vietnes, Skills vai MCP serverus",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globālās uzvednes",
       "mode": "Režīma konfigurācija",
       "projectRules": "Projekta noteikumi",
+      "memory": "Iegaumētās vēlmes",
       "user": "Lietotāja ziņojums",
       "assistant": "Modeļa reakcija",
       "tool": "Instrumenta izsaukums",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globālās uzvednes",
       "mode": "Režīmu uzvedne",
       "projectRules": "Projekta noteikumi",
+      "memory": "Iegaumētās vēlmes",
       "prompt": "Uzvedne",
       "referencedContext": "Atsauces konteksts",
       "mentions": "Piemin",
@@ -632,6 +638,8 @@
     "presetValueHint": "Izvēlas pakalpojumu sniedzēju ar labāko tokenu skaitu sekundē uz dolāru.",
     "trains": "trenējas uz datiem",
     "trainsHint": "Šis pakalpojumu sniedzējs var izmantot jūsu uzvednes apmācībai.",
+    "blocked": "bloķēts",
+    "blockedHint": "Jūsu OpenRouter privātuma vai pakalpojumu sniedzēju iestatījumi bloķē šo pakalpojumu sniedzēju.",
     "priceHint": "Cena par 1M tokenu, iekrāsota attiecībā pret citiem šī modeļa pakalpojumu sniedzējiem"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Pakalpojumu sniedzēji",
       "agent": "Agenta konfigurācija",
+      "memory": "Atmiņa",
       "agentRules": "Agenta atļauto un aizliegto saraksts",
       "sandbox": "Smilškaste",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Operētājsistēma ierobežo katru komandu, ko aģents palaiž, un visu, ko šī komanda startē. Tas ir otrs slānis aiz atļauju noteikumiem – komandai, kuru tie novērtē nepareizi. Komanda, kuru smilškaste aptur, var lūgt darboties ārpus tās; jums tiek jautāts katru reizi.",
       "unavailable": "Šajā sistēmā nav smilškastes, ko pumr varētu izmantot, tāpēc komandas darbojas bez ierobežojumiem. Nepieciešama macOS vai Linux 5.19 vai jaunāka versija ar Landlock.",
       "networkUnavailable": "Tīklu var slēgt tikai operētājsistēmā macOS.",
+      "inlineCode": "Palaist iegulto kodu stingrākā smilškastē, nevis jautāt",
+      "inlineCodeHint": "Iegulto node vai python kodu un skriptus, kas tiem nodoti ar heredoc, nevar pārbaudīt kā komandu. Kamēr ir ieslēgts “Visas komandas projekta iekšienē”, šāds kods darbojas bez jautāšanas stingrākā smilškastē: tas sasniedz tikai šo datoru, raksta tikai projektā, jūsu papildu mapēs un pagaidu mapēs un nevar startēt lietotnes, sasniegt citas programmas vai mainīt git hooks. Tas pats attiecas uz komandu, kuras argumenti ir zināmi tikai tās izpildes brīdī. Kods, kas nosauc failus ārpus projekta, sensitīvus failus vai citas tīmekļa vietnes, joprojām jautā. Ja smilškaste aptur skriptu, aģents var lūgt jums to palaist parastā veidā. Tikai macOS.",
       "modes": {
         "off": "Izslēgta",
         "files": "Faili",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Komandas darbojas ar jūsu lietotāja tiesībām, un tās ierobežo tikai atļauju noteikumi.",
-        "files": "Komandas raksta tikai projektā, jūsu papildu mapēs, pagaidu mapēs un zemāk norādītajās mapēs. Tās nevar lasīt mapes, kurās glabājas atslēgas.",
+        "files": "Komandas raksta tikai projektā, jūsu papildu mapēs, pagaidu mapēs un zemāk norādītajās mapēs. Tās nevar lasīt mapes, kurās glabājas atslēgas. Operētājsistēmā macOS tās nevar arī startēt citas lietotnes: open darbojas tikai kā atsevišķa komanda, ko pārbauda atļauju noteikumi.",
         "filesAndNetwork": "Tas pats, un komandas sasniedz tikai šo datoru, izņemot komandas, kuru host'us atļāvāt. Pakotņu instalēšana tad lūdz darboties ārpus smilškastes."
       },
       "writable": "Mapes, kurās komandas arī drīkst rakstīt",
       "writableHint": "Būvēšanas rīku kešatmiņas. Bez tām būvēšana neizdodas pirmajā lejupielādē. Ceļš sākas ar / vai ~.",
       "unreadable": "Mapes, kuras komandas nevar lasīt",
-      "unreadableHint": "Vietas, kur glabājas atslēgas un pilnvaras. git, ssh un mākoņa rīki patur mapes, ar kurām strādā, un mape, ko atļāvāt komandām, paliek atvērta.",
+      "unreadableHint": "Vietas, kur glabājas atslēgas un pilnvaras. git, ssh un mākoņa rīki patur mapes, ar kurām strādā, un mape, ko atļāvāt komandām, paliek atvērta. Arī paša pumr datu mape ar jūsu tērzēšanām un iestatījumiem komandām ir slēgta neatkarīgi no tā, kas ir šajā sarakstā.",
       "excluded": "Komandas, kas darbojas ārpus smilškastes",
       "excludedHint": "Rīkiem, kuriem ir sava smilškaste un kuri šajā nedarbojas, piemēram, pārlūka testiem. Ieraksts norāda, kā sākas komandrinda; ar * tas ir visas rindas šablons.",
       "addCommand": "Pievienot komandu",
@@ -800,6 +811,19 @@
       "timeout": "Apturēt pēc (sekundēm)",
       "project": "Projekts",
       "allProjects": "Visi projekti"
+    },
+    "memory": {
+      "title": "Atmiņa",
+      "hint": "pumr var iegaumēt, kā jums patīk strādāt, piemēram, kā vēlaties saņemt koda pārskatīšanas rezultātus, un pasaka to aģentam katrā tērzēšanā un katrā projektā. Bez jūsu piekrišanas nekas netiek iegaumēts.",
+      "enabled": "Izmantot atmiņu",
+      "enabledHint": "Kad izslēgts, tālāk esošie ieraksti tiek saglabāti, taču aģentam netiek nosūtīti un nekas jauns netiek ieteikts.",
+      "suggestions": "Ieteikt, ko iegaumēt",
+      "suggestionsHint": "Kad kāds jūsu ziņojums parāda paliekošu vēlmi, pumr pēc atbildes pajautā, vai to iegaumēt: ne biežāk kā reizi tērzēšanā un reizi dienā, un retāk ar katru reizi, kad ieteikumu nesaglabājat. Kad izslēgts, pumr joprojām iegaumē to, ko lūdzat.",
+      "list": "Iegaumētās vēlmes",
+      "add": "Pievienot ierakstu",
+      "empty": "Vēl nekas nav iegaumēts.",
+      "placeholder": "Piemēram: pārskatot kodu, par katru atradumu pajautā man, vai to labot vai izlaist.",
+      "remove": "Noņemt ierakstu"
     },
     "providers": {
       "title": "Modeļu pakalpojumu sniedzēji",
@@ -846,7 +870,9 @@
     "languageHint": "Tiek piemērots pēc saglabāšanas.",
     "workspace": {
       "allowed": "Atļautās mapes",
-      "foldersHint": "Asistents var lasīt un rakstīt šajās mapēs bez jautāšanas. Aktīvais projekts vienmēr ir atļauts."
+      "foldersHint": "Asistents var lasīt un rakstīt šajās mapēs bez jautāšanas. Aktīvais projekts vienmēr ir atļauts.",
+      "readable": "Mapes tikai lasīšanai",
+      "readableHint": "Asistents var lasīt šajās mapēs bez jautāšanas, taču par izmaiņām tajās joprojām tiek jautāts. Atcerēts pieprasījums par mapes lasīšanu vai tās satura uzskaitīšanu pievieno mapi šeit."
     },
     "mcp": {
       "tabBrowse": "Pārlūkot",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Izvēlieties attēlu",
       "clearFile": "Noņemt attēlu",
       "noFile": "Nav atlasīts neviens attēls",
-      "opacity": "Necaurredzamība",
-      "blur": "Aizmiglot",
+      "opacity": "Fona redzamība",
+      "blur": "Fona aizmiglojums",
+      "preview": "Priekšskatījums",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Tīkls",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Mapes ar atļautiem sensitīviem failiem",
     "secretFoldersHint": "Komandas drīkst bez jautāšanas izmantot sensitīvos failus (atslēgas, pilnvaras, akreditācijas datus), kas atrodas tieši šajās mapēs. Apakšmapes nav iekļautas. Izmantojiet „atļaut vienmēr“ atļaujas pieprasījumā, lai izveidotu vienu.",
     "noSecretFolders": "Vēl nav mapju ar atļautiem sensitīviem failiem.",
+    "pathFolders": "PATH mainīgajā uzticamas mapes",
+    "pathFoldersHint": "Komandas drīkst bez jautāšanas ievietot šīs mapes PATH mainīgajā, lai gan asistents var mainīt tajās esošos failus. Izmantojiet „atļaut vienmēr“ atļaujas pieprasījumā, lai pievienotu vienu.",
+    "noPathFolders": "Vēl nav PATH mainīgajā uzticamu mapju.",
     "scope": {
       "program": "Programma",
       "subcommand": "Programma + apakškomanda",
       "programFlags": "Programma + karodziņi",
-      "exact": "Precīza"
+      "exact": "Precīza",
+      "pathFolder": "Mape PATH mainīgajā"
     },
     "websiteAllowlist": "Atļautas",
     "websiteDenylist": "Bloķētas",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Projekta izpildfaili",
     "autoApproveProjectExecutablesHint": "Atļauj izpildfailus projekta iekšienē, piemēram, ./node_modules/.bin/ng, bez jautāšanas katru reizi.",
     "autoApproveProjectCommands": "Visas komandas projekta iekšienē",
-    "autoApproveProjectCommandsHint": "Atļauj jebkuru nebīstamu komandu, kuras ceļi paliek projektā, arī iegulto node vai python kodu, kas tikai lasa. Bīstamas komandas, cits iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, sensitīvi faili un viss ārpusē joprojām jautā.",
+    "autoApproveProjectCommandsHint": "Atļauj jebkuru nebīstamu komandu, kuras ceļi paliek projektā, arī iegulto node vai python kodu, kas tikai lasa. Bīstamas komandas, cits iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, sensitīvi faili un viss ārpusē joprojām jautā. Izņēmums ir iegultais node vai python kods, ko smilškaste palaiž, nevis jautā (skatiet Smilškaste).",
     "permissionPreset": {
       "strict": "Stingrs",
       "strictHint": "Bez jautāšanas darbojas tikai komandas, kas tikai lasa.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonoms",
       "autonomousHint": "Katra nebīstama komanda projektā darbojas bez jautāšanas.",
       "custom": "Pielāgots",
-      "autonomousWarning": "Autonomais režīms uzticas šim projektam: tā skripti, Makefile faili un izpildāmie faili var darīt jebko bez jautāšanas, un iegultais kods, kas tikai lasa, arī tiek palaists. Cits iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, bīstamas komandas un viss ārpus projekta joprojām jautā.",
+      "autonomousWarning": "Autonomais režīms uzticas šim projektam: tā skripti, Makefile faili un izpildāmie faili var darīt jebko bez jautāšanas, un iegultais kods, kas tikai lasa, arī tiek palaists. Cits iegultais kods, pakotņu lejupielādes, vēl neatļautas tīmekļa vietnes, bīstamas komandas un viss ārpus projekta joprojām jautā. Izņēmums ir iegultais node vai python kods, ko smilškaste palaiž, nevis jautā (skatiet Smilškaste).",
       "confirm": "Izmantot autonomo režīmu"
     },
     "noAllowedWebsites": "Vēl nav vienmēr atļautu vietņu.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Atļaut mapi",
       "hint": "Pievieno mapi un visu tajā esošo vienmēr atļautajām mapēm.",
-      "option": "Mape + apakšmapes"
+      "option": "Mape + apakšmapes",
+      "hintRead": "Atver mapi un visu tajā esošo lasīšanai. Par izmaiņām tur joprojām tiek jautāts.",
+      "optionRead": "Lasīt mapi + apakšmapes"
     },
     "hostScope": {
       "title": "Atļaut tīmekļa vietni",
@@ -1406,6 +1439,10 @@
       "hint": "Pēc tam komandas drīkst bez jautāšanas izmantot atslēgas, pilnvaras un akreditācijas datu failus, kas atrodas tieši šajā mapē. Apakšmapes nav iekļautas.",
       "option": "Sensitīvie faili šajā mapē",
       "chip": "sensitīvie faili mapē {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "PATH mainīgajā uzticamu mapi komandas drīkst tur ievietot bez jautāšanas. Tad šīs mapes programmas darbojas citu tāda paša nosaukuma programmu vietā.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Atļaut šajā tērzēšanā",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Kāpēc",
     "keyboardHint": "Nospiediet 1–{{ count }} vai izmantojiet ↑ ↓ un Enter · Esc noraida",
     "mcpToolHint": "Vairs nejautāt attiecas uz katru šī rīka izsaukumu šajā serverī neatkarīgi no argumentiem.",
+    "folderReadHint": "Atcerēta mape tiek atvērta tikai lasīšanai. Par izmaiņām tur joprojām tiek jautāts.",
     "url": {
       "queryWarning": "Šī adrese vaicājuma virknē nes daudz datu. Pirms atļaušanas pārliecinieties, ka tajā nav nekā privāta."
     },
@@ -1443,7 +1481,8 @@
     "back": "Atpakaļ",
     "next": "Tālāk",
     "submit": "Iesniegt",
-    "skip": "Izlaist"
+    "skip": "Izlaist",
+    "resetPosition": "Atiestatīt pozīciju"
   },
   "modelChoice": {
     "title": "Kuru modeli apakšagentam izmantot?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Atļauja liegta",
     "canceled": "Atcelts",
     "error": "Kļūda"
+  },
+  "memory": {
+    "title": "Vai to iegaumēt?",
+    "noticed": "pumr to pamanīja jūsu ziņojumā.",
+    "requested": "Jūs lūdzāt pumr to iegaumēt.",
+    "replaces": "Aizstāj: {{ text }}",
+    "textLabel": "Ko iegaumēt",
+    "hint": "Saglabātās vēlmes attiecas uz katru tērzēšanu visos projektos. Tās varat mainīt iestatījumu sadaļā “Atmiņa”.",
+    "save": "Iegaumēt",
+    "decline": "Nē, paldies",
+    "disable": "Vairs nejautāt",
+    "disableHint": "pumr vairs neieteiks, ko iegaumēt. To varat atkal ieslēgt iestatījumu sadaļā “Atmiņa”."
   },
   "terminal": {
     "title": "Terminālis {{ number }}",

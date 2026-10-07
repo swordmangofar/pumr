@@ -276,8 +276,8 @@
     "more": "More tabs"
   },
   "projectAppearance": {
-    "title": "Project appearance",
-    "edit": "Edit project appearance",
+    "title": "Project settings",
+    "edit": "Edit project",
     "color": "Color",
     "auto": "Auto",
     "customColor": "Custom color",
@@ -289,7 +289,11 @@
     "imageHint": "A square image works best. It is cropped and resized automatically.",
     "notAnImage": "Please choose an image file.",
     "imageFailed": "Could not read that image.",
-    "saveFailed": "Could not save the project appearance."
+    "saveFailed": "Could not save the project appearance.",
+    "environment": "Environment for commands",
+    "environmentHint": "One NAME=value per line, as in a shell profile. Every command the assistant runs in this project starts with these variables. $NAME and ~ are filled in, so PATH=$JAVA_HOME/bin:$PATH works.",
+    "environmentInvalid": "Line {{ line }} is not NAME=value.",
+    "environmentFailed": "Could not save the environment: {{ error }}"
   },
   "chat": {
     "placeholder": "Describe your task... use @ to add files, folders, websites, skills or MCP servers",
@@ -395,6 +399,7 @@
       "globalPrompts": "Global prompts",
       "mode": "Mode configuration",
       "projectRules": "Project rules",
+      "memory": "Remembered preferences",
       "user": "User message",
       "assistant": "Model response",
       "tool": "Tool call",
@@ -433,6 +438,7 @@
       "globalPrompts": "Global prompts",
       "mode": "Mode prompt",
       "projectRules": "Project rules",
+      "memory": "Remembered preferences",
       "prompt": "Prompt",
       "referencedContext": "Referenced context",
       "mentions": "Mentions",
@@ -632,6 +638,8 @@
     "presetValueHint": "Picks the provider with the best tokens per second per dollar.",
     "trains": "trains on data",
     "trainsHint": "This provider may use your prompts for training.",
+    "blocked": "blocked",
+    "blockedHint": "Your OpenRouter privacy or provider settings block this provider.",
     "priceHint": "Price per 1M tokens, colored relative to other providers for this model"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Providers",
       "agent": "Agent Configuration",
+      "memory": "Memory",
       "agentRules": "Agent white- and blacklist",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "The operating system confines every command the agent runs, and whatever that command starts. It is a second layer behind the permission rules, for a command they misjudge. A command the sandbox stops can ask to run outside it; you are asked each time.",
       "unavailable": "This system has no sandbox pumr can use, so commands run unconfined. It needs macOS, or Linux 5.19 or newer with Landlock.",
       "networkUnavailable": "Closing the network is only possible on macOS.",
+      "inlineCode": "Run inline code in a tighter sandbox instead of asking",
+      "inlineCodeHint": "Inline node or python code, and scripts passed to them in a heredoc, cannot be checked like a command. While “All commands inside the project” is on, such code runs without a prompt in a tighter sandbox: it reaches only this computer, writes only to the project, your extra folders and temp folders, and cannot start apps, reach other programs or change git hooks. The same applies to a command whose arguments are only known when it runs. Code that names files outside the project, sensitive files or other websites still asks. If the sandbox stops a script, the agent can ask you to run it normally. macOS only.",
       "modes": {
         "off": "Off",
         "files": "Files",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Commands run as your user, held back only by the permission rules.",
-        "files": "Commands write only to the project, your extra folders, temp folders and the folders listed below. They cannot read the folders that hold keys.",
+        "files": "Commands write only to the project, your extra folders, temp folders and the folders listed below. They cannot read the folders that hold keys. On macOS they cannot start other apps either: open only works as a command of its own, which the permission rules check.",
         "filesAndNetwork": "The same, and commands reach only this computer, except commands whose hosts you allowed. Installing packages then asks to run outside the sandbox."
       },
       "writable": "Folders commands may also write to",
       "writableHint": "The caches of build tools. Without them a build fails on its first download. A path starts with / or ~.",
       "unreadable": "Folders commands cannot read",
-      "unreadableHint": "Where keys and tokens live. git, ssh and the cloud tools keep the folders they work with, and a folder you released for commands stays open.",
+      "unreadableHint": "Where keys and tokens live. git, ssh and the cloud tools keep the folders they work with, and a folder you released for commands stays open. pumr's own data folder, with your chats and settings, is closed to commands as well, whatever this list holds.",
       "excluded": "Commands that run outside the sandbox",
       "excludedHint": "For tools that bring a sandbox of their own and fail inside this one, such as browser tests. An entry names how the command line begins; with * it is a pattern for the whole line.",
       "addCommand": "Add command",
@@ -800,6 +811,19 @@
       "timeout": "Stop after (seconds)",
       "project": "Project",
       "allProjects": "All projects"
+    },
+    "memory": {
+      "title": "Memory",
+      "hint": "pumr can remember how you like to work, for example how you want a code review reported, and tells the agent in every chat and every project. Nothing is remembered without your yes.",
+      "enabled": "Use memory",
+      "enabledHint": "Off, the entries below are kept, but the agent is not sent them and nothing new is suggested.",
+      "suggestions": "Suggest things to remember",
+      "suggestionsHint": "When one of your messages shows a lasting preference, pumr asks after the answer whether to remember it: at most once per chat and once a day, and less often each time you do not save one. Off, pumr still remembers what you ask it to.",
+      "list": "Remembered preferences",
+      "add": "Add entry",
+      "empty": "Nothing remembered yet.",
+      "placeholder": "For example: When reviewing code, ask me for every finding whether to fix or skip it.",
+      "remove": "Remove entry"
     },
     "providers": {
       "title": "Model providers",
@@ -846,7 +870,9 @@
     "languageHint": "Applies after saving.",
     "workspace": {
       "allowed": "Allowed folders",
-      "foldersHint": "The assistant can read and write these folders without asking. The active project is always allowed."
+      "foldersHint": "The assistant can read and write these folders without asking. The active project is always allowed.",
+      "readable": "Folders for reading only",
+      "readableHint": "The assistant can read these folders without asking, but changes there still ask. Remembering a prompt about reading or listing a folder adds it here."
     },
     "mcp": {
       "tabBrowse": "Browse",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Choose image",
       "clearFile": "Remove image",
       "noFile": "No image selected",
-      "opacity": "Opacity",
-      "blur": "Blur",
+      "opacity": "Background visibility",
+      "blur": "Background blur",
+      "preview": "Preview",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Mesh",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Folders with released sensitive files",
     "secretFoldersHint": "Commands may use the sensitive files (keys, tokens, credentials) directly in these folders without asking. Folders below them are not included. Use \"allow always\" in a permission prompt to create one.",
     "noSecretFolders": "No folders with released sensitive files yet.",
+    "pathFolders": "Folders trusted on PATH",
+    "pathFoldersHint": "Commands may put these folders on PATH without asking, although the assistant can change files in them. Use \"allow always\" in a permission prompt to add one.",
+    "noPathFolders": "No folders trusted on PATH yet.",
     "scope": {
       "program": "Program",
       "subcommand": "Program + subcommand",
       "programFlags": "Program + flags",
-      "exact": "Exact"
+      "exact": "Exact",
+      "pathFolder": "Folder on PATH"
     },
     "websiteAllowlist": "Allowed",
     "websiteDenylist": "Denied",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Project executables",
     "autoApproveProjectExecutablesHint": "Allow executables inside the project, such as ./node_modules/.bin/ng, without asking every time.",
     "autoApproveProjectCommands": "All commands inside the project",
-    "autoApproveProjectCommandsHint": "Allow any non-dangerous command whose paths stay inside the project, including inline node or python code that only reads. Dangerous commands, other inline code, package downloads, websites that are not allowed yet, sensitive files and anything outside still ask.",
+    "autoApproveProjectCommandsHint": "Allow any non-dangerous command whose paths stay inside the project, including inline node or python code that only reads. Dangerous commands, other inline code, package downloads, websites that are not allowed yet, sensitive files and anything outside still ask. The exception is inline node or python code that the sandbox runs instead of asking (see Sandbox).",
     "permissionPreset": {
       "strict": "Strict",
       "strictHint": "Only read-only commands run without asking.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonomous",
       "autonomousHint": "Every non-dangerous command inside the project runs without asking.",
       "custom": "Custom",
-      "autonomousWarning": "Autonomous trusts this project: its scripts, Makefiles and executables can do anything without a prompt, and inline code that only reads runs too. Other inline code, package downloads, websites that are not allowed yet, dangerous commands and anything outside the project still ask.",
+      "autonomousWarning": "Autonomous trusts this project: its scripts, Makefiles and executables can do anything without a prompt, and inline code that only reads runs too. Other inline code, package downloads, websites that are not allowed yet, dangerous commands and anything outside the project still ask. The exception is inline node or python code that the sandbox runs instead of asking (see Sandbox).",
       "confirm": "Use Autonomous"
     },
     "noAllowedWebsites": "No always-allowed websites yet.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Whitelist folder",
       "hint": "Adds the folder and everything below it to the always-allowed folders.",
-      "option": "Folder + subfolders"
+      "option": "Folder + subfolders",
+      "hintRead": "Opens the folder and everything below it for reading. Changes there still ask.",
+      "optionRead": "Read folder + subfolders"
     },
     "hostScope": {
       "title": "Allow website",
@@ -1406,6 +1439,10 @@
       "hint": "Commands may then use the keys, tokens and credential files directly in this folder without asking. Folders below it are not included.",
       "option": "Sensitive files in this folder",
       "chip": "sensitive files in {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "A folder trusted on PATH may be put there by commands without asking. Its programs then run in place of others with the same name.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Allow in this chat",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Why",
     "keyboardHint": "Press 1–{{ count }} or use ↑ ↓ and Enter · Esc denies",
     "mcpToolHint": "Not asking again covers every call of this tool on this server, whatever its arguments.",
+    "folderReadHint": "A remembered folder is opened for reading only. Changes there still ask.",
     "url": {
       "queryWarning": "This address carries a lot of data in its query string. Make sure it contains nothing private before you allow it."
     },
@@ -1443,7 +1481,8 @@
     "back": "Back",
     "next": "Next",
     "submit": "Submit",
-    "skip": "Skip"
+    "skip": "Skip",
+    "resetPosition": "Reset position"
   },
   "modelChoice": {
     "title": "Which model should the subagent use?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Permission denied",
     "canceled": "Canceled",
     "error": "Error"
+  },
+  "memory": {
+    "title": "Remember this?",
+    "noticed": "pumr noticed this in your message.",
+    "requested": "You asked pumr to remember this.",
+    "replaces": "Replaces: {{ text }}",
+    "textLabel": "What to remember",
+    "hint": "Saved preferences apply to every chat, in all projects. You can change them in the settings under Memory.",
+    "save": "Remember",
+    "decline": "No thanks",
+    "disable": "Don't ask again",
+    "disableHint": "pumr stops suggesting things to remember. You can turn this back on in the settings under Memory."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

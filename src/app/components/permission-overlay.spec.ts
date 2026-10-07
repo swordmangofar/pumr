@@ -696,6 +696,177 @@ describe('PermissionOverlay', () => {
     });
   });
 
+  describe('a folder on PATH', () => {
+    const folder = '/home/me/.sdkman/candidates/java/11.0.32-amzn/bin';
+    const line = `PATH=${folder}:$PATH ./gradlew test`;
+
+    function pathRequest(patch: Partial<PermissionRequestEvent> = {}): PermissionRequestEvent {
+      return request({
+        command: line,
+        detail: `Command adds ${folder} to PATH, which the assistant can change`,
+        suggestedRule: './gradlew *',
+        risk: { level: 'high', detail: 'A file in a folder on PATH runs in place of a program.' },
+        scopeOptions: [
+          { kind: 'pathFolder', rule: { kind: 'exact', value: folder } },
+          { kind: 'exact', rule: { kind: 'exact', value: line } },
+        ],
+        ...patch,
+      });
+    }
+
+    function pathChips(id: string): string[] {
+      return [...(option(id)?.querySelectorAll('[data-testid="path-chip"]') ?? [])].map(
+        (chip) => chip.getAttribute('title') ?? '',
+      );
+    }
+
+    it('remembers the folder rather than a line that is new every time', async () => {
+      await create(pathRequest());
+      expect(optionIds()).toEqual([
+        'allow',
+        'allow_session',
+        'allow_always',
+        'deny',
+        'deny_always',
+      ]);
+      // The folder is the only thing the remembering choices name.
+      expect(pathChips('allow_session')).toEqual([folder]);
+      expect(pathChips('allow_always')).toEqual([folder]);
+      expect(chips('allow_always')).toEqual(['permission.pathScope.chip']);
+      expect(pathChips('allow')).toEqual([]);
+
+      option('allow_always')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_always',
+        [{ kind: 'exact', value: folder }],
+        [],
+        [],
+      );
+    });
+
+    it('denies the line for good, never the folder', async () => {
+      await create(pathRequest());
+      expect(chips('deny_always')).toEqual([line]);
+      option('deny_always')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'deny_always',
+        [{ kind: 'exact', value: line }],
+        [],
+        [],
+      );
+    });
+
+    it('lets the user remember the exact line instead and says what trusting means', async () => {
+      await create(pathRequest());
+      openCustomize();
+      const panel = element().querySelector('[data-testid="customize-panel"]')!;
+      expect(panel.textContent).toContain('permission.pathScope.hint');
+      expect(panel.textContent).toContain('settings.scope.pathFolder');
+
+      customizeButton('settings.scope.exact').click();
+      fixture.detectChanges();
+      expect(pathChips('allow_session')).toEqual([]);
+      expect(chips('allow_session')).toEqual([line]);
+      option('allow_session')!.click();
+      expect(resolvePermission).toHaveBeenCalledWith(
+        'allow_session',
+        [{ kind: 'exact', value: line }],
+        [],
+        [],
+      );
+    });
+
+    it('offers the folder for the part of a compound line that sets PATH', async () => {
+      const first = `export PATH="${folder}:$PATH"`;
+      await create(
+        pathRequest({
+          command: `${first}; eval "$CHECK"`,
+          segments: [
+            {
+              text: first,
+              allowed: false,
+              reason: 'Command adds a folder to PATH',
+              scopeOptions: [
+                { kind: 'pathFolder', rule: { kind: 'exact', value: folder } },
+                { kind: 'exact', rule: { kind: 'exact', value: first } },
+              ],
+            },
+            {
+              text: 'eval "$CHECK"',
+              allowed: false,
+              reason: 'Command runs code from a variable',
+              scopeOptions: [{ kind: 'exact', rule: { kind: 'exact', value: 'eval "$CHECK"' } }],
+            },
+          ],
+          scopeOptions: [
+            { kind: 'pathFolder', rule: { kind: 'exact', value: folder } },
+            { kind: 'exact', rule: { kind: 'exact', value: first } },
+            { kind: 'exact', rule: { kind: 'exact', value: 'eval "$CHECK"' } },
+          ],
+        }),
+      );
+      // The folder for the first part, the exact line for the second.
+      expect(pathChips('allow_session')).toEqual([folder]);
+      expect(chips('allow_session')).toEqual(['permission.pathScope.chip', 'eval "$CHECK"']);
+      expect(chips('deny_always')).toEqual([first, 'eval "$CHECK"']);
+    });
+  });
+
+  describe('folders opened for reading', () => {
+    function hint(): Element | null {
+      return element().querySelector('[data-testid="read-only-hint"]');
+    }
+
+    it('says that a folder remembered from a prompt about reading stays closed to changes', async () => {
+      await create(
+        request({
+          promptKind: 'folder',
+          title: 'Read directory outside the project?',
+          command: null,
+          folder: '/opt/jdks',
+          path: '/opt/jdks',
+          scopeOptions: [],
+          suggestedRule: null,
+          readOnly: true,
+        }),
+      );
+      expect(hint()?.textContent).toContain('permission.folderReadHint');
+    });
+
+    it('says nothing of the kind for a prompt about a change', async () => {
+      await create(
+        request({
+          promptKind: 'folder',
+          title: 'Change file outside the project?',
+          command: null,
+          folder: '/other/repo',
+          path: '/other/repo/a.txt',
+          scopeOptions: [],
+          suggestedRule: null,
+          readOnly: false,
+        }),
+      );
+      expect(hint()).toBeNull();
+    });
+
+    it('names the folders of a command that only reads as folders for reading', async () => {
+      await create(
+        request({
+          command: 'ls /opt/jdks',
+          scopeOptions: [],
+          suggestedRule: null,
+          folders: ['/opt/jdks'],
+          readOnly: true,
+        }),
+      );
+      openCustomize();
+      const panel = element().querySelector('[data-testid="customize-panel"]')!;
+      expect(panel.textContent).toContain('permission.folderScope.optionRead');
+      expect(panel.textContent).toContain('permission.folderScope.hintRead');
+      expect(panel.textContent).not.toContain('permission.folderScope.hint ');
+    });
+  });
+
   describe('MCP tool prompts', () => {
     function mcpRequest(): PermissionRequestEvent {
       return request({

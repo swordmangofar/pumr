@@ -16,6 +16,7 @@ use crate::models::{
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::catalog::{self, ProviderDef, ProviderKind};
+use crate::providers::openrouter::{apply_data_policies, DataPolicies, OpenRouterClient};
 use crate::providers::{compat, ChatChunk, ChatMessage, LlmClient, PromptCache};
 use crate::state::{AppState, SendClaim, SwappableSink};
 use crate::terminal::TerminalEvent;
@@ -66,6 +67,7 @@ pub fn save_settings(
     keep_key_flags(&mut settings, &state.settings());
     keep_granted(&mut settings, &state.settings());
     drop_default_providers(&mut settings);
+    crate::memory::tidy_entries(&mut settings.memory.memories);
     config::save_settings(&state.settings_path, &settings)?;
     state.power.set_enabled(settings.interface.keep_awake);
     crate::window::apply(&app, &settings.window);
@@ -74,9 +76,9 @@ pub fn save_settings(
     Ok(settings)
 }
 
-/// A remembered approval for an MCP tool, and a folder whose sensitive files
-/// commands may use, come from a prompt the user answered: saving the
-/// settings may drop one and never adds one.
+/// A remembered approval for an MCP tool, a folder whose sensitive files
+/// commands may use and a folder trusted on `PATH` come from a prompt the
+/// user answered: saving the settings may drop one and never adds one.
 fn keep_granted(settings: &mut Settings, current: &Settings) {
     let tools = &current.permissions.mcp_tool_grants;
     settings
@@ -87,6 +89,11 @@ fn keep_granted(settings: &mut Settings, current: &Settings) {
     settings
         .permissions
         .secret_folders
+        .retain(|folder| folders.contains(folder));
+    let folders = &current.permissions.path_folders;
+    settings
+        .permissions
+        .path_folders
         .retain(|folder| folders.contains(folder));
 }
 
@@ -475,9 +482,37 @@ pub async fn list_endpoints(
         }
     }
     let api_key = config::get_api_key(catalog::OPENROUTER)?.unwrap_or_default();
-    let endpoints = state.provider().list_endpoints(&api_key, &model_id).await?;
+    let provider = state.provider();
+    let (endpoints, policies) = tokio::join!(
+        provider.list_endpoints(&api_key, &model_id),
+        data_policies(&state, &provider, refresh.unwrap_or(false)),
+    );
+    let mut endpoints = endpoints?;
+    if let Some(policies) = policies {
+        apply_data_policies(&mut endpoints, &policies);
+    }
     state.cache_endpoints(&model_id, endpoints.clone());
     Ok(endpoints)
+}
+
+/// What each provider does with prompts, fetched once and again on a refresh.
+/// A failed fetch keeps what was known before, which may be nothing.
+async fn data_policies(
+    state: &AppState,
+    provider: &OpenRouterClient,
+    refresh: bool,
+) -> Option<DataPolicies> {
+    let cached = state.cached_data_policies();
+    if cached.is_some() && !refresh {
+        return cached;
+    }
+    match provider.list_data_policies().await {
+        Some(policies) => {
+            state.cache_data_policies(policies.clone());
+            Some(policies)
+        }
+        None => cached,
+    }
 }
 
 #[tauri::command]
@@ -544,6 +579,11 @@ async fn stop_for_deletion(state: &AppState, session_ids: &[String]) {
 pub async fn remove_project(state: State<'_, AppState>, project_id: String) -> Result<()> {
     let session_ids = state.db.project_session_ids(&project_id)?;
     stop_for_deletion(&state, &session_ids).await;
+    if let Ok(project) = state.db.get_project(&project_id) {
+        state
+            .permissions
+            .set_project_environment(Path::new(&project.path), Vec::new());
+    }
     state.db.remove_project(&project_id)?;
     // The shadow repository keeps a copy of every snapshot; nothing refers to
     // it once the project is gone.
@@ -567,6 +607,37 @@ pub fn update_project(
         icon.as_deref(),
         icon_image.as_deref(),
     )
+}
+
+/// Sets the variables every command of the project starts with: one
+/// `NAME=value` per line, as a shell profile would set them (see
+/// `crate::project_env`). An empty text takes them away. They apply to the
+/// next command, also in a turn that is already running.
+#[tauri::command]
+pub fn set_project_environment(
+    state: State<'_, AppState>,
+    project_id: String,
+    environment: String,
+) -> Result<Project> {
+    apply_project_environment(&state, &project_id, &environment)
+}
+
+fn apply_project_environment(
+    state: &AppState,
+    project_id: &str,
+    environment: &str,
+) -> Result<Project> {
+    // Text that cannot be read is not stored: nothing would come of it.
+    let variables = crate::project_env::resolve_for_commands(environment)
+        .map_err(|problem| AppError::msg(problem.to_string()))?;
+    let text = environment.trim();
+    let project = state
+        .db
+        .update_project_environment(project_id, (!text.is_empty()).then_some(text))?;
+    state
+        .permissions
+        .set_project_environment(Path::new(&project.path), variables);
+    Ok(project)
 }
 
 #[tauri::command]
@@ -1030,11 +1101,15 @@ fn select_command_rules(
     options: &[CommandScopeOption],
     submitted: Vec<CommandRule>,
 ) -> Vec<CommandRule> {
+    let path_folders = select_path_folders(options, &submitted);
     let mut chosen = Vec::new();
     for rule in submitted {
         let rule = rule.trimmed();
+        // A folder to trust on `PATH` is no rule for a command line.
         if !rule.value().is_empty()
-            && options.iter().any(|option| option.rule == rule)
+            && options
+                .iter()
+                .any(|option| option.kind != CommandScopeKind::PathFolder && option.rule == rule)
             && !chosen.contains(&rule)
         {
             chosen.push(rule);
@@ -1043,15 +1118,46 @@ fn select_command_rules(
     // Missing segment selections use only backend-owned exact options, never
     // the display suggestion. An unscoped command offers its whole line as an
     // exact option, so allow and deny can both remember it without widening.
+    //
+    // A part that asked about `PATH` offers its folders in front of its exact
+    // line. With one of them trusted the part no longer asks, so its line
+    // needs no rule of its own.
+    let mut trusted = false;
     for option in options {
-        if option.kind == CommandScopeKind::Exact {
-            if let CommandRule::Exact(command) = &option.rule {
-                if !command.trim().is_empty()
-                    && !crate::permissions::matches_rules(command, &chosen)
-                {
-                    chosen.push(option.rule.clone());
+        match option.kind {
+            CommandScopeKind::PathFolder => {
+                trusted |= path_folders
+                    .iter()
+                    .any(|folder| folder == option.rule.value());
+            }
+            CommandScopeKind::Exact => {
+                let trusted = std::mem::take(&mut trusted);
+                if let CommandRule::Exact(command) = &option.rule {
+                    if !trusted
+                        && !command.trim().is_empty()
+                        && !crate::permissions::matches_rules(command, &chosen)
+                    {
+                        chosen.push(option.rule.clone());
+                    }
                 }
             }
+            _ => trusted = false,
+        }
+    }
+    chosen
+}
+
+/// The folders a remembering allow trusts on `PATH`: the submitted choices
+/// that are one of the prompt's own `PathFolder` options, in the order the
+/// prompt offered them.
+fn select_path_folders(options: &[CommandScopeOption], submitted: &[CommandRule]) -> Vec<String> {
+    let mut chosen: Vec<String> = Vec::new();
+    for option in options {
+        if option.kind == CommandScopeKind::PathFolder
+            && submitted.iter().any(|rule| rule.trimmed() == option.rule)
+            && !chosen.iter().any(|folder| folder == option.rule.value())
+        {
+            chosen.push(option.rule.value().to_string());
         }
     }
     chosen
@@ -1080,6 +1186,19 @@ fn command_rules_for_decision(
             .into_iter()
             .collect();
     }
+    // Denying has no folder to trust: it remembers the line that asked.
+    let submitted = if decision == "deny_always" {
+        submitted
+            .into_iter()
+            .filter(|rule| {
+                !pending.scope_options.iter().any(|option| {
+                    option.kind == CommandScopeKind::PathFolder && option.rule == rule.trimmed()
+                })
+            })
+            .collect()
+    } else {
+        submitted
+    };
     select_command_rules(&pending.scope_options, submitted)
 }
 
@@ -1168,6 +1287,7 @@ mod permission_rule_tests {
         let command = r#"echo "$(whoami)""#;
         let pending = crate::broker::PendingPrompt {
             kind: "command".into(),
+            operation: crate::broker::PermissionOperation::Execute,
             command: Some(format!("  {command}  ")),
             folder: None,
             suggested_rule: Some("echo *".into()),
@@ -1230,6 +1350,7 @@ mod permission_rule_tests {
         // is remembered for it: what it remembers is its tool.
         let mcp = crate::broker::PendingPrompt {
             kind: "command".into(),
+            operation: crate::broker::PermissionOperation::McpTool,
             command: None,
             folder: None,
             suggested_rule: None,
@@ -1353,12 +1474,239 @@ mod permission_rule_tests {
             vec![mcp_grant("codegraph_node"), mcp_grant("never_approved")];
         current.permissions.secret_folders = vec!["/home/me/secrets".into()];
         saved.permissions.secret_folders = vec!["/home/me/.ssh".into(), "/home/me/secrets".into()];
+        current.permissions.path_folders = vec!["/opt/jdks/11/bin".into()];
+        saved.permissions.path_folders = vec!["/opt/jdks/11/bin".into(), "/tmp/planted".into()];
         keep_granted(&mut saved, &current);
         assert_eq!(
             saved.permissions.mcp_tool_grants,
             vec![mcp_grant("codegraph_node")]
         );
         assert_eq!(saved.permissions.secret_folders, vec!["/home/me/secrets"]);
+        assert_eq!(saved.permissions.path_folders, vec!["/opt/jdks/11/bin"]);
+    }
+
+    /// The scopes of a prompt about a folder on `PATH`: the folder, then the
+    /// exact line, as `permissions` offers them.
+    fn path_options(folder: &str, line: &str) -> Vec<CommandScopeOption> {
+        vec![
+            CommandScopeOption {
+                kind: CommandScopeKind::PathFolder,
+                rule: CommandRule::Exact(folder.into()),
+            },
+            CommandScopeOption {
+                kind: CommandScopeKind::Exact,
+                rule: CommandRule::Exact(line.into()),
+            },
+        ]
+    }
+
+    #[test]
+    fn a_folder_chosen_for_path_is_trusted_instead_of_remembering_the_line() {
+        let folder = "/home/me/.sdkman/candidates/java/11/bin";
+        let line = "PATH=/home/me/.sdkman/candidates/java/11/bin:$PATH ./gradlew test";
+        let options = path_options(folder, line);
+        let chosen = vec![CommandRule::Exact(folder.into())];
+
+        // The folder is what is remembered: no rule for the line next to it.
+        assert_eq!(select_path_folders(&options, &chosen), vec![folder.to_string()]);
+        assert!(select_command_rules(&options, chosen.clone()).is_empty());
+        // The user picked the exact line instead: a rule, and no folder.
+        let exact = vec![CommandRule::Exact(line.into())];
+        assert!(select_path_folders(&options, &exact).is_empty());
+        assert_eq!(select_command_rules(&options, exact.clone()), exact);
+        // Nothing picked falls back to the exact line, as for every prompt.
+        assert_eq!(select_command_rules(&options, Vec::new()), exact);
+        // A folder the prompt did not offer is no choice at all.
+        let other = vec![CommandRule::Exact("/tmp/planted".into())];
+        assert!(select_path_folders(&options, &other).is_empty());
+        assert_eq!(select_command_rules(&options, other), exact);
+
+        // A second part of the line keeps its own rule next to the folder.
+        let mut compound = options.clone();
+        compound.push(CommandScopeOption {
+            kind: CommandScopeKind::Exact,
+            rule: CommandRule::Exact("eval \"$X\"".into()),
+        });
+        assert_eq!(
+            select_command_rules(&compound, chosen.clone()),
+            vec![CommandRule::Exact("eval \"$X\"".into())]
+        );
+
+        // Denying for good has no folder to trust: it remembers the line.
+        let pending = crate::broker::PendingPrompt {
+            kind: "command".into(),
+            operation: crate::broker::PermissionOperation::Execute,
+            command: Some(line.into()),
+            folder: None,
+            suggested_rule: Some("./gradlew *".into()),
+            scope_options: options,
+            folders: Vec::new(),
+            hosts: Vec::new(),
+            mcp_tool: None,
+            secret_folders: Vec::new(),
+            url: None,
+            session_id: "chat".into(),
+            grant_session_id: "chat".into(),
+        };
+        assert_eq!(
+            command_rules_for_decision(&pending, "deny_always", chosen.clone()),
+            exact
+        );
+        assert!(command_rules_for_decision(&pending, "allow_always", chosen).is_empty());
+    }
+
+    #[test]
+    fn trusting_a_folder_on_path_holds_for_the_chat_or_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("pumr.sqlite")).unwrap();
+        db.migrate().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        let state = AppState::new(
+            db,
+            dir.path().to_path_buf(),
+            settings_path.clone(),
+            Settings::default(),
+        );
+        let folders = vec!["/opt/jdks/11/bin".to_string()];
+        let trusted = |chat: &str| state.permissions.path_folders_for(chat);
+
+        for decision in ["allow_once", "deny", "deny_always"] {
+            assert!(!trust_path_folders(&state, "chat", &folders, decision).unwrap());
+        }
+        assert!(!trust_path_folders(&state, "chat", &[], "allow_always").unwrap());
+        assert!(trusted("chat").is_empty());
+
+        assert!(trust_path_folders(&state, "chat", &folders, "allow_session").unwrap());
+        assert_eq!(trusted("chat"), vec![PathBuf::from(&folders[0])]);
+        assert!(trusted("other").is_empty());
+        assert!(!settings_path.exists());
+
+        for _ in 0..2 {
+            assert!(trust_path_folders(&state, "chat", &folders, "allow_always").unwrap());
+        }
+        assert_eq!(trusted("other"), vec![PathBuf::from(&folders[0])]);
+        assert_eq!(
+            config::load_settings(&settings_path).permissions.path_folders,
+            folders
+        );
+    }
+
+    #[test]
+    fn the_variables_of_a_project_are_stored_and_reach_its_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mercurius");
+        std::fs::create_dir_all(&root).unwrap();
+        let database = dir.path().join("pumr.sqlite");
+        let open = || {
+            let db = Db::open(&database).unwrap();
+            db.migrate().unwrap();
+            AppState::new(
+                db,
+                dir.path().to_path_buf(),
+                dir.path().join("settings.json"),
+                Settings::default(),
+            )
+        };
+        let state = open();
+        let project = state.db.upsert_project(&root.to_string_lossy()).unwrap();
+        assert_eq!(project.environment, None);
+        let set = |text: &str| apply_project_environment(&state, &project.id, text);
+        let value = |state: &AppState, name: &str| {
+            state
+                .permissions
+                .project_environment(&root)
+                .into_iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value)
+        };
+
+        let text = "# JDK 11\nJAVA_HOME=/opt/jdks/11\nPATH=$JAVA_HOME/bin:$PATH";
+        let saved = set(&format!("\n{text}\n  ")).unwrap();
+        assert_eq!(saved.environment.as_deref(), Some(text));
+        assert_eq!(value(&state, "JAVA_HOME").as_deref(), Some("/opt/jdks/11"));
+        assert!(value(&state, "PATH").unwrap().starts_with("/opt/jdks/11/bin:"));
+
+        // Text that cannot be read changes nothing and says which line.
+        let error = set("JAVA_HOME=/opt/jdks/25\nsdk use java 25").unwrap_err();
+        assert!(error.to_string().contains("line 2"), "{error}");
+        assert_eq!(value(&state, "JAVA_HOME").as_deref(), Some("/opt/jdks/11"));
+        assert_eq!(
+            state.db.get_project(&project.id).unwrap().environment.as_deref(),
+            Some(text)
+        );
+
+        // They are there again after a restart.
+        let restarted = open();
+        assert_eq!(value(&restarted, "JAVA_HOME").as_deref(), Some("/opt/jdks/11"));
+
+        // An empty text takes them away.
+        assert_eq!(set("  \n").unwrap().environment, None);
+        assert!(state.permissions.project_environment(&root).is_empty());
+    }
+
+    #[test]
+    fn a_debug_log_is_told_what_was_granted_without_being_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("mercurius");
+        std::fs::create_dir_all(&root).unwrap();
+        let db = Db::open(&dir.path().join("pumr.sqlite")).unwrap();
+        db.migrate().unwrap();
+        let state = AppState::new(
+            db,
+            dir.path().to_path_buf(),
+            dir.path().join("settings.json"),
+            Settings::default(),
+        );
+        let project = state.db.upsert_project(&root.to_string_lossy()).unwrap();
+        apply_project_environment(
+            &state,
+            &project.id,
+            "API_TOKEN=secret-value\nPATH=/opt/jdks/11/bin:/usr/bin",
+        )
+        .unwrap();
+        state.permissions.add_session_folder("/work/shared");
+        state.permissions.add_session_read_folder("/opt/jdks");
+        state.permissions.add_session_path_folder("chat", "/opt/jdks/11/bin");
+        state.permissions.add_session_secret_folder("chat", "/home/me/secrets");
+        let rule = CommandRule::Glob("./gradlew *".into());
+        state.permissions.add_session_command_rule("chat", &rule);
+
+        let told = permission_state(&state, "chat", Some(&project.id));
+        assert_eq!(told.command_path.as_deref(), Some("/opt/jdks/11/bin:/usr/bin"));
+        // The names of the project's variables, never a value.
+        assert_eq!(told.project_variables, vec!["API_TOKEN", "PATH"]);
+        assert!(!serde_json::to_string(&told).unwrap().contains("secret-value"));
+        assert_eq!(told.session_folders, vec!["/work/shared"]);
+        assert_eq!(told.session_read_folders, vec!["/opt/jdks"]);
+        assert_eq!(told.chat_path_folders, vec!["/opt/jdks/11/bin"]);
+        assert_eq!(told.chat_secret_folders, vec!["/home/me/secrets"]);
+        assert_eq!(told.chat_command_rules, vec![rule]);
+
+        // Another chat has the session's folders and nothing of that chat's.
+        let other = permission_state(&state, "other", None);
+        assert_eq!(other.session_read_folders, vec!["/opt/jdks"]);
+        assert!(other.chat_path_folders.is_empty() && other.chat_command_rules.is_empty());
+        assert!(other.project_variables.is_empty());
+        assert_ne!(other.command_path, told.command_path);
+    }
+
+    #[test]
+    fn a_folder_is_remembered_for_reading_or_for_changes() {
+        let mut permissions = config::PermissionSettings::default();
+        // Asked about reading: opened for reading, once.
+        assert!(remember_folder(&mut permissions, "/opt/jdks", true));
+        assert!(!remember_folder(&mut permissions, "/opt/jdks", true));
+        assert_eq!(permissions.read_folders, vec!["/opt/jdks"]);
+        assert!(permissions.extra_folders.is_empty());
+        // Asked about a change later: it moves to the folders for changes.
+        assert!(remember_folder(&mut permissions, "/opt/jdks", false));
+        assert_eq!(permissions.extra_folders, vec!["/opt/jdks"]);
+        assert!(permissions.read_folders.is_empty());
+        // What may be changed may be read: nothing to add, either way.
+        assert!(!remember_folder(&mut permissions, "/opt/jdks", true));
+        assert!(!remember_folder(&mut permissions, "/opt/jdks", false));
+        assert!(permissions.read_folders.is_empty());
+        assert_eq!(permissions.extra_folders, vec!["/opt/jdks"]);
     }
 }
 
@@ -1430,6 +1778,70 @@ fn release_secret_folders(
     }
 }
 
+/// Stores which folders commands may put on `PATH` from now on: for this
+/// chat and its subagents, or for every chat in the settings. Returns
+/// whether the decision trusted anything.
+fn trust_path_folders(
+    state: &AppState,
+    conversation_id: &str,
+    folders: &[String],
+    decision: &str,
+) -> Result<bool> {
+    if folders.is_empty() {
+        return Ok(false);
+    }
+    match decision {
+        "allow_session" => {
+            for folder in folders {
+                state
+                    .permissions
+                    .add_session_path_folder(conversation_id, folder);
+            }
+            Ok(true)
+        }
+        "allow_always" => {
+            let mut settings = state.settings();
+            let before = settings.permissions.path_folders.len();
+            for folder in folders {
+                if !settings.permissions.path_folders.contains(folder) {
+                    settings.permissions.path_folders.push(folder.clone());
+                }
+            }
+            if settings.permissions.path_folders.len() != before {
+                config::save_settings(&state.settings_path, &settings)?;
+                state.set_settings(settings);
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Adds `folder` to the folders the assistant may use without asking: to
+/// the ones it may only read when `read_only`, else to the ones it may
+/// change. A folder it may change needs no entry for reading. Returns
+/// whether a list changed.
+fn remember_folder(
+    permissions: &mut config::PermissionSettings,
+    folder: &str,
+    read_only: bool,
+) -> bool {
+    let writable = permissions.extra_folders.iter().any(|entry| entry == folder);
+    if read_only {
+        if writable || permissions.read_folders.iter().any(|entry| entry == folder) {
+            return false;
+        }
+        permissions.read_folders.push(folder.to_string());
+        return true;
+    }
+    let before = permissions.read_folders.len();
+    permissions.read_folders.retain(|entry| entry != folder);
+    if !writable {
+        permissions.extra_folders.push(folder.to_string());
+    }
+    !writable || permissions.read_folders.len() != before
+}
+
 #[tauri::command]
 pub fn resolve_permission(
     state: State<'_, AppState>,
@@ -1456,8 +1868,18 @@ pub fn resolve_permission(
     let allowed = decision != "deny" && decision != "deny_always";
     let is_web = pending.kind.starts_with("web");
     let is_command = pending.kind == "command";
-    let chosen_rules =
-        command_rules_for_decision(&pending, &decision, command_rules.unwrap_or_default());
+    let submitted_rules = command_rules.unwrap_or_default();
+    // What a remembering choice remembers.
+    let remembers = matches!(decision.as_str(), "allow_session" | "allow_always");
+    // Folders the prompt offered to trust on `PATH`, chosen like a rule.
+    let chosen_path_folders = if is_command && remembers {
+        select_path_folders(&pending.scope_options, &submitted_rules)
+    } else {
+        Vec::new()
+    };
+    let chosen_rules = command_rules_for_decision(&pending, &decision, submitted_rules);
+    // A prompt about reading opens its folders for reading only.
+    let read_only = pending.operation.reads_only();
     // Only folders this prompt actually offered can be whitelisted. Deduplicate
     // while preserving the backend order.
     let mut chosen_folders: Vec<String> = Vec::new();
@@ -1495,7 +1917,10 @@ pub fn resolve_permission(
     // covers the requested host (and, to allow, stays narrow); otherwise the
     // backend's proposed host. Command decision metadata is display-only.
     let rule = if is_command {
-        chosen_rules.first().map(|rule| rule.value().to_string())
+        chosen_rules
+            .first()
+            .map(|rule| rule.value().to_string())
+            .or_else(|| chosen_path_folders.first().cloned())
     } else {
         let requested_host = pending
             .url
@@ -1528,7 +1953,6 @@ pub fn resolve_permission(
         .filter(|value| !value.is_empty());
     // An MCP tool prompt remembers the tool rather than a command rule; the
     // permission log names it the same way.
-    let remembers = matches!(decision.as_str(), "allow_session" | "allow_always");
     let rule = rule.or_else(|| {
         pending
             .mcp_tool
@@ -1597,27 +2021,8 @@ pub fn resolve_permission(
                 }
             }
         }
-        if let Some(folder) = &folder {
-            if !settings
-                .permissions
-                .extra_folders
-                .iter()
-                .any(|entry| entry == folder)
-            {
-                settings.permissions.extra_folders.push(folder.clone());
-                changed = true;
-            }
-        }
-        for candidate in &chosen_folders {
-            if !settings
-                .permissions
-                .extra_folders
-                .iter()
-                .any(|entry| entry == candidate)
-            {
-                settings.permissions.extra_folders.push(candidate.clone());
-                changed = true;
-            }
+        for folder in folder.iter().chain(&chosen_folders) {
+            changed |= remember_folder(&mut settings.permissions, folder, read_only);
         }
         for host in &chosen_hosts {
             if !settings
@@ -1648,12 +2053,12 @@ pub fn resolve_permission(
                 grants_applied = true;
             }
         }
-        if let Some(folder) = &folder {
-            state.permissions.add_session_folder(folder);
-            grants_applied = true;
-        }
-        for candidate in &chosen_folders {
-            state.permissions.add_session_folder(candidate);
+        for folder in folder.iter().chain(&chosen_folders) {
+            if read_only {
+                state.permissions.add_session_read_folder(folder);
+            } else {
+                state.permissions.add_session_folder(folder);
+            }
             grants_applied = true;
         }
         for host in &chosen_hosts {
@@ -1690,6 +2095,12 @@ pub fn resolve_permission(
             &state,
             &pending.grant_session_id,
             &chosen_secret_folders,
+            &decision,
+        )?;
+        grants_applied |= trust_path_folders(
+            &state,
+            &pending.grant_session_id,
+            &chosen_path_folders,
             &decision,
         )?;
     }
@@ -1759,6 +2170,47 @@ pub fn resolve_model_choice(
 ) -> Result<()> {
     state.model_choices.resolve(&request_id, model);
     Ok(())
+}
+
+/// Answers the card of a suggestion for pumr's memory (see `crate::memory`):
+/// "save" keeps its text as the user left it, "decline" keeps nothing and
+/// "disable" also switches the agent's own suggestions off.
+#[tauri::command]
+pub fn resolve_memory_suggestion(
+    state: State<'_, AppState>,
+    session_id: String,
+    id: i64,
+    decision: String,
+    text: Option<String>,
+) -> Result<Settings> {
+    answer_memory_suggestion(&state, &session_id, id, &decision, text.as_deref())
+}
+
+fn answer_memory_suggestion(
+    state: &AppState,
+    session_id: &str,
+    id: i64,
+    decision: &str,
+    text: Option<&str>,
+) -> Result<Settings> {
+    let decision = crate::memory::Decision::parse(decision)
+        .ok_or_else(|| AppError::msg("Unknown answer to a memory suggestion."))?;
+    let mut settings = state.settings();
+    let open = state.db.session_memory_suggestions(session_id)?;
+    // A card that is gone was answered already: a second click saves nothing.
+    let Some(suggestion) = open.iter().find(|suggestion| suggestion.id == id) else {
+        return Ok(settings);
+    };
+    crate::memory::apply(&mut settings.memory, suggestion, decision, text)
+        .map_err(AppError::msg)?;
+    // The settings first: were the card taken off before its entry is
+    // stored, a failure in between would lose what the user said yes to.
+    config::save_settings(&state.settings_path, &settings)?;
+    state.set_settings(settings.clone());
+    state
+        .db
+        .settle_memory_suggestion(session_id, id, decision.outcome())?;
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -1869,6 +2321,20 @@ pub fn delete_secret_folder(state: State<'_, AppState>, folder: String) -> Resul
     settings
         .permissions
         .secret_folders
+        .retain(|entry| entry != &folder);
+    config::save_settings(&state.settings_path, &settings)?;
+    state.set_settings(settings.clone());
+    Ok(settings)
+}
+
+/// Stops trusting a folder on `PATH`: a command that puts it there asks
+/// again.
+#[tauri::command]
+pub fn delete_path_folder(state: State<'_, AppState>, folder: String) -> Result<Settings> {
+    let mut settings = state.settings();
+    settings
+        .permissions
+        .path_folders
         .retain(|entry| entry != &folder);
     config::save_settings(&state.settings_path, &settings)?;
     state.set_settings(settings.clone());
@@ -2964,6 +3430,7 @@ fn best_value_provider(state: &AppState, model: &str) -> Option<String> {
     let endpoints = state.cached_endpoints(model)?;
     endpoints
         .iter()
+        .filter(|endpoint| !endpoint.blocked)
         .filter_map(|endpoint| {
             let throughput = endpoint.throughput_last_30m?;
             let price = (endpoint.prompt_price_per_m + endpoint.completion_price_per_m) / 2.0;
@@ -3075,6 +3542,10 @@ fn revert_to_message_blocking(
         .db
         .delete_messages_from(&message.session_id, message.seq)?;
     state.db.clear_session_changes(&message.session_id)?;
+    // What the agent proposed for the memory after this prompt goes with it.
+    state
+        .db
+        .withdraw_memory_suggestions(&message.session_id, message.created_at)?;
     Ok(RevertResult {
         prompt: message.content,
         restored_files: restored,
@@ -3239,7 +3710,15 @@ async fn run_send_message(
     let cached_model = state
         .cached_models()
         .and_then(|models| models.into_iter().find(|entry| entry.id == model));
-    let facts = crate::environment::detect(&setup.project_root);
+    let mut facts = crate::environment::detect(&setup.project_root);
+    // The variables the user gave the project's commands, so the agent does
+    // not set them again or go looking for the toolchain they point to.
+    facts.variables = crate::project_env::describe(
+        &state.permissions.project_environment(&setup.project_root),
+        crate::shell_env::command_var("PATH")
+            .and_then(|path| path.into_string().ok())
+            .as_deref(),
+    );
     let system_prompt = build_system_prompt(
         &setup.settings,
         &setup.session,
@@ -3264,7 +3743,8 @@ async fn run_send_message(
         .unwrap_or(0);
 
     let request = TurnRequest {
-        hooks: crate::hooks::Hooks::for_project(&setup.settings.hooks, &setup.project_root),
+        hooks: crate::hooks::Hooks::for_project(&setup.settings.hooks, &setup.project_root)
+            .with_environment(state.permissions.project_environment(&setup.project_root)),
         model: model.clone(),
         reasoning_effort: setup.reasoning,
         provider: setup.selected_provider,
@@ -3319,6 +3799,12 @@ async fn run_send_message(
         } else {
             Vec::new()
         },
+        memory: (setup.settings.memory.memory_enabled && mode.include_global_prompts).then(|| {
+            crate::memory::Offer {
+                suggestions: setup.settings.memory.memory_suggestions,
+                entries: setup.settings.memory.memories.clone(),
+            }
+        }),
         cancel: cancel.clone(),
     };
     let deps = TurnDeps {
@@ -3337,7 +3823,7 @@ async fn run_send_message(
     };
 
     let result = {
-        let _keep_awake = state.power.acquire();
+        let _keep_awake = state.power.acquire(&request.conversation_id);
         let mut woke = state.sleep.subscribe();
         let mut cut_off = false;
         let turn = agent::run_turn(&deps, request, sink.clone());
@@ -3888,6 +4374,13 @@ fn build_system_prompt(
         system_prompt.push_str(&format!("\n\nAlways respond in {}.", language));
     }
 
+    // Ahead of the environment section, which names the chat's own scratch
+    // folder and the date: what every chat is sent alike stays together at
+    // the start of the prompt, and the project's rules follow and win.
+    if mode.include_global_prompts {
+        system_prompt.push_str(&crate::memory::section(&settings.memory));
+    }
+
     system_prompt.push_str(&crate::environment::section(
         project_root,
         scratch_dir,
@@ -4350,6 +4843,48 @@ pub async fn get_system_info(app: AppHandle) -> Result<debug_log::SystemInfo> {
     blocking(move || Ok(debug_log::system_info(app_version))).await
 }
 
+/// What decides the permission prompts of a chat beyond the saved settings,
+/// for its debug log.
+#[tauri::command]
+pub fn get_permission_state(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    project_id: Option<String>,
+) -> debug_log::PermissionState {
+    permission_state(&state, &conversation_id, project_id.as_deref())
+}
+
+fn permission_state(
+    state: &AppState,
+    conversation_id: &str,
+    project_id: Option<&str>,
+) -> debug_log::PermissionState {
+    let variables = project_id
+        .and_then(|id| state.db.get_project(id).ok())
+        .map(|project| state.permissions.project_environment(Path::new(&project.path)))
+        .unwrap_or_default();
+    let own = |name: &str| {
+        variables
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+    };
+    let [session_folders, session_read_folders, chat_path_folders, chat_secret_folders] =
+        state.permissions.unsaved_grants(conversation_id);
+    debug_log::PermissionState {
+        command_path: own("PATH").or_else(|| {
+            crate::shell_env::command_var("PATH").and_then(|path| path.into_string().ok())
+        }),
+        login_shell: crate::shell_env::from_login_shell(),
+        project_variables: variables.iter().map(|(name, _)| name.clone()).collect(),
+        session_folders,
+        session_read_folders,
+        chat_path_folders,
+        chat_secret_folders,
+        chat_command_rules: state.permissions.session_command_rules(conversation_id),
+    }
+}
+
 /// Asks `model` which parts of `text`, one excerpt of a chat's debug log, are
 /// personal or secret, so the export can replace them with placeholders. The
 /// user picks the model; `stop_generation` with
@@ -4777,6 +5312,152 @@ mod tests {
             dir.join("settings.json"),
             Settings::default(),
         )
+    }
+
+    /// A chat whose agent proposed `text` for the memory.
+    fn suggested(state: &AppState, dir: &Path, text: &str) -> (String, i64) {
+        let project = state.db.upsert_project(&dir.display().to_string()).unwrap();
+        let chat = state
+            .db
+            .create_session(&project.id, "chat", None, None, None, None, None)
+            .unwrap();
+        let suggestion = state
+            .db
+            .add_memory_suggestion(&chat.id, &chat.id, text, false, None)
+            .unwrap();
+        (chat.id, suggestion.id)
+    }
+
+    #[test]
+    fn saving_a_suggestion_stores_it_as_the_user_edited_it_and_only_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let (chat, id) = suggested(&state, temp.path(), "Ask me for every finding.");
+
+        let saved = answer_memory_suggestion(
+            &state,
+            &chat,
+            id,
+            "save",
+            Some(" Ask me for every finding\nin a review. "),
+        )
+        .unwrap();
+        let texts = |settings: &Settings| -> Vec<String> {
+            settings
+                .memory
+                .memories
+                .iter()
+                .map(|entry| entry.text.clone())
+                .collect()
+        };
+        assert_eq!(texts(&saved), ["Ask me for every finding in a review."]);
+        // In the running app and in the file the next start reads.
+        assert_eq!(texts(&state.settings()), texts(&saved));
+        assert_eq!(
+            texts(&config::load_settings(&state.settings_path)),
+            texts(&saved)
+        );
+        // The card is gone and the ask is answered.
+        assert!(state
+            .db
+            .get_session(&chat)
+            .unwrap()
+            .memory_suggestions
+            .is_empty());
+        assert_eq!(
+            state.db.memory_asks().unwrap()[0].outcome,
+            Some(crate::memory::Outcome::Saved)
+        );
+
+        // A second click on a card that was slow to go.
+        let again = answer_memory_suggestion(&state, &chat, id, "save", Some("Something else."))
+            .unwrap();
+        assert_eq!(texts(&again), texts(&saved));
+    }
+
+    #[test]
+    fn dont_ask_again_switches_the_suggestions_off_and_keeps_the_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let (chat, id) = suggested(&state, temp.path(), "Keep answers short.");
+
+        assert!(answer_memory_suggestion(&state, &chat, id, "later", None).is_err());
+        let settings = answer_memory_suggestion(&state, &chat, id, "disable", None).unwrap();
+        assert!(!settings.memory.memory_suggestions);
+        assert!(settings.memory.memory_enabled);
+        assert!(settings.memory.memories.is_empty());
+        assert!(!config::load_settings(&state.settings_path)
+            .memory
+            .memory_suggestions);
+        assert_eq!(
+            state.db.memory_asks().unwrap()[0].outcome,
+            Some(crate::memory::Outcome::Disabled)
+        );
+    }
+
+    #[test]
+    fn declining_a_suggestion_keeps_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let (chat, id) = suggested(&state, temp.path(), "Keep answers short.");
+
+        let settings = answer_memory_suggestion(&state, &chat, id, "decline", None).unwrap();
+        assert!(settings.memory.memories.is_empty());
+        assert!(settings.memory.memory_suggestions);
+        assert!(state
+            .db
+            .get_session(&chat)
+            .unwrap()
+            .memory_suggestions
+            .is_empty());
+        assert_eq!(
+            state.db.memory_asks().unwrap()[0].outcome,
+            Some(crate::memory::Outcome::Declined)
+        );
+    }
+
+    #[test]
+    fn remembered_preferences_come_before_the_environment() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = app_state(temp.path());
+        let (chat, _) = suggested(&state, temp.path(), "unused");
+        let session = state.db.get_session(&chat).unwrap();
+        let mut settings = Settings::default();
+        settings.memory.memories = vec![crate::memory::MemoryEntry {
+            id: "a".to_string(),
+            text: "Keep answers short.".to_string(),
+        }];
+        let prompt = |settings: &Settings, mode: &config::Mode| {
+            build_system_prompt(
+                settings,
+                &session,
+                mode,
+                &McpManager::empty(),
+                &[],
+                &[],
+                temp.path(),
+                None,
+                &crate::environment::ProjectFacts::default(),
+                false,
+            )
+        };
+
+        let mode = config::resolve_mode(&settings, None);
+        assert!(mode.include_global_prompts);
+        let text = prompt(&settings, &mode);
+        let remembered = text.find("# Remembered preferences").unwrap();
+        assert!(text[remembered..].contains("\n- Keep answers short."));
+        assert!(remembered < text.find("# Environment").unwrap());
+
+        // A mode without the global prompts is sent nothing it can do without.
+        let bare = config::Mode {
+            include_global_prompts: false,
+            ..mode.clone()
+        };
+        assert!(!prompt(&settings, &bare).contains("# Remembered preferences"));
+        // Switched off, the entries are kept and not sent.
+        settings.memory.memory_enabled = false;
+        assert!(!prompt(&settings, &mode).contains("# Remembered preferences"));
     }
 
     #[test]

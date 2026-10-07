@@ -8,11 +8,11 @@ use crate::power::{PowerManager, SleepWatch};
 use crate::processes::ProcessRegistry;
 use crate::providers::anthropic::CapsCache;
 use crate::providers::compat::{MetaCache, Quirks};
-use crate::providers::openrouter::{KeyInfo, OpenRouterClient};
+use crate::providers::openrouter::{DataPolicies, KeyInfo, OpenRouterClient};
 use crate::providers::{LlmClient, ProviderKeys};
 use crate::terminal::TerminalRegistry;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -62,6 +62,7 @@ pub struct AppState {
     models_cache: Mutex<Option<Vec<ModelInfo>>>,
     endpoints_cache: Mutex<HashMap<String, Vec<EndpointInfo>>>,
     providers_cache: Mutex<Option<Vec<ProviderInfo>>>,
+    data_policies_cache: Mutex<Option<DataPolicies>>,
     key_info_cache: Mutex<Option<(Instant, KeyInfo)>>,
     /// Anthropic model capabilities, shared by every client built from here.
     anthropic_caps: CapsCache,
@@ -93,9 +94,24 @@ impl AppState {
         ));
         permissions.set_mcp_tool_grants(settings.permissions.mcp_tool_grants.clone());
         permissions.set_secret_folders(settings.permissions.secret_folders.clone());
+        permissions.set_read_folders(settings.permissions.read_folders.clone());
+        permissions.set_path_folders(settings.permissions.path_folders.clone());
         permissions.set_sandbox(sandbox(&settings));
+        // The variables each project gives its commands. Text that cannot be
+        // read sets nothing, and says so when the user saves it again.
+        for project in db.list_projects().unwrap_or_default() {
+            if let Some(Ok(variables)) = project
+                .environment
+                .as_deref()
+                .map(crate::project_env::resolve_for_commands)
+            {
+                permissions.set_project_environment(Path::new(&project.path), variables);
+            }
+        }
         let db = Arc::new(db);
         let broker = Arc::new(PermissionBroker::new());
+        let parking = power.clone();
+        broker.set_parking(Arc::new(move |chat| Box::new(parking.park(chat))));
         let audit_db = db.clone();
         broker.set_audit_sink(Arc::new(move |entry| {
             if let Err(error) = audit_db.record_permission_audit(&entry) {
@@ -124,6 +140,7 @@ impl AppState {
             models_cache: Mutex::new(None),
             endpoints_cache: Mutex::new(HashMap::new()),
             providers_cache: Mutex::new(None),
+            data_policies_cache: Mutex::new(None),
             key_info_cache: Mutex::new(None),
             anthropic_caps: CapsCache::default(),
             direct_meta: MetaCache::default(),
@@ -150,6 +167,10 @@ impl AppState {
             .set_mcp_tool_grants(settings.permissions.mcp_tool_grants.clone());
         self.permissions
             .set_secret_folders(settings.permissions.secret_folders.clone());
+        self.permissions
+            .set_read_folders(settings.permissions.read_folders.clone());
+        self.permissions
+            .set_path_folders(settings.permissions.path_folders.clone());
         self.permissions.set_sandbox(sandbox(&settings));
         *self.settings.lock().unwrap() = settings;
     }
@@ -214,6 +235,14 @@ impl AppState {
 
     pub fn cache_providers(&self, providers: Vec<ProviderInfo>) {
         *self.providers_cache.lock().unwrap() = Some(providers);
+    }
+
+    pub fn cached_data_policies(&self) -> Option<DataPolicies> {
+        self.data_policies_cache.lock().unwrap().clone()
+    }
+
+    pub fn cache_data_policies(&self, policies: DataPolicies) {
+        *self.data_policies_cache.lock().unwrap() = Some(policies);
     }
 
     /// Credit limits for the configured OpenRouter key, cached briefly. Returns
@@ -592,6 +621,7 @@ fn sandbox(settings: &Settings) -> crate::sandbox::Config {
         writable: permissions.sandbox_writable_folders.clone(),
         unreadable: permissions.sandbox_unreadable_folders.clone(),
         excluded: permissions.sandbox_excluded_commands.clone(),
+        inline_code: permissions.sandbox_inline_code,
     }
 }
 

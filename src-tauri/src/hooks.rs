@@ -51,6 +51,9 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 #[derive(Clone, Default)]
 pub struct Hooks {
     entries: Arc<Vec<Hook>>,
+    /// The variables the project gives its commands; hooks are commands of
+    /// the project too (a formatter, a linter).
+    environment: Arc<Vec<(String, String)>>,
 }
 
 /// What a hook run needs to know of the turn it runs in.
@@ -94,7 +97,14 @@ impl Hooks {
             .collect();
         Self {
             entries: Arc::new(entries),
+            environment: Arc::default(),
         }
+    }
+
+    /// The same hooks, run with the project's own variables.
+    pub fn with_environment(mut self, variables: Vec<(String, String)>) -> Self {
+        self.environment = Arc::new(variables);
+        self
     }
 
     pub fn is_empty(&self) -> bool {
@@ -130,7 +140,7 @@ impl Hooks {
                 "tool_name": tool,
                 "tool_input": tool_input(arguments, file.as_deref()),
             });
-            match run(hook, scene, &payload, Some(tool), file.as_deref()).await {
+            match run(hook, scene, &self.environment, &payload, Some(tool), file.as_deref()).await {
                 Verdict::Speak(reason) => {
                     record(scene, hook, false, format!("refused the {tool} call"));
                     return Some(reason);
@@ -175,7 +185,7 @@ impl Hooks {
                 "tool_input": tool_input(arguments, file.as_deref()),
                 "tool_response": { "status": outcome.status, "result": outcome.result },
             });
-            match run(hook, scene, &payload, Some(tool), file.as_deref()).await {
+            match run(hook, scene, &self.environment, &payload, Some(tool), file.as_deref()).await {
                 Verdict::Speak(report) => reports.push(report),
                 Verdict::Failed(reason) => record(scene, hook, true, reason),
                 Verdict::Pass | Verdict::Cancelled => {}
@@ -208,7 +218,7 @@ impl Hooks {
                 "stop_hook_active": again,
                 "last_assistant_message": answer,
             });
-            match run(hook, scene, &payload, None, None).await {
+            match run(hook, scene, &self.environment, &payload, None, None).await {
                 Verdict::Speak(report) => {
                     record(scene, hook, false, "sent the agent back to work".to_string());
                     reports.push(report);
@@ -351,6 +361,7 @@ async fn collect(stream: Option<impl AsyncReadExt + Unpin>) -> String {
 async fn run(
     hook: &Hook,
     scene: &HookScene<'_>,
+    environment: &[(String, String)],
     payload: &Value,
     tool: Option<&str>,
     file: Option<&Path>,
@@ -367,6 +378,7 @@ async fn run(
     process
         .current_dir(scene.project_root)
         .envs(crate::shell_env::command_environment())
+        .envs(environment.iter().map(|(name, value)| (name, value)))
         .env("PUMR_PROJECT_DIR", scene.project_root)
         .env("PUMR_TOOL", tool.unwrap_or(""))
         .env("PUMR_FILE", file.map(Path::as_os_str).unwrap_or_default())

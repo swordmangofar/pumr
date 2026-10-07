@@ -276,8 +276,8 @@
     "more": "Meer tabbladen"
   },
   "projectAppearance": {
-    "title": "Projectuitstraling",
-    "edit": "Projectuiterlijk bewerken",
+    "title": "Projectinstellingen",
+    "edit": "Project bewerken",
     "color": "Kleur",
     "auto": "Auto",
     "customColor": "Aangepaste kleur",
@@ -289,7 +289,11 @@
     "imageHint": "Een vierkante afbeelding werkt het beste. Het wordt automatisch bijgesneden en vergroot of verkleind.",
     "notAnImage": "Kies een afbeeldingsbestand.",
     "imageFailed": "Kon die afbeelding niet lezen.",
-    "saveFailed": "Kan het uiterlijk van het project niet opslaan."
+    "saveFailed": "Kan het uiterlijk van het project niet opslaan.",
+    "environment": "Omgeving voor opdrachten",
+    "environmentHint": "Eén NAME=value per regel, zoals in een shellprofiel. Elke opdracht die de assistent in dit project uitvoert, start met deze variabelen. $NAME en ~ worden ingevuld, dus PATH=$JAVA_HOME/bin:$PATH werkt.",
+    "environmentInvalid": "Regel {{ line }} is geen NAME=value.",
+    "environmentFailed": "Kan de omgeving niet opslaan: {{ error }}"
   },
   "chat": {
     "placeholder": "Beschrijf je taak... gebruik @ om bestanden, mappen, websites, skills of MCP-servers toe te voegen",
@@ -395,6 +399,7 @@
       "globalPrompts": "Globale aanwijzingen",
       "mode": "Modusconfiguratie",
       "projectRules": "Projectregels",
+      "memory": "Onthouden voorkeuren",
       "user": "Gebruikersbericht",
       "assistant": "Modelantwoord",
       "tool": "Gereedschapsoproep",
@@ -433,6 +438,7 @@
       "globalPrompts": "Globale aanwijzingen",
       "mode": "Modusprompt",
       "projectRules": "Projectregels",
+      "memory": "Onthouden voorkeuren",
       "prompt": "Snel",
       "referencedContext": "Gerefereerde context",
       "mentions": "Vermeldingen",
@@ -632,6 +638,8 @@
     "presetValueHint": "Kiest de provider met de beste tokens per seconde per dollar.",
     "trains": "traint op gegevens",
     "trainsHint": "Deze provider kan je prompts gebruiken voor training.",
+    "blocked": "geblokkeerd",
+    "blockedHint": "Je privacy- of providerinstellingen in OpenRouter blokkeren deze provider.",
     "priceHint": "Prijs per 1M tokens, gekleurd ten opzichte van andere providers voor dit model"
   },
   "right": {
@@ -742,6 +750,7 @@
     "categories": {
       "providers": "Providers",
       "agent": "Agentconfiguratie",
+      "memory": "Geheugen",
       "agentRules": "Agent whitelist en blacklist",
       "sandbox": "Sandbox",
       "hooks": "Hooks",
@@ -760,6 +769,8 @@
       "hint": "Het besturingssysteem perkt elke opdracht in die de agent uitvoert, en alles wat die opdracht start. Het is een tweede laag achter de toestemmingsregels, voor een opdracht die ze verkeerd inschatten. Een opdracht die de sandbox tegenhoudt, kan vragen om erbuiten te draaien; dat wordt je elke keer gevraagd.",
       "unavailable": "Dit systeem heeft geen sandbox die pumr kan gebruiken, dus opdrachten draaien zonder inperking. Daarvoor is macOS nodig, of Linux 5.19 of nieuwer met Landlock.",
       "networkUnavailable": "Het netwerk afsluiten kan alleen op macOS.",
+      "inlineCode": "Inline code in een strengere sandbox uitvoeren in plaats van te vragen",
+      "inlineCodeHint": "Inline node- of python-code, en scripts die ze via een heredoc krijgen, kunnen niet als een opdracht worden gecontroleerd. Zolang “Alle opdrachten binnen het project” aanstaat, draait zulke code zonder vraag in een strengere sandbox: ze bereikt alleen deze computer, schrijft alleen naar het project, je extra mappen en tijdelijke mappen, en kan geen apps starten, geen andere programma's bereiken en geen git-hooks wijzigen. Hetzelfde geldt voor een opdracht waarvan de argumenten pas bij het uitvoeren bekend zijn. Code die bestanden buiten het project, gevoelige bestanden of andere websites noemt, vraagt nog steeds. Als de sandbox een script tegenhoudt, kan de agent je vragen het normaal uit te voeren. Alleen op macOS.",
       "modes": {
         "off": "Uit",
         "files": "Bestanden",
@@ -767,13 +778,13 @@
       },
       "modeHints": {
         "off": "Opdrachten draaien als jouw gebruiker, alleen beperkt door de toestemmingsregels.",
-        "files": "Opdrachten schrijven alleen naar het project, je extra mappen, tijdelijke mappen en de mappen die hieronder staan. Ze kunnen de mappen waarin sleutels staan niet lezen.",
+        "files": "Opdrachten schrijven alleen naar het project, je extra mappen, tijdelijke mappen en de mappen die hieronder staan. Ze kunnen de mappen waarin sleutels staan niet lezen. Op macOS kunnen ze ook geen andere apps starten: open werkt alleen als een opdracht op zich, die de toestemmingsregels controleren.",
         "filesAndNetwork": "Hetzelfde, en opdrachten bereiken alleen deze computer, behalve opdrachten waarvan je de hosts hebt toegestaan. Pakketten installeren vraagt dan om buiten de sandbox te draaien."
       },
       "writable": "Mappen waarnaar opdrachten ook mogen schrijven",
       "writableHint": "De caches van build-tools. Zonder deze caches mislukt een build bij zijn eerste download. Een pad begint met / of ~.",
       "unreadable": "Mappen die opdrachten niet kunnen lezen",
-      "unreadableHint": "Waar sleutels en tokens staan. git, ssh en de cloudtools behouden de mappen waarmee ze werken, en een map die je voor opdrachten hebt vrijgegeven, blijft open.",
+      "unreadableHint": "Waar sleutels en tokens staan. git, ssh en de cloudtools behouden de mappen waarmee ze werken, en een map die je voor opdrachten hebt vrijgegeven, blijft open. Ook de eigen gegevensmap van pumr, met je chats en instellingen, is gesloten voor opdrachten, wat er ook in deze lijst staat.",
       "excluded": "Opdrachten die buiten de sandbox draaien",
       "excludedHint": "Voor tools die een eigen sandbox meebrengen en binnen deze sandbox mislukken, zoals browsertests. Een vermelding geeft aan hoe de opdrachtregel begint; met * is het een patroon voor de hele regel.",
       "addCommand": "Opdracht toevoegen",
@@ -800,6 +811,19 @@
       "timeout": "Stoppen na (seconden)",
       "project": "Project",
       "allProjects": "Alle projecten"
+    },
+    "memory": {
+      "title": "Geheugen",
+      "hint": "pumr kan onthouden hoe je graag werkt, bijvoorbeeld hoe je een codereview gerapporteerd wilt hebben, en vertelt dat de agent in elke chat en elk project. Zonder jouw ja wordt er niets onthouden.",
+      "enabled": "Geheugen gebruiken",
+      "enabledHint": "Uit: de items hieronder blijven bewaard, maar worden niet naar de agent gestuurd en er wordt niets nieuws voorgesteld.",
+      "suggestions": "Voorstellen wat te onthouden",
+      "suggestionsHint": "Als een van je berichten een blijvende voorkeur laat zien, vraagt pumr na het antwoord of het die moet onthouden: hooguit één keer per chat en één keer per dag, en minder vaak telkens als je er een niet opslaat. Uit: pumr onthoudt nog steeds wat je het vraagt te onthouden.",
+      "list": "Onthouden voorkeuren",
+      "add": "Item toevoegen",
+      "empty": "Nog niets onthouden.",
+      "placeholder": "Bijvoorbeeld: vraag me bij een codereview voor elke bevinding of die moet worden opgelost of overgeslagen.",
+      "remove": "Item verwijderen"
     },
     "providers": {
       "title": "Modelproviders",
@@ -846,7 +870,9 @@
     "languageHint": "Wordt toegepast na opslaan.",
     "workspace": {
       "allowed": "Toegestane mappen",
-      "foldersHint": "De assistent kan deze mappen zonder vragen lezen en schrijven. Het actieve project is altijd toegestaan."
+      "foldersHint": "De assistent kan deze mappen zonder vragen lezen en schrijven. Het actieve project is altijd toegestaan.",
+      "readable": "Mappen alleen om te lezen",
+      "readableHint": "De assistent kan deze mappen zonder vragen lezen, maar wijzigingen daar vragen nog steeds. Als je een vraag over het lezen of weergeven van een map laat onthouden, wordt die map hier toegevoegd."
     },
     "mcp": {
       "tabBrowse": "Bladeren",
@@ -1090,8 +1116,9 @@
       "chooseFile": "Kies afbeelding",
       "clearFile": "Afbeelding verwijderen",
       "noFile": "Geen afbeelding geselecteerd",
-      "opacity": "Dekking",
-      "blur": "Vervagen",
+      "opacity": "Zichtbaarheid achtergrond",
+      "blur": "Vervaging achtergrond",
+      "preview": "Voorbeeld",
       "presets": {
         "aurora": "Aurora",
         "mesh": "Gaas",
@@ -1318,11 +1345,15 @@
     "secretFolders": "Mappen met vrijgegeven gevoelige bestanden",
     "secretFoldersHint": "Opdrachten mogen de gevoelige bestanden (sleutels, tokens, inloggegevens) direct in deze mappen zonder vragen gebruiken. Submappen vallen er niet onder. Gebruik \"altijd toestaan\" in een toestemmingsvraag om er een aan te maken.",
     "noSecretFolders": "Nog geen mappen met vrijgegeven gevoelige bestanden.",
+    "pathFolders": "In PATH vertrouwde mappen",
+    "pathFoldersHint": "Opdrachten mogen deze mappen zonder vragen in PATH zetten, hoewel de assistent er bestanden in kan wijzigen. Gebruik \"altijd toestaan\" in een toestemmingsvraag om er een toe te voegen.",
+    "noPathFolders": "Nog geen in PATH vertrouwde mappen.",
     "scope": {
       "program": "Programma",
       "subcommand": "Programma + subopdracht",
       "programFlags": "Programma + opties",
-      "exact": "Exact"
+      "exact": "Exact",
+      "pathFolder": "Map in PATH"
     },
     "websiteAllowlist": "Toegestaan",
     "websiteDenylist": "Geblokkeerd",
@@ -1344,7 +1375,7 @@
     "autoApproveProjectExecutables": "Project-uitvoerbare bestanden",
     "autoApproveProjectExecutablesHint": "Staat uitvoerbare bestanden in het project toe, zoals ./node_modules/.bin/ng, zonder elke keer te vragen.",
     "autoApproveProjectCommands": "Alle opdrachten binnen het project",
-    "autoApproveProjectCommandsHint": "Staat elke ongevaarlijke opdracht toe waarvan de paden binnen het project blijven, ook inline node- of python-code die alleen leest. Gevaarlijke opdrachten, andere inline code, pakketdownloads, websites die nog niet zijn toegestaan, gevoelige bestanden en alles daarbuiten vragen nog steeds.",
+    "autoApproveProjectCommandsHint": "Staat elke ongevaarlijke opdracht toe waarvan de paden binnen het project blijven, ook inline node- of python-code die alleen leest. Gevaarlijke opdrachten, andere inline code, pakketdownloads, websites die nog niet zijn toegestaan, gevoelige bestanden en alles daarbuiten vragen nog steeds. De uitzondering is inline node- of python-code die de sandbox uitvoert in plaats van te vragen (zie Sandbox).",
     "permissionPreset": {
       "strict": "Strikt",
       "strictHint": "Alleen opdrachten die alleen lezen, draaien zonder te vragen.",
@@ -1353,7 +1384,7 @@
       "autonomous": "Autonoom",
       "autonomousHint": "Elke ongevaarlijke opdracht binnen het project draait zonder te vragen.",
       "custom": "Aangepast",
-      "autonomousWarning": "Autonoom vertrouwt dit project: de scripts, Makefiles en uitvoerbare bestanden kunnen alles doen zonder te vragen, en inline code die alleen leest, wordt ook uitgevoerd. Andere inline code, pakketdownloads, websites die nog niet zijn toegestaan, gevaarlijke opdrachten en alles buiten het project vragen nog steeds.",
+      "autonomousWarning": "Autonoom vertrouwt dit project: de scripts, Makefiles en uitvoerbare bestanden kunnen alles doen zonder te vragen, en inline code die alleen leest, wordt ook uitgevoerd. Andere inline code, pakketdownloads, websites die nog niet zijn toegestaan, gevaarlijke opdrachten en alles buiten het project vragen nog steeds. De uitzondering is inline node- of python-code die de sandbox uitvoert in plaats van te vragen (zie Sandbox).",
       "confirm": "Autonoom gebruiken"
     },
     "noAllowedWebsites": "Nog geen altijd-toegestane websites.",
@@ -1394,7 +1425,9 @@
     "folderScope": {
       "title": "Map toestaan",
       "hint": "Voegt de map en alles eronder toe aan de altijd toegestane mappen.",
-      "option": "Map + submappen"
+      "option": "Map + submappen",
+      "hintRead": "Opent de map en alles eronder om te lezen. Wijzigingen daar vragen nog steeds.",
+      "optionRead": "Map + submappen lezen"
     },
     "hostScope": {
       "title": "Website toestaan",
@@ -1406,6 +1439,10 @@
       "hint": "Opdrachten mogen de sleutels, tokens en bestanden met inloggegevens direct in deze map dan zonder vragen gebruiken. Submappen vallen er niet onder.",
       "option": "Gevoelige bestanden in deze map",
       "chip": "gevoelige bestanden in {{ folder }}"
+    },
+    "pathScope": {
+      "hint": "Een map die in PATH wordt vertrouwd, mogen opdrachten daar zonder vragen in zetten. De programma's uit die map draaien dan in plaats van andere met dezelfde naam.",
+      "chip": "PATH: {{ folder }}"
     },
     "allowChat": "Toestaan in deze chat",
     "option": {
@@ -1420,6 +1457,7 @@
     "justification": "Waarom",
     "keyboardHint": "Druk op 1–{{ count }} of gebruik ↑ ↓ en Enter · Esc weigert",
     "mcpToolHint": "Niet meer vragen geldt voor elke aanroep van deze tool op deze server, ongeacht de argumenten.",
+    "folderReadHint": "Een onthouden map wordt alleen geopend om te lezen. Wijzigingen daar vragen nog steeds.",
     "url": {
       "queryWarning": "Dit adres bevat veel gegevens in de querystring. Controleer of er niets privés in staat voordat je het toestaat."
     },
@@ -1443,7 +1481,8 @@
     "back": "Terug",
     "next": "Volgende",
     "submit": "Verzenden",
-    "skip": "Overslaan"
+    "skip": "Overslaan",
+    "resetPosition": "Positie herstellen"
   },
   "modelChoice": {
     "title": "Welk model moet de subagent gebruiken?",
@@ -1465,6 +1504,18 @@
     "permissionDenied": "Toestemming geweigerd",
     "canceled": "Geannuleerd",
     "error": "Fout"
+  },
+  "memory": {
+    "title": "Dit onthouden?",
+    "noticed": "pumr merkte dit op in je bericht.",
+    "requested": "Je hebt pumr gevraagd dit te onthouden.",
+    "replaces": "Vervangt: {{ text }}",
+    "textLabel": "Wat er onthouden moet worden",
+    "hint": "Opgeslagen voorkeuren gelden voor elke chat, in alle projecten. Je kunt ze wijzigen in de instellingen onder Geheugen.",
+    "save": "Onthouden",
+    "decline": "Nee, bedankt",
+    "disable": "Niet meer vragen",
+    "disableHint": "pumr stelt dan niets meer voor om te onthouden. Je kunt dit weer inschakelen in de instellingen onder Geheugen."
   },
   "terminal": {
     "title": "Terminal {{ number }}",

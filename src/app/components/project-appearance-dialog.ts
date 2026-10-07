@@ -5,18 +5,44 @@ import {
   effect,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { Project } from '../core/models';
 import { WorkspaceService } from '../core/workspace.service';
 import { PROJECT_COLORS, PROJECT_ICONS, ProjectIcon, projectColor } from './project-icon';
+import { TypedInput } from './typed-input';
 
 const ICON_IMAGE_SIZE = 256;
+
+/** What the field for a project's variables shows while it is empty. */
+const ENVIRONMENT_EXAMPLE =
+  'JAVA_HOME=~/.sdkman/candidates/java/11.0.32-amzn\nPATH=$JAVA_HOME/bin:$PATH';
+
+/**
+ * The number (from 1) of the first line that is no `NAME=value`, `null` when
+ * every line is one. Empty lines and lines that start with `#` say nothing,
+ * and `export` may stand in front, as in a shell profile. The backend reads
+ * the text by the same rule.
+ */
+export function badEnvironmentLine(text: string): number | null {
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    if (!/^(export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/.test(line)) {
+      return index + 1;
+    }
+  }
+  return null;
+}
 
 @Component({
   selector: 'app-project-appearance-dialog',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslocoPipe, ProjectIcon],
+  imports: [TranslocoPipe, ProjectIcon, TypedInput],
   host: {
     '(document:keydown.escape)': 'close()',
   },
@@ -188,6 +214,31 @@ const ICON_IMAGE_SIZE = 256;
                 </p>
               }
             </section>
+
+            <section>
+              <h3 class="mb-2 text-xs font-semibold uppercase tracking-widest text-mist/40">
+                {{ 'projectAppearance.environment' | transloco }}
+              </h3>
+              <textarea
+                class="field h-24 w-full resize-y rounded-xl px-4 py-2 font-mono text-sm leading-relaxed"
+                data-testid="project-environment"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                [value]="environment()"
+                [placeholder]="environmentExample"
+                (typedValue)="setEnvironment($event)"
+              ></textarea>
+              @if (environmentError(); as problem) {
+                <p class="mt-2 text-xs text-rose-400" data-testid="project-environment-error">
+                  {{ problem.key | transloco: problem.params }}
+                </p>
+              } @else {
+                <p class="mt-2 text-xs leading-relaxed text-mist/30">
+                  {{ 'projectAppearance.environmentHint' | transloco }}
+                </p>
+              }
+            </section>
           </div>
 
           <footer
@@ -231,6 +282,13 @@ export class ProjectAppearanceDialog {
   protected readonly iconImage = signal<string | null>(null);
   protected readonly saving = signal(false);
   protected readonly error = signal<string | null>(null);
+  /** The project's variables for its commands, one `NAME=value` per line. */
+  protected readonly environment = signal('');
+  protected readonly environmentError = signal<{
+    key: string;
+    params: Record<string, unknown>;
+  } | null>(null);
+  protected readonly environmentExample = ENVIRONMENT_EXAMPLE;
 
   protected readonly preview = computed<Project>(() => {
     const active = this.project();
@@ -250,13 +308,24 @@ export class ProjectAppearanceDialog {
   });
 
   constructor() {
+    // What the user is editing starts from the project when the dialog opens
+    // for it. Saving one part updates the project; that must not put the
+    // parts still being edited, or an error just shown, back.
     effect(() => {
-      const active = this.project();
+      this.workspace.projectEditorId();
+      const active = untracked(() => this.project());
       this.color.set(active?.color ?? null);
       this.icon.set(active?.icon ?? null);
       this.iconImage.set(active?.iconImage ?? null);
       this.error.set(null);
+      this.environment.set(active?.environment ?? '');
+      this.environmentError.set(null);
     });
+  }
+
+  protected setEnvironment(value: string): void {
+    this.environment.set(value);
+    this.environmentError.set(null);
   }
 
   protected setColor(value: string | null): void {
@@ -306,6 +375,15 @@ export class ProjectAppearanceDialog {
     if (!active || this.saving()) {
       return;
     }
+    const environment = this.environment();
+    const badLine = badEnvironmentLine(environment);
+    if (badLine !== null) {
+      this.environmentError.set({
+        key: 'projectAppearance.environmentInvalid',
+        params: { line: badLine },
+      });
+      return;
+    }
     this.saving.set(true);
     try {
       await this.workspace.updateProjectAppearance(active.id, {
@@ -313,10 +391,24 @@ export class ProjectAppearanceDialog {
         icon: this.icon(),
         iconImage: this.iconImage(),
       });
-      this.close();
     } catch (error) {
       console.error(error);
       this.error.set('projectAppearance.saveFailed');
+      this.saving.set(false);
+      return;
+    }
+    try {
+      if (environment.trim() !== (active.environment ?? '').trim()) {
+        await this.workspace.updateProjectEnvironment(active.id, environment);
+      }
+      this.close();
+    } catch (error) {
+      // The backend says what it could not read, such as a relative folder
+      // in PATH.
+      this.environmentError.set({
+        key: 'projectAppearance.environmentFailed',
+        params: { error: String(error) },
+      });
     } finally {
       this.saving.set(false);
     }

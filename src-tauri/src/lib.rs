@@ -14,12 +14,14 @@ mod git;
 mod hooks;
 mod marketplace;
 mod mcp;
+mod memory;
 mod mentions;
 mod model_match;
 mod models;
 mod permissions;
 mod power;
 mod processes;
+mod project_env;
 mod providers;
 mod read_formats;
 mod rendering;
@@ -78,7 +80,8 @@ pub fn run() {
                 )?;
             }
 
-            let data_dir = config::data_folder(app.path().app_data_dir()?);
+            let app_data_dir = app.path().app_data_dir()?;
+            let data_dir = config::data_folder(app_data_dir.clone());
             std::fs::create_dir_all(&data_dir)?;
             config::init_dev_store(&data_dir);
             let db = db::Db::open(&data_dir.join("pumr.sqlite"))?;
@@ -99,6 +102,14 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             window::follow_desktop_dpi(app.handle());
             let state = state::AppState::new(db, data_dir, settings_path, settings);
+            // The data folders hold every chat, the settings and the
+            // snapshots, so the sandbox closes them to the agent's commands.
+            // The skills the user installed lie in there as well, and the
+            // agent runs their scripts, so those stay readable.
+            state.permissions.set_private(sandbox::Private {
+                folders: config::data_folders(&app_data_dir),
+                shared: vec![state.marketplace.skills_dir()],
+            });
             // Each chat gets a scratch folder here (see `LivePermissions`);
             // ones whose chat is gone are cleared on start.
             if let Ok(cache_dir) = app.path().app_cache_dir() {
@@ -144,6 +155,7 @@ pub fn run() {
             commands::add_project,
             commands::remove_project,
             commands::update_project,
+            commands::set_project_environment,
             commands::list_sessions,
             commands::list_sub_sessions,
             commands::list_sub_sessions_for_project,
@@ -163,6 +175,7 @@ pub fn run() {
             commands::clear_permission_audit,
             commands::resolve_question,
             commands::resolve_model_choice,
+            commands::resolve_memory_suggestion,
             commands::add_command_rule,
             commands::delete_command_rule,
             commands::get_file_ignore_catalog,
@@ -170,6 +183,7 @@ pub fn run() {
             commands::delete_website_rule,
             commands::delete_mcp_tool_grant,
             commands::delete_secret_folder,
+            commands::delete_path_folder,
             commands::discover_mcp_sources,
             commands::discover_skills,
             commands::search_mcp_marketplace,
@@ -255,6 +269,7 @@ pub fn run() {
             commands::ask_side_question,
             commands::compact_session,
             commands::get_system_info,
+            commands::get_permission_state,
             commands::find_sensitive_data,
             commands::save_debug_log,
             commands::send_message,

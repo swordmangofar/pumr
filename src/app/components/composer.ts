@@ -111,6 +111,8 @@ interface SlashRow {
   source?: string;
   /** The endpoint a provider row stands for, shown with its price and health. */
   endpoint?: EndpointInfo;
+  /** Listed, but not to be chosen. */
+  disabled?: boolean;
 }
 
 /** Something a picker command offers. */
@@ -352,7 +354,10 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
   template: `
     <!-- What the provider menu and /provider show of an endpoint. -->
     <ng-template #endpointInfo let-endpoint>
-      <div class="flex items-center justify-between gap-3">
+      <div
+        class="flex items-center justify-between gap-3"
+        [class.opacity-50]="endpoint.blocked"
+      >
         <span class="flex min-w-0 items-center gap-2">
           @if (providerIcon(endpoint.providerSlug); as icon) {
             <img
@@ -371,6 +376,13 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           <span class="truncate text-sm text-white">{{
             endpoint.providerName
           }}</span>
+          @if (endpoint.blocked) {
+            <span
+              class="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-300"
+            >
+              {{ 'provider.blocked' | transloco }}
+            </span>
+          }
           @if (endpoint.training) {
             <span
               class="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
@@ -397,7 +409,10 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           {{ price(endpoint.completionPricePerM) }}
         </span>
       </div>
-      <div class="mt-1.5 flex items-center gap-3 text-xs text-mist/40">
+      <div
+        class="mt-1.5 flex items-center gap-3 text-xs text-mist/40"
+        [class.opacity-50]="endpoint.blocked"
+      >
         @let up = uptime(endpoint);
         @if (up !== null) {
           <span
@@ -640,6 +655,8 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                   index === slashActive() ? 'bg-accent/10 text-white' : 'text-mist hover:bg-white/5'
                 "
                 [attr.aria-selected]="index === slashActive()"
+                [attr.aria-disabled]="item.disabled ? true : null"
+                [attr.title]="item.endpoint?.blocked ? blockedHint(item.endpoint) : null"
                 (mousedown)="$event.preventDefault()"
                 (click)="item.select()"
               >
@@ -1008,7 +1025,13 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                   class="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-mist/60 transition-colors hover:bg-white/5 hover:text-white"
                   [attr.aria-expanded]="providerOpen()"
                   [attr.aria-controls]="providerOpen() ? 'composer-provider-menu' : null"
-                  [attr.title]="provider() === 'auto' ? ('provider.auto' | transloco) : null"
+                  [attr.title]="
+                    providerBlocked()
+                      ? ('provider.blockedHint' | transloco)
+                      : provider() === 'auto'
+                        ? ('provider.auto' | transloco)
+                        : null
+                  "
                   (click)="toggleProvider()"
                   (keydown.escape)="closeMenus()"
                 >
@@ -1054,7 +1077,7 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                           <path d="m10 2 1.6 4.4L16 8l-4.4 1.6L10 14l-1.6-4.4L4 8l4.4-1.6z" />
                         </svg>
                       }
-                      <span [class]="routingLabelClass()">
+                      <span [class]="routingLabelClass()" [class.line-through]="providerBlocked()">
                         @if (provider() === 'auto') {
                           {{ 'provider.auto' | transloco }}
                         } @else {
@@ -1171,7 +1194,9 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                     @for (endpoint of endpoints(); track endpoint.slug + endpoint.name) {
                       <button
                         type="button"
-                        class="block w-full border-b border-white/5 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+                        class="block w-full border-b border-white/5 px-4 py-2.5 text-left transition-colors enabled:hover:bg-white/5 disabled:cursor-not-allowed"
+                        [disabled]="endpoint.blocked"
+                        [attr.title]="endpoint.blocked ? blockedHint(endpoint) : null"
                         (click)="selectProvider(endpoint)"
                       >
                         <ng-container
@@ -1621,7 +1646,15 @@ export class Composer {
         return words.every((word) => text.includes(word));
       })
       .slice(0, SLASH_MODEL_ROWS)
-      .map((choice) => ({ ...choice, command: false, select: () => this.choose(choice) }));
+      .map((choice) => ({
+        ...choice,
+        command: false,
+        select: () => {
+          if (!choice.disabled) {
+            this.choose(choice);
+          }
+        },
+      }));
   });
   /** The providers that serve the model are still being fetched for `/provider`. */
   protected readonly slashLoading = computed(
@@ -1826,6 +1859,14 @@ export class Composer {
       (entry) => entry.slug === provider || entry.slug.split('/')[0] === provider,
     );
     return endpoint?.providerName ?? provider;
+  });
+  /** The chosen provider is one the account may not use, so OpenRouter is left to route. */
+  protected readonly providerBlocked = computed(() => {
+    const provider = this.provider();
+    const served = this.endpoints().filter(
+      (entry) => entry.slug === provider || entry.slug.split('/')[0] === provider,
+    );
+    return served.length > 0 && served.every((entry) => entry.blocked);
   });
   private readonly priceRange = computed(() => {
     const prices = this.endpoints()
@@ -2157,6 +2198,7 @@ export class Composer {
             label: endpoint.providerName,
             detail: '',
             endpoint,
+            disabled: endpoint.blocked,
             search: `${endpoint.providerName} ${endpoint.slug} ${endpoint.quantization ?? ''}`,
             current: active === value || active === endpoint.slug,
             apply: () => this.selectProvider(endpoint),
@@ -3246,7 +3288,10 @@ export class Composer {
       content,
       model,
       reasoningEffort: this.reasoning(),
-      provider: !this.isOpenRouterModel() || this.provider() === 'auto' ? null : this.provider(),
+      provider:
+        !this.isOpenRouterModel() || this.provider() === 'auto' || this.providerBlocked()
+          ? null
+          : this.provider(),
       attachments,
       mentions,
       ...(prompt ? { promptId: prompt.id } : {}),
@@ -3378,7 +3423,15 @@ export class Composer {
     this.providerOpen.set(opening);
   }
 
+  /** Why a blocked endpoint cannot be chosen: OpenRouter's reason, if it gave one. */
+  protected blockedHint(endpoint: EndpointInfo): string {
+    return endpoint.blockedReason || this.transloco.translate('provider.blockedHint');
+  }
+
   protected async selectProvider(endpoint: EndpointInfo): Promise<void> {
+    if (endpoint.blocked) {
+      return;
+    }
     const slug = endpoint.slug.split('/')[0] || endpoint.providerName;
     await this.applyProvider(slug);
   }

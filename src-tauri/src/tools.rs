@@ -1139,7 +1139,10 @@ pub(crate) fn relative_display(runtime: &ToolRuntime, path: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(&runtime.project_root) {
         return relative.to_string_lossy().replace('\\', "/");
     }
-    for folder in &runtime.permissions.folders_for(&runtime.conversation_id) {
+    for folder in &runtime
+        .permissions
+        .readable_folders_for(&runtime.conversation_id)
+    {
         if let Ok(relative) = path.strip_prefix(folder) {
             return relative.to_string_lossy().replace('\\', "/");
         }
@@ -1188,7 +1191,15 @@ pub(crate) async fn ensure_path_access(
     label: &str,
     operation: PermissionOperation,
 ) -> std::result::Result<(), ToolOutcome> {
-    let extra = runtime.permissions.folders_for(&runtime.conversation_id);
+    // Reading and listing are also covered by the folders the user opened
+    // for reading only; a change needs a folder allowed for changes.
+    let extra = if operation.reads_only() {
+        runtime
+            .permissions
+            .readable_folders_for(&runtime.conversation_id)
+    } else {
+        runtime.permissions.folders_for(&runtime.conversation_id)
+    };
     if permissions::path_is_inside(absolute, &runtime.project_root, &extra)
         && !permissions::symlink_escapes(absolute, &runtime.project_root, &extra)
     {
@@ -1217,6 +1228,13 @@ pub(crate) async fn ensure_path_access(
     // Granting the home directory or `/` would open everything below it, so
     // a path directly in one of them can only be allowed once.
     let folder = (!permissions::is_too_broad_folder(&folder)).then(|| folder.display().to_string());
+    // The prompt says what is asked for, because the answer grants no more:
+    // a folder allowed for reading stays closed to changes.
+    let (title, verb) = match operation {
+        PermissionOperation::Read => (format!("Read {label} outside the project?"), "read"),
+        PermissionOperation::Write => (format!("Change {label} outside the project?"), "change"),
+        _ => (format!("Access {label} outside the project?"), "access"),
+    };
     let decision = runtime
         .broker
         .ask(
@@ -1225,8 +1243,8 @@ pub(crate) async fn ensure_path_access(
                 operation,
                 cwd: Some(permission_path(&runtime.project_root)),
                 project_root: runtime.project_root.clone(),
-                title: format!("Access {label} outside the project?"),
-                detail: format!("The assistant wants to access {}.", absolute.display()),
+                title,
+                detail: format!("The assistant wants to {verb} {}.", absolute.display()),
                 command: None,
                 path: Some(permission_path(absolute).display().to_string()),
                 folder,
@@ -3320,6 +3338,17 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         asked.secrets = secret_folders.iter().map(PathBuf::from).collect();
         asked.hosts = !hosts.is_empty();
     }
+    let wants_out = flag(arguments, UNSANDBOXED_ARGUMENT);
+    // Code the rules cannot read (`node -e`, a heredoc fed to python) runs in
+    // the tight sandbox instead of asking, where that sandbox bounds it. The
+    // agent gets the prompt back by asking for it, which it is told to do
+    // when the tight sandbox stopped the command.
+    let tight = match &decision {
+        CommandDecision::Ask { .. } if !wants_out && !flag(arguments, ASK_FIRST_ARGUMENT) => {
+            tight_policy(runtime, &command, &cwd, &restorable)
+        }
+        _ => None,
+    };
     match &decision {
         CommandDecision::Deny { reason } => {
             audit_unprompted(runtime, "command", &command, false, reason.clone());
@@ -3333,25 +3362,51 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             };
             audit_unprompted(runtime, "command", &command, true, reason);
         }
+        CommandDecision::Ask { reason, .. } if tight.is_some() => {
+            audit_unprompted(
+                runtime,
+                "command",
+                &command,
+                true,
+                format!("left to the tight sandbox instead of asking: {reason}"),
+            );
+        }
         CommandDecision::Ask { .. } => {}
     }
-    if let CommandDecision::Ask {
-        reason,
-        suggested_rule,
-        segments,
-        risk,
-        scope_options,
-        outside_folders,
-        hosts,
-        secret_folders,
-    } = decision
+    if let (
+        None,
+        CommandDecision::Ask {
+            reason,
+            suggested_rule,
+            segments,
+            risk,
+            scope_options,
+            outside_folders,
+            hosts,
+            secret_folders,
+        },
+    ) = (&tight, decision)
     {
+        // A command that only reads opens the folders its prompt offers for
+        // reading; any other may write there, so they are opened for changes.
+        let operation = if !outside_folders.is_empty()
+            && runtime.permissions.only_reads(
+                &command,
+                &runtime.project_root,
+                &cwd,
+                &runtime.conversation_id,
+                &asked.folders,
+            ) {
+            PermissionOperation::ExecuteReadOnly
+        } else {
+            PermissionOperation::Execute
+        };
         let answer = runtime
             .broker
             .ask(
                 PermissionPrompt {
                     kind: "command".to_string(),
-                    operation: PermissionOperation::Execute,
+                    operation,
                     cwd: Some(permission_path(&cwd)),
                     project_root: runtime.project_root.clone(),
                     title: "Run command?".to_string(),
@@ -3381,13 +3436,8 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         }
     }
 
-    let mut policy = command_policy(runtime, &command, &cwd, &asked);
+    let mut policy = tight.or_else(|| command_policy(runtime, &command, &cwd, &asked));
     // Leaving the sandbox is the user's call, every time.
-    let wants_out = match arguments.get(UNSANDBOXED_ARGUMENT) {
-        Some(Value::Bool(wanted)) => *wanted,
-        Some(Value::String(wanted)) => wanted.trim().eq_ignore_ascii_case("true"),
-        _ => false,
-    };
     if policy.is_some() && wants_out {
         let answer = runtime
             .broker
@@ -3398,7 +3448,7 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
                     cwd: Some(permission_path(&cwd)),
                     project_root: runtime.project_root.clone(),
                     title: "Run command outside the sandbox?".to_string(),
-                    detail: "Outside the sandbox this command can change any file your account can, not only those of the project, and read the folders that hold your keys.".to_string(),
+                    detail: "Outside the sandbox this command can change any file your account can, not only those of the project, and read the folders that hold your keys as well as pumr's own data, with the chats of all your projects.".to_string(),
                     command: Some(command.clone()),
                     path: None,
                     folder: None,
@@ -3439,6 +3489,8 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         // What the user's shell profile exports and pumr, started from a
         // launcher, never got: the settings of their tools and skills.
         .envs(crate::shell_env::command_environment())
+        // And what the user set for this project's commands: its toolchain.
+        .envs(runtime.permissions.project_environment(&runtime.project_root))
         // Python holds back what it prints to a pipe until it has a few
         // kilobytes; the chat shows a command's output as it is printed.
         .env("PYTHONUNBUFFERED", "1")
@@ -3551,25 +3603,23 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
             exit_code: exited,
             read_upto: Mutex::new(seen),
         }));
+        let note = sandbox_note(policy.as_ref(), &buffered, false);
         return ToolOutcome::ok(format!(
-            "Command is still running after {timeout}s and was moved to the background (process id: {id}). Call bash_output with this id to wait for it and read the rest of its output; do not run the command again. The user can stop it from the running processes indicator.\n\nOutput so far:\n{buffered}"
+            "Command is still running after {timeout}s and was moved to the background (process id: {id}). Call bash_output with this id to wait for it and read the rest of its output; do not run the command again. The user can stop it from the running processes indicator.\n\nOutput so far:\n{buffered}{note}"
         ));
     }
 
     match exit_code {
-        Some(0) => ToolOutcome::ok(if buffered.trim().is_empty() {
-            "Command finished successfully (no output).".to_string()
-        } else {
-            format!("Command finished successfully.\n{buffered}")
-        }),
+        Some(0) => {
+            let note = sandbox_note(policy.as_ref(), &buffered, false);
+            ToolOutcome::ok(if buffered.trim().is_empty() {
+                "Command finished successfully (no output).".to_string()
+            } else {
+                format!("Command finished successfully.\n{buffered}{note}")
+            })
+        }
         Some(code) => {
-            // Said only when the output looks like it: a failing test has
-            // nothing to do with the sandbox.
-            let hint = policy
-                .as_ref()
-                .filter(|policy| sandbox::looks_blocked(&buffered, policy))
-                .map(sandbox_hint)
-                .unwrap_or_default();
+            let hint = sandbox_note(policy.as_ref(), &buffered, true);
             ToolOutcome {
                 result: format!(
                     "{}{hint}",
@@ -3607,6 +3657,97 @@ pub fn offer_unsandboxed(schemas: &mut [Value]) {
             );
         }
     }
+}
+
+/// The argument with which a `bash` call asks for the prompt it would
+/// otherwise run without, in the tight sandbox.
+const ASK_FIRST_ARGUMENT: &str = "ask_first";
+
+/// Offers `bash` the way back to the prompt. Only where code written on the
+/// command line runs in the tight sandbox instead of asking.
+pub fn offer_ask_first(schemas: &mut [Value]) {
+    for schema in schemas {
+        if schema.pointer("/function/name").and_then(Value::as_str) != Some("bash") {
+            continue;
+        }
+        if let Some(properties) = schema
+            .pointer_mut("/function/parameters/properties")
+            .and_then(Value::as_object_mut)
+        {
+            properties.insert(
+                ASK_FIRST_ARGUMENT.to_string(),
+                json!({
+                    "type": "boolean",
+                    "description": "Ask the user before running. Only for inline code or a heredoc script that the tighter sandbox for such code stopped."
+                }),
+            );
+        }
+    }
+}
+
+/// What `bash` is told where code written on the command line asks every
+/// time: a script file runs like any other command of the project, and a
+/// rule can be saved for it.
+const SCRIPT_FILE_ADVICE: &str = " For a check that needs more than a line of code, write a script file to the scratch folder and run that file: inline code (node -e, python -c, a heredoc) asks the user every time.";
+
+/// Tells `bash` to keep code out of the command line. Left out where the
+/// tight sandbox takes such code over, so that no model avoids it there.
+pub fn prefer_script_files(schemas: &mut [Value]) {
+    for schema in schemas {
+        if schema.pointer("/function/name").and_then(Value::as_str) != Some("bash") {
+            continue;
+        }
+        if let Some(description) = schema.pointer_mut("/function/description") {
+            if let Some(text) = description.as_str() {
+                *description = Value::String(format!("{text}{SCRIPT_FILE_ADVICE}"));
+            }
+        }
+    }
+}
+
+/// Whether a `bash` call sets the argument `name`, as a boolean or spelled
+/// out.
+fn flag(arguments: &Value, name: &str) -> bool {
+    match arguments.get(name) {
+        Some(Value::Bool(wanted)) => *wanted,
+        Some(Value::String(wanted)) => wanted.trim().eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+/// The tight sandbox for a command that asks, where it can stand in for the
+/// prompt: the user left that on, this machine can close the network, and the
+/// line asks for nothing but code the rules cannot read (see
+/// `permissions::runs_contained`).
+fn tight_policy(
+    runtime: &ToolRuntime,
+    command: &str,
+    cwd: &Path,
+    restorable: &dyn Fn(&Path) -> bool,
+) -> Option<sandbox::Policy> {
+    let permissions = &runtime.permissions;
+    if !permissions.contains_inline_code() {
+        return None;
+    }
+    let folders = permissions.folders_for(&runtime.conversation_id);
+    let released = permissions.secret_folders_for(&runtime.conversation_id);
+    let policy = permissions.sandbox().tight_policy(&sandbox::Call {
+        command,
+        project_root: &runtime.project_root,
+        folders: &folders,
+        released: &released,
+        private: &permissions.private(),
+        network_approved: false,
+    })?;
+    permissions
+        .runs_contained(
+            command,
+            &runtime.project_root,
+            cwd,
+            &runtime.conversation_id,
+            Some(restorable),
+        )
+        .then_some(policy)
 }
 
 /// What a prompt in front of a command named: saying yes to the command says
@@ -3652,19 +3793,45 @@ fn command_policy(
         project_root: &runtime.project_root,
         folders: &folders,
         released: &released,
+        private: &permissions.private(),
         network_approved,
     })
 }
 
-/// What a command the sandbox seems to have stopped is told about it.
-fn sandbox_hint(policy: &sandbox::Policy) -> String {
+/// What a command is told about the sandbox it ran in. Said only when its
+/// output looks like the sandbox stopped something: a failing test has
+/// nothing to do with it. A command that did not fail is told only what it
+/// could not know: that it ran in the tight sandbox, which it did not ask
+/// for, or that an `open` in it started nothing.
+fn sandbox_note(policy: Option<&sandbox::Policy>, output: &str, failed: bool) -> String {
+    let Some(policy) = policy.filter(|policy| sandbox::looks_blocked(output, policy)) else {
+        return String::new();
+    };
+    if policy.tight {
+        return format!(
+            "\n\n[pumr] This command ran without asking the user, in a tighter sandbox for code written on the command line: it writes only to the project, the scratch folder and temp folders, reaches no network but this machine, starts no apps, reaches no socket or process of another program and cannot change git hooks or .git/config. If that is what stopped it, run it again with \"{ASK_FIRST_ARGUMENT}\": true, which asks the user and then runs it in the normal sandbox."
+        );
+    }
+    let opened_nothing = sandbox::refused_to_open(output, policy);
+    if !failed {
+        return if opened_nothing {
+            "\n\n[pumr] The sandbox kept this command from opening an app or a page: `open` starts nothing from inside a script or next to another program. To show the user a page, run `open <url>` as a command of its own.".to_string()
+        } else {
+            String::new()
+        };
+    }
     let network = if policy.network {
         ""
     } else {
         " and reaches no network but this machine"
     };
+    let open = if opened_nothing {
+        " `open` starts nothing from inside a script or next to another program: run it as a command of its own."
+    } else {
+        ""
+    };
     format!(
-        "\n\n[pumr] This command ran in the sandbox: it writes only to the project, the scratch folder and temp folders, cannot read the folders that hold keys (such as ~/.ssh){network}. A program with a sandbox of its own, such as a browser, cannot start inside it. If that is what stopped the command, run it again with \"{UNSANDBOXED_ARGUMENT}\": true, which asks the user."
+        "\n\n[pumr] This command ran in the sandbox: it writes only to the project, the scratch folder and temp folders, cannot read the folders that hold keys (such as ~/.ssh) or pumr's own data folder{network}.{open} A program with a sandbox of its own, such as a browser, cannot start inside it. If that is what stopped the command, run it again with \"{UNSANDBOXED_ARGUMENT}\": true, which asks the user."
     )
 }
 
@@ -5623,6 +5790,61 @@ mod guidance_tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn a_command_starts_with_the_variables_of_its_project() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path().join("project");
+        let tools = workspace.path().join("toolchain/bin");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        // A program only the project's own `PATH` leads to.
+        let program = tools.join("pumr-project-tool");
+        std::fs::write(&program, "#!/bin/sh\nprintf 'from the toolchain of %s' \"$TOOLCHAIN\"\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut runtime = test_runtime(&root, workspace.path());
+        let command = json!({ "command": "pumr-project-tool" });
+        // The program is not one that runs unasked; the user allowed it.
+        let allowed = crate::models::CommandRule::Exact("pumr-project-tool".to_string());
+        runtime
+            .permissions
+            .add_session_command_rule(&runtime.conversation_id, &allowed);
+
+        // Without them the program is not found.
+        let outcome = run_bash(&mut runtime, &command).await;
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+
+        let path = format!(
+            "{}:{}",
+            tools.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        runtime.permissions.set_project_environment(
+            &root,
+            vec![
+                ("TOOLCHAIN".to_string(), "eleven".to_string()),
+                ("PATH".to_string(), path),
+            ],
+        );
+        let outcome = run_bash(&mut runtime, &command).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(
+            outcome.result.ends_with("from the toolchain of eleven"),
+            "{}",
+            outcome.result
+        );
+        // Another project does not get them, with the same settings and in
+        // the same chat.
+        let other = workspace.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        runtime.project_root = other;
+        let outcome = run_bash(&mut runtime, &command).await;
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn the_chat_sees_what_a_tail_holds_back() {
         let (shown, outcome) = streamed("printf 'one\\ntwo\\nthree\\n' | tail -n 1").await;
         assert_eq!(outcome.status, "ok", "{}", outcome.result);
@@ -5901,6 +6123,45 @@ mod guidance_tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn reading_pumrs_own_data_takes_leaving_the_sandbox() {
+        if !sandbox::support().files {
+            return;
+        }
+        let (directory, mut runtime, _) = confined_project();
+        let data = directory.path().canonicalize().unwrap().join("app-data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("pumr.sqlite"), "every chat").unwrap();
+        runtime.permissions.set_private(sandbox::Private {
+            folders: vec![data],
+            shared: Vec::new(),
+        });
+        let command = "cat ../app-data/pumr.sqlite";
+
+        // The rules ask about a database outside the project. The user's
+        // yes to that opens the folder for the command, but not this one.
+        let asked = answering(&mut runtime, true);
+        let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+        assert!(!outcome.result.contains("every chat"), "{}", outcome.result);
+        assert!(
+            outcome.result.contains("or pumr's own data folder")
+                && outcome.result.contains("\"unsandboxed\": true"),
+            "{}",
+            outcome.result
+        );
+        let title = "Run command outside the sandbox?".to_string();
+        assert!(!asked.lock().unwrap().contains(&title));
+
+        // Outside the sandbox it is read, which is the user's call.
+        let call = json!({ "command": command, "unsandboxed": true });
+        let outcome = run_bash(&mut runtime, &call).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(outcome.result.contains("every chat"), "{}", outcome.result);
+        assert!(asked.lock().unwrap().contains(&title));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn without_a_sandbox_nothing_is_asked_about_leaving_it() {
         let (_directory, mut runtime, escaped) = confined_project();
         runtime.permissions.set_sandbox(sandbox::Config::default());
@@ -5911,6 +6172,224 @@ mod guidance_tests {
         assert_eq!(outcome.status, "ok", "{}", outcome.result);
         assert!(escaped.exists());
         assert!(asked.lock().unwrap().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_open_inside_a_script_starts_nothing_and_says_so() {
+        let (directory, mut runtime, _) = confined_project();
+        // An app that says it ran, by a file next to the project.
+        let base = directory.path().canonicalize().unwrap();
+        let app = base.join("Probe.app/Contents");
+        std::fs::create_dir_all(app.join("MacOS")).unwrap();
+        std::fs::write(
+            app.join("Info.plist"),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n<key>CFBundleExecutable</key><string>Probe</string>\n<key>CFBundleIdentifier</key><string>dev.pumr.bash-test</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>LSUIElement</key><true/>\n</dict></plist>\n",
+        )
+        .unwrap();
+        let marker = base.join("launched");
+        let program = app.join("MacOS/Probe");
+        std::fs::write(&program, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(runtime.project_root.join("report.sh"), "open -g -n ../Probe.app\n").unwrap();
+        for line in ["sh report.sh", "sh report.sh; true"] {
+            runtime.permissions.add_session_command_rule(
+                "session",
+                &crate::models::CommandRule::Exact(line.to_string()),
+            );
+        }
+        let asked = answering(&mut runtime, false);
+
+        let outcome = run_bash(&mut runtime, &json!({ "command": "sh report.sh" })).await;
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+        assert!(
+            outcome
+                .result
+                .contains("`open` starts nothing from inside a script or next to another program")
+                && outcome.result.contains("\"unsandboxed\": true"),
+            "{}",
+            outcome.result
+        );
+        // A line that ends well all the same is told what did not happen.
+        let outcome = run_bash(&mut runtime, &json!({ "command": "sh report.sh; true" })).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(
+            outcome
+                .result
+                .contains("[pumr] The sandbox kept this command from opening an app or a page"),
+            "{}",
+            outcome.result
+        );
+        assert!(asked.lock().unwrap().is_empty());
+
+        // As a command of its own `open` is for the rules to judge, and an
+        // app is nothing they let through unasked.
+        let outcome =
+            run_bash(&mut runtime, &json!({ "command": "open -g -n ../Probe.app" })).await;
+        assert_eq!(outcome.status, "denied", "{}", outcome.result);
+        assert_eq!(*asked.lock().unwrap(), ["Run command?".to_string()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(!marker.exists());
+    }
+
+    /// A confined project whose sandbox takes over code written on the
+    /// command line, as it does with the settings of a new install.
+    #[cfg(target_os = "macos")]
+    fn contained_project() -> (tempfile::TempDir, ToolRuntime, PathBuf) {
+        let (directory, runtime, escaped) = confined_project();
+        runtime.permissions.set_sandbox(sandbox::Config {
+            mode: sandbox::Mode::Files,
+            inline_code: true,
+            ..Default::default()
+        });
+        runtime.permissions.replace(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::permissions::AutoApproveConfig {
+                project_commands: true,
+                ..Default::default()
+            },
+        );
+        (directory, runtime, escaped)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn inline_code_runs_in_the_tight_sandbox_instead_of_asking() {
+        let (_directory, mut runtime, _) = contained_project();
+        let audit: Arc<Mutex<Vec<PermissionAuditEntry>>> = Arc::default();
+        let log = audit.clone();
+        runtime
+            .broker
+            .set_audit_sink(Arc::new(move |entry| log.lock().unwrap().push(entry)));
+        let asked = answering(&mut runtime, false);
+        // Shaped like the lines agents write: a script, its output cut down.
+        let command = "python3 -c \"import pathlib; pathlib.Path('made.txt').write_text('made'); print('one'); print('two')\" 2>&1 | tail -n 1";
+
+        let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+        assert_eq!(outcome.result, "Command finished successfully.\ntwo\n");
+        assert_eq!(
+            std::fs::read_to_string(runtime.project_root.join("made.txt")).unwrap(),
+            "made"
+        );
+        assert!(asked.lock().unwrap().is_empty());
+        // The audit log says what ran unasked and why it would have asked.
+        let entry = audit.lock().unwrap().last().cloned().unwrap();
+        assert!(entry.allowed && entry.decided_by == "auto");
+        assert!(
+            entry
+                .reason
+                .starts_with("left to the tight sandbox instead of asking: ")
+                && entry.reason.contains("Command runs inline Python code"),
+            "{}",
+            entry.reason
+        );
+
+        // With the setting off the same line asks, as it does without the
+        // in-project commands the setting builds on.
+        runtime.permissions.set_sandbox(sandbox::Config {
+            mode: sandbox::Mode::Files,
+            ..Default::default()
+        });
+        let refused = run_bash(&mut runtime, &json!({ "command": command })).await;
+        assert_eq!(refused.status, "denied", "{}", refused.result);
+        runtime.permissions.set_sandbox(sandbox::Config {
+            mode: sandbox::Mode::Files,
+            inline_code: true,
+            ..Default::default()
+        });
+        runtime.permissions.replace(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::permissions::AutoApproveConfig::default(),
+        );
+        let refused = run_bash(&mut runtime, &json!({ "command": command })).await;
+        assert_eq!(refused.status, "denied", "{}", refused.result);
+        let title = "Run command?".to_string();
+        assert_eq!(*asked.lock().unwrap(), [title.clone(), title]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn what_the_tight_sandbox_stops_can_ask_for_the_prompt() {
+        let (_directory, mut runtime, escaped) = contained_project();
+        let asked = answering(&mut runtime, true);
+        let hooked = runtime.project_root.join(".git/hooks/pre-commit");
+        // Nothing in these lines names what they reach for.
+        let outside = "python3 -c \"import os; open(os.path.join(os.pardir, 'escaped.txt'), 'w').write('x')\"";
+        let hook = "python3 -c \"import os; d = chr(46) + 'git/hooks'; os.makedirs(d, exist_ok=True); open(d + '/pre-commit', 'w').write('x')\"";
+        let elsewhere =
+            "python3 -c \"import socket; socket.create_connection(('192.0.2.1', 80), 2)\"";
+        for command in [outside, hook, elsewhere] {
+            let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+            assert_eq!(outcome.status, "error", "{command}: {}", outcome.result);
+            assert!(
+                outcome.result.contains(
+                    "[pumr] This command ran without asking the user, in a tighter sandbox"
+                ) && outcome.result.contains("\"ask_first\": true"),
+                "{command}: {}",
+                outcome.result
+            );
+        }
+        assert!(!escaped.exists() && !hooked.exists());
+        assert!(asked.lock().unwrap().is_empty());
+
+        // Asked for, the prompt is back, and with the user's yes the line
+        // runs in the sandbox every command gets.
+        let outcome = run_bash(&mut runtime, &json!({ "command": hook, "ask_first": true })).await;
+        assert_eq!(outcome.status, "ok", "{}", outcome.result);
+        assert!(hooked.exists());
+        assert_eq!(*asked.lock().unwrap(), ["Run command?".to_string()]);
+        // Which holds what it always held.
+        let outcome =
+            run_bash(&mut runtime, &json!({ "command": outside, "ask_first": true })).await;
+        assert_eq!(outcome.status, "error", "{}", outcome.result);
+        assert!(outcome.result.contains("\"unsandboxed\": true"), "{}", outcome.result);
+        assert!(!escaped.exists());
+    }
+
+    #[test]
+    fn bash_is_told_how_code_on_the_command_line_is_handled() {
+        let names = |schemas: &[Value], found: &dyn Fn(&Value) -> bool| -> Vec<String> {
+            schemas
+                .iter()
+                .filter(|schema| found(schema))
+                .filter_map(|schema| schema.pointer("/function/name")?.as_str())
+                .map(str::to_string)
+                .collect()
+        };
+        // Where the tight sandbox takes such code over, the way back to the
+        // prompt.
+        let mut schemas = tool_schemas();
+        offer_ask_first(&mut schemas);
+        let offered = names(&schemas, &|schema| {
+            schema
+                .pointer("/function/parameters/properties/ask_first")
+                .is_some()
+        });
+        assert_eq!(offered, ["bash"]);
+        // Elsewhere, to write a script file instead.
+        let mut schemas = tool_schemas();
+        prefer_script_files(&mut schemas);
+        let advised = names(&schemas, &|schema| {
+            schema
+                .pointer("/function/description")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.ends_with(SCRIPT_FILE_ADVICE))
+        });
+        assert_eq!(advised, ["bash"]);
+        // Untouched, the schema says neither.
+        let plain = json!(tool_schemas()).to_string();
+        assert!(!plain.contains("ask_first") && !plain.contains(SCRIPT_FILE_ADVICE.trim()));
     }
 
     #[test]

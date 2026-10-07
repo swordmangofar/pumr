@@ -420,6 +420,9 @@ pub struct Settings {
     /// Commands of the user's that run at fixed moments of the agent's work
     /// (see `crate::hooks`).
     pub hooks: Vec<Hook>,
+    /// What pumr remembers of how the user likes to work (see `crate::memory`).
+    #[serde(flatten)]
+    pub memory: crate::memory::MemorySettings,
 }
 
 /// One hook: a command and when it runs.
@@ -619,7 +622,15 @@ impl ModelSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PermissionSettings {
+    /// Folders outside the project the assistant may read and change.
     pub extra_folders: Vec<String>,
+    /// Folders outside the project the assistant may read but not change.
+    /// "Always allow" on a prompt about reading or listing a folder saves it
+    /// here.
+    pub read_folders: Vec<String>,
+    /// Folders commands may put on `PATH` although the assistant can write
+    /// to them, saved with "always allow" on the prompt about that folder.
+    pub path_folders: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_command_allows")]
     pub command_rules: Vec<CommandRule>,
     #[serde(default, deserialize_with = "deserialize_command_denies")]
@@ -660,6 +671,9 @@ pub struct PermissionSettings {
     /// Commands that run outside the sandbox, by how their line begins or as
     /// a pattern of the whole line.
     pub sandbox_excluded_commands: Vec<String>,
+    /// Whether inline code and scripts fed to an interpreter run in a tight
+    /// sandbox instead of asking, where the sandbox can close the network.
+    pub sandbox_inline_code: bool,
 }
 
 #[derive(Deserialize)]
@@ -704,6 +718,8 @@ impl Default for PermissionSettings {
     fn default() -> Self {
         Self {
             extra_folders: Vec::new(),
+            read_folders: Vec::new(),
+            path_folders: Vec::new(),
             command_rules: Vec::new(),
             denied_command_rules: Vec::new(),
             allowed_websites: Vec::new(),
@@ -731,6 +747,7 @@ impl Default for PermissionSettings {
             sandbox_writable_folders: crate::sandbox::default_writable(),
             sandbox_unreadable_folders: crate::sandbox::default_unreadable(),
             sandbox_excluded_commands: Vec::new(),
+            sandbox_inline_code: true,
         }
     }
 }
@@ -1333,16 +1350,32 @@ pub fn data_folder(app_data_dir: std::path::PathBuf) -> std::path::PathBuf {
     if !cfg!(debug_assertions) {
         return app_data_dir;
     }
+    let own = debug_data_folder(&app_data_dir);
+    if let Err(error) = seed_data_folder(&app_data_dir, &own) {
+        log::warn!("could not copy the installed pumr's data for the debug build: {error}");
+    }
+    own
+}
+
+/// The folder of a debug build, next to the one the system names for the app.
+fn debug_data_folder(app_data_dir: &Path) -> std::path::PathBuf {
     let mut name = app_data_dir
         .file_name()
         .unwrap_or_default()
         .to_os_string();
     name.push(".dev");
-    let own = app_data_dir.with_file_name(name);
-    if let Err(error) = seed_data_folder(&app_data_dir, &own) {
-        log::warn!("could not copy the installed pumr's data for the debug build: {error}");
-    }
-    own
+    app_data_dir.with_file_name(name)
+}
+
+/// The data folders of both builds of pumr, whichever of them this is. Each
+/// holds chats, and the debug build's started as a copy of the other's, so
+/// the commands of either build are kept out of both (see
+/// `sandbox::Private`).
+pub fn data_folders(app_data_dir: &Path) -> Vec<std::path::PathBuf> {
+    vec![
+        app_data_dir.to_path_buf(),
+        debug_data_folder(app_data_dir),
+    ]
 }
 
 /// Starts the folder `own` as a copy of `installed`, once: the chats,
@@ -1452,6 +1485,21 @@ mod tests {
         let own = data_folder(directory.path().join("dev.pumr.app"));
         assert_eq!(own, directory.path().join("dev.pumr.app.dev"));
         assert!(!own.join(DATABASE).exists());
+    }
+
+    #[test]
+    fn the_data_folders_of_both_builds_are_named_by_either() {
+        let installed = Path::new("/data/dev.pumr.app");
+        let folders = data_folders(installed);
+        assert_eq!(
+            folders,
+            [
+                installed.to_path_buf(),
+                Path::new("/data/dev.pumr.app.dev").to_path_buf()
+            ]
+        );
+        // The one this build keeps its data in is among them.
+        assert!(folders.contains(&data_folder(installed.to_path_buf())));
     }
 
     #[test]
@@ -1777,5 +1825,22 @@ mod tests {
         assert_eq!(reloaded["settingsVersion"], json!(SETTINGS_VERSION));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn inline_code_is_left_to_the_sandbox_unless_switched_off() {
+        // A file from before the setting existed.
+        let mut stored = serde_json::to_value(Settings::default()).unwrap();
+        assert!(stored
+            .as_object_mut()
+            .unwrap()
+            .remove("sandboxInlineCode")
+            .is_some());
+        let settings: Settings = serde_json::from_value(stored.clone()).unwrap();
+        assert!(settings.permissions.sandbox_inline_code);
+
+        stored["sandboxInlineCode"] = json!(false);
+        let settings: Settings = serde_json::from_value(stored).unwrap();
+        assert!(!settings.permissions.sandbox_inline_code);
     }
 }

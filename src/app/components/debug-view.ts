@@ -16,7 +16,7 @@ import {
   buildAgentGraph,
 } from '../core/agent-graph';
 import { api } from '../core/api';
-import { enabledGlobalPrompts } from '../core/debug-log';
+import { enabledGlobalPrompts, rememberedPreferences } from '../core/debug-log';
 import {
   FileChange,
   LiveToolCall,
@@ -764,6 +764,32 @@ export class DebugView {
             sections: [
               { labelKey: 'debug.sections.globalPrompts', text: globals.join('\n\n'), mono: false },
             ],
+            taskCallIds: [],
+            toolCallId: null,
+          });
+        }
+        const remembered = rememberedPreferences(settings);
+        if (remembered.length > 0) {
+          const list = remembered.map((entry) => `- ${entry}`).join('\n');
+          steps.push({
+            id: `${session.id}:context:memory`,
+            sessionId: session.id,
+            kind: 'context',
+            tags: ['context'],
+            titleKey: 'debug.steps.memory',
+            subtitle: '',
+            time: null,
+            status: null,
+            fields: [
+              {
+                labelKey: 'debug.fields.count',
+                value: String(remembered.length),
+                mono: true,
+                tone: 'default',
+              },
+              charField(list),
+            ],
+            sections: [{ labelKey: 'debug.sections.memory', text: list, mono: false }],
             taskCallIds: [],
             toolCallId: null,
           });

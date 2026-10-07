@@ -26,6 +26,11 @@ export interface Project {
   color: string | null;
   icon: string | null;
   iconImage: string | null;
+  /**
+   * The variables every command of the project starts with, as the user
+   * typed them: one `NAME=value` per line.
+   */
+  environment?: string | null;
 }
 
 export interface Session {
@@ -54,7 +59,32 @@ export interface Session {
    * the machine slept mid-reply) and waits for the user to continue.
    */
   interrupted: boolean;
+  /**
+   * Preferences the agent proposed for pumr's memory in this session that the
+   * user has not answered yet. The chat shows a card for each.
+   */
+  memorySuggestions?: MemorySuggestion[];
 }
+
+/** One preference of the user's that pumr remembers, for every project. */
+export interface MemoryEntry {
+  id: string;
+  text: string;
+}
+
+/** A preference the agent proposed for the memory; the user decides on it. */
+export interface MemorySuggestion {
+  id: number;
+  text: string;
+  /** The user asked to have it remembered, as far as the agent says. */
+  requested: boolean;
+  /** The entry it corrects, when it names one. */
+  replaces: MemoryEntry | null;
+  createdAt: number;
+}
+
+/** What the user chose on a suggestion's card. */
+export type MemoryDecision = 'save' | 'decline' | 'disable';
 
 export interface ToolCallRecord {
   id: string;
@@ -218,6 +248,10 @@ export interface EndpointInfo {
   supportsImplicitCaching: boolean;
   training: boolean | null;
   retainsPrompts: boolean | null;
+  /** The account's OpenRouter settings rule this endpoint out. */
+  blocked: boolean;
+  /** OpenRouter's explanation of why it is blocked. */
+  blockedReason: string | null;
 }
 
 export interface ProviderInfo {
@@ -351,6 +385,10 @@ export interface Settings {
   mcpToolGrants: McpToolGrant[];
   /** Folders whose sensitive files commands may use without a prompt. */
   secretFolders: string[];
+  /** Folders outside the project the assistant may read but not change. */
+  readFolders: string[];
+  /** Folders commands may put on `PATH` although the assistant can change them. */
+  pathFolders: string[];
   permissionDefaults: PermissionDefaults;
   autoApproveReadOnly: boolean;
   autoApprovePackageScripts: boolean;
@@ -413,8 +451,16 @@ export interface Settings {
   sandboxUnreadableFolders: string[];
   /** Commands that run outside the sandbox. */
   sandboxExcludedCommands: string[];
+  /** Whether inline code runs in a tighter sandbox instead of asking. */
+  sandboxInlineCode: boolean;
   /** Commands of the user's that run at fixed moments of the agent's work. */
   hooks: Hook[];
+  /** Whether what pumr remembers of how the user works is sent to the agent. */
+  memoryEnabled: boolean;
+  /** Whether the agent may propose things to remember on its own account. */
+  memorySuggestions: boolean;
+  /** What pumr remembers: one preference per entry. */
+  memories: MemoryEntry[];
 }
 
 export type SandboxMode = 'off' | 'files' | 'filesAndNetwork';
@@ -879,7 +925,11 @@ export interface CommandRisk {
   detail: string;
 }
 
-export type CommandScopeKind = 'program' | 'subcommand' | 'programFlags' | 'exact';
+/**
+ * `pathFolder` is no rule for a command line: its option holds a folder
+ * that commands may put on `PATH` from now on.
+ */
+export type CommandScopeKind = 'program' | 'subcommand' | 'programFlags' | 'exact' | 'pathFolder';
 
 export type CommandRule = { kind: 'exact'; value: string } | { kind: 'glob'; value: string };
 
@@ -923,6 +973,29 @@ export interface PermissionAuditEntry {
 }
 
 /** The machine a chat's debug log is exported on. */
+/**
+ * What decides a chat's permission prompts beyond the saved settings, for
+ * its debug log.
+ */
+export interface PermissionState {
+  /** The `PATH` commands of the chat's project start with. */
+  commandPath: string | null;
+  /** Whether commands get the environment of the user's login shell. */
+  loginShell: boolean;
+  /** The names of the variables the project gives its commands. */
+  projectVariables: string[];
+  /** Folders allowed for changes until the app restarts. */
+  sessionFolders: string[];
+  /** Folders opened for reading until the app restarts. */
+  sessionReadFolders: string[];
+  /** Folders the chat's commands may put on `PATH`. */
+  chatPathFolders: string[];
+  /** Folders whose sensitive files the chat's commands may use. */
+  chatSecretFolders: string[];
+  /** Command rules that hold for the chat. */
+  chatCommandRules: CommandRule[];
+}
+
 export interface SystemInfo {
   /** `macOS`, `Windows`, `Linux`, or the OS's own name elsewhere. */
   osName: string;
@@ -1024,6 +1097,8 @@ export type StreamEvent =
       mcpTool?: McpToolGrant | null;
       /** Folders whose sensitive files the user can release for commands. */
       secretFolders?: string[];
+      /** Whether a folder remembered from this prompt is opened for reading only. */
+      readOnly?: boolean;
       /** The assistant's one-sentence explanation of why it asks. */
       justification: string | null;
     }

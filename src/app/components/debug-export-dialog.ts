@@ -28,6 +28,7 @@ import {
   enabledGlobalPrompts,
   planRedactions,
   Redaction,
+  rememberedPreferences,
   redactionDiff,
   searchParts,
 } from '../core/debug-log';
@@ -701,12 +702,20 @@ export class DebugExportDialog implements OnInit {
   private async load(): Promise<void> {
     const rootId = this.sessionId();
     const conversationId = this.conversationId();
-    const [system, audit, home] = await Promise.all([
+    const [system, audit, home, live] = await Promise.all([
       api.getSystemInfo().catch(() => null),
       conversationId
         ? api.listPermissionAudit(conversationId, 1000).catch(() => null)
         : Promise.resolve([]),
       homeDir().catch(() => null),
+      // What holds for this chat without being saved: why a command asked
+      // often lies there.
+      api
+        .getPermissionState(
+          conversationId ?? rootId,
+          this.workspace.session(rootId)?.projectId ?? null,
+        )
+        .catch(() => null),
       this.workspace.loadAgentTree(rootId).catch(() => undefined),
     ]);
     this.home = home;
@@ -733,11 +742,13 @@ export class DebugExportDialog implements OnInit {
         exportedAt: this.exportedAt,
         system,
         settings: debugLogSettings(settings),
+        permissions: { saved: settings, live },
         context: {
           systemPrompt: ownPrompt || settings?.defaultSystemPrompt || '',
           systemPromptSource: ownPrompt ? 'session' : 'default',
           globalPrompts:
             mode?.includeGlobalPrompts && settings ? enabledGlobalPrompts(settings) : [],
+          memories: mode?.includeGlobalPrompts && settings ? rememberedPreferences(settings) : [],
           mode,
           rules: this.workspace.rules(),
         },
