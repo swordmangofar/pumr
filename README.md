@@ -168,7 +168,12 @@ sessions in SQLite. No project files leave the machine except the requests you a
 - A shadow git repository snapshots every prompt — your real `.git` is never touched.
 - Changed files show `+additions -deletions` and open a Monaco diff (inline or side-by-side).
 - `@` mentions in the composer add files, directories, websites, skills or MCP tools
-  as structured context for the next message.
+  as structured context for the next message. `@` followed by the start of a name lists
+  the matching files and folders straight away; the letters only have to appear in order,
+  so `@ces` finds `composer-editor.service.ts`.
+- `Ctrl+Space` completes the word at the cursor with the project's files, folders and the
+  classes, functions and other names its code defines, read from the source files of
+  TypeScript, JavaScript, Rust, Python, Go, the JVM languages, C#, Swift, C, C++ and Ruby.
 - Typing `/` in the composer lists its commands. `/btw` asks a quick side question about
   the session or anything else, also while the agent works; the answer appears below the
   chat box and never becomes part of the session. `/model`, `/mode`, `/effort` and
@@ -196,11 +201,11 @@ sessions in SQLite. No project files leave the machine except the requests you a
   your prompts, MCP servers and skills it loads, whether the activated global prompts and
   project rules (`AGENTS.md`) apply, and whether it may only plan instead of editing files.
 - Built-in modes: Coding (everything activated), Planning (plans with you, cannot write or
-  edit files), Verification (runs the build and tests and reports PASS/FAIL/BLOCKED without
-  changing code) and Nacked (base prompt only, for speed). Edit or reset them, or add your own.
+  edit files and runs only commands that read), Verification (runs the build and tests and
+  reports PASS/FAIL/BLOCKED without changing code) and Nacked (base prompt only, for speed). Edit or reset them, or add your own.
 - Pick a mode per session in the composer or with `/mode`; new sessions start in the default
-  mode. `⌘⇧P` (`Ctrl+Shift+P` on Linux and Windows, configurable) switches between Planning
-  and the mode the session was in before. The
+  mode. `⌘⇧P` (`Ctrl+Shift+P` on Linux and Windows, configurable) switches to the next mode
+  in the order of the mode picker, and from the last back to the first. The
   debugger shows how the system prompt was put together: base, global prompts and mode prompt.
 - Memory: pumr remembers how you like to work. When a message shows a lasting preference
   ("ask me for every finding whether to fix it"), the agent proposes it, and once its answer
@@ -357,6 +362,7 @@ src-tauri/src/           Rust core
   hooks.rs               the user's commands before and after tool calls and at turn end
   memory.rs              remembered preferences: the remember tool and how often it may ask
   git.rs                 shadow git repo: snapshots, diffs, restore, branch info
+  symbols.rs             the classes and functions a project defines, for completion
   processes.rs           background process registry
   broker.rs              permission request/response plumbing
   db.rs                  SQLite schema and queries (projects, sessions, messages, costs)

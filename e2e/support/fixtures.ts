@@ -134,6 +134,7 @@ export function seed(patch: Partial<FakeSeed> = {}): FakeSeed {
     },
     sandboxSupport: { files: true, network: true },
     softwareRendering: false,
+    leakyBackdrop: false,
     replies: [],
     chunkDelayMs: 5,
     ...patch,

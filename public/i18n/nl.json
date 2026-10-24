@@ -35,7 +35,8 @@
     "sortName": "Alfabetisch",
     "sortSessions": "Aantal sessies",
     "today": "Vandaag",
-    "yesterday": "Gisteren"
+    "yesterday": "Gisteren",
+    "currentBranch": "Huidige branch: {{ branch }}"
   },
   "workspace": {
     "empty": "Geen bestanden gevonden.",
@@ -597,6 +598,18 @@
         "label": "MCP-server",
         "hint": "Verbind een server en stel de tools beschikbaar"
       }
+    },
+    "symbolKinds": {
+      "class": "klasse",
+      "interface": "interface",
+      "struct": "struct",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "type",
+      "function": "functie",
+      "method": "methode",
+      "constant": "constante",
+      "module": "module"
     },
     "mentionNoResults": "Geen overeenkomsten. Blijf typen of druk op Escape.",
     "mentionFetch": "{{ url }} ophalen",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nieuwe regel",
       "chatStop": "Antwoord stoppen",
       "chatRecallPrompt": "Laatste prompt terughalen",
-      "chatToggleMode": "Wisselen tussen plannen en programmeren",
-      "chatToggleModeHint": "Gaat terug naar de modus waarin de sessie vóór het plannen was.",
+      "chatToggleMode": "Naar de volgende modus wisselen",
+      "chatToggleModeHint": "Gaat alle modi langs in de volgorde van de moduskiezer en begint na de laatste weer bij de eerste.",
+      "chatComplete": "Woord bij de cursor aanvullen",
+      "chatCompleteHint": "Stelt bestanden, mappen, klassen en functies van het project voor die passen bij het al getypte deel van het woord.",
       "gitToggleStage": "Geselecteerde bestanden stagen of unstagen",
       "gitDiscardFiles": "Geselecteerde bestanden verwerpen",
       "gitSelectAllFiles": "Alle bestanden selecteren",

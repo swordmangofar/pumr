@@ -190,6 +190,7 @@ export type HotkeyAction =
   | 'chatStop'
   | 'chatRecallPrompt'
   | 'chatToggleMode'
+  | 'chatComplete'
   | 'gitToggleStage'
   | 'gitDiscardFiles'
   | 'gitSelectAllFiles'
@@ -473,6 +474,15 @@ export const HOTKEY_DEFINITIONS: readonly HotkeyDefinition[] = [
     // Not `M`: macOS gives Cmd+Shift+M to the Minimize item of the window
     // menu (Cmd+M) before the webview sees the key.
     defaults: () => [mod('Shift+P')],
+  },
+  {
+    kind: 'action',
+    id: 'chatComplete',
+    category: 'chat',
+    label: 'settings.hotkeys.chatComplete',
+    hint: 'settings.hotkeys.chatCompleteHint',
+    // As in code editors, also on macOS.
+    defaults: () => ['Ctrl+Space'],
   },
   // Git
   {

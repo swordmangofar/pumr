@@ -35,7 +35,8 @@
     "sortName": "Abecedne",
     "sortSessions": "Počet relácií",
     "today": "Dnes",
-    "yesterday": "včera"
+    "yesterday": "včera",
+    "currentBranch": "Aktuálna vetva: {{ branch }}"
   },
   "workspace": {
     "empty": "Nenašli sa žiadne súbory.",
@@ -597,6 +598,18 @@
         "label": "Server MCP",
         "hint": "Pripojiť server a sprístupniť jeho nástroje"
       }
+    },
+    "symbolKinds": {
+      "class": "trieda",
+      "interface": "rozhranie",
+      "struct": "štruktúra",
+      "enum": "výčet",
+      "trait": "trait",
+      "type": "typ",
+      "function": "funkcia",
+      "method": "metóda",
+      "constant": "konštanta",
+      "module": "modul"
     },
     "mentionNoResults": "Žiadne zhody. Píšte ďalej alebo stlačte Escape.",
     "mentionFetch": "Načítať {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nový riadok",
       "chatStop": "Zastaviť odpoveď",
       "chatRecallPrompt": "Vyvolať posledný prompt",
-      "chatToggleMode": "Prepnúť medzi plánovaním a programovaním",
-      "chatToggleModeHint": "Vráti režim, v ktorom relácia bola pred plánovaním.",
+      "chatToggleMode": "Prepnúť na ďalší režim",
+      "chatToggleModeHint": "Prechádza všetky režimy v poradí výberu režimu a po poslednom začne znova od začiatku.",
+      "chatComplete": "Doplniť slovo pri kurzore",
+      "chatCompleteHint": "Ponúkne súbory, priečinky, triedy a funkcie projektu, ktoré zodpovedajú už napísanej časti slova.",
       "gitToggleStage": "Pridať vybrané súbory do indexu alebo ich z neho odobrať",
       "gitDiscardFiles": "Zahodiť vybrané súbory",
       "gitSelectAllFiles": "Vybrať všetky súbory",

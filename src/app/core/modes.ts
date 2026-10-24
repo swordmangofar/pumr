@@ -2,8 +2,6 @@ import { Mode } from './models';
 
 /** The built-in mode a session runs in when its own is gone. */
 export const CODING_MODE_ID = 'coding';
-/** The built-in plan-only mode. */
-export const PLANNING_MODE_ID = 'planning';
 
 /** The mode with the given id, else coding, else whatever mode there is. */
 export function resolveMode(
@@ -18,23 +16,12 @@ export function resolveMode(
 }
 
 /**
- * Where the plan hotkey takes a session: from a plan-only mode back to the
- * mode it left for planning (coding when that is not known), and from any
- * other mode to planning. `undefined` when there is no mode to switch to.
+ * Where the mode hotkey takes a session: to the mode after `current` in the
+ * order of the mode picker, and from the last back to the first. `undefined`
+ * when there is no other mode to switch to.
  */
-export function planToggleTarget(
-  modes: readonly Mode[],
-  current: Mode | undefined,
-  previousId: string | null | undefined,
-): Mode | undefined {
-  if (current?.planOnly) {
-    const working = modes.filter((mode) => !mode.planOnly);
-    return (
-      working.find((mode) => mode.id === previousId) ??
-      working.find((mode) => mode.id === CODING_MODE_ID) ??
-      working[0]
-    );
-  }
-  const planning = modes.filter((mode) => mode.planOnly);
-  return planning.find((mode) => mode.id === PLANNING_MODE_ID) ?? planning[0];
+export function nextMode(modes: readonly Mode[], current: Mode | undefined): Mode | undefined {
+  const index = modes.findIndex((mode) => mode.id === current?.id);
+  const next = modes[(index + 1) % modes.length];
+  return next?.id === current?.id ? undefined : next;
 }

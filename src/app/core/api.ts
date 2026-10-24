@@ -61,6 +61,7 @@ import {
   SandboxSupport,
   WindowControl,
   WorkspaceEntry,
+  WorkspaceSymbol,
   WorkspaceFile,
 } from './models';
 
@@ -122,6 +123,7 @@ export const api = {
   getWindowControl: () => invoke<WindowControl>('get_window_control'),
   getSandboxSupport: () => invoke<SandboxSupport>('get_sandbox_support'),
   isSoftwareRendered: () => invoke<boolean>('is_software_rendered'),
+  hasLeakyBackdrop: () => invoke<boolean>('has_leaky_backdrop'),
   setInterfaceZoom: (zoom: number) => invoke<void>('set_interface_zoom', { zoom }),
   setApiKey: (provider: string, key: string) => invoke<void>('set_api_key', { provider, key }),
   deleteApiKey: (provider: string) => invoke<void>('delete_api_key', { provider }),
@@ -419,6 +421,8 @@ export const api = {
     invoke<void>('uninstall_marketplace_skills', { marketplace, skill }),
   listWorkspaceEntries: (projectId: string) =>
     invoke<WorkspaceEntry[]>('list_workspace_entries', { projectId }),
+  listWorkspaceSymbols: (projectId: string) =>
+    invoke<WorkspaceSymbol[]>('list_workspace_symbols', { projectId }),
   readWorkspaceFile: (projectId: string, path: string) =>
     invoke<WorkspaceFile>('read_workspace_file', { projectId, path }),
   writeWorkspaceFile: (projectId: string, path: string, content: string) =>

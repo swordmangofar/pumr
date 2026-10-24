@@ -35,7 +35,8 @@
     "sortName": "Alfabetycznie",
     "sortSessions": "Liczba sesji",
     "today": "Dzisiaj",
-    "yesterday": "Wczoraj"
+    "yesterday": "Wczoraj",
+    "currentBranch": "Bieżąca gałąź: {{ branch }}"
   },
   "workspace": {
     "empty": "Nie znaleziono plików.",
@@ -597,6 +598,18 @@
         "label": "Serwer MCP",
         "hint": "Połącz serwer i udostępnij jego narzędzia"
       }
+    },
+    "symbolKinds": {
+      "class": "klasa",
+      "interface": "interfejs",
+      "struct": "struktura",
+      "enum": "wyliczenie",
+      "trait": "trait",
+      "type": "typ",
+      "function": "funkcja",
+      "method": "metoda",
+      "constant": "stała",
+      "module": "moduł"
     },
     "mentionNoResults": "Brak dopasowań. Pisz dalej lub naciśnij Escape.",
     "mentionFetch": "Pobierz {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nowa linia",
       "chatStop": "Zatrzymaj odpowiedź",
       "chatRecallPrompt": "Przywołaj ostatni prompt",
-      "chatToggleMode": "Przełącz między planowaniem a programowaniem",
-      "chatToggleModeHint": "Wraca do trybu, w którym sesja była przed planowaniem.",
+      "chatToggleMode": "Przełącz na następny tryb",
+      "chatToggleModeHint": "Przechodzi przez wszystkie tryby w kolejności wyboru trybu i po ostatnim zaczyna od początku.",
+      "chatComplete": "Uzupełnij słowo przy kursorze",
+      "chatCompleteHint": "Podpowiada pliki, foldery, klasy i funkcje projektu pasujące do już wpisanej części słowa.",
       "gitToggleStage": "Dodaj zaznaczone pliki do indeksu lub usuń je z niego",
       "gitDiscardFiles": "Odrzuć zaznaczone pliki",
       "gitSelectAllFiles": "Zaznacz wszystkie pliki",

@@ -26,6 +26,8 @@ use std::time::Duration;
 const DISABLE_EXPLICIT_SYNC: &str = "__NV_DISABLE_EXPLICIT_SYNC";
 const DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
 const DISABLE_COMPOSITING: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
+#[cfg(any(target_os = "linux", test))]
+const SKIA_COMPOSITION: &str = "WEBKIT_USE_SKIA_FOR_COMPOSITION";
 const STARTING: &str = "starting";
 const FALLBACK: &str = "fallback";
 /// How long a start has to survive to count as working. The protocol error
@@ -101,6 +103,39 @@ fn paints_on_cpu(var: impl Fn(&str) -> Option<OsString>) -> bool {
     [DISABLE_DMABUF, DISABLE_COMPOSITING]
         .iter()
         .any(|key| var(key).is_some_and(|value| value != "0"))
+}
+
+/// Whether the webview paints what lies in front of an element with a
+/// `backdrop-filter` into that element's backdrop as well. TextureMapper,
+/// WebKitGTK's compositor before 2.54, builds the backdrop from every layer
+/// but the filtered one (WebKit bugs 275819 and 315165), so a blur behind text
+/// blurs that text too and it glows. The interface leaves such blurs out
+/// (`data-backdrop` in `styles.css`).
+#[cfg(target_os = "linux")]
+pub fn leaky_backdrop() -> bool {
+    // SAFETY: plain version getters without arguments or preconditions.
+    let version = unsafe {
+        (
+            webkit2gtk_sys::webkit_get_major_version(),
+            webkit2gtk_sys::webkit_get_minor_version(),
+        )
+    };
+    composites_with_texture_mapper(version, |key| std::env::var_os(key))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn leaky_backdrop() -> bool {
+    false
+}
+
+/// 2.54 composites with Skia and keeps TextureMapper for
+/// `WEBKIT_USE_SKIA_FOR_COMPOSITION=0`, that value exactly.
+#[cfg(any(target_os = "linux", test))]
+fn composites_with_texture_mapper(
+    version: (u32, u32),
+    var: impl Fn(&str) -> Option<OsString>,
+) -> bool {
+    version < (2, 54) || var(SKIA_COMPOSITION).is_some_and(|value| value == "0")
 }
 
 fn needs_explicit_sync_off(nvidia: bool, var: impl Fn(&str) -> Option<OsString>) -> bool {
@@ -194,6 +229,26 @@ mod tests {
         assert!(paints_on_cpu(lookup(vec![(DISABLE_DMABUF, "")])));
         assert!(!paints_on_cpu(lookup(vec![(DISABLE_DMABUF, "0")])));
         assert!(!paints_on_cpu(lookup(vec![("WAYLAND_DISPLAY", "wayland-0")])));
+    }
+
+    #[test]
+    fn texture_mapper_is_told_apart_from_the_skia_compositor() {
+        // Ubuntu 24.04 and Pop!_OS with COSMIC, the AppImage built on 22.04.
+        assert!(composites_with_texture_mapper((2, 52), lookup(vec![])));
+        assert!(composites_with_texture_mapper((2, 44), lookup(vec![])));
+        assert!(!composites_with_texture_mapper((2, 54), lookup(vec![])));
+        assert!(!composites_with_texture_mapper((3, 0), lookup(vec![])));
+        // 2.54 goes back to TextureMapper for "0" and nothing else.
+        assert!(composites_with_texture_mapper(
+            (2, 54),
+            lookup(vec![(SKIA_COMPOSITION, "0")])
+        ));
+        for value in ["1", "", "false"] {
+            assert!(!composites_with_texture_mapper(
+                (2, 54),
+                lookup(vec![(SKIA_COMPOSITION, value)])
+            ));
+        }
     }
 
     #[test]

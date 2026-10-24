@@ -12,7 +12,7 @@ use crate::models::{
     McpToolGrant, Mention, Message, ModelInfo, PermissionDecision, ProcessInfo, Project,
     ProjectRule, ProviderInfo, ProviderStatus, QuestionAnswer, RoutedEvent, RunningTurns, Session,
     SideAnswer, SideAnswerEvent, SpendStats, SpendSummary, StreamEvent, WorkspaceEntry,
-    WorkspaceFile,
+    WorkspaceFile, WorkspaceSymbol,
 };
 use crate::permissions::{CommandScopeKind, CommandScopeOption, FileIgnoreConfig};
 use crate::providers::catalog::{self, ProviderDef, ProviderKind};
@@ -178,6 +178,14 @@ pub fn get_window_control() -> crate::control::WindowControl {
 #[tauri::command]
 pub fn is_software_rendered() -> bool {
     crate::rendering::software()
+}
+
+/// Whether the webview blurs what lies in front of a `backdrop-filter` into
+/// its backdrop, which the interface answers by leaving the panel blur out
+/// (see [`crate::rendering::leaky_backdrop`]).
+#[tauri::command]
+pub fn has_leaky_backdrop() -> bool {
+    crate::rendering::leaky_backdrop()
 }
 
 /// Applies an interface zoom to the webview, e.g. while previewing it in the
@@ -1030,6 +1038,17 @@ pub fn list_workspace_entries(
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+/// Lists the classes, functions and other names the project's source files
+/// define, for the composer to complete while a prompt is typed.
+#[tauri::command]
+pub async fn list_workspace_symbols(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<WorkspaceSymbol>> {
+    let root = project_root(&state, &project_id)?;
+    blocking(move || Ok(crate::symbols::scan(&root))).await
 }
 
 /// Reads a project file for the workspace viewer. The path must resolve inside
@@ -4060,6 +4079,7 @@ async fn assemble_turn_context(
             justification: None,
             vision: false,
             read_only: false,
+            plan_only: false,
             cancel,
             emit: sink.clone(),
         };

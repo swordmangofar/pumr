@@ -35,7 +35,8 @@
     "sortName": "Alfabetisk",
     "sortSessions": "Antal sessioner",
     "today": "I dag",
-    "yesterday": "I går"
+    "yesterday": "I går",
+    "currentBranch": "Aktuel gren: {{ branch }}"
   },
   "workspace": {
     "empty": "Ingen filer fundet.",
@@ -597,6 +598,18 @@
         "label": "MCP-server",
         "hint": "Forbind en server, og eksponér dens værktøjer"
       }
+    },
+    "symbolKinds": {
+      "class": "klasse",
+      "interface": "interface",
+      "struct": "struct",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "type",
+      "function": "funktion",
+      "method": "metode",
+      "constant": "konstant",
+      "module": "modul"
     },
     "mentionNoResults": "Ingen match. Fortsæt med at skrive, eller tryk Escape.",
     "mentionFetch": "Hent {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Ny linje",
       "chatStop": "Stop svaret",
       "chatRecallPrompt": "Hent seneste prompt",
-      "chatToggleMode": "Skift mellem planlægning og kodning",
-      "chatToggleModeHint": "Går tilbage til den tilstand, sessionen var i før planlægningen.",
+      "chatToggleMode": "Skift til næste mode",
+      "chatToggleModeHint": "Går gennem alle modes i rækkefølgen fra modevælgeren og starter forfra efter den sidste.",
+      "chatComplete": "Fuldfør ordet ved markøren",
+      "chatCompleteHint": "Foreslår projektets filer, mapper, klasser og funktioner, der passer til den del af ordet, der allerede er skrevet.",
       "gitToggleStage": "Stage eller unstage valgte filer",
       "gitDiscardFiles": "Kassér valgte filer",
       "gitSelectAllFiles": "Vælg alle filer",

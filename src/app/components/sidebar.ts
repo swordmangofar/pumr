@@ -4,6 +4,7 @@ import {
   Component,
   ElementRef,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -17,6 +18,7 @@ import { SettingsService } from '../core/settings.service';
 import { AgentStatus } from './agent-status';
 import { AttentionIndicator } from './attention-indicator';
 import { GitSidebar } from './git-sidebar';
+import { BranchIcon } from './branch-icon';
 import { ProjectIcon } from './project-icon';
 import { WorkspaceTree } from './workspace-tree';
 
@@ -43,6 +45,7 @@ function startOfDay(timestamp: number): number {
   selector: 'app-sidebar',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    BranchIcon,
     TranslocoPipe,
     NgTemplateOutlet,
     AgentStatus,
@@ -53,6 +56,7 @@ function startOfDay(timestamp: number): number {
   ],
   host: {
     '(document:keydown)': 'onKeydown($event)',
+    '(window:focus)': 'reloadBranches()',
   },
   template: `
     <div class="flex h-full flex-col">
@@ -152,7 +156,24 @@ function startOfDay(timestamp: number): number {
               } @else if (workspace.sessionAttention(session.id); as attention) {
                 <app-attention-indicator [kind]="attention" [onAccent]="sessionActive(session)" />
               }
-              <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
+              @if (showProject && branchFor(session.projectId); as branch) {
+                <span class="flex min-w-0 flex-1 flex-col">
+                  <span class="truncate">{{ session.title }}</span>
+                  <span
+                    class="flex min-w-0 items-center gap-1 text-xs leading-4 opacity-75"
+                    [title]="
+                      branch.detached
+                        ? ('git.detached' | transloco)
+                        : ('sidebar.currentBranch' | transloco: { branch: branch.name })
+                    "
+                  >
+                    <app-branch-icon />
+                    <span class="truncate">{{ branch.name }}</span>
+                  </span>
+                </span>
+              } @else {
+                <span class="min-w-0 flex-1 truncate">{{ session.title }}</span>
+              }
               @if (workspace.agentActivity(session.id); as status) {
                 <app-agent-status
                   [status]="status"
@@ -443,9 +464,28 @@ function startOfDay(timestamp: number): number {
                       isExpanded(project.id) ? '▾' : '▸'
                     }}</span>
                     <app-project-icon [project]="project" [size]="24" />
-                    <span class="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span class="truncate text-sm font-medium text-mist">{{ project.name }}</span>
-                      <span class="shrink-0 text-xs text-mist/30">{{ project.sessionCount }}</span>
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="flex min-w-0 items-baseline gap-2">
+                        <span class="truncate text-sm font-medium text-mist">{{
+                          project.name
+                        }}</span>
+                        <span class="shrink-0 text-xs text-mist/30">{{
+                          project.sessionCount
+                        }}</span>
+                      </span>
+                      @if (branchFor(project.id); as branch) {
+                        <span
+                          class="flex min-w-0 items-center gap-1 text-xs leading-4 text-mist/60"
+                          [title]="
+                            branch.detached
+                              ? ('git.detached' | transloco)
+                              : ('sidebar.currentBranch' | transloco: { branch: branch.name })
+                          "
+                        >
+                          <app-branch-icon />
+                          <span class="truncate">{{ branch.name }}</span>
+                        </span>
+                      }
                     </span>
                   </button>
                   <button
@@ -632,6 +672,19 @@ export class Sidebar {
   protected readonly clonePath = signal('');
   protected readonly cloneBusy = signal(false);
   protected readonly cloneError = signal<string | null>(null);
+  /** Projects whose branch was loaded, so a changed project list loads only the new ones. */
+  private readonly branchesLoaded = new Set<string>();
+
+  constructor() {
+    effect(() => {
+      for (const project of this.workspace.projects()) {
+        if (!this.branchesLoaded.has(project.id)) {
+          this.branchesLoaded.add(project.id);
+          void this.workspace.loadGitInfo(project.id);
+        }
+      }
+    });
+  }
 
   protected readonly historyGroups = computed<HistoryGroup[]>(() => {
     const groups: HistoryGroup[] = [];
@@ -701,6 +754,22 @@ export class Sidebar {
 
   protected projectFor(session: Session) {
     return this.workspace.projectFor(session.projectId);
+  }
+
+  /** The checked-out branch of a project, or its commit while HEAD is detached. */
+  protected branchFor(projectId: string): { name: string; detached: boolean } | null {
+    const git = this.workspace.gitInfoFor(projectId);
+    if (git?.branch) {
+      return { name: git.branch, detached: false };
+    }
+    return git?.isRepo && git.head ? { name: git.head, detached: true } : null;
+  }
+
+  /** Catches up with branches switched outside the app, such as in a terminal. */
+  protected reloadBranches(): void {
+    for (const project of this.workspace.projects()) {
+      void this.workspace.loadGitInfo(project.id);
+    }
   }
 
   protected isExpanded(projectId: string): boolean {

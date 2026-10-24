@@ -15,11 +15,13 @@ describe('RenderingService', () => {
   afterEach(() => {
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'];
     delete root.dataset['renderer'];
+    delete root.dataset['backdrop'];
     vi.restoreAllMocks();
   });
 
   it('marks the document when the webview paints on the CPU', async () => {
     vi.spyOn(api, 'isSoftwareRendered').mockResolvedValue(true);
+    vi.spyOn(api, 'hasLeakyBackdrop').mockResolvedValue(false);
 
     await service.init();
 
@@ -29,29 +31,45 @@ describe('RenderingService', () => {
 
   it('leaves a GPU-composited webview alone', async () => {
     vi.spyOn(api, 'isSoftwareRendered').mockResolvedValue(false);
+    vi.spyOn(api, 'hasLeakyBackdrop').mockResolvedValue(false);
 
     await service.init();
 
     expect(service.software()).toBe(false);
+    expect(root.dataset['renderer']).toBeUndefined();
+    expect(root.dataset['backdrop']).toBeUndefined();
+  });
+
+  it('marks the document when the compositor blurs what lies in front of a backdrop', async () => {
+    vi.spyOn(api, 'isSoftwareRendered').mockResolvedValue(false);
+    vi.spyOn(api, 'hasLeakyBackdrop').mockResolvedValue(true);
+
+    await service.init();
+
+    expect(root.dataset['backdrop']).toBe('leaky');
     expect(root.dataset['renderer']).toBeUndefined();
   });
 
   it('assumes GPU compositing when the backend cannot tell', async () => {
     vi.spyOn(api, 'isSoftwareRendered').mockRejectedValue(new Error('unknown command'));
+    vi.spyOn(api, 'hasLeakyBackdrop').mockRejectedValue(new Error('unknown command'));
 
     await service.init();
 
     expect(service.software()).toBe(false);
     expect(root.dataset['renderer']).toBeUndefined();
+    expect(root.dataset['backdrop']).toBeUndefined();
   });
 
   it('does not ask outside Tauri', async () => {
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'];
     const asked = vi.spyOn(api, 'isSoftwareRendered');
+    const askedBackdrop = vi.spyOn(api, 'hasLeakyBackdrop');
 
     await service.init();
 
     expect(asked).not.toHaveBeenCalled();
+    expect(askedBackdrop).not.toHaveBeenCalled();
     expect(service.software()).toBe(false);
   });
 });

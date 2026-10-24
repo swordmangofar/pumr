@@ -35,7 +35,8 @@
     "sortName": "Abecedně",
     "sortSessions": "Počet relací",
     "today": "Dnes",
-    "yesterday": "Včera"
+    "yesterday": "Včera",
+    "currentBranch": "Aktuální větev: {{ branch }}"
   },
   "workspace": {
     "empty": "Nebyly nalezeny žádné soubory.",
@@ -597,6 +598,18 @@
         "label": "Server MCP",
         "hint": "Připojit server a zpřístupnit jeho nástroje"
       }
+    },
+    "symbolKinds": {
+      "class": "třída",
+      "interface": "rozhraní",
+      "struct": "struktura",
+      "enum": "výčet",
+      "trait": "trait",
+      "type": "typ",
+      "function": "funkce",
+      "method": "metoda",
+      "constant": "konstanta",
+      "module": "modul"
     },
     "mentionNoResults": "Žádné shody. Pište dál nebo stiskněte Escape.",
     "mentionFetch": "Načíst {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nový řádek",
       "chatStop": "Zastavit odpověď",
       "chatRecallPrompt": "Vyvolat poslední prompt",
-      "chatToggleMode": "Přepnout mezi plánováním a programováním",
-      "chatToggleModeHint": "Vrátí režim, ve kterém relace byla před plánováním.",
+      "chatToggleMode": "Přepnout na další režim",
+      "chatToggleModeHint": "Prochází všechny režimy v pořadí výběru režimu a po posledním začne znovu od začátku.",
+      "chatComplete": "Doplnit slovo u kurzoru",
+      "chatCompleteHint": "Nabídne soubory, složky, třídy a funkce projektu, které odpovídají již napsané části slova.",
       "gitToggleStage": "Přidat vybrané soubory do indexu nebo je z něj odebrat",
       "gitDiscardFiles": "Zahodit vybrané soubory",
       "gitSelectAllFiles": "Vybrat všechny soubory",

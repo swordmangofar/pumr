@@ -35,7 +35,8 @@
     "sortName": "Po abecedi",
     "sortSessions": "Število sej",
     "today": "Danes",
-    "yesterday": "včeraj"
+    "yesterday": "včeraj",
+    "currentBranch": "Trenutna veja: {{ branch }}"
   },
   "workspace": {
     "empty": "Ni datotek.",
@@ -597,6 +598,18 @@
         "label": "MCP strežnik",
         "hint": "Poveži strežnik in razkrij njegova orodja"
       }
+    },
+    "symbolKinds": {
+      "class": "razred",
+      "interface": "vmesnik",
+      "struct": "struktura",
+      "enum": "naštevanje",
+      "trait": "trait",
+      "type": "tip",
+      "function": "funkcija",
+      "method": "metoda",
+      "constant": "konstanta",
+      "module": "modul"
     },
     "mentionNoResults": "Ni zadetkov. Nadaljujte s tipkanjem ali pritisnite Escape.",
     "mentionFetch": "Pridobi {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nova vrstica",
       "chatStop": "Ustavi odgovor",
       "chatRecallPrompt": "Prikliči zadnji poziv",
-      "chatToggleMode": "Preklopi med načrtovanjem in programiranjem",
-      "chatToggleModeHint": "Vrne se v način, v katerem je bila seja pred načrtovanjem.",
+      "chatToggleMode": "Preklopi na naslednji način",
+      "chatToggleModeHint": "Gre skozi vse načine v vrstnem redu izbirnika načinov in po zadnjem začne znova od začetka.",
+      "chatComplete": "Dokončaj besedo pri kazalcu",
+      "chatCompleteHint": "Predlaga datoteke, mape, razrede in funkcije projekta, ki se ujemajo z že vpisanim delom besede.",
       "gitToggleStage": "Pripravi izbrane datoteke ali prekliči njihovo pripravo",
       "gitDiscardFiles": "Zavrzi izbrane datoteke",
       "gitSelectAllFiles": "Izberi vse datoteke",

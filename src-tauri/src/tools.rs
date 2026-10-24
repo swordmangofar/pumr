@@ -63,6 +63,9 @@ pub struct ToolRuntime {
     /// The call is made in a mode that changes no files: planning, read-only,
     /// a subagent that explores or checks.
     pub read_only: bool,
+    /// The call is made in planning, where `bash` runs only commands that
+    /// read.
+    pub plan_only: bool,
     pub cancel: CancellationToken,
     pub emit: EventSink,
 }
@@ -3338,6 +3341,22 @@ async fn run_bash(runtime: &mut ToolRuntime, arguments: &Value) -> ToolOutcome {
         asked.secrets = secret_folders.iter().map(PathBuf::from).collect();
         asked.hosts = !hosts.is_empty();
     }
+    // Planning changes nothing: a command runs there only when its line shows
+    // that it reads, whatever rule or answer would let it run in another mode.
+    if runtime.plan_only
+        && !matches!(decision, CommandDecision::Deny { .. })
+        && !runtime.permissions.only_reads(
+            &command,
+            &runtime.project_root,
+            &cwd,
+            &runtime.conversation_id,
+            &asked.folders,
+        )
+    {
+        return ToolOutcome::error(
+            "Planning mode runs only commands that read, and this one is not recognised as read-only, so it was not run. Look things up with read, grep, glob and ls, or with a read-only command such as git log, git diff or git show.",
+        );
+    }
     let wants_out = flag(arguments, UNSANDBOXED_ARGUMENT);
     // Code the rules cannot read (`node -e`, a heredoc fed to python) runs in
     // the tight sandbox instead of asking, where that sandbox bounds it. The
@@ -4499,6 +4518,7 @@ pub(crate) mod tests {
             justification: None,
             vision: true,
             read_only: false,
+            plan_only: false,
             cancel: CancellationToken::new(),
             emit: Arc::new(|_: RoutedEvent| {}),
         }
@@ -5994,6 +6014,67 @@ mod guidance_tests {
             "{}",
             outcome.result
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn planning_runs_only_the_commands_that_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let base = directory.path().canonicalize().unwrap();
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "before\n").unwrap();
+        let mut runtime = test_runtime(&root, &base.join("app-data"));
+        // Outside planning every one of these would run without asking.
+        runtime.permissions.replace(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::permissions::AutoApproveConfig {
+                project_commands: true,
+                ..Default::default()
+            },
+        );
+        runtime.permissions.add_session_command_rule(
+            "session",
+            &crate::models::CommandRule::Exact("touch made.txt".to_string()),
+        );
+        runtime.read_only = true;
+        runtime.plan_only = true;
+        let asked = answering(&mut runtime, true);
+
+        for command in ["cat a.txt", "grep -n before a.txt | head -n 1"] {
+            let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+            assert_eq!(outcome.status, "ok", "{command}: {}", outcome.result);
+            assert!(
+                outcome.result.contains("before"),
+                "{command}: {}",
+                outcome.result
+            );
+        }
+        for command in [
+            "touch made.txt",
+            "echo after > a.txt",
+            "sed -i s/before/after/ a.txt",
+        ] {
+            let outcome = run_bash(&mut runtime, &json!({ "command": command })).await;
+            assert_eq!(outcome.status, "error", "{command}: {}", outcome.result);
+            assert!(
+                outcome
+                    .result
+                    .starts_with("Planning mode runs only commands that read"),
+                "{command}: {}",
+                outcome.result
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "before\n"
+        );
+        assert!(!root.join("made.txt").exists());
+        assert!(asked.lock().unwrap().is_empty());
     }
 
     /// A project whose `write.sh` writes a file outside of it, a runtime that

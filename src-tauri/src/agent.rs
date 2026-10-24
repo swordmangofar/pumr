@@ -458,17 +458,16 @@ fn build_tool_schemas(deps: &TurnDeps, request: &TurnRequest) -> Vec<Value> {
     tool_schemas
 }
 
-/// Whether the tool `name` may run in this request: planning modes change
-/// nothing and run nothing, read-only modes change no files, and a subagent
-/// neither delegates nor asks the user, nor proposes anything for the
-/// memory, which no agent does while it is switched off. It decides both
-/// what the model is offered and what is run, because a model calls a tool it
-/// is not offered all the same when the chat's earlier turns, in another
-/// mode, used it.
+/// Whether the tool `name` may run in this request: planning and read-only
+/// modes change no files (in planning, `bash` runs only commands that read),
+/// and a subagent neither delegates nor asks the user, nor proposes anything
+/// for the memory, which no agent does while it is switched off. It decides
+/// both what the model is offered and what is run, because a model calls a
+/// tool it is not offered all the same when the chat's earlier turns, in
+/// another mode, used it.
 fn tool_allowed(request: &TurnRequest, name: &str) -> bool {
     !match name {
         "write" | "edit" => request.plan_only || request.read_only,
-        "bash" | "bash_output" => request.plan_only,
         "task" | "question" => request.depth >= MAX_SUBAGENT_DEPTH,
         "remember" => request.depth >= MAX_SUBAGENT_DEPTH || request.memory.is_none(),
         _ => false,
@@ -2468,6 +2467,7 @@ async fn run_call(
         justification: None,
         vision: takes_pictures(deps, request),
         read_only: request.plan_only || request.read_only,
+        plan_only: request.plan_only,
         cancel: request.cancel.clone(),
         emit: sink.clone(),
     };
@@ -4193,19 +4193,15 @@ mod tests {
             let root = project(&temp);
             std::fs::write(root.join("a.txt"), "before\n").unwrap();
             prompt(&db, &session, "rename it");
-            let mut replies = vec![
+            let replies = vec![
                 called(
                     "edit",
                     json!({ "path": "a.txt", "old_string": "before", "new_string": "after" }),
                 ),
                 called("write", json!({ "path": "new.txt", "content": "made\n" })),
+                said("That takes another mode."),
             ];
-            let mut refused = vec!["edit", "write"];
-            if plan_only {
-                replies.push(called("bash", json!({ "command": "ls" })));
-                refused.push("bash");
-            }
-            replies.push(said("That takes another mode."));
+            let refused = ["edit", "write"];
             let (base_url, _requests) = scripted_server(replies);
             let (deps, mut request) = turn(db, &session, &root, &base_url, Vec::new());
             request.plan_only = plan_only;
@@ -4223,6 +4219,8 @@ mod tests {
                 assert_eq!(offered.contains(&name), allowed, "{name}");
             }
             assert!(refused.iter().all(|name| !offered.contains(name)));
+            // Both keep the commands, which in planning run only when they read.
+            assert!(offered.contains(&"bash") && offered.contains(&"bash_output"));
             // An MCP tool is offered in every mode, and so it runs in every mode.
             assert!(tool_allowed(&request, "mcp__files__write_file"));
             assert!(tool_allowed(&request, "mcp_invoke"));

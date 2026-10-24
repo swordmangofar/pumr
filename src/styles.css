@@ -115,6 +115,19 @@ html {
   transition: opacity 0.3s ease;
 }
 
+/* Noise over the whole window that hides the bands of the dark gradients (see
+   GrainOverlay). It lies above the panels rather than with the backdrop, since
+   their blur would smooth it out and leave the bands behind again. Pixelated,
+   a grain stays one pixel and keeps its strength when the window is scaled. */
+.app-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  background-repeat: repeat;
+  image-rendering: pixelated;
+}
+
 /* Miniature of the backdrop used by the settings picker. The frame paints the
    default theme gradient so the "none" option still previews correctly. */
 .bg-preview-frame {
@@ -547,6 +560,16 @@ textarea {
    compositing, which leaves the text underneath showing through sharply. */
 :root:not([data-platform='mac']) .glass-pop {
   background-color: var(--color-navy);
+}
+
+/* TextureMapper, WebKitGTK's compositor before 2.54 (Ubuntu 24.04, Pop!_OS
+   with COSMIC), builds a backdrop from every layer but the filtered one, so
+   it holds what is painted in front as well (see rendering.rs). A panel's
+   blur layer lies behind the panel's own text, which came back blurred and
+   saturated as a glow around every letter. The panels keep their tint and go
+   without the blur there, as they do without GPU compositing. */
+:root[data-backdrop='leaky'] .glass::before {
+  display: none;
 }
 
 .puma-sprite {

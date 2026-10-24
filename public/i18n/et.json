@@ -35,7 +35,8 @@
     "sortName": "Tähestikuline",
     "sortSessions": "Seansside arv",
     "today": "Täna",
-    "yesterday": "eile"
+    "yesterday": "eile",
+    "currentBranch": "Praegune haru: {{ branch }}"
   },
   "workspace": {
     "empty": "Faile ei leitud.",
@@ -597,6 +598,18 @@
         "label": "MCP-server",
         "hint": "Ühenda server ja avalda selle tööriistad"
       }
+    },
+    "symbolKinds": {
+      "class": "klass",
+      "interface": "liides",
+      "struct": "struktuur",
+      "enum": "loend",
+      "trait": "trait",
+      "type": "tüüp",
+      "function": "funktsioon",
+      "method": "meetod",
+      "constant": "konstant",
+      "module": "moodul"
     },
     "mentionNoResults": "Vasteid pole. Jätkake tippimist või vajutage Escape.",
     "mentionFetch": "Too {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Uus rida",
       "chatStop": "Peata vastus",
       "chatRecallPrompt": "Too tagasi viimane viip",
-      "chatToggleMode": "Lülitu planeerimise ja programmeerimise vahel",
-      "chatToggleModeHint": "Läheb tagasi režiimi, milles seanss oli enne planeerimist.",
+      "chatToggleMode": "Lülitu järgmisele režiimile",
+      "chatToggleModeHint": "Läbib kõik režiimid režiimivalija järjekorras ja alustab pärast viimast uuesti algusest.",
+      "chatComplete": "Lõpeta kursori juures olev sõna",
+      "chatCompleteHint": "Pakub projekti faile, kaustu, klasse ja funktsioone, mis sobivad sõna juba kirjutatud osaga.",
       "gitToggleStage": "Valmista või eemalda valmistamisest valitud failid",
       "gitDiscardFiles": "Hülga valitud failid",
       "gitSelectAllFiles": "Vali kõik failid",

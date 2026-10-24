@@ -10,6 +10,19 @@ export interface MentionQuery {
   term: string;
 }
 
+/**
+ * The word at the caret that Ctrl+Space completes. `term` is the part before
+ * the caret, which the menu searches for; completing it replaces the whole
+ * word, `start` to `end`. Without a text node at the caret there is no word,
+ * and the completion goes in at the caret.
+ */
+export interface WordQuery {
+  node: Text | null;
+  start: number;
+  end: number;
+  term: string;
+}
+
 /** A pill as a saved draft holds it: a mention, or the text of a pasted block. */
 export type SavedPill = { mention: Mention } | { block: string };
 
@@ -206,7 +219,8 @@ export class ComposerEditorService {
     const text = node.textContent ?? '';
     const offset = selection.anchorOffset;
     const before = text.slice(0, offset);
-    const match = /(?:^|\s)@([A-Za-z]*)(?::([^\s]*))?$/.exec(before);
+    // Without a colon, what follows the `@` is the start of a kind or of a path.
+    const match = /(?:^|\s)@([^\s:@]*)(?::([^\s]*))?$/.exec(before);
     if (!match) {
       return null;
     }
@@ -219,6 +233,67 @@ export class ComposerEditorService {
       hasColon: match[2] !== undefined,
       term: match[2] ?? '',
     };
+  }
+
+  /** The word the caret is in or behind, if the caret is in the editor. */
+  detectWord(editor: HTMLElement): WordQuery | null {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
+      return null;
+    }
+    const node = selection.anchorNode;
+    if (!node || !editor.contains(node)) {
+      return null;
+    }
+    if (!(node instanceof Text)) {
+      return { node: null, start: 0, end: 0, term: '' };
+    }
+    const text = node.data;
+    const offset = selection.anchorOffset;
+    const term = /\S*$/.exec(text.slice(0, offset))?.[0] ?? '';
+    const rest = /^\S*/.exec(text.slice(offset))?.[0] ?? '';
+    return { node, start: offset - term.length, end: offset + rest.length, term };
+  }
+
+  /**
+   * Whether nothing of a word follows the caret, so that moving it right
+   * would not move it through the word being typed.
+   */
+  caretEndsWord(): boolean {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
+      return false;
+    }
+    const node = selection.anchorNode;
+    if (!(node instanceof Text)) {
+      return true;
+    }
+    return /^(?:\s|$)/.test(node.data.slice(selection.anchorOffset));
+  }
+
+  /**
+   * Puts `text` in place of the word and the caret behind it. At the end of
+   * the line a space follows, for the next word.
+   */
+  completeWord(editor: HTMLElement, word: WordQuery, text: string): void {
+    editor.focus();
+    if (!word.node || !word.node.isConnected) {
+      this.insertAtCaret(editor, document.createTextNode(`${text} `));
+      return;
+    }
+    const value = word.node.data;
+    const before = value.slice(0, word.start);
+    const after = value.slice(word.end);
+    const inserted = after === '' ? `${text} ` : text;
+    word.node.data = before + inserted + after;
+    const selection = window.getSelection();
+    if (selection) {
+      const caret = document.createRange();
+      caret.setStart(word.node, before.length + inserted.length);
+      caret.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(caret);
+    }
   }
 
   createPill(

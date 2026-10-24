@@ -97,3 +97,40 @@ test.describe('software rendering', () => {
     await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
   });
 });
+
+/**
+ * WebKitGTK before 2.54 paints what lies in front of a backdrop-filter into its
+ * backdrop. The panels' blur layer lies behind their text, so there the text
+ * glowed; the app leaves that blur out and keeps the tint.
+ */
+test.describe('leaky backdrop', () => {
+  test('blurs behind the panels where the backdrop holds only what is behind', async ({
+    app,
+    page,
+  }) => {
+    await app.start();
+
+    await expect(page.locator('html')).not.toHaveAttribute('data-backdrop');
+    const blur = await page
+      .getByRole('main')
+      .evaluate((main) => getComputedStyle(main, '::before').backdropFilter);
+    expect(blur).toContain('blur');
+  });
+
+  test('keeps the panel text out of the blur by leaving the blur out', async ({ app, page }) => {
+    await app.start(seed({ leakyBackdrop: true }));
+
+    await expect(page.locator('html')).toHaveAttribute('data-backdrop', 'leaky');
+    const panels = await page.locator('.glass').evaluateAll((elements) =>
+      elements.map((element) => ({
+        layer: getComputedStyle(element, '::before').display,
+        tint: getComputedStyle(element).backgroundColor,
+      })),
+    );
+    expect(panels.length).toBeGreaterThan(0);
+    for (const panel of panels) {
+      expect(panel.layer).toBe('none');
+      expect(panel.tint).not.toBe('rgba(0, 0, 0, 0)');
+    }
+  });
+});

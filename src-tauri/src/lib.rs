@@ -30,6 +30,7 @@ mod screenshot;
 mod shell_env;
 mod shell_lex;
 mod state;
+mod symbols;
 mod terminal;
 mod tools;
 mod window;
@@ -142,6 +143,7 @@ pub fn run() {
             commands::get_window_control,
             commands::get_sandbox_support,
             commands::is_software_rendered,
+            commands::has_leaky_backdrop,
             commands::set_interface_zoom,
             commands::set_api_key,
             commands::delete_api_key,
@@ -198,6 +200,7 @@ pub fn run() {
             commands::install_mcp_server,
             commands::uninstall_mcp_server,
             commands::list_workspace_entries,
+            commands::list_workspace_symbols,
             commands::read_workspace_file,
             commands::write_workspace_file,
             commands::list_processes,

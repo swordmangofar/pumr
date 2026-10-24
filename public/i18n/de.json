@@ -35,7 +35,8 @@
     "sortName": "Alphabetisch",
     "sortSessions": "Anzahl Sitzungen",
     "today": "Heute",
-    "yesterday": "Gestern"
+    "yesterday": "Gestern",
+    "currentBranch": "Aktueller Branch: {{ branch }}"
   },
   "workspace": {
     "empty": "Keine Dateien gefunden.",
@@ -597,6 +598,18 @@
         "label": "MCP-Server",
         "hint": "Server verbinden und Tools bereitstellen"
       }
+    },
+    "symbolKinds": {
+      "class": "Klasse",
+      "interface": "Interface",
+      "struct": "Struct",
+      "enum": "Enum",
+      "trait": "Trait",
+      "type": "Typ",
+      "function": "Funktion",
+      "method": "Methode",
+      "constant": "Konstante",
+      "module": "Modul"
     },
     "mentionNoResults": "Keine Treffer. Tippe weiter oder drücke Escape.",
     "mentionFetch": "{{ url }} abrufen",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Neue Zeile",
       "chatStop": "Antwort stoppen",
       "chatRecallPrompt": "Letzten Prompt zurückholen",
-      "chatToggleMode": "Zwischen Planen und Programmieren wechseln",
-      "chatToggleModeHint": "Kehrt in den Modus zurück, in dem die Sitzung vor dem Planen war.",
+      "chatToggleMode": "Zum nächsten Modus wechseln",
+      "chatToggleModeHint": "Geht alle Modi in der Reihenfolge der Modusauswahl durch und beginnt nach dem letzten wieder von vorn.",
+      "chatComplete": "Wort am Cursor vervollständigen",
+      "chatCompleteHint": "Schlägt Dateien, Ordner, Klassen und Funktionen des Projekts vor, die zum bereits getippten Teil des Worts passen.",
       "gitToggleStage": "Ausgewählte Dateien vormerken oder zurücknehmen",
       "gitDiscardFiles": "Ausgewählte Dateien verwerfen",
       "gitSelectAllFiles": "Alle Dateien auswählen",

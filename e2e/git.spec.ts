@@ -458,6 +458,42 @@ test.describe('the branch button next to fetch', () => {
     }
   });
 
+  test('shows the checked-out branch under the project in the sessions list', async ({
+    app,
+    page,
+  }) => {
+    await openGit(page, app, { git: { refs } });
+    const leftSidebar = page.locator('app-sidebar');
+    const leftTab = (name: string) =>
+      leftSidebar.getByRole('button', { name, exact: true }).first();
+
+    await leftTab('Sessions').click();
+    await expect(leftSidebar.getByTitle('Current branch: main')).toHaveText('main');
+
+    await leftTab('Git').click();
+    await toolbar(page, 'Branch').click();
+    await dialog(page).getByLabel('Branch name').fill('feature/login');
+    await dialog(page).getByRole('button', { name: 'Create and checkout' }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    await leftTab('Sessions').click();
+
+    await expect(leftSidebar.getByTitle('Current branch: feature/login')).toHaveText(
+      'feature/login',
+    );
+  });
+
+  test('shows the checked-out branch on each session in the history', async ({ app, page }) => {
+    await openGit(page, app, { git: { refs } });
+    const leftSidebar = page.locator('app-sidebar');
+
+    await leftSidebar.getByRole('button', { name: 'Sessions', exact: true }).first().click();
+    await leftSidebar.getByRole('button', { name: 'History', exact: true }).click();
+
+    await expect(
+      leftSidebar.locator('[data-session-row="session-1"]').getByTitle('Current branch: main'),
+    ).toHaveText('main');
+  });
+
   test('creates a branch without leaving the current one', async ({ app, page }) => {
     await openGit(page, app, { git: { refs } });
 

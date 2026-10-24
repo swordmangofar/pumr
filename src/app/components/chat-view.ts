@@ -32,6 +32,7 @@ import { MarkdownView } from './markdown-view';
 import { MemoryCard } from './memory-card';
 import { PermissionOverlay } from './permission-overlay';
 import { PumaLoader } from './puma-loader';
+import { BranchIcon } from './branch-icon';
 import { ProjectIcon } from './project-icon';
 import { ModelChoiceOverlay } from './model-choice-overlay';
 import { QuestionOverlay } from './question-overlay';
@@ -107,6 +108,7 @@ const NO_MEMORY_SUGGESTIONS: MemorySuggestion[] = [];
   selector: 'app-chat-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    BranchIcon,
     TypedInput,
     TranslocoPipe,
     Composer,
@@ -247,9 +249,10 @@ const NO_MEMORY_SUGGESTIONS: MemorySuggestion[] = [];
                             @if (gitFor(project.id); as git) {
                               @if (git.isRepo && git.branch) {
                                 <span
-                                  class="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-mist/60"
+                                  class="flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs font-medium text-mist/80"
                                 >
-                                  ⎇ {{ git.branch }}
+                                  <app-branch-icon />
+                                  {{ git.branch }}
                                 </span>
                               }
                             }
@@ -261,9 +264,10 @@ const NO_MEMORY_SUGGESTIONS: MemorySuggestion[] = [];
 
                   @if (workspace.activeGitInfo()?.branch; as branch) {
                     <span
-                      class="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-xs text-mist/60"
+                      class="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-xs font-medium text-mist/80"
                     >
-                      ⎇ {{ branch }}
+                      <app-branch-icon />
+                      {{ branch }}
                     </span>
                   }
                 </div>

@@ -35,7 +35,8 @@
     "sortName": "Alfabetic",
     "sortSessions": "Număr de sesiuni",
     "today": "Astăzi",
-    "yesterday": "Ieri"
+    "yesterday": "Ieri",
+    "currentBranch": "Ramura curentă: {{ branch }}"
   },
   "workspace": {
     "empty": "Nu s-au găsit fișiere.",
@@ -597,6 +598,18 @@
         "label": "MCP server",
         "hint": "Conectează un server și expune-i tool-urile"
       }
+    },
+    "symbolKinds": {
+      "class": "clasă",
+      "interface": "interfață",
+      "struct": "structură",
+      "enum": "enumerare",
+      "trait": "trait",
+      "type": "tip",
+      "function": "funcție",
+      "method": "metodă",
+      "constant": "constantă",
+      "module": "modul"
     },
     "mentionNoResults": "Nicio potrivire. Continuă să tastezi sau apasă Escape.",
     "mentionFetch": "Preia {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Linie nouă",
       "chatStop": "Oprește răspunsul",
       "chatRecallPrompt": "Readu ultimul prompt",
-      "chatToggleMode": "Comută între planificare și programare",
-      "chatToggleModeHint": "Revine la modul în care era sesiunea înainte de planificare.",
+      "chatToggleMode": "Comută la modul următor",
+      "chatToggleModeHint": "Parcurge toate modurile în ordinea din selectorul de mod și după ultimul o ia de la început.",
+      "chatComplete": "Completează cuvântul de la cursor",
+      "chatCompleteHint": "Sugerează fișiere, foldere, clase și funcții din proiect care se potrivesc cu partea deja tastată a cuvântului.",
       "gitToggleStage": "Adaugă în stage sau scoate din stage fișierele selectate",
       "gitDiscardFiles": "Renunță la fișierele selectate",
       "gitSelectAllFiles": "Selectează toate fișierele",

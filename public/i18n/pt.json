@@ -35,7 +35,8 @@
     "sortName": "Alfabética",
     "sortSessions": "Número de sessões",
     "today": "Hoje",
-    "yesterday": "Ontem"
+    "yesterday": "Ontem",
+    "currentBranch": "Ramo atual: {{ branch }}"
   },
   "workspace": {
     "empty": "Nenhum arquivo encontrado.",
@@ -597,6 +598,18 @@
         "label": "MCP server",
         "hint": "Conectar um servidor e expor suas ferramentas"
       }
+    },
+    "symbolKinds": {
+      "class": "classe",
+      "interface": "interface",
+      "struct": "struct",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "tipo",
+      "function": "função",
+      "method": "método",
+      "constant": "constante",
+      "module": "módulo"
     },
     "mentionNoResults": "Nenhuma correspondência. Continue digitando ou pressione Esc.",
     "mentionFetch": "Buscar {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nova linha",
       "chatStop": "Parar a resposta",
       "chatRecallPrompt": "Recuperar o último prompt",
-      "chatToggleMode": "Alternar entre planejamento e programação",
-      "chatToggleModeHint": "Volta ao modo em que a sessão estava antes do planejamento.",
+      "chatToggleMode": "Mudar para o próximo modo",
+      "chatToggleModeHint": "Percorre todos os modos na ordem do seletor de modo e recomeça depois do último.",
+      "chatComplete": "Completar a palavra no cursor",
+      "chatCompleteHint": "Sugere arquivos, pastas, classes e funções do projeto que correspondem à parte da palavra já digitada.",
       "gitToggleStage": "Preparar ou despreparar os arquivos selecionados",
       "gitDiscardFiles": "Descartar os arquivos selecionados",
       "gitSelectAllFiles": "Selecionar todos os arquivos",

@@ -114,6 +114,27 @@ export interface WorkspaceEntry {
   kind: 'file' | 'directory';
 }
 
+export type SymbolKind =
+  | 'class'
+  | 'interface'
+  | 'struct'
+  | 'enum'
+  | 'trait'
+  | 'type'
+  | 'function'
+  | 'method'
+  | 'constant'
+  | 'module';
+
+/** A name the project defines, such as a class or a function. */
+export interface WorkspaceSymbol {
+  name: string;
+  kind: SymbolKind;
+  path: string;
+  /** 1-based. */
+  line: number;
+}
+
 export interface WorkspaceFile {
   path: string;
   /** Empty for a `binary` file. */

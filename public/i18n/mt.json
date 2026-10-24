@@ -35,7 +35,8 @@
     "sortName": "Alfabetiku",
     "sortSessions": "Numru ta' sessjonijiet",
     "today": "Illum",
-    "yesterday": "Ilbieraħ"
+    "yesterday": "Ilbieraħ",
+    "currentBranch": "Fergħa attwali: {{ branch }}"
   },
   "workspace": {
     "empty": "Ma nstab l-ebda fajl.",
@@ -597,6 +598,18 @@
         "label": "MCP server",
         "hint": "Qabbad server u esponi l-għodod tiegħu"
       }
+    },
+    "symbolKinds": {
+      "class": "klassi",
+      "interface": "interfaċċa",
+      "struct": "struttura",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "tip",
+      "function": "funzjoni",
+      "method": "metodu",
+      "constant": "kostanti",
+      "module": "modulu"
     },
     "mentionNoResults": "L-ebda riżultat. Kompli ittajpja jew agħfas Escape.",
     "mentionFetch": "Iġbed {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Linja ġdida",
       "chatStop": "Waqqaf ir-risposta",
       "chatRecallPrompt": "Erġa' ġib l-aħħar prompt",
-      "chatToggleMode": "Aqleb bejn l-ippjanar u l-ikkowdjar",
-      "chatToggleModeHint": "Jerġa' lura għall-mod li s-sessjoni kienet fih qabel l-ippjanar.",
+      "chatToggleMode": "Aqleb għall-mod li jmiss",
+      "chatToggleModeHint": "Jgħaddi minn kull mod fl-ordni tal-għażla tal-mod u wara l-aħħar wieħed jerġa' jibda mill-bidu.",
+      "chatComplete": "Ikkompleta l-kelma fejn hemm il-kursur",
+      "chatCompleteHint": "Jissuġġerixxi fajls, folders, klassijiet u funzjonijiet tal-proġett li jaqblu mal-parti tal-kelma li diġà ġiet ittajpjata.",
       "gitToggleStage": "Ipprepara jew neħħi l-preparazzjoni tal-fajls magħżula",
       "gitDiscardFiles": "Warrab il-fajls magħżula",
       "gitSelectAllFiles": "Agħżel il-fajls kollha",

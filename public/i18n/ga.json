@@ -35,7 +35,8 @@
     "sortName": "In ord aibítre",
     "sortSessions": "Líon na seisiún",
     "today": "Inniu",
-    "yesterday": "Inné"
+    "yesterday": "Inné",
+    "currentBranch": "Brainse reatha: {{ branch }}"
   },
   "workspace": {
     "empty": "Níor aimsíodh aon chomhaid.",
@@ -597,6 +598,18 @@
         "label": "MCP server",
         "hint": "Ceangail freastalaí agus nocht a chuid uirlisí"
       }
+    },
+    "symbolKinds": {
+      "class": "aicme",
+      "interface": "comhéadan",
+      "struct": "struchtúr",
+      "enum": "áireamh",
+      "trait": "trait",
+      "type": "cineál",
+      "function": "feidhm",
+      "method": "modh",
+      "constant": "tairiseach",
+      "module": "modúl"
     },
     "mentionNoResults": "Níl aon mheaitseáil. Lean ort ag clóscríobh nó brúigh Escape.",
     "mentionFetch": "Faigh {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Líne nua",
       "chatStop": "Stop an freagra",
       "chatRecallPrompt": "Aisghair an leid is déanaí",
-      "chatToggleMode": "Athraigh idir pleanáil agus códú",
-      "chatToggleModeHint": "Téann sé ar ais chuig an mód ina raibh an seisiún roimh an bpleanáil.",
+      "chatToggleMode": "Athraigh go dtí an chéad mhód eile",
+      "chatToggleModeHint": "Téann sé trí na móid go léir in ord an roghnóra mód agus tosaíonn sé arís ón tús tar éis an mhóid dheireanaigh.",
+      "chatComplete": "Críochnaigh an focal ag an gcúrsóir",
+      "chatCompleteHint": "Molann sé comhaid, fillteáin, aicmí agus feidhmeanna an tionscadail a mheaitseálann an chuid den fhocal atá clóscríofa cheana.",
       "gitToggleStage": "Ullmhaigh nó dí-ullmhaigh na comhaid roghnaithe",
       "gitDiscardFiles": "Caith amach na comhaid roghnaithe",
       "gitSelectAllFiles": "Roghnaigh gach comhad",

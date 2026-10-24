@@ -35,7 +35,8 @@
     "sortName": "Alfabēta secībā",
     "sortSessions": "Sesiju skaits",
     "today": "Šodien",
-    "yesterday": "vakar"
+    "yesterday": "vakar",
+    "currentBranch": "Pašreizējais zars: {{ branch }}"
   },
   "workspace": {
     "empty": "Nav atrasts neviens fails.",
@@ -597,6 +598,18 @@
         "label": "MCP serveris",
         "hint": "Savienot serveri un atklāt tā rīkus"
       }
+    },
+    "symbolKinds": {
+      "class": "klase",
+      "interface": "saskarne",
+      "struct": "struktūra",
+      "enum": "uzskaitījums",
+      "trait": "trait",
+      "type": "tips",
+      "function": "funkcija",
+      "method": "metode",
+      "constant": "konstante",
+      "module": "modulis"
     },
     "mentionNoResults": "Nav atbilstību. Turpiniet rakstīt vai nospiediet Escape.",
     "mentionFetch": "Ielādēt {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Jauna rinda",
       "chatStop": "Apturēt atbildi",
       "chatRecallPrompt": "Atsaukt pēdējo uzvedni",
-      "chatToggleMode": "Pārslēgties starp plānošanu un programmēšanu",
-      "chatToggleModeHint": "Atgriežas režīmā, kurā sesija bija pirms plānošanas.",
+      "chatToggleMode": "Pārslēgties uz nākamo režīmu",
+      "chatToggleModeHint": "Iet cauri visiem režīmiem režīma izvēlnes secībā un pēc pēdējā sāk no sākuma.",
+      "chatComplete": "Pabeigt vārdu pie kursora",
+      "chatCompleteHint": "Piedāvā projekta failus, mapes, klases un funkcijas, kas atbilst jau ierakstītajai vārda daļai.",
       "gitToggleStage": "Sagatavot vai atsaukt atlasīto failu sagatavošanu",
       "gitDiscardFiles": "Atmest atlasītos failus",
       "gitSelectAllFiles": "Atlasīt visus failus",

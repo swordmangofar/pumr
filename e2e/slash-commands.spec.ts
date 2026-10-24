@@ -187,17 +187,14 @@ test.describe('slash commands', () => {
     expect(await app.backend.calls('send_message')).toEqual([]);
   });
 
-  test('the mode hotkey switches between planning and the mode before it', async ({
-    app,
-    page,
-  }) => {
+  test('the mode hotkey goes through every mode in turn', async ({ app, page }) => {
     const composer = await openSession(page, app.start, {
-      sessions: [session({ title: 'New session', modeId: 'nacked' })],
+      sessions: [session({ title: 'New session', modeId: 'coding' })],
       settings: { ...seed().settings, modes: MODES },
     });
     const picker = (name: string) => page.locator('app-composer').getByRole('button', { name });
 
-    await expect(picker('Nacked')).toBeVisible();
+    await expect(picker('Coding')).toBeVisible();
     await composer.click();
     await page.keyboard.type('Half a prompt');
     await page.keyboard.press(TOGGLE_MODE);
@@ -207,11 +204,15 @@ test.describe('slash commands', () => {
       modeId: 'planning',
     });
 
-    // Back to the mode it left, not to coding; the draft is untouched.
+    // On to the next mode, not back to coding; the draft is untouched.
     await page.keyboard.press(TOGGLE_MODE);
     await expect(picker('Nacked')).toBeVisible();
     await expect(composer).toHaveText('Half a prompt');
     expect(await app.backend.calls('send_message')).toEqual([]);
+
+    // After the last mode it starts again at the first.
+    await page.keyboard.press(TOGGLE_MODE);
+    await expect(picker('Coding')).toBeVisible();
 
     // It works wherever the focus is.
     await page.locator('body').click({ position: { x: 5, y: 5 } });

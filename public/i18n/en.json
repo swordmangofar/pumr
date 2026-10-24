@@ -35,7 +35,8 @@
     "sortName": "Alphabetical",
     "sortSessions": "Session count",
     "today": "Today",
-    "yesterday": "Yesterday"
+    "yesterday": "Yesterday",
+    "currentBranch": "Current branch: {{ branch }}"
   },
   "workspace": {
     "empty": "No files found.",
@@ -597,6 +598,18 @@
         "label": "MCP server",
         "hint": "Connect a server and expose its tools"
       }
+    },
+    "symbolKinds": {
+      "class": "class",
+      "interface": "interface",
+      "struct": "struct",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "type",
+      "function": "function",
+      "method": "method",
+      "constant": "constant",
+      "module": "module"
     },
     "mentionNoResults": "No matches. Keep typing or press Escape.",
     "mentionFetch": "Fetch {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "New line",
       "chatStop": "Stop the response",
       "chatRecallPrompt": "Recall last prompt",
-      "chatToggleMode": "Switch between planning and coding",
-      "chatToggleModeHint": "Goes back to the mode the session was in before planning.",
+      "chatToggleMode": "Switch to the next mode",
+      "chatToggleModeHint": "Goes through all modes in the order of the mode picker and starts again after the last one.",
+      "chatComplete": "Complete the word at the cursor",
+      "chatCompleteHint": "Suggests the project's files, folders, classes and functions that match the part of the word already typed.",
       "gitToggleStage": "Stage or unstage selected files",
       "gitDiscardFiles": "Discard selected files",
       "gitSelectAllFiles": "Select all files",

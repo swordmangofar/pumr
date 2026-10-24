@@ -35,7 +35,8 @@
     "sortName": "Betűrendben",
     "sortSessions": "Munkamenetek száma",
     "today": "Ma",
-    "yesterday": "Tegnap"
+    "yesterday": "Tegnap",
+    "currentBranch": "Jelenlegi ág: {{ branch }}"
   },
   "workspace": {
     "empty": "Nem található fájl.",
@@ -597,6 +598,18 @@
         "label": "MCP szerver",
         "hint": "Szerver csatlakoztatása és eszközeinek elérhetővé tétele"
       }
+    },
+    "symbolKinds": {
+      "class": "osztály",
+      "interface": "interfész",
+      "struct": "struktúra",
+      "enum": "felsorolás",
+      "trait": "trait",
+      "type": "típus",
+      "function": "függvény",
+      "method": "metódus",
+      "constant": "konstans",
+      "module": "modul"
     },
     "mentionNoResults": "Nincs találat. Folytassa a gépelést, vagy nyomja meg az Escape billentyűt.",
     "mentionFetch": "{{ url }} letöltése",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Új sor",
       "chatStop": "Válasz leállítása",
       "chatRecallPrompt": "Utolsó prompt visszahívása",
-      "chatToggleMode": "Váltás tervezés és kódolás között",
-      "chatToggleModeHint": "Visszatér abba a módba, amelyben a munkamenet a tervezés előtt volt.",
+      "chatToggleMode": "Váltás a következő módra",
+      "chatToggleModeHint": "Végigmegy az összes módon a módválasztó sorrendjében, és az utolsó után elölről kezdi.",
+      "chatComplete": "A kurzornál lévő szó kiegészítése",
+      "chatCompleteHint": "Felajánlja a projekt azon fájljait, mappáit, osztályait és függvényeit, amelyek illeszkednek a szó már begépelt részéhez.",
       "gitToggleStage": "Kijelölt fájlok előkészítése vagy előkészítésének visszavonása",
       "gitDiscardFiles": "Kijelölt fájlok elvetése",
       "gitSelectAllFiles": "Összes fájl kijelölése",

@@ -24,6 +24,7 @@ import type {
   SandboxSupport,
   WindowControl,
   WorkspaceEntry,
+  WorkspaceSymbol,
 } from '../../src/app/core/models';
 
 /**
@@ -156,6 +157,11 @@ export interface FakeSeed {
   sandboxSupport: SandboxSupport;
   /** Whether the webview paints without GPU compositing (`is_software_rendered`). */
   softwareRendering: boolean;
+  /**
+   * Whether the compositor blurs what lies in front of a backdrop-filter into
+   * its backdrop, as WebKitGTK before 2.54 does (`has_leaky_backdrop`).
+   */
+  leakyBackdrop: boolean;
   /** What a new shell prints as its prompt; `$ ` when left out. */
   terminalPrompt?: string;
   replies: FakeReply[];
@@ -402,6 +408,60 @@ export function installFakeBackend(seed: FakeSeed): void {
   function sessionChanges(sessionId: unknown): FileChange[] {
     const base = baselines.get(String(sessionId));
     return base ? changesSince(base) : [];
+  }
+
+  /**
+   * The definitions `symbols::scan` reads off the start of a line, for the
+   * languages the specs write: TypeScript, Rust and Python.
+   */
+  function workspaceSymbols(): WorkspaceSymbol[] {
+    const patterns: [RegExp, WorkspaceSymbol['kind'] | null][] = [
+      [
+        /^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(class|interface|enum|type|function)\s+([A-Za-z_$][\w$]*)/,
+        null,
+      ],
+      [/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*[:=]/, 'constant'],
+      [
+        /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(fn|struct|enum|trait|type|mod)\s+([A-Za-z_]\w*)/,
+        null,
+      ],
+      [/^\s*(?:async\s+)?(class|def)\s+([A-Za-z_]\w*)/, null],
+    ];
+    const kinds: Record<string, WorkspaceSymbol['kind']> = {
+      class: 'class',
+      interface: 'interface',
+      enum: 'enum',
+      type: 'type',
+      struct: 'struct',
+      trait: 'trait',
+      mod: 'module',
+    };
+    const symbols: WorkspaceSymbol[] = [];
+    for (const [path, content] of [...files.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (!/\.(?:ts|tsx|js|rs|py)$/.test(path)) {
+        continue;
+      }
+      const seen = new Set<string>();
+      content.split('\n').forEach((line, index) => {
+        for (const [pattern, fixed] of patterns) {
+          const match = pattern.exec(line);
+          if (!match) {
+            continue;
+          }
+          const name = fixed ? match[1] : match[2];
+          let kind = fixed ?? kinds[match[1]] ?? 'function';
+          if (kind === 'function' && /^\s/.test(line)) {
+            kind = 'method';
+          }
+          if (!seen.has(name)) {
+            seen.add(name);
+            symbols.push({ name, kind, path, line: index + 1 });
+          }
+          break;
+        }
+      });
+    }
+    return symbols;
   }
 
   function workspaceEntries(): WorkspaceEntry[] {
@@ -1358,6 +1418,7 @@ export function installFakeBackend(seed: FakeSeed): void {
     }),
     get_sandbox_support: () => clone(seed.sandboxSupport),
     is_software_rendered: () => seed.softwareRendering,
+    has_leaky_backdrop: () => seed.leakyBackdrop,
     set_interface_zoom: () => null,
     has_api_key: (args) => state.apiKeys.includes(String(args['provider'])),
     set_api_key: (args) => {
@@ -1813,6 +1874,7 @@ export function installFakeBackend(seed: FakeSeed): void {
     },
     get_project_rules: () => [],
     list_workspace_entries: () => workspaceEntries(),
+    list_workspace_symbols: () => workspaceSymbols(),
     read_workspace_file: (args) => {
       const path = String(args['path']);
       // Every file of the fake folder is text.

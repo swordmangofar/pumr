@@ -35,7 +35,8 @@
     "sortName": "Alfabetisk",
     "sortSessions": "Antal sessioner",
     "today": "I dag",
-    "yesterday": "I går"
+    "yesterday": "I går",
+    "currentBranch": "Aktuell gren: {{ branch }}"
   },
   "workspace": {
     "empty": "Inga filer hittades.",
@@ -597,6 +598,18 @@
         "label": "MCP-server",
         "hint": "Anslut en server och exponera dess verktyg"
       }
+    },
+    "symbolKinds": {
+      "class": "klass",
+      "interface": "gränssnitt",
+      "struct": "struct",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "typ",
+      "function": "funktion",
+      "method": "metod",
+      "constant": "konstant",
+      "module": "modul"
     },
     "mentionNoResults": "Inga träffar. Fortsätt skriva eller tryck Escape.",
     "mentionFetch": "Hämta {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Ny rad",
       "chatStop": "Stoppa svaret",
       "chatRecallPrompt": "Hämta senaste prompten",
-      "chatToggleMode": "Växla mellan planering och kodning",
-      "chatToggleModeHint": "Går tillbaka till läget som sessionen var i före planeringen.",
+      "chatToggleMode": "Växla till nästa läge",
+      "chatToggleModeHint": "Går igenom alla lägen i lägesväljarens ordning och börjar om efter det sista.",
+      "chatComplete": "Komplettera ordet vid markören",
+      "chatCompleteHint": "Föreslår projektets filer, mappar, klasser och funktioner som matchar den redan skrivna delen av ordet.",
       "gitToggleStage": "Stagea eller avstagea markerade filer",
       "gitDiscardFiles": "Kasta markerade filer",
       "gitSelectAllFiles": "Markera alla filer",

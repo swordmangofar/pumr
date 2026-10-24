@@ -4,6 +4,7 @@ import {
   DestroyRef,
   ElementRef,
   Injector,
+  Signal,
   ViewEncapsulation,
   afterNextRender,
   computed,
@@ -27,9 +28,11 @@ import {
   TextBlock,
   UserSystemPrompt,
   WorkspaceEntry,
+  WorkspaceSymbol,
 } from '../core/models';
 import { OPENROUTER_PROVIDER, api, providerIdOf } from '../core/api';
 import { CapabilityCatalogService, searchCapabilities } from '../core/capability-catalog.service';
+import { Ranked, best, fuzzyScore, matching, pathScore } from '../core/completion';
 import { formatTokenCount } from '../core/format';
 import { displayHotkey, HotkeyAction, hotkeyBindings, matchesAction } from '../core/hotkeys';
 import { ModelsService } from '../core/models.service';
@@ -47,7 +50,12 @@ import {
 import { AttachmentPreview } from './attachment-preview';
 import { ModelMenu, formatModelContext, formatModelPrice } from './model-menu';
 import { ProviderMark } from './provider-mark';
-import { ComposerEditorService, MentionQuery, trimEdges } from './composer-editor.service';
+import {
+  ComposerEditorService,
+  MentionQuery,
+  WordQuery,
+  trimEdges,
+} from './composer-editor.service';
 
 const REASONING_OPTIONS = ['off', 'low', 'medium', 'high'];
 const MENTION_KINDS: MentionKind[] = ['file', 'directory', 'website', 'skill', 'mcp'];
@@ -141,13 +149,80 @@ const METER_MUTED = 'rgba(255,255,255,0.25)';
 const METER_WARN_RATIO = 0.75;
 const METER_BAD_RATIO = 0.9;
 
+/** A row of the `@` menu, or of the one Ctrl+Space opens to complete a word. */
 interface MentionItem {
-  kind: MentionKind;
+  /** A symbol is only offered for completing a word. */
+  kind: MentionKind | 'symbol';
   value: string;
   label: string;
   sublabel: string | null;
   /** Render the sublabel as prose (skill descriptions) instead of a path. */
   prose?: boolean;
+  /** What the row is tagged with, when not its kind. */
+  badge?: string;
+}
+
+/** Rows the `@` menu lists at most; typing narrows them down. */
+const MENTION_ROWS = 60;
+/** At an equal match, a file comes before a folder. */
+const DIRECTORY_PENALTY = 50;
+
+/**
+ * Something of the project on screen that the menu lists, such as its files.
+ * The agent adds and deletes files, so it is read again once each time the
+ * menu opens; the list from before shows meanwhile, unless it was another
+ * project's.
+ */
+class ProjectListing<T> {
+  readonly items = signal<T[]>([]);
+  /** The project whose items `items` holds. */
+  private loadedFor = '';
+  /** The project read again for the menu that is open. */
+  private refreshedFor: string | null = null;
+
+  constructor(private readonly read: (projectId: string) => Promise<T[]>) {}
+
+  /** Has the next menu read it again. */
+  expire(): void {
+    this.refreshedFor = null;
+  }
+
+  /**
+   * Reads it for `projectId` unless the open menu did already, and tells
+   * `changed` when `items` changed. A slow answer for a project that is no
+   * longer `current` is dropped.
+   */
+  async load(
+    projectId: string,
+    current: () => string | undefined,
+    changed: () => void,
+  ): Promise<void> {
+    if (this.refreshedFor === projectId) {
+      return;
+    }
+    this.refreshedFor = projectId;
+    if (this.loadedFor !== projectId) {
+      this.loadedFor = '';
+      this.items.set([]);
+      changed();
+    }
+    let items: T[];
+    try {
+      items = await this.read(projectId);
+    } catch {
+      // Whatever is listed stays, and the next keystroke tries again.
+      if (this.refreshedFor === projectId) {
+        this.refreshedFor = null;
+      }
+      return;
+    }
+    if (current() !== projectId) {
+      return;
+    }
+    this.loadedFor = projectId;
+    this.items.set(items);
+    changed();
+  }
 }
 
 const MAX_ATTACHMENTS = 10;
@@ -587,18 +662,22 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
         @if (mentionOpen()) {
           <div class="fixed inset-0 z-30" (click)="closeMention()"></div>
           <div
+            #mentionMenu
             class="absolute right-3 bottom-full left-3 z-40 mb-2 max-h-[min(22rem,50vh)] overflow-y-auto glass-pop rounded-2xl shadow-2xl"
             id="composer-mention-menu"
+            role="listbox"
           >
             @for (item of mentionItems(); track item.kind + ':' + item.value; let index = $index) {
               <button
                 type="button"
+                role="option"
                 class="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm transition-colors"
                 [class]="
                   index === mentionIndex()
                     ? 'bg-accent/10 text-white'
                     : 'text-mist hover:bg-white/5'
                 "
+                [attr.aria-selected]="index === mentionIndex()"
                 (mousedown)="$event.preventDefault()"
                 (click)="selectMention(item)"
               >
@@ -628,7 +707,7 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
                   }
                 </span>
                 <span class="shrink-0 text-[10px] tracking-wide text-mist/40 uppercase">{{
-                  item.kind
+                  item.badge ?? item.kind
                 }}</span>
               </button>
             } @empty {
@@ -739,7 +818,7 @@ async function imageToFile(image: HTMLImageElement): Promise<File | null> {
           (keydown)="onKeydown($event)"
           (keyup.arrowleft)="onCaretMove()"
           (keyup.arrowright)="onCaretMove()"
-          (click)="onCaretMove()"
+          (click)="onEditorClick()"
           (paste)="onPaste($event)"
         ></div>
 
@@ -1690,17 +1769,22 @@ export class Composer {
   protected readonly editingBlockId = signal<string | null>(null);
   protected readonly blockDraft = signal('');
 
-  private readonly workspaceEntries = signal<WorkspaceEntry[]>([]);
+  /** The project's files and folders, for `@file`, `@directory` and completing a word. */
+  private readonly entries = new ProjectListing<WorkspaceEntry>((projectId) =>
+    api.listWorkspaceEntries(projectId),
+  );
+  /** The names the project defines, for completing a word. */
+  private readonly symbols = new ProjectListing<WorkspaceSymbol>((projectId) =>
+    api.listWorkspaceSymbols(projectId),
+  );
   private readonly catalog = inject(CapabilityCatalogService);
   private readonly sideQuestions = inject(SideQuestionService);
   private readonly injector = inject(Injector);
   private readonly destroyRef = inject(DestroyRef);
   private catalogRefreshedFor: MentionKind | null = null;
   private mentionQuery: MentionQuery | null = null;
-  /** The project whose files `workspaceEntries` lists. */
-  private loadedEntriesFor = '';
-  /** The project whose files were read again for the picker that is open. */
-  private entriesRefreshedFor: string | null = null;
+  /** The word Ctrl+Space completes, while the menu is open for it. */
+  private completion: WordQuery | null = null;
   /** The session whose draft and attachments the chat box holds. */
   private lastSessionId: string | null = null;
   /** The editor as `restore` brings it back, pills included; see `serialize`. */
@@ -1715,6 +1799,7 @@ export class Composer {
   private readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
   private readonly blockTextareaRef = viewChild<ElementRef<HTMLTextAreaElement>>('blockTextarea');
   private readonly slashMenuRef = viewChild<ElementRef<HTMLElement>>('slashMenu');
+  private readonly mentionMenuRef = viewChild<ElementRef<HTMLElement>>('mentionMenu');
 
   private readonly modelOverride = signal<{ sessionId: string; value: string } | null>(null);
   private readonly reasoningOverride = signal<{ sessionId: string; value: string } | null>(null);
@@ -2060,12 +2145,21 @@ export class Composer {
 
   /** Scrolls the menu to its highlighted row once that row is rendered. */
   private revealSlashItem(): void {
-    if (!this.slashOpen()) {
-      return;
+    if (this.slashOpen()) {
+      this.revealSelected(this.slashMenuRef);
     }
+  }
+
+  private revealMentionItem(): void {
+    if (this.mentionOpen()) {
+      this.revealSelected(this.mentionMenuRef);
+    }
+  }
+
+  private revealSelected(menuRef: Signal<ElementRef<HTMLElement> | undefined>): void {
     afterNextRender(
       () => {
-        const menu = this.slashMenuRef()?.nativeElement;
+        const menu = menuRef()?.nativeElement;
         const row = menu?.querySelector<HTMLElement>('[aria-selected="true"]');
         if (!menu || !row) {
           return;
@@ -2294,6 +2388,14 @@ export class Composer {
     if (this.mentionOpen()) {
       this.updateMention();
     }
+  }
+
+  protected onEditorClick(): void {
+    // The caret goes elsewhere than the word being completed.
+    if (this.completion) {
+      this.closeMention();
+    }
+    this.onCaretMove();
   }
 
   private focusInput(): void {
@@ -2785,29 +2887,25 @@ export class Composer {
   private updateMention(): void {
     const query = this.detectQuery();
     if (!query) {
-      this.closeMention();
+      if (this.completion) {
+        this.updateCompletion();
+      } else {
+        this.closeMention();
+      }
       return;
     }
+    // An `@` typed into a word being completed makes it a reference.
+    this.completion = null;
     this.mentionQuery = query;
 
     if (!query.hasColon) {
-      const kinds = MENTION_KINDS.filter((kind) => kind.startsWith(query.kindPrefix));
-      if (kinds.length === 0) {
-        this.closeMention();
-        return;
-      }
+      // The kinds that `@` and what follows it may start, and the files and
+      // folders it names.
       this.mentionKind.set(null);
-      this.mentionTerm.set(query.kindPrefix);
-      this.mentionItems.set(
-        kinds.map((kind) => ({
-          kind,
-          value: '',
-          label: this.kindLabel(kind),
-          sublabel: this.kindHint(kind),
-        })),
-      );
-      this.mentionIndex.set(0);
-      this.mentionOpen.set(true);
+      this.showMentionItems(query.kindPrefix);
+      if (query.kindPrefix) {
+        void this.loadEntries();
+      }
       return;
     }
 
@@ -2817,49 +2915,165 @@ export class Composer {
       return;
     }
     this.mentionKind.set(kind);
-    this.mentionTerm.set(query.term);
-    this.mentionItems.set(this.filterMentionItems(kind, query.term));
+    this.showMentionItems(query.term);
+    void this.loadMentionData(kind);
+  }
+
+  /**
+   * Opens the menu on the word at the caret, for the files, folders and names
+   * of the project it may be the start of. In an `@` reference it brings back
+   * that menu instead.
+   */
+  private startCompletion(): void {
+    if (this.detectQuery()) {
+      this.updateMention();
+      return;
+    }
+    const word = this.detectWord();
+    if (!word) {
+      return;
+    }
+    this.mentionQuery = null;
+    this.mentionKind.set(null);
+    this.completion = word;
+    this.showMentionItems(word.term);
+    void this.loadEntries();
+    void this.loadSymbols();
+  }
+
+  /**
+   * Follows the word being completed as it is typed. Once it is ended, or
+   * deleted, the menu closes.
+   */
+  private updateCompletion(): void {
+    const word = this.detectWord();
+    if (!word || word.term === '') {
+      this.closeMention();
+      return;
+    }
+    this.completion = word;
+    this.showMentionItems(word.term);
+  }
+
+  private detectWord(): WordQuery | null {
+    const editor = this.editorRef()?.nativeElement;
+    return editor ? this.editorDom.detectWord(editor) : null;
+  }
+
+  /** Opens the menu on what `term` finds, its first row highlighted. */
+  private showMentionItems(term: string): void {
+    this.mentionTerm.set(term);
+    this.mentionItems.set(this.findMentionItems());
     this.mentionIndex.set(0);
     this.mentionOpen.set(true);
-    void this.loadMentionData(kind);
+    this.revealMentionItem();
+  }
+
+  /** Lists again what the open menu finds, once more of the project was read. */
+  private refreshMentionItems(): void {
+    if (!this.mentionOpen()) {
+      return;
+    }
+    const items = this.findMentionItems();
+    this.mentionItems.set(items);
+    this.mentionIndex.update((index) => Math.min(index, Math.max(0, items.length - 1)));
+  }
+
+  /** What the open menu lists for the term typed so far. */
+  private findMentionItems(): MentionItem[] {
+    const term = this.mentionTerm();
+    if (this.completion) {
+      return this.completionItems(term);
+    }
+    const kind = this.mentionKind();
+    if (kind) {
+      return this.filterMentionItems(kind, term);
+    }
+    const kinds = MENTION_KINDS.filter((entry) => entry.startsWith(term)).map(
+      (entry): MentionItem => ({
+        kind: entry,
+        value: '',
+        label: this.kindLabel(entry),
+        sublabel: this.kindHint(entry),
+      }),
+    );
+    if (!term) {
+      return kinds;
+    }
+    const paths = best(this.rankEntries(this.entries.items(), term), MENTION_ROWS - kinds.length);
+    return [...kinds, ...paths.map((entry) => this.entryItem(entry))];
+  }
+
+  /** The files and folders `term` matches, a file before a folder that matches as well. */
+  private rankEntries(entries: readonly WorkspaceEntry[], term: string): Ranked<WorkspaceEntry>[] {
+    return matching(entries, (entry) => {
+      const score = pathScore(term, entry.path);
+      return score === null || entry.kind === 'file' ? score : score - DIRECTORY_PENALTY;
+    });
+  }
+
+  private entryItem(entry: WorkspaceEntry): MentionItem {
+    return {
+      kind: entry.kind,
+      value: entry.path,
+      label: entry.path.split('/').pop() ?? entry.path,
+      sublabel: entry.path,
+    };
+  }
+
+  /**
+   * What a word may be completed to: the project's files, folders and the
+   * names its code defines. A name defined in several places is listed once.
+   */
+  private completionItems(term: string): MentionItem[] {
+    const named = new Set<string>();
+    const symbols = this.symbols.items().filter((symbol) => {
+      if (named.has(symbol.name)) {
+        return false;
+      }
+      named.add(symbol.name);
+      return true;
+    });
+    const found: Ranked<WorkspaceEntry | WorkspaceSymbol>[] = [
+      ...this.rankEntries(this.entries.items(), term),
+      ...matching(symbols, (symbol) => fuzzyScore(term, symbol.name)),
+    ];
+    return best(found, MENTION_ROWS).map((item) =>
+      'name' in item
+        ? {
+            kind: 'symbol',
+            value: item.name,
+            label: item.name,
+            sublabel: `${item.path}:${item.line}`,
+            badge: this.transloco.translate(`composer.symbolKinds.${item.kind}`),
+          }
+        : this.entryItem(item),
+    );
+  }
+
+  private loadEntries(): Promise<void> {
+    return this.loadListing(this.entries);
+  }
+
+  private loadSymbols(): Promise<void> {
+    return this.loadListing(this.symbols);
+  }
+
+  private loadListing<T>(listing: ProjectListing<T>): Promise<void> {
+    const project = this.workspace.activeProject();
+    if (!project) {
+      return Promise.resolve();
+    }
+    return listing.load(
+      project.id,
+      () => this.workspace.activeProject()?.id,
+      () => this.refreshMentionItems(),
+    );
   }
 
   private async loadMentionData(kind: MentionKind): Promise<void> {
     if (kind === 'file' || kind === 'directory') {
-      const project = this.workspace.activeProject();
-      if (!project || this.entriesRefreshedFor === project.id) {
-        return;
-      }
-      // The agent adds and deletes files, so they are read again once each
-      // time the picker opens; the list from before shows meanwhile.
-      this.entriesRefreshedFor = project.id;
-      if (this.loadedEntriesFor !== project.id) {
-        // Unless it lists the files of another project.
-        this.loadedEntriesFor = '';
-        this.workspaceEntries.set([]);
-        this.mentionItems.set(this.filterMentionItems(kind, this.mentionTerm()));
-      }
-      let entries: WorkspaceEntry[];
-      try {
-        entries = await api.listWorkspaceEntries(project.id);
-      } catch {
-        // Whatever is listed stays, and the next keystroke tries again.
-        if (this.entriesRefreshedFor === project.id) {
-          this.entriesRefreshedFor = null;
-        }
-        return;
-      }
-      // A slow answer for a project that is no longer the one on screen.
-      if (this.workspace.activeProject()?.id !== project.id) {
-        return;
-      }
-      this.loadedEntriesFor = project.id;
-      this.workspaceEntries.set(entries);
-      const open = this.mentionKind();
-      if (open === 'file' || open === 'directory') {
-        this.mentionItems.set(this.filterMentionItems(open, this.mentionTerm()));
-      }
-      return;
+      return this.loadEntries();
     }
     if ((kind !== 'skill' && kind !== 'mcp') || this.catalogRefreshedFor === kind) {
       return;
@@ -2869,26 +3083,23 @@ export class Composer {
     this.catalogRefreshedFor = kind;
     await this.catalog.refresh();
     if (this.mentionKind() === kind) {
-      this.mentionItems.set(this.filterMentionItems(kind, this.mentionTerm()));
+      this.refreshMentionItems();
     }
   }
 
   private filterMentionItems(kind: MentionKind, term: string): MentionItem[] {
     const needle = term.toLowerCase();
-    const limit = 60;
+    const limit = MENTION_ROWS;
     switch (kind) {
       case 'file':
       case 'directory':
-        return this.workspaceEntries()
-          .filter((entry) => entry.kind === kind)
-          .filter((entry) => needle === '' || entry.path.toLowerCase().includes(needle))
-          .slice(0, limit)
-          .map((entry) => ({
-            kind,
-            value: entry.path,
-            label: entry.path.split('/').pop() ?? entry.path,
-            sublabel: entry.path,
-          }));
+        return best(
+          this.rankEntries(
+            this.entries.items().filter((entry) => entry.kind === kind),
+            term,
+          ),
+          limit,
+        ).map((entry) => this.entryItem(entry));
       case 'skill':
       case 'mcp':
         return searchCapabilities(
@@ -2928,7 +3139,14 @@ export class Composer {
   }
 
   protected selectMention(item: MentionItem): void {
+    if (this.completion) {
+      this.completeWord(item.value);
+      return;
+    }
     const query = this.mentionQuery;
+    if (item.kind === 'symbol') {
+      return;
+    }
     if (item.value === '') {
       if (query) {
         this.replaceQuery(`@${item.kind}:`, query);
@@ -2947,6 +3165,19 @@ export class Composer {
     this.focusInput();
   }
 
+  /** Writes `text` in place of the word being completed. */
+  private completeWord(text: string): void {
+    const editor = this.editorRef()?.nativeElement;
+    const word = this.completion;
+    // Closed first, so that the input that follows does not open it again.
+    this.closeMention();
+    if (!editor || !word) {
+      return;
+    }
+    this.editorDom.completeWord(editor, word, text);
+    this.onEditorInput();
+  }
+
   protected removeMention(mention: Mention): void {
     this.mentions.update((list) =>
       list.filter((entry) => !(entry.kind === mention.kind && entry.value === mention.value)),
@@ -2961,11 +3192,14 @@ export class Composer {
     }
     const next = (this.mentionIndex() + delta + items.length) % items.length;
     this.mentionIndex.set(next);
+    this.revealMentionItem();
   }
 
   protected closeMention(): void {
     this.catalogRefreshedFor = null;
-    this.entriesRefreshedFor = null;
+    this.entries.expire();
+    this.symbols.expire();
+    this.completion = null;
     this.mentionOpen.set(false);
     this.mentionKind.set(null);
     this.mentionTerm.set('');
@@ -2977,8 +3211,10 @@ export class Composer {
     return 'composer.mentionNoResults';
   }
 
-  protected mentionIcon(kind: MentionKind): string {
+  protected mentionIcon(kind: MentionKind | 'symbol'): string {
     switch (kind) {
+      case 'symbol':
+        return 'M7.5 4C6 4 5.5 4.8 5.5 6v2c0 1-.6 2-1.5 2 .9 0 1.5 1 1.5 2v2c0 1.2.5 2 2 2M12.5 4c1.5 0 2 .8 2 2v2c0 1 .6 2 1.5 2-.9 0-1.5 1-1.5 2v2c0 1.2-.5 2-2 2';
       case 'file':
         return 'M11.5 2.5H5.5A1.5 1.5 0 0 0 4 4v12a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 16 16V7zM11.5 2.5V7H16';
       case 'directory':
@@ -3033,6 +3269,13 @@ export class Composer {
     if (event.isComposing || event.keyCode === 229) {
       return;
     }
+    if (matchesAction(this.settings.settings(), 'chatComplete', event)) {
+      event.preventDefault();
+      if (!this.slashOpen()) {
+        this.startCompletion();
+      }
+      return;
+    }
     if (this.mentionOpen()) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -3044,7 +3287,15 @@ export class Composer {
         this.moveMention(-1);
         return;
       }
-      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+      // Right takes the highlighted row where it would not move through the word.
+      const right =
+        event.key === 'ArrowRight' &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        this.editorDom.caretEndsWord();
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab' || right) {
         const items = this.mentionItems();
         if (items.length > 0) {
           event.preventDefault();

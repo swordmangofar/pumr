@@ -35,7 +35,8 @@
     "sortName": "Aakkosjärjestys",
     "sortSessions": "Istuntojen määrä",
     "today": "Tänään",
-    "yesterday": "Eilen"
+    "yesterday": "Eilen",
+    "currentBranch": "Nykyinen haara: {{ branch }}"
   },
   "workspace": {
     "empty": "Tiedostoja ei löytynyt.",
@@ -597,6 +598,18 @@
         "label": "MCP-palvelin",
         "hint": "Yhdistä palvelin ja tuo sen työkalut käyttöön"
       }
+    },
+    "symbolKinds": {
+      "class": "luokka",
+      "interface": "rajapinta",
+      "struct": "rakenne",
+      "enum": "luettelo",
+      "trait": "trait",
+      "type": "tyyppi",
+      "function": "funktio",
+      "method": "metodi",
+      "constant": "vakio",
+      "module": "moduuli"
     },
     "mentionNoResults": "Ei osumia. Jatka kirjoittamista tai paina Escape.",
     "mentionFetch": "Nouda {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Uusi rivi",
       "chatStop": "Pysäytä vastaus",
       "chatRecallPrompt": "Palauta viimeisin kehote",
-      "chatToggleMode": "Vaihda suunnittelun ja koodauksen välillä",
-      "chatToggleModeHint": "Palaa tilaan, jossa istunto oli ennen suunnittelua.",
+      "chatToggleMode": "Vaihda seuraavaan tilaan",
+      "chatToggleModeHint": "Käy läpi kaikki tilat tilanvalitsimen järjestyksessä ja aloittaa viimeisen jälkeen alusta.",
+      "chatComplete": "Täydennä kohdistimen kohdalla oleva sana",
+      "chatCompleteHint": "Ehdottaa projektin tiedostoja, kansioita, luokkia ja funktioita, jotka vastaavat sanan jo kirjoitettua osaa.",
       "gitToggleStage": "Valmistele tai poista valmistelusta valitut tiedostot",
       "gitDiscardFiles": "Hylkää valitut tiedostot",
       "gitSelectAllFiles": "Valitse kaikki tiedostot",

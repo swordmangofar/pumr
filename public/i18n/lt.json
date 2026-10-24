@@ -35,7 +35,8 @@
     "sortName": "Pagal abėcėlę",
     "sortSessions": "Sesijų skaičius",
     "today": "Šiandien",
-    "yesterday": "vakar"
+    "yesterday": "vakar",
+    "currentBranch": "Dabartinė šaka: {{ branch }}"
   },
   "workspace": {
     "empty": "Failų nerasta.",
@@ -597,6 +598,18 @@
         "label": "MCP serveris",
         "hint": "Prijungti serverį ir atskleisti jo įrankius"
       }
+    },
+    "symbolKinds": {
+      "class": "klasė",
+      "interface": "sąsaja",
+      "struct": "struktūra",
+      "enum": "išvardijimas",
+      "trait": "trait",
+      "type": "tipas",
+      "function": "funkcija",
+      "method": "metodas",
+      "constant": "konstanta",
+      "module": "modulis"
     },
     "mentionNoResults": "Atitikmenų nėra. Tęskite rašyti arba paspauskite Escape.",
     "mentionFetch": "Nuskaityti {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nauja eilutė",
       "chatStop": "Stabdyti atsakymą",
       "chatRecallPrompt": "Grąžinti paskutinę užklausą",
-      "chatToggleMode": "Perjungti tarp planavimo ir programavimo",
-      "chatToggleModeHint": "Grįžta į režimą, kuriame sesija buvo prieš planavimą.",
+      "chatToggleMode": "Perjungti į kitą režimą",
+      "chatToggleModeHint": "Pereina per visus režimus režimo parinkiklio tvarka ir po paskutinio pradeda iš naujo.",
+      "chatComplete": "Užbaigti žodį ties žymekliu",
+      "chatCompleteHint": "Siūlo projekto failus, aplankus, klases ir funkcijas, atitinkančias jau įvestą žodžio dalį.",
       "gitToggleStage": "Paruošti pažymėtus failus arba atšaukti jų paruošimą",
       "gitDiscardFiles": "Atmesti pažymėtus failus",
       "gitSelectAllFiles": "Pažymėti visus failus",

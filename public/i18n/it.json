@@ -35,7 +35,8 @@
     "sortName": "Alfabetico",
     "sortSessions": "Numero di sessioni",
     "today": "Oggi",
-    "yesterday": "Ieri"
+    "yesterday": "Ieri",
+    "currentBranch": "Ramo corrente: {{ branch }}"
   },
   "workspace": {
     "empty": "Nessun file trovato.",
@@ -597,6 +598,18 @@
         "label": "MCP server",
         "hint": "Connetti un server ed esponi i suoi strumenti"
       }
+    },
+    "symbolKinds": {
+      "class": "classe",
+      "interface": "interfaccia",
+      "struct": "struct",
+      "enum": "enum",
+      "trait": "trait",
+      "type": "tipo",
+      "function": "funzione",
+      "method": "metodo",
+      "constant": "costante",
+      "module": "modulo"
     },
     "mentionNoResults": "Nessuna corrispondenza. Continua a digitare o premi Esc.",
     "mentionFetch": "Recupera {{ url }}",
@@ -1242,8 +1255,10 @@
       "chatNewLine": "Nuova riga",
       "chatStop": "Interrompi la risposta",
       "chatRecallPrompt": "Richiama l'ultimo prompt",
-      "chatToggleMode": "Passa da pianificazione a programmazione e viceversa",
-      "chatToggleModeHint": "Torna alla modalità in cui era la sessione prima della pianificazione.",
+      "chatToggleMode": "Passa alla modalità successiva",
+      "chatToggleModeHint": "Scorre tutte le modalità nell'ordine del selettore di modalità e dopo l'ultima ricomincia dall'inizio.",
+      "chatComplete": "Completa la parola al cursore",
+      "chatCompleteHint": "Suggerisce file, cartelle, classi e funzioni del progetto che corrispondono alla parte della parola già digitata.",
       "gitToggleStage": "Aggiungi o rimuovi dallo stage i file selezionati",
       "gitDiscardFiles": "Scarta i file selezionati",
       "gitSelectAllFiles": "Seleziona tutti i file",

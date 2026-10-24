@@ -20,9 +20,11 @@ import { BackdropCanvas } from './components/backdrop-canvas';
 import { ChatView } from './components/chat-view';
 import { DebugView } from './components/debug-view';
 import { GitView } from './components/git-view';
+import { GrainOverlay } from './components/grain-overlay';
 import { ProcessIndicator } from './components/process-indicator';
 import { PumaLoader } from './components/puma-loader';
 import { ProjectAppearanceDialog } from './components/project-appearance-dialog';
+import { BranchIcon } from './components/branch-icon';
 import { ProjectIcon } from './components/project-icon';
 import { RightPanel } from './components/right-panel';
 import { SettingsDialog } from './components/settings/settings-dialog';
@@ -52,6 +54,7 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    BranchIcon,
     Sidebar,
     ChatView,
     GitView,
@@ -67,6 +70,7 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
     AgentStatus,
     AttentionIndicator,
     BackdropCanvas,
+    GrainOverlay,
     ProjectIcon,
     ProjectAppearanceDialog,
   ],
@@ -78,6 +82,7 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
       <canvas appBackdrop class="app-backdrop" aria-hidden="true"></canvas>
     }
     <div class="app-background" aria-hidden="true"></div>
+    <div appGrain class="app-grain" aria-hidden="true"></div>
 
     @if (splashVisible()) {
       <div
@@ -136,9 +141,10 @@ const WINDOW_SUMMONED_EVENT = 'window-summoned';
           @if (workspace.activeGitInfo(); as git) {
             @if (git.branch) {
               <span
-                class="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-xs text-mist/60"
+                class="flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-xs font-medium text-mist/80"
               >
-                ⎇ {{ git.branch }}
+                <app-branch-icon />
+                {{ git.branch }}
               </span>
             }
           }
@@ -876,7 +882,7 @@ export class App implements OnInit {
     }
     if (matchesAction(settings, 'chatToggleMode', event)) {
       event.preventDefault();
-      void this.workspace.togglePlanMode();
+      void this.workspace.cycleMode();
       return;
     }
     if (matchesHotkey(settings.openTabHotkey, event)) {

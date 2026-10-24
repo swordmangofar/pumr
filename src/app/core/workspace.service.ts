@@ -29,7 +29,7 @@ import {
   SpendSummary,
   UpdateSessionArgs,
 } from './models';
-import { planToggleTarget, resolveMode } from './modes';
+import { nextMode, resolveMode } from './modes';
 import { SettingsService } from './settings.service';
 import { SoundService } from './sound.service';
 import { ProcessService } from './process.service';
@@ -120,8 +120,6 @@ export class WorkspaceService {
   private readonly activeState = signal<string | null>(null);
   private readonly messagesState = signal<Record<string, Message[]>>({});
   private readonly messageLoadTokens = new Map<string, number>();
-  /** The mode each session left when the plan hotkey took it to planning. */
-  private readonly modeBeforePlan = new Map<string, string>();
   private readonly streamingState = signal<Record<string, boolean>>({});
   private readonly errorsState = signal<Record<string, string | null>>({});
   private readonly composerDraftsState = signal<Record<string, string>>({});
@@ -1563,22 +1561,19 @@ export class WorkspaceService {
   }
 
   /**
-   * Switches the session shown between planning and the mode it was in before
-   * (coding unless it left another one for planning).
+   * Switches the session shown to the next mode in the order of the mode
+   * picker, and from the last back to the first.
    */
-  async togglePlanMode(): Promise<void> {
+  async cycleMode(): Promise<void> {
     const session = this.activeAgent();
     if (!session) {
       return;
     }
     const modes = this.settings.modes();
     const current = resolveMode(modes, session.modeId ?? this.settings.settings()?.defaultModeId);
-    const target = planToggleTarget(modes, current, this.modeBeforePlan.get(session.id));
-    if (!target || target.id === current?.id) {
+    const target = nextMode(modes, current);
+    if (!target) {
       return;
-    }
-    if (current && !current.planOnly) {
-      this.modeBeforePlan.set(session.id, current.id);
     }
     await this.updateSession({ sessionId: session.id, modeId: target.id });
   }

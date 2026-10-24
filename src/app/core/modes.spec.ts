@@ -1,5 +1,5 @@
 import { Mode } from './models';
-import { planToggleTarget, resolveMode } from './modes';
+import { nextMode, resolveMode } from './modes';
 
 function mode(id: string, planOnly = false): Mode {
   return {
@@ -28,31 +28,28 @@ describe('resolveMode', () => {
   });
 });
 
-describe('planToggleTarget', () => {
-  it('goes from a working mode to planning', () => {
-    expect(planToggleTarget(MODES, MODES[0], null)?.id).toBe('planning');
-    expect(planToggleTarget(MODES, MODES[2], null)?.id).toBe('planning');
+describe('nextMode', () => {
+  it('goes through every mode in order and starts again after the last', () => {
+    const visited = [MODES[0]];
+    for (let step = 0; step < MODES.length; step++) {
+      visited.push(nextMode(MODES, visited[visited.length - 1])!);
+    }
+    expect(visited.map((mode) => mode.id)).toEqual([
+      'coding',
+      'planning',
+      'nacked',
+      'outline',
+      'coding',
+    ]);
   });
 
-  it('goes back to the mode that was left for planning', () => {
-    expect(planToggleTarget(MODES, MODES[1], 'nacked')?.id).toBe('nacked');
+  it('starts at the first mode when the current one is not listed', () => {
+    expect(nextMode(MODES, mode('deleted'))?.id).toBe('coding');
+    expect(nextMode(MODES, undefined)?.id).toBe('coding');
   });
 
-  it('goes back to coding when the mode before is unknown, gone or plan-only', () => {
-    expect(planToggleTarget(MODES, MODES[1], null)?.id).toBe('coding');
-    expect(planToggleTarget(MODES, MODES[1], 'deleted')?.id).toBe('coding');
-    expect(planToggleTarget(MODES, MODES[3], 'planning')?.id).toBe('coding');
-  });
-
-  it('uses another plan-only mode when the built-in one is gone', () => {
-    const modes = [mode('coding'), mode('outline', true)];
-    expect(planToggleTarget(modes, modes[0], null)?.id).toBe('outline');
-  });
-
-  it('has nowhere to go without a mode of the other kind', () => {
-    expect(planToggleTarget([mode('coding')], mode('coding'), null)).toBeUndefined();
-    expect(
-      planToggleTarget([mode('planning', true)], mode('planning', true), null),
-    ).toBeUndefined();
+  it('has nowhere to go without another mode', () => {
+    expect(nextMode([mode('coding')], mode('coding'))).toBeUndefined();
+    expect(nextMode([], undefined)).toBeUndefined();
   });
 });

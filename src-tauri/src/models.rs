@@ -216,6 +216,20 @@ pub struct WorkspaceEntry {
     pub kind: String,
 }
 
+/// A name the project defines, such as a class or a function, that the
+/// composer completes while a prompt is typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSymbol {
+    pub name: String,
+    /// `class`, `interface`, `struct`, `enum`, `trait`, `type`, `function`,
+    /// `method`, `constant` or `module`.
+    pub kind: String,
+    pub path: String,
+    /// 1-based.
+    pub line: usize,
+}
+
 /// The text content of a file opened from the workspace tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

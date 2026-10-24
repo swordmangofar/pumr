@@ -10,6 +10,7 @@ import {
   Mode,
   ModelInfo,
   WorkspaceEntry,
+  WorkspaceSymbol,
 } from '../core/models';
 import { ModelsService } from '../core/models.service';
 import { FALLBACK_SETTINGS, SettingsService } from '../core/settings.service';
@@ -753,6 +754,118 @@ describe('Composer', () => {
       answerFirst([entry('src/a.ts'), entry('src/b.ts')]);
       await settled();
       expect(suggested()).toEqual(['other/b.ts']);
+    });
+  });
+
+  describe('completing a word', () => {
+    const ENTRIES: WorkspaceEntry[] = [
+      { path: 'src', kind: 'directory' },
+      { path: 'src/composer.ts', kind: 'file' },
+      { path: 'src/models.ts', kind: 'file' },
+    ];
+    const SYMBOLS: WorkspaceSymbol[] = [
+      { name: 'Composer', kind: 'class', path: 'src/composer.ts', line: 3 },
+      { name: 'ComposerInsert', kind: 'interface', path: 'src/workspace.ts', line: 9 },
+      { name: 'Composer', kind: 'class', path: 'src/other.ts', line: 1 },
+    ];
+
+    beforeEach(() => {
+      activeProject.set({ id: 'p1' });
+      vi.spyOn(api, 'listWorkspaceEntries').mockResolvedValue(ENTRIES);
+      vi.spyOn(api, 'listWorkspaceSymbols').mockResolvedValue(SYMBOLS);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    /** Ctrl+Space, the default key for completing a word. */
+    function complete(): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', {
+        key: ' ',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor().dispatchEvent(event);
+      return event;
+    }
+
+    function offered(): string[] {
+      return internals()
+        .mentionItems()
+        .map((item) => item.value);
+    }
+
+    it('offers the names, files and folders the word at the caret may start', async () => {
+      typeAtCaret('refactor Compo');
+      expect(complete().defaultPrevented).toBe(true);
+      // A name defined twice is offered once.
+      await vi.waitFor(() =>
+        expect(offered()).toEqual(['Composer', 'src/composer.ts', 'ComposerInsert']),
+      );
+
+      expect(press('Tab').defaultPrevented).toBe(true);
+      expect(editor().textContent).toBe('refactor Composer ');
+      expect(offered()).toEqual([]);
+      press('Enter');
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'refactor Composer', mentions: [] }),
+      );
+    });
+
+    it('narrows the list while the word is typed and closes once it ends', async () => {
+      typeAtCaret('Co');
+      complete();
+      await vi.waitFor(() => expect(offered()).toHaveLength(3));
+
+      typeAtCaret('ComposerI');
+      expect(offered()).toEqual(['ComposerInsert']);
+      typeAtCaret('ComposerI ');
+      expect(offered()).toEqual([]);
+      // Typing on does not bring it back.
+      typeAtCaret('ComposerI Comp');
+      expect(offered()).toEqual([]);
+    });
+
+    it('replaces the whole word the caret is in', async () => {
+      typeAtCaret('see modelsx and more');
+      caretAt(editor().firstChild!, 'see mod'.length);
+      complete();
+      await vi.waitFor(() => expect(offered()[0]).toBe('src/models.ts'));
+
+      press('Enter');
+      expect(editor().textContent).toBe('see src/models.ts and more');
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it('takes the highlighted row with the right arrow only at the end of the word', async () => {
+      typeAtCaret('Compo');
+      complete();
+      await vi.waitFor(() => expect(offered()[0]).toBe('Composer'));
+
+      caretAt(editor().firstChild!, 2);
+      expect(press('ArrowRight').defaultPrevented).toBe(false);
+      expect(editor().textContent).toBe('Compo');
+
+      caretAt(editor().firstChild!, 5);
+      expect(press('ArrowRight').defaultPrevented).toBe(true);
+      expect(editor().textContent).toBe('Composer ');
+    });
+
+    it('lists files after the kinds for an @ reference, and makes the pick a pill', async () => {
+      typeAtCaret('look at @compo');
+      // Names are only for completing a word.
+      await vi.waitFor(() => expect(offered()).toEqual(['src/composer.ts']));
+
+      press('ArrowRight');
+      const pill = editor().querySelector<HTMLElement>('[data-mention]');
+      expect(pill?.dataset['value']).toBe('src/composer.ts');
+      expect(api.listWorkspaceSymbols).not.toHaveBeenCalled();
+    });
+
+    it('still offers the kinds first for an @ reference', async () => {
+      typeAtCaret('@fi');
+      expect(offered()[0]).toBe('');
+      press('Tab');
+      expect(editor().textContent).toBe('@file:');
     });
   });
 
